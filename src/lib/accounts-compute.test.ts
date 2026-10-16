@@ -366,6 +366,8 @@ describe("buildAccountsAudit", () => {
       paymentDeclinedCount: 0,
       noPaymentMethodCount: 0,
       pausedCount: 0,
+      churnedCount: 0,
+      churnUnavailableReason: "not_requested",
       outOfCreditCount: 0,
       statusUnknownCount: 0,
       inactiveCount: 0,
@@ -624,5 +626,109 @@ describe("buildAccountsAudit — per-org reads fail-soft under orgReadsFailSoft 
     const soft = await buildAccountsAudit(COLD, NOW, deps(fixture), { orgReadsFailSoft: true });
     expect(soft).toEqual(strict);
     expect(soft.unreadOrgReads).toEqual([]);
+  });
+});
+
+describe("buildAccountsAudit — a cancelled account is CHURNED, read from billing's commercial state (BOARD-CHURNED-TRIAL-1016)", () => {
+  // Owner rule 2026-10-16: "Free trial font partie de mes clients." Current client = paid, or a trial
+  // still running. A cancelled subscription (trial or paid) is churned, whatever its campaigns still say.
+  const fixture = {
+    memberships: [
+      { orgId: "cancelled-trial", brandId: "b-ct" },
+      { orgId: "trialing", brandId: "b-tr" },
+      { orgId: "prepaid", brandId: "b-pp" },
+      { orgId: "canceling", brandId: "b-cn" },
+      { orgId: "unreadable", brandId: "b-un" },
+    ],
+    // cancelled-trial has a near-zero balance and $14/day still "running": the old verdict says out_of_credit.
+    balanceUsd: { "cancelled-trial": 0.1, trialing: 0.1, prepaid: 500, canceling: 500, unreadable: 500 },
+    configuredUsd: { "b-ct": 14, "b-tr": 14, "b-pp": 20, "b-cn": 20, "b-un": 20 },
+  };
+  const row = (orgId: string, revenueClass: string, classReason: string, paymentMode = "subscription") => ({
+    orgId,
+    paymentMode,
+    revenueClass,
+    classReason,
+    mrrCents: "0.0000000000",
+    unknownReason: null,
+  });
+  const fleet = async () => ({
+    asOf: NOW.toISOString(),
+    orgs: [
+      row("cancelled-trial", "none", "subscription_ended"),
+      row("trialing", "none", "subscription_trialing"),
+      row("prepaid", "one_off", "prepaid_no_auto_topup", "prepaid"),
+      row("canceling", "none", "subscription_canceling"),
+    ],
+    unreadableOrgIds: ["unreadable"],
+  });
+
+  it("a cancelled trial is churned (not out_of_credit), with billing's reason, counted apart and in no money total", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: fleet }, { churnFromBilling: true });
+    const ct = audit.rows.find((r) => r.orgId === "cancelled-trial")!;
+    expect(ct.status).toBe("churned");
+    expect(ct.churnedReason).toBe("subscription_ended");
+    expect(audit.stats.churnedCount).toBe(2);
+    expect(audit.stats.churnUnavailableReason).toBeNull();
+    expect(audit.stats.outOfCreditCount).toBe(1); // only the trial still running
+    expect(audit.stats.totalCount).toBe(5);
+    expect(audit.stats.inactiveCount).toBe(0);
+    // prepaid 20 + unreadable 20 are active; churned rows add nothing to the running total
+    expect(audit.stats.totalRunningDailyBudgetUsd).toBe(40);
+  });
+
+  it("a cancel pending at period end is churned too (the customer cancelled)", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: fleet }, { churnFromBilling: true });
+    const cn = audit.rows.find((r) => r.orgId === "canceling")!;
+    expect([cn.status, cn.churnedReason]).toEqual(["churned", "subscription_canceling"]);
+  });
+
+  it("a trial still running stays a client: it keeps its bucket", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: fleet }, { churnFromBilling: true });
+    const tr = audit.rows.find((r) => r.orgId === "trialing")!;
+    expect([tr.status, tr.churnedReason]).toEqual(["out_of_credit", null]);
+  });
+
+  it("a prepaid account with no subscription that paid stays a client: it keeps its bucket", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: fleet }, { churnFromBilling: true });
+    const pp = audit.rows.find((r) => r.orgId === "prepaid")!;
+    expect([pp.status, pp.churnedReason]).toEqual(["active", null]);
+  });
+
+  it("an org billing could not read is never churned", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, { ...deps(fixture), recurringRevenue: fleet }, { churnFromBilling: true });
+    const un = audit.rows.find((r) => r.orgId === "unreadable")!;
+    expect([un.status, un.churnedReason]).toEqual(["active", null]);
+  });
+
+  it("billing's fleet read failing churns nobody: every row keeps its bucket and the reason is stated", async () => {
+    const audit = await buildAccountsAudit(
+      COLD,
+      NOW,
+      { ...deps(fixture), recurringRevenue: async () => { throw new Error("billing down"); } },
+      { churnFromBilling: true },
+    );
+    expect(audit.rows.every((r) => r.status !== "churned" && r.churnedReason === null)).toBe(true);
+    expect(audit.stats.churnedCount).toBe(0);
+    expect(audit.stats.churnUnavailableReason).toBe("billing_revenue_unavailable");
+    expect(audit.rows.find((r) => r.orgId === "cancelled-trial")!.status).toBe("out_of_credit");
+  });
+
+  it("churn wins over an unreadable payment-outlook (billing's commercial state is a known fact)", async () => {
+    const base = deps(fixture);
+    const audit = await buildAccountsAudit(
+      COLD,
+      NOW,
+      { ...base, recurringRevenue: fleet, paymentHold: async (orgId) => { if (orgId === "cancelled-trial") throw new Error("timeout"); return base.paymentHold(orgId); } },
+      { churnFromBilling: true, orgReadsFailSoft: true, paymentHoldRetryDelayMs: 0 },
+    );
+    expect(audit.rows.find((r) => r.orgId === "cancelled-trial")!.status).toBe("churned");
+    expect(audit.stats.statusUnknownCount).toBe(0);
+  });
+
+  it("a caller that does not ask for churn keeps the old buckets and says so", async () => {
+    const audit = await buildAccountsAudit(COLD, NOW, deps(fixture));
+    expect(audit.stats.churnedCount).toBe(0);
+    expect(audit.stats.churnUnavailableReason).toBe("not_requested");
   });
 });

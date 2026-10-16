@@ -57,6 +57,7 @@ function account(over: Partial<AccountRow> & { orgId: string; brandId: string; s
     orgActualBalanceUsd: 1000,
     autoTopupEnabled: false,
     paymentDeclinedReason: null,
+    churnedReason: null,
     revenueSide: "self_serve",
     revenueClass: null,
     revenueClassReason: null,
@@ -200,7 +201,7 @@ function makeDeps(fixtures: {
   const audit: AccountsAudit = {
     rows: fixtures.accounts,
     unreadOrgReads: [],
-    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, outOfCreditCount: 0, statusUnknownCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
+    stats: { totalRunningDailyBudgetUsd: 0, totalConfiguredDailyBudgetUsd: 0, totalReactiveRunningDailyCapUsd: 0, mrrUsd: 0, arrUsd: 0, mrrBasis: "billing_recurring", mrrUnavailableReason: null, mrrUnknownOrgIds: [], activeCount: 0, reactiveOnlyCount: 0, paymentDeclinedCount: 0, noPaymentMethodCount: 0, pausedCount: 0, churnedCount: 0, churnUnavailableReason: null, outOfCreditCount: 0, statusUnknownCount: 0, inactiveCount: 0, totalCount: fixtures.accounts.length },
     asOf: NOW.toISOString(),
   };
   const byUser: ActiveUsersByUser = {
@@ -791,6 +792,27 @@ describe("buildCustomerHealthBoard — one org's unreadable billing payment-outl
     expect(calls.get("o7")).toBe(2);
     expect(calls.get("o0")).toBe(1);
     expect(audit.rows.filter((r) => r.status === "unknown").map((r) => r.orgId)).toEqual(["o7"]);
+  });
+
+  it("a CANCELLED account reads churned on the board (billing's commercial state), counted apart, badge red; a trial still running keeps its bucket (BOARD-CHURNED-TRIAL-1016)", async () => {
+    const fleet = async () => ({
+      asOf: NOW.toISOString(),
+      orgs: [
+        { orgId: "ok1", paymentMode: "subscription", revenueClass: "none", classReason: "subscription_ended", mrrCents: "0", unknownReason: null },
+        { orgId: "bad", paymentMode: "subscription", revenueClass: "none", classReason: "subscription_trialing", mrrCents: "0", unknownReason: null },
+      ],
+      unreadableOrgIds: ["ok2"],
+    });
+    const base = boardDeps(null);
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, {
+      ...base,
+      accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now, { ...accountsDeps(null), recurringRevenue: fleet }, 0),
+    });
+    const ok1 = board.customers.find((r) => r.orgId === "ok1")!;
+    expect([ok1.status, ok1.churnedReason, ok1.health.badge]).toEqual(["churned", "subscription_ended", "red"]);
+    expect(board.customers.find((r) => r.orgId === "bad")!.status).toBe("active"); // trial still running
+    expect(board.customers.find((r) => r.orgId === "ok2")!.status).toBe("payment_declined"); // billing could not read it: never churned
+    expect(board.stats).toMatchObject({ totalCustomers: 3, activeCount: 1, churnedCount: 1, churnUnavailableReason: null, paymentDeclinedCount: 1, inactiveCount: 0 });
   });
 
   it("the default accounts audit (staff Accounts page, send-forecast) stays fail-loud on the same failure", async () => {
