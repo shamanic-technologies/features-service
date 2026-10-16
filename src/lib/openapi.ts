@@ -5458,7 +5458,7 @@ const publicSalesFunnelSchema = z.object({
 const triggerVocabularyFields = {
   type: z.enum(["outcome", "condition"]).describe("Owner 2026-10-15 (outcomes and triggers are two catalogues). `outcome`: '⚡ <outcome>' (⚡ = the trigger glyph, never in the name), fired the moment a person reaches `outcomeKey`, exactly one per outcome, named by that outcome's label. `condition`: computed by us (an outcome + a delay + 'still not' another, a polled source, an integration state such as a GitHub issue in prod)."),
   outcomeKey: z.string().nullable().describe("The outcome (`outcomes[].key`) an outcome trigger reports. Null on a condition trigger (its `fromStep` is only the step its rule starts from)."),
-  callable: z.boolean().describe("An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."),
+  callable: z.boolean().describe("An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."),
 };
 
 const channelCatalogueResponseSchema = registry.register(
@@ -7066,7 +7066,8 @@ const catalogueTriggerRow = z.object({
   id: z.string().describe("The trigger id a reactive pipe names (`triggerId`)."),
   name: z.string().describe("The trigger's label, unique (an outcome trigger is named by its outcome: 'Positive reply')."),
   ...triggerVocabularyFields,
-  valueUsd: z.number().nullable().describe("A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."),
+  valueUsd: z.number().nullable().describe("A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`). Null exactly when `valueUnavailableReason` is set."),
+  valueUnavailableReason: z.enum(["condition_trigger", "outcome_not_in_catalogue", "no_route_to_paid_client"]).nullable().describe("Why `valueUsd` is null: `condition_trigger` (computed by us, no outcome of its own), `outcome_not_in_catalogue` (its outcome is missing from the step catalogue it was valued on), `no_route_to_paid_client` (no rated leg leads from its outcome to a paid client). Null when `valueUsd` is served."),
   icon: z.literal("lightning").describe("The family glyph (Phosphor)."),
   color: z.string().describe("`#RRGGBB`, derived from the name."),
   eventIcon: z.string().describe("The trigger type's own Phosphor icon (e.g. `thumbs-up`)."),

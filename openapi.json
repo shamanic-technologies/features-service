@@ -28456,7 +28456,7 @@
                 },
                 "callable": {
                   "type": "boolean",
-                  "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                  "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                 }
               },
               "required": [
@@ -48078,7 +48078,7 @@
                           },
                           "callable": {
                             "type": "boolean",
-                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                           },
                           "displayOrder": {
                             "type": "integer"
@@ -48265,7 +48265,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -48400,7 +48400,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -48553,7 +48553,7 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "displayOrder": {
                       "type": "integer"
@@ -57336,12 +57336,22 @@
                           },
                           "callable": {
                             "type": "boolean",
-                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                            "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                           },
                           "valueUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
+                            "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`). Null exactly when `valueUnavailableReason` is set."
+                          },
+                          "valueUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "condition_trigger",
+                              "outcome_not_in_catalogue",
+                              "no_route_to_paid_client"
+                            ],
+                            "description": "Why `valueUsd` is null: `condition_trigger` (computed by us, no outcome of its own), `outcome_not_in_catalogue` (its outcome is missing from the step catalogue it was valued on), `no_route_to_paid_client` (no rated leg leads from its outcome to a paid client). Null when `valueUsd` is served."
                           },
                           "icon": {
                             "type": "string",
@@ -57402,6 +57412,7 @@
                           "outcomeKey",
                           "callable",
                           "valueUsd",
+                          "valueUnavailableReason",
                           "icon",
                           "color",
                           "eventIcon",
@@ -57493,12 +57504,22 @@
                     },
                     "callable": {
                       "type": "boolean",
-                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger and on the triggers a caller reports today (`kind` reported: follow_up_due, email_pushed_via_api, follow_up_date_reached, parked); false on what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`) and on the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
+                      "description": "An OUTSIDE caller (API / MCP / Copilot) may fire it through campaign-service's public trigger door. True on every outcome trigger; on a condition trigger ONLY for the closed legacy list (follow_up_due, email_pushed_via_api, follow_up_date_reached; parked C3/D). False on every other condition: what we compute ourselves (`delay`, `poll`, `github_issue_in_prod`), a fact our own services detect in data we hold (`whatsapp_number_given`, crm-service's phone watch), and the inline requests between our own services (`on_demand`, `lead_requested`). Our services keep the internal door for every declared trigger."
                     },
                     "valueUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`); null on a condition trigger and on an unvalued outcome."
+                      "description": "A trigger can carry a value (owner 2026-10-15): an outcome trigger's is its outcome's fleet value (`/internal/catalogue/steps` `valueUsd`). Null exactly when `valueUnavailableReason` is set."
+                    },
+                    "valueUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "condition_trigger",
+                        "outcome_not_in_catalogue",
+                        "no_route_to_paid_client"
+                      ],
+                      "description": "Why `valueUsd` is null: `condition_trigger` (computed by us, no outcome of its own), `outcome_not_in_catalogue` (its outcome is missing from the step catalogue it was valued on), `no_route_to_paid_client` (no rated leg leads from its outcome to a paid client). Null when `valueUsd` is served."
                     },
                     "icon": {
                       "type": "string",
@@ -57686,6 +57707,7 @@
                     "outcomeKey",
                     "callable",
                     "valueUsd",
+                    "valueUnavailableReason",
                     "icon",
                     "color",
                     "eventIcon",
