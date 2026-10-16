@@ -3,9 +3,10 @@
  * name of its OWN family, shared by every client and stable forever (`lib/sales-path-names.ts` stores and
  * assigns them):
  *
- *   SALES FUNNEL (a sales path with one pipe per leg; the "combination" of `/offers/:id/sales-paths`): an
- *     uplifting word (Victory, Jubilation...). The pool is the original `SALES_PATH_NAME_POOL` (every word of
- *     it given or not) followed by `FUNNEL_EXTRA_WORDS`, ~1000 words in all.
+ *   SALES FUNNEL (a sales path with one pipe per leg; the "combination" of `/offers/:id/sales-paths`): since
+ *     2026-10-16 (owner, FUNNEL-NAMES-1016) NO word: 2 or 3 plain words saying what it does, composed from its
+ *     key (`lib/funnel-names.ts`). The uplifting words below were its names before; they stay listed so a word
+ *     already given (now retired) is never given to another family.
  *   PIPE (one channel x one leg; the "campaign" name of `/public/channels` `stepTransitions[].campaignName`):
  *     a bird (Sparrow, Plover...). The ~20 pipes named before 2026-10-10 keep their uplifting word until the
  *     owner's go to rename them (relayed by session porto-v3); every NEW pipe takes a bird.

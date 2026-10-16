@@ -145,7 +145,10 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
 const { __setCatalogueMeasurementsForTest } = await import("./agent-catalogue.js");
-const { FAMILY_WORDS } = await import("../lib/sales-path-names.js");
+const { isComposedNameOf } = await import("../lib/funnel-names.js");
+const { seedPipeTriggerOf } = await import("../lib/sales-path-names.js");
+/** A funnel's name says what it does (owner 2026-10-16): one of its composed candidates, never a pool word. */
+const expectComposedFunnelName = (id: string, name: string) => expect(isComposedNameOf(id, name, seedPipeTriggerOf), `${id}: ${name}`).toBe(true);
 const { PIPE_BIRD_WORDS, PATH_RIVER_WORDS } = await import("../lib/catalogue-names.js");
 
 const { CHANNEL_TRIGGER_TYPES } = await import("../lib/channel-triggers.js");
@@ -555,7 +558,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(funnel.body.created).toBe(true);
     expect(funnel.body.face.svgPath).toBe(`/public/catalogue/faces/${encodeURIComponent(funnel.body.name)}.svg`);
     expect(givenBefore.has(funnel.body.name)).toBe(false);
-    expect(FAMILY_WORDS.sales_funnel).toContain(funnel.body.name);
+    expectComposedFunnelName(funnel.body.id, funnel.body.name);
     expect(PIPE_BIRD_WORDS).toContain(p1.body.name);
     expect(PATH_RIVER_WORDS).toContain(created.body.name);
     expect(mem.paths).toHaveLength(1);
@@ -597,7 +600,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(f.body.id).toBe("trigger:lead_found+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
     // Every pipe answers the trigger, the proactive cold email included: the funnel is reactive, never "mixed".
     expect(f.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_found", name: "Lead" }, triggerLabel: "Lead", mixed: false });
-    expect(FAMILY_WORDS.sales_funnel).toContain(f.body.name);
+    expectComposedFunnelName(f.body.id, f.body.name);
     // Stated, it reads back by id and lists under its path.
     const again = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(f.body.id)}`).set(KEY);
     expect(again.status).toBe(200);
@@ -650,7 +653,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
       const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, createdBy: "campaign-service" });
       expect(f.status).toBe(201);
       expect(f.body).toMatchObject({ type: "reactive" });
-      expect(FAMILY_WORDS.sales_funnel).toContain(f.body.name);
+      expectComposedFunnelName(f.body.id, f.body.name);
       expect(f.body.face.svgPath).toContain("/public/catalogue/faces/");
     }
     expect(mem.paths.map((p) => p.combinationKey)).toEqual([

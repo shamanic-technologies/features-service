@@ -2371,7 +2371,7 @@ const salesPathLegSchema = z.object({
 const salesPathSchema = z.object({
   rank: z.number(),
   combinationKey: z.string().describe("The row's UNIQUE identity within the response (key rows on it): the legs in order joined by `+`, each leg a PLATFORM channel works suffixed `@<channel slug>` (a leg the customer's team works keys bare, so a combination keys the same in both scopes), e.g. `start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`. The same combination has the same key for every brand and org."),
-  name: z.string().describe("The combination's name: one English word (e.g. Victory, Sol), the SAME for every client, brand and org, given once on first sight and never changed nor reused."),
+  name: z.string().describe("The combination's name: 2 or 3 plain English words saying what it does (e.g. Cold Email Meetings, Reply Booking; owner 2026-10-16), the SAME for every client, brand and org, given on first sight and never reused."),
   pathKey: z.string().describe("The CHAIN of legs (legKeys joined by `+`), shared by every combination of that chain. Not unique: key rows on combinationKey."),
   legKeys: z.array(z.string()),
   steps: z.array(salesPathStepSchema),
@@ -6641,7 +6641,7 @@ registry.registerPath({
 // ── Agent catalogue (owner 2026-10-10, "chat first") ──────────────────────
 
 const CATALOGUE_DESCRIPTION =
-  "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, from one family per concept: sales funnels uplifting words, pipes birds, sales paths rivers; never a word twice, never a workflow dynasty word; a family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).";
+  "THE AGENT CATALOGUE (owner 2026-10-10, \"chat first\"; model and formulas: lib/agent-catalogue.ts). An agent narrows a request level by level: Steps -> Sales Paths -> Channels -> Pipes -> Sales Funnels -> Workflows. Vocabulary: STEP = a stage; PIPE = one channel x one leg (was the per-(channel, leg) `campaignName`), id `<channel slug>|<leg key>`; SALES PATH = a chain of legs ending on Paid client, no channel, id = its leg keys joined by `+`; SALES FUNNEL = a sales path with one pipe per leg (was the named sales-path `combinationKey`, same id and name: a platform leg `<leg>@<slug>`, a leg the customer's team or nobody works bare). A path starts on an entry leg: from nothing, or from Lead found (an outbound channel works the lead a sourcing pipe Start -> Lead found found). Every list row is id + name + icon + one line + `costUsd` + `roi` + `roiBasis` + `status` (`measured` = every input a measured fleet outcome; `estimated` = a sales funnel or path whose cost per paying client uses a leg rate that is not measured (stated median, default, declared): never say measured; `learning` = no mature history, cost and roi null; `customer_time` = the customer's own team, no cost to us). Rows rank measured > estimated > customer_time > learning, then roi. Fleet grain, no identity: value(Paid client) = the fleet median offer lifetime revenue; value(step) = the best rated route to Paid client (fleet median of stated rates >= 5 brands, else the seeded default, else a declared rate); pipe cost = the best workflow's MATURE cost per outcome of the leg's step, roi = value(to step) / cost; funnel cost per paying client = sum of platform pipe costs x outcomes needed per paying client, roi = lifetime revenue / cost; path = its best funnel in that order; channel = its best measured pipe; step cost = the cheapest measured pipe producing it. `limit` default 10, max 25 (a page stays ~2k tokens). Id lists are comma-separated; a `+` in an id must be sent as %2B (an unencoded `+` read as a space is put back). Names are given on first sight (the rows a page shows) and on creation, sales funnels by what they do, in 2 or 3 plain words composed from their legs (\"Cold Email Meetings\", \"Reply Booking\"; owner 2026-10-16), pipes birds, sales paths rivers; never a name twice (a funnel whose candidates are all held is numbered, \"Cold Email Meetings 2\"), never a workflow dynasty word; a pipe or path family whose single words are all given continues with two words (its own adjective + a family word). Service-key only; a draft object (a declared leg not yet published) is listed with `draft: true`. A fresh process serves the last stored figures while it rebuilds; only a read with nothing ever stored waits on the build (up to 150 s, else 503 `catalogue_economics_not_computed_yet`).";
 
 const catalogueStatus = z
   .enum(["measured", "estimated", "learning", "customer_time"])
@@ -7202,7 +7202,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/sales-funnels",
   "Declare a sales funnel (internal, api-key)",
-  "One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). ONE CHANNEL PER LEG (owner 2026-10-11): the sourcing leg (Start -> Lead found) included, named by ONE pipe: a source (`sourcing-apollo-cold-filters|start_to_lead_found`, ...) or Lead Sourcing (`lead-sourcing|start_to_lead_found`, we pick the sources). Two pipes on one leg = 400 `one_channel_per_leg`; a path leg no pipe names = 400 `leg_without_channel`; a source an outreach channel does not take (your CRM contacts before cold email) = 400 `funnel_invalid`. The funnel id names every leg (`start_to_lead_found@<source>+...`); a legacy id (it starts out of Lead found) reads as its Lead Sourcing funnel. Persisted (the declared sales path store the offer read already knows) and named with a never-given uplifting word + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
+  "One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). ONE CHANNEL PER LEG (owner 2026-10-11): the sourcing leg (Start -> Lead found) included, named by ONE pipe: a source (`sourcing-apollo-cold-filters|start_to_lead_found`, ...) or Lead Sourcing (`lead-sourcing|start_to_lead_found`, we pick the sources). Two pipes on one leg = 400 `one_channel_per_leg`; a path leg no pipe names = 400 `leg_without_channel`; a source an outreach channel does not take (your CRM contacts before cold email) = 400 `funnel_invalid`. The funnel id names every leg (`start_to_lead_found@<source>+...`); a legacy id (it starts out of Lead found) reads as its Lead Sourcing funnel. Persisted (the declared sales path store the offer read already knows) and named by what it does (2 or 3 plain words, never given before) + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
   z.object({ pipeIds: z.array(z.string()), triggerId: z.string().optional().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."), ...catalogueActor }),
   catalogueFunnelDetail.extend({ created: z.boolean() }),
 );
@@ -7322,6 +7322,50 @@ registry.registerPath({
     404: { description: "`pipe_not_found` (unknown, already retired, or a play id)." },
     409: { description: "`pipe_coded`, `pipe_in_use` or `pipe_in_sales_funnel`." },
     502: { description: "`campaigns_unreadable`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/catalogue/sales-funnels/descriptive-names",
+  summary: "Rename every word-named sales funnel to the name that says what it does (internal, api-key, staff)",
+  description:
+    "FUNNEL-NAMES-1016 (owner 2026-10-16): a sales funnel's name says what it does in 2 or 3 plain words (\"Cold Email Meetings\", \"Reply Booking\"), composed from its legs (`lib/funnel-names.ts`). Every funnel still named with a word (\"Victory\") takes its composed name; the old word is retired, never given again. Names stay unique: a funnel whose candidates are all held takes the first one numbered (\"Cold Email Meetings 2\"). Dry run unless `apply: true`; idempotent (a second run renames nothing). `firstKeys`: the funnel ids customers run, named first so they get the plainest name.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            apply: z.boolean().optional().describe("true writes the renames; absent or false answers the plan only."),
+            firstKeys: z.array(z.string()).optional().describe("Funnel ids named first, in this order (the ones customers run)."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "The renames (planned, or written when `applied`).",
+      content: {
+        "application/json": {
+          schema: z.object({
+            applied: z.boolean(),
+            count: z.number().int(),
+            renames: z.array(
+              z.object({
+                combinationKey: z.string().describe("The funnel id."),
+                from: z.string().describe("The old name, now retired."),
+                to: z.string().describe("The new name."),
+                shortDescription: z.string().nullable().describe("The funnel's one-line description (null when the catalogue no longer lists the funnel)."),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "`apply_invalid` or `first_keys_invalid`." },
+    401: { description: "Missing or wrong service key." },
   },
 });
 

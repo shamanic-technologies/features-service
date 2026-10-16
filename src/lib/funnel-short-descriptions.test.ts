@@ -98,6 +98,20 @@ describe("one short customer sentence per sales funnel (owner 2026-10-14)", () =
     for (const [a, b] of pairs) expect(say(a)).not.toBe(say(b));
   });
 
+  it("a funnel bringing people to the site says what the visit should become (owner 2026-10-16: explicit)", () => {
+    const visitTo = (to: string) => funnelShortDescription({
+      reactive: false,
+      triggerId: null,
+      legs: [
+        { fromStep: null, toStep: "lead_found", channel: { slug: "lead-sourcing", name: "Lead Sourcing", channelType: "sourcing", performedBy: "software", operatedBy: "platform" } as SummaryChannel, runByUs: true },
+        { fromStep: "lead_found", toStep: "website_visit", channel: { slug: "sales-cold-email-outreach", name: "Sales Cold Email Outreach", channelType: "outbound", performedBy: "software", operatedBy: "platform" } as SummaryChannel, runByUs: true },
+        { fromStep: "website_visit", toStep: to, channel: null, runByUs: false },
+      ],
+    }).shortDescription;
+    expect(visitTo("purchase")).toBe("We email new buyers until they visit your site and buy.");
+    expect(visitTo("signup")).toBe("We email new buyers until they visit your site and sign up.");
+  });
+
   it("reads the cold email funnel as the owner's example", () => {
     expect(say(`${LS}lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client`)).toBe("We email new buyers until they reply with interest.");
   });

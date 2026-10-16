@@ -103,18 +103,18 @@ describe("salesPathNamesFor — shared, stable forever, never reused", () => {
   it("names new combinations in rank order, and a re-read (any brand, any order) returns the same names", async () => {
     expect(k1).toBe("start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
     const first = await salesPathNamesFor([k1, k2]);
-    expect([first.get(k1), first.get(k2)]).toEqual(["Victory", "Sol"]);
+    // A funnel's name says what it does (owner 2026-10-16, lib/funnel-names.ts).
+    expect([first.get(k1), first.get(k2)]).toEqual(["Cold Email Replies", "Cold Email Deals"]);
     // Another brand reads the same combinations in the opposite rank, plus a new one.
     const second = await salesPathNamesFor([k3, k2, k1]);
-    // "Herald" is a workflow dynasty word (lib/workflow-dynasty-words.ts): never given again.
-    expect([second.get(k1), second.get(k2), second.get(k3)]).toEqual(["Victory", "Sol", "Epiphany"]);
+    expect([second.get(k1), second.get(k2), second.get(k3)]).toEqual(["Cold Email Replies", "Cold Email Deals", "Cold Email Meetings"]);
     expect(store.rows).toHaveLength(3);
   });
 
   it("a name already given is never handed to another combination", async () => {
-    store.rows = [{ combinationKey: "retired-combination", name: "Victory" }];
+    store.rows = [{ combinationKey: "retired-combination", name: "Cold Email Replies" }];
     const names = await salesPathNamesFor([k1]);
-    expect(names.get(k1)).toBe("Sol");
+    expect(names.get(k1)).toBe("Email Replies");
   });
 });
 

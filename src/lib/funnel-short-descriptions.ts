@@ -186,9 +186,19 @@ const LATER_WHO: Readonly<Record<string, string>> = {
   meeting_booked: "booked buyers",
 };
 
-function outreachPhrase(reach: (o: string) => string, leg: SummaryLeg, ai: boolean, isCall: boolean): Phrase {
+/** What a site visit should become, by the step after it (owner 2026-10-16: say what the funnel brings, not only "your site"). */
+const VISIT_TO: Readonly<Record<string, string>> = {
+  signup: "until they visit your site and sign up",
+  purchase: "until they visit your site and buy",
+  meeting_booked: "until they visit your site and book a meeting",
+  form_submitted: "until they visit your site and fill in your form",
+  paid_client: "until they visit your site and buy",
+};
+
+function outreachPhrase(reach: (o: string) => string, leg: SummaryLeg, ai: boolean, isCall: boolean, next: string | null): Phrase {
   const entry = leg.fromStep === null || leg.fromStep === "lead_found";
-  const result = isCall && leg.toStep === "conversation" ? "until they show interest" : leg.toStep === "website_visit" && entry ? "to bring them to your site" : until(leg.toStep);
+  const visit = leg.toStep === "website_visit" && entry ? (VISIT_TO[next ?? ""] ?? "to bring them to your site") : null;
+  const result = isCall && leg.toStep === "conversation" ? "until they show interest" : (visit ?? until(leg.toStep));
   const later = reach(LATER_WHO[leg.fromStep ?? ""] ?? (entry ? "new buyers" : "your leads"));
   return {
     first: { full: (o) => (result ? `${reach(o)} ${result}` : reach(o)), short: (o) => reach(o) },
@@ -243,7 +253,7 @@ function conversionPhrase(leg: SummaryLeg, ai: boolean): Phrase {
 }
 
 /** PURE: the phrase of one leg of ours (never a sourcing leg). */
-function phraseOf(leg: SummaryLeg): Phrase {
+function phraseOf(leg: SummaryLeg, next: string | null = null): Phrase {
   const c = leg.channel!;
   const ai = c.performedBy === "software" && c.channelType === "conversion";
   if (c.slug === "ai-follow-up-email" && leg.fromStep !== null && leg.fromStep !== "lead_found") {
@@ -256,7 +266,7 @@ function phraseOf(leg: SummaryLeg): Phrase {
     };
   }
   const reach = OUTREACH[c.slug] ?? (c.channelType === "outbound" ? fallbackOutreach(c) : null);
-  if (reach) return outreachPhrase(reach, leg, ai, c.slug === "cold-call-outreach");
+  if (reach) return outreachPhrase(reach, leg, ai, c.slug === "cold-call-outreach", next);
   const entry = leg.fromStep === null || leg.fromStep === "lead_found";
   if (entry && c.channelType !== "conversion") return broadcastPhrase(PRESS_OUTREACH[c.slug] ?? BROADCAST[c.slug] ?? fallbackBroadcast(c), leg.toStep);
   return conversionPhrase(leg, ai);
@@ -289,16 +299,17 @@ export function funnelShortDescription(input: SummaryInput): { shortDescription:
   let who: string | null = null;
   let sourced: string | null = null;
   let lastSlug: string | null = null;
-  for (const leg of input.legs) {
+  for (const [i, leg] of input.legs.entries()) {
     if (!leg.runByUs || !leg.channel) continue;
+    const next = input.legs[i + 1]?.toStep ?? null;
     if (leg.channel.channelType === "sourcing" || leg.toStep === "lead_found") {
       sourced = SOURCED[leg.channel.slug] ?? DEFAULT_SOURCED;
       continue;
     }
     if (phrases.length === 0) who = sourced ?? whoIsAnswered(input, leg);
     // Two legs in a row on one channel are one thing we do, read up to the further step ("follow up until they buy").
-    if (lastSlug === leg.channel.slug) phrases[phrases.length - 1] = phraseOf(leg);
-    else phrases.push(phraseOf(leg));
+    if (lastSlug === leg.channel.slug) phrases[phrases.length - 1] = phraseOf(leg, next);
+    else phrases.push(phraseOf(leg, next));
     lastSlug = leg.channel.slug;
   }
   if (phrases.length === 0) {
