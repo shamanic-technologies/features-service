@@ -4091,8 +4091,8 @@ const customerHealthRowSchema = z.object({
   ltrUsd: z.number().nullable().describe("Lifetime revenue per customer (LTR / LTV), USD. Same value as breakevenCacUsd."),
   economics: salesEconomicsSchema.nullable(),
   currentEconomics: z.object({
-    committedSpendUsd: z.number().nullable().describe("COMMITTED acquisition spend, USD (billed + open holds) — the single basis roiMultiple / cacPct / currentCacUsd are computed on. null when not computed (no own economics)."),
-    realizedSpendUsd: z.number().nullable().describe("Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration, divided by nowhere. null when not computed (no own economics)."),
+    committedSpendUsd: z.number().nullable().describe("NET COMMITTED acquisition spend, USD (billed + open holds, after the org's discount = what the client PAID, every channel the brand runs, sourcing included) — the single basis roiMultiple / cacPct / currentCacUsd are computed on. Read from the SAME body GET /brands/{brandId}/revenue?pricing=net serves, so the board's ROI equals the brand page's (SHOCKWAVE-ROI-NET-1016; before, the board divided one channel's pipeline by GROSS spend). null when not computed (no own economics, or the revenue read failed: see unreadParts)."),
+    realizedSpendUsd: z.number().nullable().describe("Billed-only acquisition spend, USD, NET. TRANSITIONAL — reported for the staff console's migration, divided by nowhere. null when not computed (no own economics)."),
     expectedPipelineUsd: z.number().nullable().describe("Expected pipeline, USD (revenue-engine EV total). null when incomputable."),
     currentCacUsd: z.number().nullable().describe("Realized cost to acquire one paying customer, USD = (cacPct/100) × LTR. null when incomputable."),
     roiMultiple: z.number().nullable().describe("LTR / CAC = pipeline / spend. ≥ 1 ⟺ CAC below breakeven. null when spend or pipeline is 0/unknown."),
@@ -4148,6 +4148,10 @@ const customerHealthRowSchema = z.object({
       transitionedAt: z.string().describe("ISO timestamp of the flip."),
     })).nullable().describe("Pause on/off transition timeline (campaign-service, forward-only, oldest-first). Empty array = tracked, no flips yet; null = read failed / unconfigured — never fabricated."),
   }).describe("All three are now TRACKED upstream (dashboardReturnFrequency = PostHog; budgetChangeHistory = billing; pauseHistory = campaign). Each is null only when its producer is unreachable/unconfigured (fail-soft); an empty history array means tracked-but-nothing-yet. Never fabricated."),
+  unreadParts: z.array(z.object({
+    part: z.enum(["pricing", "revenue", "audiences", "best_workflow"]).describe("pricing = the offer terms / conversion counts (every economics field null); revenue = the ROI read (currentEconomics null); audiences = audience evidence (bestAudience null, audience rollup from the pool only); best_workflow = the workflow projection (bestWorkflow null)."),
+    reason: z.string().describe("The downstream error, capped at 300 chars (e.g. an email-gateway timeout relayed from instantly-service)."),
+  })).describe("The reads behind this row that FAILED, each named with its reason; [] when every read answered. Each part fails on its own (one failing never blanks another), and a named part's fields are null on the row: a blank ROI with a part named here is a read failure, never 'no data' and never a figure to keep from an older board."),
 });
 
 const customerHealthStatsSchema = z.object({

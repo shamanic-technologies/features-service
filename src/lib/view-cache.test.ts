@@ -414,7 +414,7 @@ describe("servedCached on a fingerprint rotation", () => {
   const newKey = buildScopeKey("b1", { orgId: "o", econ: "new", pricing: "net" });
 
   it("serves the family's previous cell NOW and computes the new cell behind the response", async () => {
-    familyRow = { body: { pipeline: 7 } };
+    familyRow = { body: { pipeline: 7 }, computedAt: new Date() };
     let resolveCompute!: (value: { pipeline: number }) => void;
     const compute = vi.fn(() => new Promise<{ pipeline: number }>((resolve) => { resolveCompute = resolve; }));
     const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute });
@@ -437,9 +437,19 @@ describe("servedCached on a fingerprint rotation", () => {
   });
 
   it("decodes an encoded previous cell", async () => {
-    familyRow = { body: encodeSnapshotBody({ name: "a\u0000b" }) };
+    familyRow = { body: encodeSnapshotBody({ name: "a\u0000b" }), computedAt: new Date() };
     const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute: vi.fn().mockResolvedValue({}) });
     expect(JSON.stringify(body)).toBe(JSON.stringify({ name: "a\u0000b" }));
+  });
+
+  it("an OLD previous cell is never served: it was priced on terms that may be gone, so the read computes live", async () => {
+    // SHOCKWAVE-ROI-NET-1016: a two-day-old cell priced on leg rates brand-service had deleted read $360
+    // per positive reply, the next read $112.50. A previous cell older than the facts gate is a miss.
+    familyRow = { body: { pipeline: 7 }, computedAt: new Date(Date.now() - 2 * 24 * 3600_000) };
+    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute });
+    expect(body).toEqual({ pipeline: 42 });
+    expect(compute).toHaveBeenCalledTimes(1);
   });
 
   it("with no previous cell, computes on the request path exactly as a miss always did", async () => {
