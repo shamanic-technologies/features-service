@@ -16,6 +16,16 @@ vi.mock("./lib/fleet-positive-repliers.js", () => ({
 }));
 
 /**
+ * Suite-wide default: the brand's timeline journeys that say which row EARNED a person's signals
+ * (lib/serving-row-credit.ts) are EMPTY, so every person keeps its row's own attribution, the basis every
+ * route fixture was written against. Suites about the credit rule set their own return.
+ */
+vi.mock("./lib/serving-row-journeys.js", () => ({
+  fetchServingRowJourneys: vi.fn(async () => []),
+  __resetServingRowJourneys: vi.fn(),
+}));
+
+/**
  * Suite-wide default: the stored fleet cell (lib/fleet-cell-store.ts) is a Postgres row. Here nothing is
  * stored, every build claim is granted and a store is a no-op — each process builds its own cell, the
  * behaviour before the store existed. `fleet-positive-repliers.test.ts` swaps in an in-memory store.

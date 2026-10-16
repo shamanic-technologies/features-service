@@ -10,6 +10,7 @@ import type { Journey } from "./lived-sales-paths.js";
 
 interface RawFact {
   label?: unknown;
+  source?: unknown;
   occurredAt?: unknown;
   campaignId?: unknown;
   attributable?: unknown;
@@ -39,8 +40,10 @@ export function toJourney(raw: RawJourney): Journey {
     facts: (raw.facts ?? []).map((f) => {
       const label = str(f.label);
       if (!label) throw new Error(`lead-service timeline-journeys: a fact of lead ${leadId} carries no label`);
+      const source = str(f.source);
       return {
         label,
+        ...(source ? { source } : {}),
         occurredAt: str(f.occurredAt),
         campaignId: str(f.campaignId),
         attributable: typeof f.attributable === "boolean" ? f.attributable : null,

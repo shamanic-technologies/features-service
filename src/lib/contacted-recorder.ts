@@ -20,6 +20,7 @@
  */
 import { contactMethodsOf } from "./channel-contact-methods.js";
 import type { EnginePerson } from "./revenue-engine.js";
+import { creditedSignal } from "./serving-row-credit.js";
 
 export type ContactedRecorder = "email-gateway" | "lead-service";
 
@@ -49,7 +50,8 @@ export function contactedPersonsBySlug(
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const p of persons) {
-    if (!p.signals.contacted || !p.workflowSlug) continue;
+    // Only a row whose campaign acted on the person counts it (lib/serving-row-credit.ts).
+    if (!creditedSignal(p, "contacted") || !p.workflowSlug) continue;
     if (campaignIds && (!p.campaignId || !campaignIds.has(p.campaignId))) continue;
     out.set(p.workflowSlug, (out.get(p.workflowSlug) ?? 0) + 1);
   }
