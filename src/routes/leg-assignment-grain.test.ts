@@ -150,6 +150,8 @@ interface Options {
   brandReplies?: Record<string, number>;
   /** Dynasties that never ran anywhere: no spend, no contact, at any grain (the explore allowance). */
   unrun?: string[];
+  /** The brand works no audience (a brand with no history: a new customer, a staff test org). */
+  noAudiences?: boolean;
 }
 
 let requestedUrls: string[] = [];
@@ -196,6 +198,7 @@ function mockFetch(options: Options = {}): void {
     if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared([CONVERSATION_FUNNEL, WEBSITE_FUNNEL]));
     if (url.includes("/sales-funnels")) return json({ funnels: [CONVERSATION_FUNNEL, WEBSITE_FUNNEL] });
     if (url.includes("/orgs/audiences")) {
+      if (options.noAudiences) return json({ audiences: [] });
       return json({ audiences: [{ id: AUD, name: "Aud", status: "active", filters: {} }] });
     }
     // The brand's campaigns perform each declared funnel's entry leg: what a goal-keyed read (no leg
@@ -394,6 +397,22 @@ describe("COLD START: a leg with no priced workflow still names a selectable one
     expect(res.body.recommendationBasis).toBe("cold_start");
     expect(res.body.recommendedBudgetUsd).toBeNull();
     expect(res.body.recommendationWithheldReason).toBeUndefined();
+  });
+
+  // NO-WORKFLOW-NEW-BRAND-1016 (prod 2026-10-16): a brand with no audience and no history, on a pipe whose
+  // only assigned workflow never ran, answered `rows: []`, so campaign-service refused the funnel `no_workflow`.
+  it("a brand with NO audience still gets the pipe's rank-1 workflow, on its brand-level row", async () => {
+    assign("start_to_conversation", { neon: "active", lithium: "deprecated", sodium: "deprecated", argon: "deprecated" });
+    mockFetch({ unrun: ["neon"], noAudiences: true });
+    const res = await get("leg=start_to_conversation");
+    expect(res.status).toBe(200);
+    const neon = res.body.rows.filter((r: any) => r.workflow.workflowDynastySlug === "neon");
+    expect(neon).toHaveLength(1);
+    expect(neon[0]).toMatchObject({ audienceId: null, measured: false, rank: 1 });
+    expect(neon[0].legAssignment).toMatchObject({ state: "active", selectable: true });
+    expect(res.body.rows.every((r: any) => r.audienceId === null)).toBe(true);
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("neon");
+    expect(res.body.recommendationBasis).toBe("cold_start");
   });
 
   it("never falls back to a deprecated or unassigned workflow", async () => {

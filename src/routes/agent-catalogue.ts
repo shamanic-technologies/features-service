@@ -70,12 +70,15 @@ import {
   listDeclaredSalesPaths,
   listDeclaredSteps,
   listTriggerCatalogue,
+  listTriggerTypes,
   loadChannelCatalogue,
   registerStepDeclarations,
   retireLeg,
+  retireSalesPath,
+  retireTrigger,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
-import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
+import { campaignsOnTrigger, campaignsRunningFunnel, fetchFleetCampaignRows, fetchFleetLegCampaignsFor, type FleetCampaignRef } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
@@ -1538,6 +1541,116 @@ router.post("/internal/catalogue/pipes/:id/retire", apiKeyOnly, async (req, res)
     res.json({ object: "pipe", id: p.id, name, retired: true, retiredAt: done.retiredAt, retiredBy, note });
   } catch (err) {
     fail(res, err, "retire pipe");
+  }
+});
+
+/**
+ * The retire body a trigger or funnel retire takes: who (staff identity), why (at most 500 characters), and
+ * `allowStoppedCampaigns` (default false): a STOPPED campaign blocks the retire like a running one (it can be restarted)
+ * unless staff states it knows them (a test whose campaign already ran keeps its history in campaign-service, so it
+ * cannot be deleted first). An ONGOING campaign always blocks.
+ */
+function retireBodyOf(body: Body): { retiredBy: string; note: string | null; allowStopped: boolean } {
+  const retiredBy = actorOf(body, "retiredBy");
+  if (body.note !== undefined && body.note !== null && (typeof body.note !== "string" || body.note.trim().length > 500)) throw bad("note_invalid", "note must be a string of at most 500 characters");
+  if (body.allowStoppedCampaigns !== undefined && typeof body.allowStoppedCampaigns !== "boolean") throw bad("allow_stopped_campaigns_invalid", "allowStoppedCampaigns must be a boolean");
+  return { retiredBy, note: typeof body.note === "string" && body.note.trim() !== "" ? body.note.trim() : null, allowStopped: body.allowStoppedCampaigns === true };
+}
+
+/** The campaigns that block a retire: every one, or (when staff allows stopped ones) every one not stopped. */
+const blockingCampaigns = (cs: readonly FleetCampaignRef[], allowStopped: boolean): FleetCampaignRef[] =>
+  allowStopped ? cs.filter((c) => c.status !== "stopped") : [...cs];
+
+/** Every campaign row of every org, or null after answering 502 (an unreadable answer never retires). */
+async function fleetCampaignRowsOr502(res: Response, what: string): Promise<unknown[] | null> {
+  try {
+    return await fetchFleetCampaignRows();
+  } catch (err) {
+    console.error(`[features-service] agent catalogue: retire ${what} refused, campaign read failed:`, err);
+    res.status(502).json({ error: `could not read which campaigns use ${what}, so it is not retired`, reason: "campaigns_unreadable" });
+    return null;
+  }
+}
+
+const quoteCampaigns = (cs: readonly FleetCampaignRef[]): string => cs.slice(0, 3).map((c) => `${c.campaignId} (${c.status ?? "unknown status"})`).join(", ");
+
+/**
+ * RETIRE A SALES FUNNEL DECLARED BY MISTAKE (CATALOGUE-RETIRE-1016): a DECLARED funnel no campaign of any org runs or ran
+ * (every status: a stopped campaign can be restarted) leaves every catalogue read; its row is kept (who declared it, who
+ * retired it, why). A trigger-headed funnel then lists nowhere; a funnel the pipes compose on their own (no trigger head)
+ * is still composable from its pipes and answers `stillComposable: true`. Refused, never forced: 404
+ * `sales_funnel_not_declared`, 409 `sales_funnel_in_use` (a stopped campaign too, unless `allowStoppedCampaigns: true`;
+ * a running one always), 502 `campaigns_unreadable`. Declaring it again revives it.
+ */
+router.post("/internal/catalogue/sales-funnels/:id/retire", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    refuseCustomer(body, "retiring a sales funnel", "a customer stops its own campaign; the catalogue is ours");
+    const { retiredBy, note, allowStopped } = retireBodyOf(body);
+    const key = storedCombinationKeyOf(req.params.id);
+    const declared = (await listDeclaredSalesPaths()).find((d) => d.combinationKey === key);
+    if (!declared) return void res.status(404).json({ error: `no declared sales funnel ${req.params.id} (only a declared funnel is retired here)`, reason: "sales_funnel_not_declared" });
+    const served = servedCombinationKeyOf(key);
+    const rows = await fleetCampaignRowsOr502(res, served);
+    if (!rows) return;
+    const all = campaignsRunningFunnel(rows, [...new Set([served, key, req.params.id])]);
+    const using = blockingCampaigns(all, allowStopped);
+    if (using.length > 0) {
+      throw new DeclarationError(409, "sales_funnel_in_use", `${served} is run by ${using.length} campaign(s) (${quoteCampaigns(using)}): a sales funnel a campaign runs or ran is never retired; delete a stopped campaign that never ran first (campaign-service DELETE /sales-funnel-campaigns/{id}), or state allowStoppedCampaigns: true when only stopped campaigns remain`);
+    }
+    const { names } = await loadModel();
+    const name = names.get(served) ?? null;
+    const done = await retireSalesPath(key, retiredBy, note);
+    if (!done) throw new Error(`[features-service] declared sales funnel ${key} vanished while being retired`);
+    invalidateChannelCatalogue();
+    const after = await loadModel();
+    const stillComposable = funnelById(after.model, served) !== null;
+    console.log(`[features-service] agent catalogue: sales funnel ${served} (${name}) retired by ${retiredBy}${note ? `: ${note}` : ""}${stillComposable ? " (still composable from its pipes)" : ""}`);
+    res.json({ object: "sales_funnel", id: served, name, retired: true, retiredAt: done.retiredAt, retiredBy, note, stillComposable, stoppedCampaigns: all });
+  } catch (err) {
+    fail(res, err, "retire sales funnel");
+  }
+});
+
+/**
+ * RETIRE A TRIGGER DECLARED BY MISTAKE (CATALOGUE-RETIRE-1016): a DECLARED trigger nothing uses leaves every catalogue read
+ * (trigger lists, the channel catalogue, every validation); its row is kept. Refused, never forced: 404
+ * `trigger_not_found`; 409 `trigger_coded` (stated in code), `trigger_on_pipe` (a pipe answers it: retire the pipe first),
+ * `trigger_heads_sales_funnel` (a declared sales funnel or path starts on it: retire that first), `trigger_in_use` (any
+ * campaign of any org runs on it, every status); 502 `campaigns_unreadable`. Declaring the same id again revives it.
+ */
+router.post("/internal/catalogue/triggers/:id/retire", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    refuseCustomer(body, "retiring a trigger", "the trigger catalogue is ours");
+    const { retiredBy, note, allowStopped } = retireBodyOf(body);
+    const id = req.params.id;
+    const t = (await listTriggerTypes()).find((x) => x.id === id);
+    if (!t) return void res.status(404).json({ error: `no trigger ${id}`, reason: "trigger_not_found" });
+    if (t.origin !== "declared") throw new DeclarationError(409, "trigger_coded", `${id} is stated in code, not declared: it cannot be retired here`);
+    const { model, cat } = await loadModel();
+    const pipes = [...model.pipes.values()].filter((p) => p.triggerId === id).map((p) => p.id);
+    const legs = cat.declared.legs.filter((l) => l.triggerId === id).map((l) => `${l.channelSlug}|${l.legKey}`);
+    const onPipes = [...new Set([...pipes, ...legs])];
+    if (onPipes.length > 0) throw new DeclarationError(409, "trigger_on_pipe", `${id} is answered by ${onPipes.length} pipe(s) (${onPipes.slice(0, 3).join(", ")}): retire those first`);
+    const head = `${TRIGGER_HEAD}${id}+`;
+    const [funnels, chains] = await Promise.all([listDeclaredSalesPaths(), listDeclaredSalesPathChains()]);
+    const headed = [...funnels.map((f) => servedCombinationKeyOf(f.combinationKey)), ...chains.map((c) => c.pathId)].filter((k) => k.startsWith(head));
+    if (headed.length > 0) throw new DeclarationError(409, "trigger_heads_sales_funnel", `${id} heads ${headed.length} declared sales funnel(s) or path(s) (${headed.slice(0, 3).join(", ")}): retire those first`);
+    const rows = await fleetCampaignRowsOr502(res, id);
+    if (!rows) return;
+    const all = campaignsOnTrigger(rows, id);
+    const using = blockingCampaigns(all, allowStopped);
+    if (using.length > 0) {
+      throw new DeclarationError(409, "trigger_in_use", `${id} is run on by ${using.length} campaign(s) (${quoteCampaigns(using)}): a trigger a campaign runs or ran on is never retired (allowStoppedCampaigns: true lets stopped ones through, never a running one)`);
+    }
+    const done = await retireTrigger(id, retiredBy, note);
+    if (!done) throw new Error(`[features-service] declared trigger ${id} vanished while being retired`);
+    invalidateChannelCatalogue();
+    console.log(`[features-service] agent catalogue: trigger ${id} (${t.label}) retired by ${retiredBy}${note ? `: ${note}` : ""}`);
+    res.json({ object: "trigger", id, name: t.label, retired: true, retiredAt: done.retiredAt, retiredBy, note, stoppedCampaigns: all });
+  } catch (err) {
+    fail(res, err, "retire trigger");
   }
 });
 

@@ -246,6 +246,13 @@
       "when": 1792713600000,
       "tag": "0034_retired_declared_legs",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792717200000,
+      "tag": "0035_retired_triggers_and_funnels",
+      "breakpoints": true
     }
   ]
 }
