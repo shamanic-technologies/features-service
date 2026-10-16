@@ -172,6 +172,7 @@ const ANSWERS: Readonly<Record<string, string>> = {
 const TRIGGER_ANSWERS: Readonly<Record<string, string>> = {
   github_issue_in_prod: "Release",
   email_pushed_via_api: "API",
+  lead_event: "Event",
 };
 
 /** Who a funnel's first trigger answers (one word), undefined when the trigger says nothing more than its step. */

@@ -37,6 +37,8 @@
  *  - `github_issue_in_prod` (owner 2026-10-12): campaign-service's detector sees the GitHub issue a campaign waits on
  *    reach production. ONE coded trigger of that kind (`lib/channel-triggers.ts`); the issue is a per-campaign fact
  *    at campaign-service, so the kind is never declared again (400 `trigger_kind_not_declarable`).
+ *  - `any_of` (owner 2026-10-16, LEAD-EVENT-TRIGGER-1016): fires whenever any member trigger fires; ONE coded trigger
+ *    of that kind (`lead_event`), members computed at read (`withAnyOfMembers`), never declared again (same 400).
  * campaign-service runs the `delay` and `poll` detectors since #601 (deployed 2026-10-10), so both kinds are
  * in the set and every declared trigger of those kinds is coded. Their params are validated HERE with the
  * detector's own rules (`parseDelayParams`, `parsePollParams`), so a malformed declaration never reaches it.
@@ -105,7 +107,7 @@ export interface DeclaredLeg {
   updatedAt: string;
 }
 
-export const TRIGGER_KINDS = ["event", "delay", "poll", "reported", "github_issue_in_prod"] as const;
+export const TRIGGER_KINDS = ["event", "delay", "poll", "reported", "github_issue_in_prod", "any_of"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 /** The kinds a service fires GENERICALLY for any declared trigger of that kind (see the header): campaign-service's
@@ -459,6 +461,11 @@ export function parseTriggerInput(body: Body, existing: readonly TriggerTypeReco
   if (kind === "github_issue_in_prod") {
     // ONE general type, coded (`lib/channel-triggers.ts`): the issue a campaign waits on is stated per campaign at campaign-service.
     throw bad("trigger_kind_not_declarable", "github_issue_in_prod is one coded trigger (github_issue_in_prod): name it on the pipe and state the issue on the campaign");
+  }
+  if (kind === "any_of") {
+    // ONE coded trigger of that kind, `lead_event` (`lib/channel-triggers.ts`): its members are every fact trigger, so a
+    // new fact is declared as its own trigger and joins it by itself.
+    throw bad("trigger_kind_not_declarable", "any_of is one coded trigger (lead_event): declare the fact as its own trigger, it joins lead_event's members by itself");
   }
   let fromStep: ChannelStepKey | null = null;
   let params: Record<string, unknown> | null = null;
