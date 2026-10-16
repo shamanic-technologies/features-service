@@ -40,7 +40,8 @@ const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-
 const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
 const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
 const app = (await import("../index.js")).default;
-const { unionBrandFamilies, leadFamiliesScopeKey } = await import("./brand-lead-families.js");
+const { unionBrandFamilies, leadFamiliesScopeKey, withIntentHot } = await import("./brand-lead-families.js");
+const { fetchBrandIntent } = await import("../lib/relationship-intent.js");
 const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
 
 const lead = (leadId: string, campaignId: string, signals: Record<string, boolean>, extra: Record<string, unknown> = {}) => ({
@@ -117,6 +118,35 @@ describe("GET /brands/:brandId/lead-families", () => {
     }
   });
 
+  it("a person lead-service tags lead + wants business is Hot whatever the channel; pipeline Today counts stay apart (HOT-INBOUND-UNANSWERED-1016)", async () => {
+    const recent = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const person = (humanId: string, emails: string[], lead: string | null, wants: string | null, lastInboundAt: string | null = recent) => ({
+      humanId, emails, lastInboundAt, leadState: lead, wantsBusinessState: wants,
+    });
+    vi.mocked(fetchBrandIntent).mockResolvedValueOnce([
+      person("h-inbound", ["Admin@DefiniteJobs.co.uk"], "yes", "yes"),
+      person("h-cold", ["coldreply@x.com"], "yes", "yes"),
+      person("h-won", ["won@x.com"], "yes", "yes"),
+      person("h-friend", ["friend@x.com"], "no", null),
+      person("h-nothanks", ["never@x.com"], "yes", "no"),
+    ] as never);
+    const res = await request(app).get("/brands/brand-1/lead-families").set(AUTH);
+    expect(res.status).toBe(200);
+    const byEmail = Object.fromEntries(res.body.people.map((p: { email: string }) => [p.email, p]));
+    expect(byEmail["admin@definitejobs.co.uk"]).toEqual(
+      expect.objectContaining({ family: "hot", leadId: null, offerId: null, hotBasis: "wants_business", humanId: "h-inbound", campaignLeadIds: [] }),
+    );
+    expect(byEmail["coldreply@x.com"]).toEqual(expect.objectContaining({ family: "hot", lostReason: null, hotBasis: "wants_business" }));
+    expect(byEmail["won@x.com"].family).toBe("won");
+    expect(byEmail["hot@x.com"]).toEqual(expect.objectContaining({ family: "hot", hotBasis: "pipeline" }));
+    expect(byEmail["never@x.com"].family).toBe("cold");
+    expect(byEmail["friend@x.com"]).toBeUndefined();
+    expect(res.body.counts).toEqual({ won: 1, hot: 3, lost: 0, cold: 2 });
+    expect(res.body.hotBreakdown).toEqual({ pipeline: 1, wantsBusiness: 2 });
+    expect(res.body.pipelineCounts).toEqual({ won: 1, hot: 1, lost: 1, cold: 2 });
+    expect(res.body.intent).toEqual(expect.objectContaining({ writers: 5, leadsWantingBusiness: 3, alreadyWon: 1, promotedFromLost: 1, addedInbound: 1 }));
+  });
+
   it("refuses an unknown cause", async () => {
     const res = await request(app).get("/brands/brand-1/lead-families?cause=bogus").set(AUTH);
     expect(res.status).toBe(400);
@@ -130,7 +160,7 @@ describe("unionBrandFamilies", () => {
       { offerId: "o1", families: [{ leadId: "a", email: null, campaignLeadIds: ["r1"], family: "cold", lostReason: null }] },
       { offerId: "o2", families: [{ leadId: "a", email: "a@x.com", campaignLeadIds: ["r2"], family: "won", lostReason: null }] },
     ]);
-    expect(u.people).toEqual([{ leadId: "a", email: "a@x.com", campaignLeadIds: ["r1", "r2"], family: "won", lostReason: null, offerId: "o2" }]);
+    expect(u.people).toEqual([{ leadId: "a", email: "a@x.com", campaignLeadIds: ["r1", "r2"], family: "won", lostReason: null, offerId: "o2", hotBasis: null, humanId: null }]);
     expect(u.counts).toEqual({ won: 1, hot: 0, lost: 0, cold: 0 });
   });
 });
@@ -158,5 +188,38 @@ describe("leadFamiliesScopeKey", () => {
     expect(familyKeyOf(leadFamiliesScopeKey("b1", "org1", [offer(["c1"])], "priced:outreach,other"))).not.toBe(base);
     expect(familyKeyOf(leadFamiliesScopeKey("b1", "org2", [offer(["c1"])], "priced:outreach"))).not.toBe(base);
     expect(familyKeyOf(leadFamiliesScopeKey("b2", "org1", [offer(["c1"])], "priced:outreach"))).not.toBe(base);
+  });
+});
+
+describe("withIntentHot", () => {
+  const now = new Date("2026-10-16T12:00:00Z");
+  const row = (leadId: string, family: "won" | "hot" | "lost" | "cold", lostReason: "went_cold" | "ruled_out" | null = null) => ({
+    leadId, email: `${leadId}@x.com`, campaignLeadIds: [`r-${leadId}`], family, lostReason, offerId: "o1", hotBasis: null, humanId: null,
+  });
+  const person = (humanId: string, emails: string[], lastInboundAt: string | null, lead = "yes", wants = "yes") =>
+    ({ humanId, emails, lastInboundAt, leadState: lead, wantsBusinessState: wants }) as never;
+
+  it("a wants-business yes older than the fresh window does not make anyone Hot", () => {
+    const u = withIntentHot([row("a", "lost", "went_cold")], [person("h", ["a@x.com", "new@x.com"], "2026-07-01T00:00:00Z")], now);
+    expect(u.counts).toEqual({ won: 0, hot: 0, lost: 1, cold: 0 });
+    expect(u.intent).toEqual(expect.objectContaining({ leadsWantingBusiness: 1, silentTooLong: 1, freshDays: 30 }));
+  });
+
+  it("a tagged person with two addresses is one Hot person with a row per address; a pipeline Hot is never demoted by a no", () => {
+    const u = withIntentHot(
+      [row("a", "cold"), row("b", "hot")],
+      [person("h", ["a@x.com", "a2@x.com"], "2026-10-15T00:00:00Z"), person("hb", ["b@x.com"], "2026-10-15T00:00:00Z", "yes", "no")],
+      now,
+    );
+    expect(u.people.filter((p) => p.family === "hot").map((p) => p.email).sort()).toEqual(["a2@x.com", "a@x.com", "b@x.com"]);
+    expect(u.counts.hot).toBe(3); // a (lead), a2 (human h), b: a and a2 are two keys since a is a pipeline lead
+    expect(u.hotBreakdown).toEqual({ pipeline: 1, wantsBusiness: 2 });
+  });
+
+  it("a person with no email is listed (email null) and counted once", () => {
+    const u = withIntentHot([], [person("h", [], "2026-10-15T00:00:00Z")], now);
+    expect(u.people).toEqual([expect.objectContaining({ leadId: null, email: null, humanId: "h", family: "hot" })]);
+    expect(u.intent.addedWithoutEmail).toBe(1);
+    expect(u.counts.hot).toBe(1);
   });
 });

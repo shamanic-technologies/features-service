@@ -13736,24 +13736,121 @@
               "lost",
               "cold"
             ],
-            "description": "People per family over the whole brand (a person counted once, in its strongest family)."
+            "description": "People per family over the whole brand (a person counted once, in its strongest family). hot = hotBreakdown.pipeline + hotBreakdown.wantsBusiness."
+          },
+          "hotBreakdown": {
+            "type": "object",
+            "properties": {
+              "pipeline": {
+                "type": "integer",
+                "description": "Hot on our outreach pipeline's verdict (= Today's Hot leads over the brand's offers)."
+              },
+              "wantsBusiness": {
+                "type": "integer",
+                "description": "Hot because lead-service tags them lead yes AND wants business yes, any channel (inbound email, WhatsApp, signup, form, Copilot, API), last word within intent.freshDays, and our pipeline did not already have them Hot or Won. Includes people who are none of our outreach leads (leadId null)."
+              }
+            },
+            "required": [
+              "pipeline",
+              "wantsBusiness"
+            ]
           },
           "lostBreakdown": {
             "type": "object",
             "properties": {
               "wentCold": {
                 "type": "integer",
-                "description": "Lost because they went cold on interest we caused (= Today's Lost leads, coldLeads.count)."
+                "description": "Lost because they went cold on interest we caused (Today's Lost leads, coldLeads.count, minus anyone now Hot on the tags)."
               },
               "ruledOut": {
                 "type": "integer",
-                "description": "Lost because a human ruled them out and nothing priced is left."
+                "description": "Lost because a human ruled them out and nothing priced is left (minus anyone now Hot on the tags)."
               }
             },
             "required": [
               "wentCold",
               "ruledOut"
             ]
+          },
+          "pipelineCounts": {
+            "type": "object",
+            "properties": {
+              "won": {
+                "type": "integer"
+              },
+              "hot": {
+                "type": "integer"
+              },
+              "lost": {
+                "type": "integer"
+              },
+              "cold": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "won",
+              "hot",
+              "lost",
+              "cold"
+            ],
+            "description": "The outreach pipeline's families alone, before lead-service's tags (what Today's Hot / Lost leads count over the brand's offers)."
+          },
+          "intent": {
+            "type": "object",
+            "properties": {
+              "writers": {
+                "type": "integer",
+                "description": "People who wrote to the brand (lead-service relationships/intent)."
+              },
+              "leadsWantingBusiness": {
+                "type": "integer",
+                "description": "Among them, tagged lead yes AND wants business yes."
+              },
+              "silentTooLong": {
+                "type": "integer",
+                "description": "Of those, last word to us older than freshDays: not made Hot."
+              },
+              "alreadyWon": {
+                "type": "integer"
+              },
+              "alreadyHot": {
+                "type": "integer"
+              },
+              "promotedFromLost": {
+                "type": "integer",
+                "description": "Lost on the pipeline, Hot now: they wrote wanting business."
+              },
+              "promotedFromCold": {
+                "type": "integer",
+                "description": "Cold on the pipeline, Hot now."
+              },
+              "addedInbound": {
+                "type": "integer",
+                "description": "None of our outreach leads (inbound only), Hot now."
+              },
+              "addedWithoutEmail": {
+                "type": "integer",
+                "description": "Of the added people, those with no email address (listed with email null, not matchable by email)."
+              },
+              "freshDays": {
+                "type": "integer",
+                "description": "How recent their last word must be for a wants-business yes to make them Hot."
+              }
+            },
+            "required": [
+              "writers",
+              "leadsWantingBusiness",
+              "silentTooLong",
+              "alreadyWon",
+              "alreadyHot",
+              "promotedFromLost",
+              "promotedFromCold",
+              "addedInbound",
+              "addedWithoutEmail",
+              "freshDays"
+            ],
+            "description": "How lead-service's two tags (is a lead? wants business?) moved the families (HOT-INBOUND-UNANSWERED-1016)."
           },
           "offers": {
             "type": "array",
@@ -13792,7 +13889,7 @@
                 "counts"
               ]
             },
-            "description": "Per offer, before the union: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."
+            "description": "Per offer, before the union and before the tags: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."
           },
           "people": {
             "type": "array",
@@ -13800,19 +13897,21 @@
               "type": "object",
               "properties": {
                 "leadId": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true,
+                  "description": "lead-service's lead; null for a person who is none of our outreach leads (Hot on the tags, see humanId)."
                 },
                 "email": {
                   "type": "string",
                   "nullable": true,
-                  "description": "Trimmed, lower-cased. Null when lead-service states none."
+                  "description": "Trimmed, lower-cased. Null when no address is known. A tagged person holding several addresses gets one row per address."
                 },
                 "campaignLeadIds": {
                   "type": "array",
                   "items": {
                     "type": "string"
                   },
-                  "description": "The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer."
+                  "description": "The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer. Empty on a tags-only row."
                 },
                 "family": {
                   "type": "string",
@@ -13833,7 +13932,22 @@
                 },
                 "offerId": {
                   "type": "string",
-                  "description": "The offer whose verdict gave the family."
+                  "nullable": true,
+                  "description": "The offer whose verdict gave the family; null on a tags-only row."
+                },
+                "hotBasis": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "pipeline",
+                    "wants_business"
+                  ],
+                  "description": "How a Hot row is Hot; null when not Hot."
+                },
+                "humanId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "lead-service's person, on a row its tags made Hot; null otherwise."
                 }
               },
               "required": [
@@ -13842,17 +13956,22 @@
                 "campaignLeadIds",
                 "family",
                 "lostReason",
-                "offerId"
+                "offerId",
+                "hotBasis",
+                "humanId"
               ]
             },
-            "description": "Every person with a family, won > hot > lost > cold, then lead id. A person with no family (engaged or gone cold on another cause) is absent. Unpaged."
+            "description": "Every person with a family, won > hot > lost > cold, then lead id (human id on tags-only rows). A person with no family (engaged or gone cold on another cause) is absent. Unpaged."
           }
         },
         "required": [
           "brandId",
           "outcomeCauses",
           "counts",
+          "hotBreakdown",
           "lostBreakdown",
+          "pipelineCounts",
+          "intent",
           "offers",
           "people"
         ]
@@ -36284,7 +36403,7 @@
     "/brands/{brandId}/lead-families": {
       "get": {
         "summary": "Every person of a brand's offers in its family: won client, hot lead, lost lead, cold lead",
-        "description": "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. Unioned across the brand's offers, the strongest family wins (won > hot > lost > cold). Additive read.",
+        "description": "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top) OR anyone lead-service tags lead yes AND wants business yes, any channel, whose last word is recent (HOT-INBOUND-UNANSWERED-1016); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. Unioned across the brand's offers, the strongest family wins (won > hot > lost > cold). Additive read.",
         "tags": [
           "Stats"
         ],
