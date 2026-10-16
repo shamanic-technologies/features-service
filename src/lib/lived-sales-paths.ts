@@ -60,12 +60,29 @@ export interface JourneyAct {
   kind?: string;
 }
 
+/**
+ * One (campaign, SENDING workflow) under which the person was actually emailed (lead-service v0.83.116,
+ * sends only): the workflow that sent, which is often NOT the serve row's (a retry claimed by another).
+ */
+export interface JourneyEmailSend {
+  campaignId: string | null;
+  /** Null when lead-service cannot name the sending workflow (9 of 60,304 pairs, 2026-10-16). */
+  workflowSlug: string | null;
+  firstSentAt: string | null;
+  lastSentAt: string | null;
+}
+
 /** One person x offer as the timeline holds it (offer null = facts with no offer). */
 export interface Journey {
   leadId: string;
   offerId: string | null;
   facts: JourneyFact[];
   acts: JourneyAct[];
+  /**
+   * Our sends per (campaign, sending workflow), earliest first. Absent = the producer did not state it (a
+   * fixture, a producer predating the field); the attribution read (`serving-row-journeys.ts`) refuses that.
+   */
+  emailSends?: JourneyEmailSend[];
 }
 
 export interface FunnelCampaignRef {
