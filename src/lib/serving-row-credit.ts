@@ -22,8 +22,24 @@
  *
  * The person's own signals are untouched: the brand still counts them (they replied, to the brand). Only a
  * count PARTITIONED by workflow or campaign reads {@link creditedSignal}.
+ *
+ * THE SENDING WORKFLOW (owner 2026-10-16, EMAIL-SENDS-ATTRIBUTION-1016). The serve row's workflow is often
+ * not the one that SENT: lead-service measured 2,201 of 4,023 retried-then-sent people emailed by another
+ * workflow than the one on their row, and a person served later by a newer workflow lost their reply to
+ * no workflow at all (drmorley@: replied 2026-09-21 to ballad-v4's email, row says miaplacidus). When the
+ * timeline states the person's sends (`emailSends`, one per campaign x sending workflow), the person is
+ * RE-ATTRIBUTED, for every partitioned count, to the send its outcome followed:
+ *   - a positive reply (then a click) resolves to the latest send BEFORE it under its thread's campaign, or,
+ *     naming no campaign (CRM date), the latest send before it under any campaign of the scope;
+ *   - a person with no such outcome goes to its latest send (contacted);
+ *   - only sends under the read's campaign scope are candidates (a campaign / offer grain never moves a
+ *     person outside itself). With no candidate send, the serve-row rule above stands.
+ * The person's `campaignId` / `workflowSlug` become the send's, and, when moved, `servedAt` its first send
+ * (the mature cohort's clock for that workflow). One person, one attribution: partitions still add up to
+ * the brand, whose totals never move.
  */
 
+import type { CampaignFilter } from "./campaign-scope.js";
 import type { Journey } from "./lived-sales-paths.js";
 import type { EnginePerson } from "./revenue-engine.js";
 
@@ -53,11 +69,21 @@ interface DatedEvidence {
   at: number | null;
 }
 
+interface Send {
+  campaignId: string | null;
+  workflowSlug: string | null;
+  first: number | null;
+  last: number | null;
+  firstIso: string | null;
+}
+
 interface PersonTimeline {
   /** campaign id → its FIRST act on the person (ms); null when the act states no date. */
   firstActBy: Map<string, number | null>;
   replies: DatedEvidence[];
   clicks: DatedEvidence[];
+  /** The person's sends per (campaign, sending workflow); null when no journey of the person states them. */
+  sends: Send[] | null;
 }
 
 const ms = (iso: string | null | undefined): number | null => {
@@ -70,7 +96,13 @@ const ms = (iso: string | null | undefined): number | null => {
 export function indexTimelines(journeys: readonly Journey[]): Map<string, PersonTimeline> {
   const out = new Map<string, PersonTimeline>();
   for (const j of journeys) {
-    const t: PersonTimeline = out.get(j.leadId) ?? { firstActBy: new Map(), replies: [], clicks: [] };
+    const t: PersonTimeline = out.get(j.leadId) ?? { firstActBy: new Map(), replies: [], clicks: [], sends: null };
+    if (j.emailSends !== undefined) {
+      t.sends = t.sends ?? [];
+      for (const e of j.emailSends) {
+        t.sends.push({ campaignId: e.campaignId, workflowSlug: e.workflowSlug, first: ms(e.firstSentAt), last: ms(e.lastSentAt), firstIso: e.firstSentAt });
+      }
+    }
     for (const a of j.acts) {
       if (!a.campaignId) continue;
       const at = ms(a.firstActedAt);
@@ -117,11 +149,77 @@ export function servingRowCredit(person: EnginePerson, timeline: PersonTimeline 
   };
 }
 
-/** PURE. Stamp every person with what its attributed row earned, IN PLACE; returns the same array. */
-export function creditServingRows<T extends EnginePerson>(persons: T[], journeys: readonly Journey[]): T[] {
+/** The latest send instant of `s` known to be at or before `t` (its first send when it straddles `t`). */
+const sentBefore = (s: Send, t: number): number => (s.last !== null && s.last <= t ? s.last : (s.first as number));
+
+function latest(sends: readonly Send[], key: (s: Send) => number): Send {
+  let best = sends[0];
+  for (const s of sends) if (key(s) >= key(best)) best = s;
+  return best;
+}
+
+/** The send a reaction followed (see the module rule), or null when none of `sends` preceded it. */
+function sendFollowed(e: DatedEvidence, sends: readonly Send[]): Send | null {
+  const pool = e.campaignId !== null ? sends.filter((s) => s.campaignId === e.campaignId) : sends;
+  if (pool.length === 0) return null;
+  if (e.at === null) {
+    // An undated reply IN a thread answered that thread's latest send; an undated one naming none: nothing.
+    return e.campaignId !== null ? latest(pool, (s) => s.last ?? s.first ?? -Infinity) : null;
+  }
+  const at = e.at;
+  const before = pool.filter((s) => s.first !== null && s.first <= at);
+  if (before.length > 0) return latest(before, (s) => sentBefore(s, at));
+  // A reply in a thread dated before every send of it (clock skew): the thread's opener.
+  return e.campaignId !== null ? latest([...pool].reverse(), (s) => -(s.first ?? Infinity)) : null;
+}
+
+/** The first of `evidence` (date order, undated last) that follows one of `sends`. */
+function firstSendFollowed(evidence: readonly DatedEvidence[], sends: readonly Send[]): Send | null {
+  const ordered = [...evidence].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
+  for (const e of ordered) {
+    const send = sendFollowed(e, sends);
+    if (send) return send;
+  }
+  return null;
+}
+
+/**
+ * PURE. The person as every partitioned count reads it: re-attributed to the workflow that SENT the email its
+ * outcome followed, with what that send earned (see the module rule). Never mutates `person`.
+ */
+export function creditPerson<T extends EnginePerson>(person: T, timeline: PersonTimeline | undefined, scope: ReadonlySet<string> | null): T {
+  const sends = (timeline?.sends ?? []).filter((s) => !scope || (s.campaignId !== null && scope.has(s.campaignId)));
+  if (!timeline || sends.length === 0) return { ...person, servingRowCredit: servingRowCredit(person, timeline) };
+  const own = person.signals;
+  const crmAt = ms(person.crmPositiveReplyAt ?? person.signalDates?.positiveReply ?? null);
+  const replies = crmAt !== null ? [...timeline.replies, { campaignId: null, at: crmAt }] : timeline.replies;
+  const replyTo = own.positiveReply ? firstSendFollowed(replies, sends) : null;
+  const clickTo = own.clicked ? firstSendFollowed(timeline.clicks, sends) : null;
+  const to = replyTo ?? clickTo ?? latest(sends, (s) => s.last ?? s.first ?? -Infinity);
+  const credit: ServingRowCredit = {
+    contacted: Boolean(own.contacted),
+    clicked: Boolean(own.clicked) && timeline.clicks.some((c) => sendFollowed(c, sends) === to),
+    positiveReply: replyTo !== null,
+  };
+  const moved = to.campaignId !== (person.campaignId ?? null) || to.workflowSlug !== (person.workflowSlug ?? null);
+  return {
+    ...person,
+    campaignId: to.campaignId,
+    workflowSlug: to.workflowSlug,
+    ...(moved && person.servedAt !== undefined && to.firstIso ? { servedAt: to.firstIso } : {}),
+    servingRowCredit: credit,
+  };
+}
+
+/**
+ * PURE. Every person as its partitioned counts read it ({@link creditPerson}), restricted to the read's
+ * campaign scope (undefined = the brand). Returns NEW person objects; the input rows are never mutated (a
+ * lead walk may be shared by reads of other scopes).
+ */
+export function creditServingRows<T extends EnginePerson>(persons: readonly T[], journeys: readonly Journey[], campaignScope?: CampaignFilter): T[] {
   const timelines = indexTimelines(journeys);
-  for (const p of persons) p.servingRowCredit = servingRowCredit(p, timelines.get(p.leadId));
-  return persons;
+  const scope = campaignScope === undefined ? null : new Set(typeof campaignScope === "string" ? [campaignScope] : campaignScope);
+  return persons.map((p) => creditPerson(p, timelines.get(p.leadId), scope));
 }
 
 /**

@@ -508,10 +508,9 @@ export async function computeWorkflowRevenueGroups(input: {
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null, quals, priced?.pricedFunnelKeys ?? [], causes);
   applyDisqualifiedMarks(persons, await disqualifiedRead());
-  creditServingRows(persons, journeys);
-
   return buildWorkflowRevenueGroups({
-    persons,
+    // Each person on the workflow that SENT the email its outcome followed (lib/serving-row-credit.ts).
+    persons: creditServingRows(persons, journeys, campaignScope),
     costCentsBySlug,
     workflows,
     funnel,

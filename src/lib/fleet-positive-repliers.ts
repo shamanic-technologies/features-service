@@ -107,7 +107,8 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
 
 /** The stored cell's key: the channel, and the stored FORMAT (bump it when {@link encodeCell} changes). */
 // v2 (OUTCOME-BEFORE-WORKFLOW-1015): buckets hold only what each row EARNED; a v1 cell is never adopted.
-const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v2`;
+// v3 (EMAIL-SENDS-ATTRIBUTION-1016): buckets key on the SENDING workflow and campaign; a v2 cell is never adopted.
+const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v3`;
 /** How long one process may hold a rebuild before another takes over (a build walks the fleet: minutes). */
 const BUILD_CLAIM_MS = 10 * 60_000;
 /** How often a process whose cell has gone stale looks for a newer one another process stored. */
