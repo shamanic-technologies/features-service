@@ -5607,8 +5607,10 @@ registry.registerPath({
   description:
     "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs (with `funnels` listing EVERY declared funnel in its own right, each stating the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so a consumer answers 'which funnels does this outcome lead into' from one read with no translation table of its own), each carrying `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, already composed against the channel's own term, plus `governedBy` saying which side produced it — so a payment screen renders ONE figure and never combines two of ours. That figure is a run length before the result is judgeable, NOT a lock-in: nothing enforces it and the only thing a buyer commits to is the daily operating cost. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
   tags: ["Public"],
+  request: { query: z.object({ includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }) },
   responses: {
-    200: { description: "The acquisition-channel catalogue", content: { "application/json": { schema: channelCatalogueResponseSchema } } },
+    200: { description: "The acquisition-channel catalogue (`triggers[]`: entry doors only unless `includeInline=true`)", content: { "application/json": { schema: channelCatalogueResponseSchema } } },
+    400: { description: "`include_inline_unrecognised`." },
   },
 });
 
@@ -6344,6 +6346,10 @@ const declaredSalesPathViewSchema = z.object({
   createdAt: z.string(),
 });
 
+/** A customer write (2026-10-16): the gateway sets it for a non-staff key. Refused outright on what a customer never creates. */
+const customerNeverCreates = (what: string) =>
+  z.boolean().optional().describe(`True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): ${what} is staff only, 403 \`staff_only\` (a new one is a feature request). Absent or false = staff. Anything else = 400 \`runnable_only_invalid\`.`);
+
 const actorFields = {
   requestedByOrgId: z.string().nullable().optional().describe("The client org that asked for it (provenance only, never scope)."),
 };
@@ -6393,6 +6399,7 @@ registry.registerPath({
             minimumCommitmentDays: z.number().int().describe(">= 1."),
             maxDaysToFirstProduction: z.number().int().describe(">= 0."),
             createdBy: z.string().describe("The staff identity making the write."),
+            runnableOnly: customerNeverCreates("a new channel"),
             ...actorFields,
           }),
         },
@@ -6473,6 +6480,7 @@ registry.registerPath({
             triggerId: z.string().nullable().optional().describe("Required on a reactive leg; absent/null on a proactive one."),
             published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), 
             createdBy: z.string(),
+            runnableOnly: customerNeverCreates("a new pipe"),
             ...actorFields,
           }),
         },
@@ -6519,10 +6527,11 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/internal/declarations/trigger-types",
-  summary: "List every trigger type (internal, api-key)",
+  summary: "List the trigger types: entry doors only unless includeInline=true (internal, api-key)",
   description: DECLARATIONS_DESCRIPTION,
   tags: ["Internal"],
-  responses: { 200: { description: "Coded and declared.", content: { "application/json": { schema: z.object({ triggerTypes: z.array(triggerTypeViewSchema) }) } } } },
+  request: { query: z.object({ includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }) },
+  responses: { 400: { description: "`include_inline_unrecognised`." }, 200: { description: "Coded and declared.", content: { "application/json": { schema: z.object({ triggerTypes: z.array(triggerTypeViewSchema) }) } } } },
 });
 
 registry.registerPath({
@@ -6558,6 +6567,7 @@ registry.registerPath({
             firedBy: z.string().optional().describe("`event` only: the service that would detect it (default `not_built`)."),
             params: z.record(z.unknown()).optional().describe("`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days | minutes, unlessStep?}` (a step key; EXACTLY ONE of days >= 1 or minutes >= 5; optional unlessStep = another step: the occurrence is cancelled when the person reached it by the due time, e.g. `{afterStep: signup, minutes: 30, unlessStep: paid_client}`). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."),
             createdBy: z.string(),
+            runnableOnly: customerNeverCreates("a new trigger"),
             ...actorFields,
           }),
         },
@@ -7080,7 +7090,7 @@ const catalogueTriggerRow = z.object({
   origin: z.enum(["code", "declared"]),
   pipeCount: z.number().int().describe("Reactive pipes that name this trigger."),
 });
-catalogueRead("/internal/catalogue/triggers", "List triggers: what starts a reactive pipe (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
+catalogueRead("/internal/catalogue/triggers", "List triggers: the entry doors a reactive campaign starts on (internal, api-key)", { q: catalogueQ, limit: catalogueLimit, includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
 catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
 
 const catalogueFunnelsCarryingPlay = z
@@ -7172,6 +7182,7 @@ const catalogueCreate = (path: string, summary: string, extra: string, body: z.Z
       400: { description: "A field is missing or invalid (`reason` names it)." },
       401: { description: "Missing or wrong service key." },
       404: { description: "A referenced object does not exist (`*_not_found`)." },
+      403: { description: "`staff_only`: a customer write (`runnableOnly: true`) on what a customer never creates (a pipe, an outcome)." },
       409: { description: "Already exists (`step_exists`, `step_label_taken`, `leg_exists`, `already_exists`)." },
       502: { description: "`name_family_exhausted`: the family has no name left (add words at the end of its list)." },
     },
@@ -7183,21 +7194,21 @@ catalogueCreate(
   "/internal/catalogue/steps",
   "Declare a step (internal, api-key)",
   "A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
-  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), ...catalogueActor }),
+  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
   z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable() }),
 );
 catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
   "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). WHERE A PIPE ON A TRIGGER STARTS: at Start (`fromStep: null`, leg `start_to_<toStep>`), the trigger starts it, like every running reactive campaign; or out of a real step a trigger stands for (Positive reply, Form submitted...). NEVER at Lead found: that is where a source hands its leads to a proactive pipe, those leads never fire a trigger, so no sales funnel could take the pipe (400 `reactive_pipe_from_lead_found`, naming the entry leg to declare). A trigger's `fromStep` is where a lead stands when it fires, not where a reactive pipe starts: to reuse a proactive pipe leaving that step, head a sales funnel with the trigger (`POST /internal/catalogue/sales-funnels` `triggerId`). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once. A pipe created by mistake: `POST /internal/catalogue/pipes/{id}/retire`.",
-  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), ...catalogueActor }),
+  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), runnableOnly: customerNeverCreates("a new pipe"), ...catalogueActor }),
   cataloguePipeDetail,
 );
 catalogueCreate(
   "/internal/catalogue/sales-paths",
   "Declare a sales path (internal, api-key)",
   "The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
-  z.object({ legKeys: z.array(z.string()), triggerId: z.string().optional().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."), ...catalogueActor }),
+  z.object({ legKeys: z.array(z.string()), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): every leg must be worked by at least one pipe we run today (`runnable`), else 400 `leg_not_runnable` naming the leg. Absent or false = staff, any leg. Anything else = 400 `runnable_only_invalid`."), triggerId: z.string().optional().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."), ...catalogueActor }),
   catalogueGlyphRow.extend({ created: z.boolean() }),
 );
 catalogueCreate(

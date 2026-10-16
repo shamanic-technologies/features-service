@@ -99,6 +99,10 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     firedBy: "instantly-service",
     coded: true,
   },
+  // FIRED by lead-service (EVERY-OUTCOME-FIRES-1015, STD-VOCAB-1016: "every outcome reached fires its trigger, no
+  // exception"): its outcome detector rings campaign-service's door once per person for every outcome its records
+  // show (a serve's find, a CRM fact, a stated or tracked outcome, an AI Instant Call act; a sale the site's tag
+  // reported = Direct purchase), the same door an outside caller uses, one fire per person whoever rings.
   {
     id: "website_visited",
     label: "Website visit",
@@ -106,7 +110,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "cursor-click",
     fromStep: "website_visit",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     id: "booking_call_started",
@@ -115,7 +119,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "phone-call",
     fromStep: "booking_call",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     id: "meeting_booked",
@@ -124,7 +128,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "calendar-check",
     fromStep: "meeting_booked",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     id: "meeting_attended",
@@ -133,7 +137,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "handshake",
     fromStep: "meeting_attended",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     id: "signed_up",
@@ -142,7 +146,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "user-plus",
     fromStep: "signup",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     // FIRED by crm-service (owner 2026-10-12, FORM-SUBMITTED-TRIGGER-1012, Doc Dinners' "AI auto responder"): each NEW
@@ -165,18 +169,18 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     icon: "shopping-cart",
     fromStep: "purchase",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     // OUTCOME TRIGGERS of the two outcomes that had none (owner 2026-10-15: one trigger per outcome, no exception).
-    // A caller (API / MCP / Copilot) reports the fact through campaign-service's door; no detector of ours fires it yet.
+    // A caller (API / MCP / Copilot) reports the fact through campaign-service's door; lead-service rings the same door.
     id: "lead_found",
     label: "Lead",
     description: "A person matching your target was found.",
     icon: "identification-card",
     fromStep: "lead_found",
     firedBy: "lead-service",
-    coded: false,
+    coded: true,
   },
   {
     id: "paid_client",
@@ -184,8 +188,8 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     description: "A prospect became a paying client.",
     icon: "currency-dollar",
     fromStep: "paid_client",
-    firedBy: "crm-service",
-    coded: false,
+    firedBy: "lead-service",
+    coded: true,
   },
   {
     // REPORTED BY A CALLER (owner 2026-10-11, the Copilot follow-up): a follow-up someone planned for ONE person is
@@ -272,3 +276,24 @@ export const INLINE_TRIGGER_IDS: ReadonlySet<string> = new Set(CHANNEL_TRIGGER_T
  *  for every read serving `callable`, the inline flag read off the coded list. */
 export const triggerCallable = (t: { id: string; kind?: string | null; fromStep: string | null }): boolean =>
   isTriggerCallable({ id: t.id, kind: t.kind, fromStep: t.fromStep, inline: INLINE_TRIGGER_IDS.has(t.id) });
+
+/**
+ * An ENTRY DOOR (owner 2026-10-15/16, standard vocabulary): a trigger a reactive campaign is offered on. Every trigger
+ * but the INLINE ones (`on_demand`, `lead_requested`: one of our services asking another inside a run). Every LIST of
+ * triggers an outside reader or the Copilot gets (`/public/channels` `triggers[]`, `/internal/catalogue/triggers`,
+ * `/internal/declarations/trigger-types`) serves entry doors only; `?includeInline=true` adds the inline ones for our
+ * own services (campaign-service's door validates every declared trigger). A read BY ID always answers, and every
+ * pipe or funnel naming an inline trigger keeps working.
+ */
+export const isEntryDoor = (t: { id: string }): boolean => !INLINE_TRIGGER_IDS.has(t.id);
+
+/** `?includeInline=` on a trigger list: absent or `false` = entry doors only, `true` = every declared trigger. */
+export class IncludeInlineQueryError extends Error {
+  readonly reason = "include_inline_unrecognised";
+}
+
+export function includeInlineOf(raw: unknown): boolean {
+  if (raw === undefined || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new IncludeInlineQueryError("includeInline must be true or false");
+}
