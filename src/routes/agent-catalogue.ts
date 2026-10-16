@@ -79,7 +79,7 @@ import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
-import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
+import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf, triggerValueOf } from "../lib/outcome-vocabulary.js";
 import { triggerCallable } from "../lib/channel-triggers.js";
 import { funnelShortDescription, type ShortDescriptionUnavailableReason } from "../lib/funnel-short-descriptions.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY } from "../lib/sourcing-origins.js";
@@ -1334,10 +1334,8 @@ const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number
   type: triggerTypeOf(t),
   outcomeKey: triggerOutcomeKeyOf(t),
   callable: triggerCallable(t),
-  valueUsd: (() => {
-    const k = triggerOutcomeKeyOf(t);
-    return k === null ? null : (m.steps.get(k)?.valueUsd ?? null);
-  })(),
+  // Null always with a reason (TRIGGER-CATALOGUE-GAPS-1016): a condition, an outcome the model lacks, or no rated route.
+  ...triggerValueOf(t, (k) => m.steps.get(k)?.valueUsd),
   icon: FAMILY_GLYPHS.trigger,
   color: glyphColorOf(t.label),
   eventIcon: phosphorIconOf(t.icon),

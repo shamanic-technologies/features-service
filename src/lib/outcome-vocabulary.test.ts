@@ -3,10 +3,12 @@ import { CHANNEL_STEPS, CHANNEL_STEP_KEYS } from "./acquisition-channels.js";
 import { CHANNEL_TRIGGER_TYPES, triggerCallable } from "./channel-triggers.js";
 import {
   isTriggerCallable,
+  LEGACY_CALLABLE_CONDITION_IDS,
   outcomeTriggerLabel,
   pluralLabelOf,
   triggerOutcomeKeyOf,
   triggerTypeOf,
+  triggerValueOf,
   withOutcomeTriggers,
   type OutcomeTriggerSource,
 } from "./outcome-vocabulary.js";
@@ -75,9 +77,45 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
     // An INLINE trigger is one of our services asking another inside a run, never a fact a client holds.
     expect(triggerCallable(byId.get("lead_requested")!)).toBe(false);
     expect(triggerCallable(byId.get("on_demand")!)).toBe(false);
-    expect(isTriggerCallable(source({ kind: "delay" }))).toBe(false);
+    expect(isTriggerCallable(source({ kind: "delay", fromStep: "signup" }))).toBe(false);
     expect(isTriggerCallable(source({ kind: "poll" }))).toBe(false);
-    expect(isTriggerCallable(source({ kind: "reported" }))).toBe(true);
+    expect(isTriggerCallable(source({ id: "email_pushed_via_api", kind: "reported" }))).toBe(true);
+    expect(isTriggerCallable(source({ id: "follow_up_date_reached", kind: "reported" }))).toBe(true);
+  });
+
+  it("calls no condition trigger callable outside the closed legacy list (MUST-HAVE 3, TRIGGER-CATALOGUE-GAPS-1016)", () => {
+    expect([...LEGACY_CALLABLE_CONDITION_IDS].sort()).toEqual(["email_pushed_via_api", "follow_up_date_reached", "follow_up_due", "lead_requested"]);
+    // The prod catalogue's declared triggers (2026-10-16) beside the coded ones.
+    const declared = [
+      source({ id: "email_pushed_via_api", kind: "reported", origin: "declared" }),
+      source({ id: "follow_up_date_reached", kind: "reported", origin: "declared" }),
+      source({ id: "whatsapp_number_given", kind: "reported", fromStep: "lead_found", origin: "declared" }),
+      source({ id: "signup_not_paid_30_min", kind: "delay", fromStep: "signup", origin: "declared" }),
+      source({ id: "industry_update_video", kind: "event", fromStep: "industry_update_video", origin: "declared" }),
+    ];
+    const all = [...CHANNEL_TRIGGER_TYPES, ...declared];
+    const callableConditions = all.filter((t) => triggerTypeOf(t) === "condition" && triggerCallable(t)).map((t) => t.id);
+    for (const id of callableConditions) expect(LEGACY_CALLABLE_CONDITION_IDS.has(id), id).toBe(true);
+    // crm-service reports it through the INTERNAL door (still accepted there); no outside caller may push it.
+    expect(triggerCallable(declared[2])).toBe(false);
+    // Every outcome trigger stays callable.
+    for (const t of all.filter((x) => triggerTypeOf(x) === "outcome")) expect(triggerCallable(t), t.id).toBe(true);
+  });
+
+  it("serves every trigger a value or a reason, never a bare null (MUST-HAVE 5)", () => {
+    // The fleet values served in prod 2026-10-16; `email_sent` unvalued here to pin the reason.
+    const values: Record<string, number | null> = { conversation: 125, paid_client: 2500, lead_found: 0.22, industry_update_video: 25, email_sent: null };
+    const valueOf = (k: string) => (Object.hasOwn(values, k) ? values[k] : undefined);
+    expect(triggerValueOf(source({ fromStep: "paid_client" }), valueOf)).toEqual({ valueUsd: 2500, valueUnavailableReason: null });
+    expect(triggerValueOf(source({ fromStep: "lead_found" }), valueOf)).toEqual({ valueUsd: 0.22, valueUnavailableReason: null });
+    expect(triggerValueOf(source({ fromStep: "industry_update_video" }), valueOf)).toEqual({ valueUsd: 25, valueUnavailableReason: null });
+    expect(triggerValueOf(source({ fromStep: "email_sent" }), valueOf)).toEqual({ valueUsd: null, valueUnavailableReason: "no_route_to_paid_client" });
+    expect(triggerValueOf(source({ fromStep: "meeting_booked" }), valueOf)).toEqual({ valueUsd: null, valueUnavailableReason: "outcome_not_in_catalogue" });
+    expect(triggerValueOf(source({ kind: "delay", fromStep: "signup" }), valueOf)).toEqual({ valueUsd: null, valueUnavailableReason: "condition_trigger" });
+    for (const t of CHANNEL_TRIGGER_TYPES) {
+      const v = triggerValueOf(t, valueOf);
+      expect(v.valueUsd === null, t.id).toBe(v.valueUnavailableReason !== null);
+    }
   });
 
   it("generates the outcome trigger of a declared outcome that has none, and only then", () => {

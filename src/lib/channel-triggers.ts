@@ -270,5 +270,5 @@ export const INLINE_TRIGGER_IDS: ReadonlySet<string> = new Set(CHANNEL_TRIGGER_T
 
 /** Whether an outside caller may fire this trigger type (`isTriggerCallable`, `lib/outcome-vocabulary.ts`): one rule
  *  for every read serving `callable`, the inline flag read off the coded list. */
-export const triggerCallable = (t: { id: string; kind?: string | null }): boolean =>
-  isTriggerCallable({ kind: t.kind, inline: INLINE_TRIGGER_IDS.has(t.id) });
+export const triggerCallable = (t: { id: string; kind?: string | null; fromStep: string | null }): boolean =>
+  isTriggerCallable({ id: t.id, kind: t.kind, fromStep: t.fromStep, inline: INLINE_TRIGGER_IDS.has(t.id) });
