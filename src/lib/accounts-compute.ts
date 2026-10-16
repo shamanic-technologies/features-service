@@ -22,6 +22,9 @@
  * reactive cap rides beside it as `reactiveRunningDailyCapUsd`, never summed into money in play.
  *
  * STATUS rule (exact, precedence order; "running" = PROACTIVE running):
+ *   00. (callers asking `churnFromBilling`) billing's class reason says the customer CANCELLED     → "churned"
+ *       (owner rule 2026-10-16: a cancelled trial or subscription is not a current client, whatever its
+ *       campaigns still say; a trial still running and a prepaid org that paid keep their bucket)
  *   0a. billing cannot charge the org because it has NO chargeable card (`no_chargeable_card`)     → "no_payment_method"
  *   0b. billing cannot charge the org for any other reason (payment-outlook `charge_blocked`)      → "payment_declined"
  *   1. runningDailyBudgetUsd > 0 && (autoTopupEnabled || actualBalanceUsd > runningDailyBudgetUsd) → "active"
@@ -106,7 +109,17 @@ export type AccountStatus =
  * charge it, does its balance cover the running budget) are not known, and no verdict is invented. The
  * row then carries `statusUnknownReason`. The default audit (active users) stays fail-loud and never emits it.
  */
-export type AccountRowStatus = AccountStatus | "unknown";
+export type AccountRowStatus = AccountStatus | "unknown" | "churned";
+
+/**
+ * billing's revenue-class reasons that mean the CUSTOMER CANCELLED (owner rule 2026-10-16, BOARD-CHURNED-TRIAL-1016:
+ * "Free trial font partie de mes clients." A current client has paid, or is in a free trial still running; an
+ * account that cancelled, a trial cancelled before its first charge or a paid plan cancelled, is CHURNED).
+ * `subscription_ended` = billing's subscription is `canceled`; `subscription_canceling` = a cancel is pending at
+ * period end (billing itself calls a pending cancel churn). Read from billing's `GET /internal/revenue/fleet`
+ * class, never reconstructed here. `subscription_trialing` (a trial still running) is NOT in it.
+ */
+export const CHURNED_CLASS_REASONS: ReadonlySet<string> = new Set(["subscription_ended", "subscription_canceling"]);
 
 /** billing's blockedReason for an org with no chargeable card. */
 export const NO_CHARGEABLE_CARD = "no_chargeable_card";
@@ -154,6 +167,11 @@ export interface AccountRow {
   /** Whether the org has auto-topup enabled (billing has_auto_topup; false when absent). null = billing's balance read failed. */
   autoTopupEnabled: boolean | null;
   status: AccountRowStatus;
+  /**
+   * billing's reason the account is CHURNED (`subscription_ended` | `subscription_canceling`) when `status` is
+   * "churned"; null otherwise (and always null when churn was not requested or billing's read failed).
+   */
+  churnedReason: string | null;
   /**
    * Why `status` is "unknown" (the unreadable input, e.g. `billing payment-outlook unreadable: …`).
    * Set only under `orgReadsFailSoft`; absent/null whenever the status is known.
@@ -218,6 +236,14 @@ export interface AccountsStats {
   /** Rows with no chargeable card (status no_payment_method); excluded from every money total. */
   noPaymentMethodCount: number;
   pausedCount: number;
+  /**
+   * Rows whose customer CANCELLED (status "churned": billing's subscription is canceled, or a cancel is pending).
+   * Not current clients; excluded from every running/MRR/money total like paused/inactive. 0 when churn was not
+   * requested or billing's read failed (`churnUnavailableReason`).
+   */
+  churnedCount: number;
+  /** Why churn could not be read (`billing_revenue_unavailable` / `not_requested`), or null when it was. */
+  churnUnavailableReason: "billing_revenue_unavailable" | "not_requested" | null;
   /** Rows whose status could not be decided (status "unknown"; only under `orgReadsFailSoft`). Excluded from every money total; the orgs are named in `AccountsAudit.unreadOrgReads`. */
   statusUnknownCount: number;
   inactiveCount: number;
@@ -283,6 +309,12 @@ export interface AccountsAuditOptions {
    * timeout 500'd the whole fleet answer); the active-users count keeps the fail-loud read.
    */
   orgReadsFailSoft?: boolean;
+  /**
+   * Read billing's commercial state (same fleet read as `recurringRevenue`, shared) and mark a CANCELLED
+   * account "churned" (see `CHURNED_CLASS_REASONS`). The staff Accounts page and the customer-health board ask
+   * for it. A failed fleet read, or an org billing could not read, churns NOBODY (never a guessed churn).
+   */
+  churnFromBilling?: boolean;
   /** Test seam: the pause before the soft path's single outlook retry (default `PAYMENT_HOLD_SOFT_RETRY_DELAY_MS`). */
   paymentHoldRetryDelayMs?: number;
 }
@@ -368,6 +400,7 @@ export async function buildAccountsAudit(
   // One batched call for every pair's configured + running budget — a fleet audit cannot afford a
   // request per brand, and both figures come from the same producer computation.
   const wantRecurring = opts.recurringRevenue === true && deps.recurringRevenue !== undefined;
+  const wantChurn = opts.churnFromBilling === true && deps.recurringRevenue !== undefined;
   const [budgets, statedRows, recurring] = await Promise.all([
     deps.spendableBudgets([...pairs.values()]),
     // Fail-soft: the side is additive information on a fail-loud audit whose other consumers (revenue
@@ -375,7 +408,7 @@ export async function buildAccountsAudit(
     deps.statedAmounts ? deps.statedAmounts() : Promise.resolve(null),
     // Fail-soft to NULL with a reason: an unavailable billing read makes the MRR unknown — it never
     // falls back to the running-budget computation this replaced, and never fails the audit's rows.
-    wantRecurring
+    wantRecurring || wantChurn
       ? deps.recurringRevenue!().catch((err) => {
           console.error("[features-service] accounts: billing recurring revenue unavailable (soft):", err);
           return null;
@@ -383,6 +416,12 @@ export async function buildAccountsAudit(
       : Promise.resolve(null),
   ]);
   const recurringByOrg = new Map((recurring?.orgs ?? []).map((o) => [o.orgId, o]));
+  /** billing's churn reason for an org, or null (not churned, not requested, or billing could not read it). */
+  const churnedReasonOf = (orgId: string): string | null => {
+    if (!wantChurn) return null;
+    const reason = recurringByOrg.get(orgId)?.classReason;
+    return reason !== undefined && CHURNED_CLASS_REASONS.has(reason) ? reason : null;
+  };
   // The agency rule, byte-for-byte `agencyOrgIdsOf` (agency-self-serve-compute.ts): any org carrying a
   // stated amount, whatever its date range. Restated rather than imported because that module imports
   // active-users-compute, which imports this one.
@@ -450,7 +489,9 @@ export async function buildAccountsAudit(
       }
       const brand = brandInfo.get(p.brandId);
       const { balance } = info;
-      const unknown = info.unknownReason !== null || balance === null;
+      const churnedReason = churnedReasonOf(p.orgId);
+      // A churned account's verdict is billing's commercial fact; an unreadable outlook/balance does not undo it.
+      const unknown = churnedReason === null && (info.unknownReason !== null || balance === null);
       // Neither budget carries the usage discount — a ceiling is a config value, not a charge. The
       // ACTIVE verdict gates on the RUNNING figure vs the actual balance.
       return {
@@ -470,7 +511,9 @@ export async function buildAccountsAudit(
         // An unreadable payment hold or balance leaves the verdict undecided: the status is "unknown",
         // never the verdict computed as if billing could charge the org or its balance were 0.
         status:
-          unknown || balance === null
+          churnedReason !== null
+            ? "churned"
+            : unknown || balance === null
             ? "unknown"
             : accountStatus(
                 budget.configuredUsd,
@@ -480,6 +523,7 @@ export async function buildAccountsAudit(
                 balance.autoTopupEnabled,
                 info.hold,
               ),
+        churnedReason,
         ...(unknown ? { statusUnknownReason: info.unknownReason ?? "billing balance unreadable" } : {}),
         paymentDeclinedReason: info.hold?.blockedReason ?? null,
         revenueSide: agencyOrgIds === null ? null : agencyOrgIds.has(p.orgId) ? "agency" : "self_serve",
@@ -489,9 +533,9 @@ export async function buildAccountsAudit(
       };
   });
 
-  // Deterministic order: active → payment_declined → no_payment_method → unknown → out_of_credit → reactive_only → paused → inactive, then running budget desc, tiebreak on the
+  // Deterministic order: active → payment_declined → no_payment_method → unknown → out_of_credit → reactive_only → paused → inactive → churned, then running budget desc, tiebreak on the
   // configured one (a paused row runs nothing, so its posted money is what ranks it), then brandId.
-  const statusRank: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7 };
+  const statusRank: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7, churned: 8 };
   rows.sort((a, b) => {
     if (a.status !== b.status) return statusRank[a.status] - statusRank[b.status];
     if (a.runningDailyBudgetUsd !== b.runningDailyBudgetUsd) {
@@ -520,6 +564,7 @@ export async function buildAccountsAudit(
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
   let statusUnknownCount = 0;
+  let churnedCount = 0;
   for (const row of rows) {
     if (row.status === "active") {
       totalRunningDailyBudgetUsd += row.runningDailyBudgetUsd;
@@ -539,10 +584,12 @@ export async function buildAccountsAudit(
       noPaymentMethodCount += 1;
     } else if (row.status === "unknown") {
       statusUnknownCount += 1;
+    } else if (row.status === "churned") {
+      churnedCount += 1;
     }
   }
   const inactiveCount =
-    rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount;
+    rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount - churnedCount;
   // Round the fleet totals to cents defensively (per-row budgets are already dollars-and-cents).
   totalRunningDailyBudgetUsd = Math.round(totalRunningDailyBudgetUsd * 100) / 100;
   totalConfiguredDailyBudgetUsd = Math.round(totalConfiguredDailyBudgetUsd * 100) / 100;
@@ -550,7 +597,7 @@ export async function buildAccountsAudit(
 
   // 5. MRR / ARR — billing's recurring figure for the fleet, summed on its own decimal text. The
   //    running budget above is configuration in play, not revenue, and is no longer multiplied into MRR.
-  const mrr = recurring ? sumRecurringMrr(recurring) : null;
+  const mrr = recurring && wantRecurring ? sumRecurringMrr(recurring) : null;
   unreadOrgReads.sort((a, b) => a.orgId.localeCompare(b.orgId) || a.read.localeCompare(b.read));
   return {
     rows,
@@ -569,6 +616,8 @@ export async function buildAccountsAudit(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
+      churnedCount,
+      churnUnavailableReason: !wantChurn ? "not_requested" : recurring ? null : "billing_revenue_unavailable",
       outOfCreditCount,
       statusUnknownCount,
       inactiveCount,
