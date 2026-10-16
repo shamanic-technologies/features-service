@@ -178,10 +178,16 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
 
   it("refuses a leg on a trigger nothing fires; a declared delay trigger is fired, malformed params refused", async () => {
     await request(app).post("/internal/declarations/channels").set(KEY).send(channelBody).expect(201);
+    // A declared event: nothing fires it (every outcome trigger in code is fired since STD-VOCAB-1016).
+    await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "webinar_joined", label: "Webinar joined", description: "A person joined a webinar.", icon: "video-camera", kind: "event", createdBy: "kevin@distribute.you" })
+      .expect(201);
     const res = await request(app)
       .post(`/internal/declarations/channels/${SLUG}/legs`)
       .set(KEY)
-      .send({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "meeting_booked", createdBy: "kevin@distribute.you" });
+      .send({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "webinar_joined", createdBy: "kevin@distribute.you" });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe("trigger_not_fired");
     expect(mem.legs).toHaveLength(0);
