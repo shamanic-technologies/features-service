@@ -55010,6 +55010,10 @@
                       "type": "string"
                     }
                   },
+                  "runnableOnly": {
+                    "type": "boolean",
+                    "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key; owner 2026-10-16): every pipe must be one we run today (the `runnable` every catalogue read serves), else 400 `pipe_not_runnable` naming the pipe and why. Absent or false = staff, any pipe. Anything else = 400 `runnable_only_invalid`."
+                  },
                   "triggerId": {
                     "type": "string",
                     "description": "A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor). The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."
