@@ -4,7 +4,12 @@ import { describe, it, expect, vi } from "vitest";
 // which pull in the db module. Stub it — all reads are injected via deps, so the real db is never touched.
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
+// The board's ROI reads the brand page's own body; the test asks WHICH body (basis, scope) it asks for.
+const brandRevenueForOrg = vi.hoisted(() => vi.fn());
+vi.mock("../routes/brand-economics.js", () => ({ computeBrandRevenueForOrg: brandRevenueForOrg }));
+
 import {
+  boardBrandRevenue,
   buildCustomerHealthBoard,
   customerHealthAccountsAudit,
   AUDIENCE_NEAR_EXHAUSTED_PCT,
@@ -218,7 +223,7 @@ function makeDeps(fixtures: {
     },
     conversionCounts: async (brandId) =>
       fixtures.perBrand[brandId]?.counts ?? { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
-    brandRevenue: async (_f, brandId) => {
+    brandRevenue: async (brandId) => {
       const r = fixtures.perBrand[brandId]?.revenue;
       if (!r) throw new Error(`no revenue fixture for ${brandId}`);
       // committed defaults to the billed figure — a fixture only splits them when the case is about
@@ -648,9 +653,9 @@ describe("buildCustomerHealthBoard", () => {
     // transient retries exhausted, or a downstream 5xx. Must NOT reject the whole board.
     const wrapped: CustomerHealthDeps = {
       ...deps,
-      brandRevenue: async (f, brandId, orgId, priced) => {
+      brandRevenue: async (brandId, orgId) => {
         if (brandId === "bm") throw new Error("downstream revenue 503");
-        return deps.brandRevenue(f, brandId, orgId, priced);
+        return deps.brandRevenue(brandId, orgId);
       },
     };
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
@@ -659,7 +664,10 @@ describe("buildCustomerHealthBoard", () => {
     // Degraded row: still listed with identity + status, economics-derived enrichment nulled.
     expect(byId.bm.status).toBe("active");
     expect(byId.bm.currentEconomics.roiMultiple).toBeNull();
+    // The failure is NAMED on the row, never a blank that reads as "no data".
+    expect(byId.bm.unreadParts).toEqual([{ part: "revenue", reason: "downstream revenue 503" }]);
     // Healthy sibling unaffected — full enrichment.
+    expect(byId.bn.unreadParts).toEqual([]);
     expect(byId.bn.currentEconomics.roiMultiple).toBe(10);
     expect(byId.bn.health.badge).toBe("green");
     // Fleet stats still computed over ALL rows.
@@ -788,5 +796,47 @@ describe("buildCustomerHealthBoard — one org's unreadable billing payment-outl
   it("the default accounts audit (staff Accounts page, send-forecast) stays fail-loud on the same failure", async () => {
     const { buildAccountsAudit } = await import("./accounts-compute.js");
     await expect(buildAccountsAudit(COLD_CSV, NOW, accountsDeps("bad"))).rejects.toThrow(/payment-outlook failed \(502\)/);
+  });
+});
+
+describe("SHOCKWAVE-ROI-NET-1016: the board's ROI is the brand page's NET ROI", () => {
+  it("reads the brand body on the NET basis (what the client paid, every channel), never one channel's gross spend", async () => {
+    // Shockwavecenters, prod 2026-10-16: pipeline $1,535.39 over $684.15 paid (net) vs $1,327.94 gross.
+    brandRevenueForOrg.mockResolvedValueOnce({
+      headline: { totalPipelineUsd: 1535.39 },
+      costEconomics: { committedCostUsd: 684.15, actualCostUsd: 663.2, roiMultiple: 1535.39 / 684.15, costOfAcquisitionPct: (684.15 / 1535.39) * 100 },
+    });
+    const r = await boardBrandRevenue("brand-sw", "org-sw");
+    expect(brandRevenueForOrg).toHaveBeenCalledWith("brand-sw", "org-sw", "net");
+    expect(r.committedCostUsd).toBe(684.15);
+    expect(r.expectedPipelineUsd).toBe(1535.39);
+    expect(r.roiMultiple).toBeCloseTo(2.244, 3);
+  });
+
+  it("a failing best-workflow read (email-gateway timeout) no longer blanks the ROI beside it, and is named", async () => {
+    const deps = makeDeps({
+      accounts: [account({ orgId: "s", brandId: "bs", status: "active" })],
+      recencies: [recency("s", "2026-07-14")],
+      perBrand: {
+        bs: {
+          economics: econ(2500),
+          funnels: ["sales_meetings_from_conversation"] as SalesFunnelKey[],
+          revenue: { actualCostUsd: 684.15, expectedPipelineUsd: 1535.39, roiMultiple: 2.244, cacPct: 44.6 },
+          audiences: [],
+        },
+      },
+    });
+    const timeout = "email-gateway /orgs/stats (groupBy=workflowSlug, brandId) failed (502): instantly-service: The operation was aborted due to timeout";
+    const wrapped: CustomerHealthDeps = {
+      ...deps,
+      workflowProjection: async () => {
+        throw new Error(timeout);
+      },
+    };
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
+    const row = board.customers[0];
+    expect(row.currentEconomics.roiMultiple).toBe(2.244);
+    expect(row.bestWorkflow).toBeNull();
+    expect(row.unreadParts).toEqual([{ part: "best_workflow", reason: timeout }]);
   });
 });

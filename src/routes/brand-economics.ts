@@ -102,11 +102,13 @@ import { expectedReturnForBrand, expectedReturnForScope, withAudienceExpectedRet
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
+  DEFAULT_PRICED_CAUSES,
   OUTCOME_CAUSES,
   causeScopeKeyPart,
   parseOutcomeCauses,
+  type OutcomeCause,
 } from "../lib/outcome-cause.js";
-import { parsePricing } from "../lib/pricing.js";
+import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { planChannelSpend, withPipeSpendAttribution } from "../lib/pipe-spend-attribution.js";
 import {
@@ -140,6 +142,60 @@ function resolveBrandFunnel(brandId: string, channels: BrandChannel[]): ReturnTy
   const distinct = distinctChannelFunnels(channels);
   if (distinct.length > 1) throw new BrandChannelsPriceDifferentlyError(brandId);
   return distinct[0] ?? null;
+}
+
+/**
+ * THE BRAND'S MONEY BODY, computed exactly as `GET /brands/:brandId/revenue` computes it: one engine pass
+ * over every channel the brand runs, priced on the offer terms of its declared funnels (several offers:
+ * each person on their own campaign's offer), with no campaign narrowing. The route and the staff
+ * customer-health board both call this, so a client's ROI reads the same on both (SHOCKWAVE-ROI-NET-1016:
+ * the board priced one channel on the gross basis and read 0.83x beside the brand page's 4.5x).
+ */
+export function computeBrandRevenueBody(args: {
+  brandId: string;
+  featureSlugs: string[];
+  funnel: ReturnType<typeof getFunnel>;
+  brandPriced: FunnelPricedEconomics | undefined;
+  perOffer: Awaited<ReturnType<typeof fetchPerOfferPricing>> | null;
+  headers: DownstreamHeaders;
+  pricing: Pricing;
+  causes: readonly OutcomeCause[];
+}) {
+  return computeFeatureRevenue(
+    args.featureSlugs,
+    args.brandId,
+    undefined,
+    args.funnel,
+    args.headers,
+    undefined,
+    args.brandPriced,
+    true,
+    args.pricing,
+    undefined,
+    undefined,
+    undefined,
+    args.causes,
+    undefined,
+    undefined,
+    // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
+    true,
+    args.perOffer,
+  );
+}
+
+/**
+ * The same body for a caller holding only the ORG (the cross-org staff board): channels, declared funnels
+ * and offer terms read the way the route reads them, default outcome causes. Throws what the route turns
+ * into 404/409 (`BrandHasNoChannelsError`, `BrandChannelsPriceDifferentlyError`).
+ */
+export async function computeBrandRevenueForOrg(brandId: string, orgId: string, pricing: Pricing) {
+  const channels = await resolveBrandChannels(brandId, { orgId });
+  const featureSlugs = brandFeatureSlugs(channels);
+  const headers: DownstreamHeaders = { orgId, featureSlug: featureSlugs.length === 1 ? featureSlugs[0] : undefined };
+  const funnel = resolveBrandFunnel(brandId, channels);
+  const brandPriced = funnel ? priceOnDeclaredFunnel(await fetchDeclaredFunnelsSoft(brandId, orgId)) : undefined;
+  const perOffer = brandPriced && brandPriced.economics.economics === null ? await fetchPerOfferPricing(brandId, orgId) : null;
+  return computeBrandRevenueBody({ brandId, featureSlugs, funnel, brandPriced, perOffer, headers, pricing, causes: DEFAULT_PRICED_CAUSES });
 }
 
 /** Shared parsing + channel resolution for all three brand reads. */
@@ -324,26 +380,7 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       orgId: headers.orgId,
       compute: async () => {
         // ONE engine pass over the brand's whole evidence set, with NO campaign narrowing.
-        const body = await computeFeatureRevenue(
-          featureSlugs,
-          brandId,
-          undefined,
-          funnel,
-          headers,
-          undefined,
-          brandPriced,
-          true,
-          pricing,
-          undefined,
-          undefined,
-          undefined,
-          causes,
-          undefined,
-          undefined,
-          // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
-          true,
-          perOffer,
-        );
+        const body = await computeBrandRevenueBody({ brandId, featureSlugs, funnel, brandPriced, perOffer, headers, pricing, causes });
         const window = windowDays
           ? await computeRevenueWindow({
               days: windowDays,
