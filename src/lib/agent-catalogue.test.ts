@@ -482,3 +482,51 @@ describe("a learning funnel still serves an EXPECTED cost per paying client and 
     expect(funnelById(bare, SOARING)!.expected.unavailableReason).toBe("leg_unrated:lead_found_to_paid_client");
   });
 });
+
+describe("a funnel id resolves whatever the size of its path (WARM-FUNNEL-NOT-FOUND-1016)", () => {
+  // 600 meeting-booking channels on one leg: the 5-leg path holds far more combinations than the listing cap (2,000).
+  const base = SEEDED.find((f) => f.slug === "ai-meeting-booking")!;
+  const clones = Array.from({ length: 600 }, (_, i) => ({ ...base, slug: `zz-meeting-booking-${String(i).padStart(3, "0")}`, name: `ZZ Meeting Booking ${i}` }));
+  const big = buildChannelCatalogue([...SEEDED, ...clones], (slug) => (slug.startsWith("zz-") ? "A clone." : channelShortDescription(slug)), (slug) =>
+    slug.startsWith("zz-") ? channelTypeOf(base.slug) : channelTypeOf(slug),
+  );
+  const model = buildCatalogueModel(inputs({ channels: big, publishedPipeIds: allPipeIds(big) }));
+  const path = [...model.paths.values()]
+    .filter((p) => !p.triggerId && p.legKeys.includes("conversation_to_meeting_booked") && p.legKeys[0] === "start_to_lead_found")
+    .sort((a, b) => b.legKeys.length - a.legKeys.length)[0];
+
+  it("the target funnel sits past the listing cap and still resolves by id", () => {
+    expect(path.legKeys.length).toBeGreaterThanOrEqual(5);
+    const listed = funnelsOfPath(model, path);
+    expect(listed.length).toBe(2000);
+    const outreach = pipesOnLeg(model, path.legKeys[1]).find((p) => p.operatedBy === "platform")!;
+    const source = pipesOnLeg(model, "start_to_lead_found").find((p) => p.operatedBy === "platform" && p.channelSlug === "lead-sourcing")!;
+    const legs = path.legKeys.map((legKey, i) => ({
+      legKey,
+      pipe:
+        i === 0
+          ? source
+          : i === 1
+            ? outreach
+            : legKey === "conversation_to_meeting_booked"
+              ? model.pipes.get(`zz-meeting-booking-599|${legKey}`)!
+              : pipesOnLeg(model, legKey).find((p) => p.operatedBy === "customer")!,
+    }));
+    const id = funnelIdOf(legs);
+    expect(listed.some((f) => f.id === id)).toBe(false);
+    const f = funnelById(model, id);
+    expect(f?.id).toBe(id);
+    expect(f?.legs.map((l) => l.pipe?.id)).toEqual(legs.map((l) => l.pipe.id));
+  });
+
+  it("an id naming a pipe the leg does not have, or the wrong leg count, resolves to nothing", () => {
+    const first = funnelsOfPath(model, path)[0];
+    expect(funnelById(model, first.id.replace("@lead-sourcing", "@no-such-source"))).toBeNull();
+    expect(funnelById(model, first.id.split("+").slice(0, -1).join("+"))).toBeNull();
+  });
+
+  it("every listed funnel of every path resolves to itself", () => {
+    const small = buildCatalogueModel(inputs());
+    for (const p of small.paths.values()) for (const f of funnelsOfPath(small, p)) expect(funnelById(small, f.id)?.id, f.id).toBe(f.id);
+  });
+});

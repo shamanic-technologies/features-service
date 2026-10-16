@@ -1077,6 +1077,25 @@ function canonicalFunnelId(model: CatalogueModel, id: string): string {
  * pipe works makes no funnel. Capped at `cap`.
  */
 export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 2000): CatalogueFunnel[] {
+  return enumerateFunnels(model, path, cap, null);
+}
+
+/**
+ * PURE: the ONE funnel of a path whose id is `id`, or null. Each leg keeps only the option its id part names, so the
+ * walk is a single combination whatever the path's size: a lookup never depends on the listing cap
+ * (WARM-FUNNEL-NOT-FOUND-1016: a 5-leg path held more than 2,000 combinations and a recent strategy sorted past the cap,
+ * so its funnel read 404 while its campaign ran).
+ */
+export function funnelOfPath(model: CatalogueModel, path: CataloguePath, id: string): CatalogueFunnel | null {
+  const head = path.triggerId ?? null;
+  const rest = head ? (id.startsWith(`${TRIGGER_HEAD}${head}+`) ? id.slice(`${TRIGGER_HEAD}${head}+`.length) : null) : id;
+  if (rest === null) return null;
+  const parts = rest.split("+");
+  if (parts.length !== path.legKeys.length) return null;
+  return enumerateFunnels(model, path, 1, parts).find((f) => f.id === id) ?? null;
+}
+
+function enumerateFunnels(model: CatalogueModel, path: CataloguePath, cap: number, parts: readonly string[] | null): CatalogueFunnel[] {
   const head = path.triggerId ?? null;
   const options: FunnelLeg[][] = path.legKeys.map((legKey, legIndex) => {
     const onLeg = pipesOnLeg(model, legKey);
@@ -1088,7 +1107,8 @@ export function funnelsOfPath(model: CatalogueModel, path: CataloguePath, cap = 
     // A trigger-headed funnel whose first pipe already answers that same trigger IS the existing reactive funnel
     // (its own id): never listed twice.
     const all = [...platform, ...variants, ...customer].filter((p) => !(head && legIndex === 0 && p.triggerId === head));
-    return all.map((pipe) => ({ legKey, pipe }));
+    const legs = all.map((pipe) => ({ legKey, pipe }));
+    return parts ? legs.filter((l) => funnelIdOf([l]) === parts[legIndex]) : legs;
   });
   if (options.some((o) => o.length === 0)) return [];
   const out = new Map<string, CatalogueFunnel>();
@@ -1183,13 +1203,13 @@ export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel |
     const path = model.paths.get(triggerHeadedPathId(head.triggerId, rest.split("+").map((part) => part.split("@")[0])));
     if (!path) return null;
     const full = `${TRIGGER_HEAD}${head.triggerId}+${rest}`;
-    return funnelsOfPath(model, path).find((f) => f.id === full) ?? null;
+    return funnelOfPath(model, path, full);
   }
   const exact = (key: string): CatalogueFunnel | null => {
     const legKeys = key.split("+").map((part) => part.split("@")[0]);
     const path = model.paths.get(pathIdOf(legKeys));
     if (!path) return null;
-    return funnelsOfPath(model, path).find((f) => f.id === key) ?? null;
+    return funnelOfPath(model, path, key);
   };
   const canonical = canonicalFunnelId(model, id);
   const found = exact(canonical);
