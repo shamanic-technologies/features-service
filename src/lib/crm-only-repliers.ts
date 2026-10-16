@@ -96,7 +96,7 @@ export async function fetchScopePersons(
     fetchLeadsForRevenue(brandId, campaignScope, identity),
     fetchServingRowJourneys(brandId, identity),
   ]);
-  return creditServingRows(dedupPersonsByLead(rows), journeys);
+  return creditServingRows(dedupPersonsByLead(rows), journeys, campaignScope);
 }
 
 /** PURE. The positive repliers among deduped persons — by EITHER witness, one per person. */

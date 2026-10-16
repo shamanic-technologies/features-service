@@ -19,7 +19,15 @@ export function fetchServingRowJourneys(
   const now = Date.now();
   const entry = held.get(key);
   if (entry && now - entry.at < HOLD_MS) return entry.journeys;
-  const journeys = fetchBrandJourneys(brandId, identity);
+  const journeys = fetchBrandJourneys(brandId, identity).then((read) => {
+    // The attribution keys on the SENDING workflow (`emailSends`, lead-service v0.83.116): a journey without
+    // it would silently fall back to the serve row's workflow, the bug this read exists to fix. Fail loud.
+    const missing = read.filter((j) => j.emailSends === undefined).length;
+    if (missing > 0) {
+      throw new Error(`lead-service timeline-journeys: ${missing} of ${read.length} journeys of brand ${brandId} state no emailSends`);
+    }
+    return read;
+  });
   held.set(key, { at: now, journeys });
   journeys.catch(() => {
     if (held.get(key)?.journeys === journeys) held.delete(key);
