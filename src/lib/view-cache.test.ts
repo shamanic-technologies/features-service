@@ -182,6 +182,22 @@ describe("servedCached", () => {
     expect(storedRow?.body).toEqual({ pipeline: 42 }); // snapshot updated
   });
 
+  it("a dependency FAILING (lead-service 502) never blocks a read: the last good value answers at once, read after read (SFC-MONEY-SLOW-1016)", async () => {
+    storedRow = { view: "sales-funnel-campaign-money", scopeKey: "k", orgId: "o", body: { investedUsd: 12.5 }, computedAt: new Date(Date.now() - 60_000), refreshingAt: null };
+    // The compute takes as long as the real one and then fails as lead-service's change feed did in prod.
+    const compute = vi.fn(
+      () => new Promise((_, reject) => setTimeout(() => reject(new Error('lead-service /orgs/leads/changes failed (502): {"error":"email-gateway unavailable"}')), 1_500)),
+    );
+    for (const read of [1, 2]) {
+      const t0 = Date.now();
+      const body = await servedCached({ view: "sales-funnel-campaign-money", scopeKey: "k", orgId: "o", compute });
+      expect(Date.now() - t0, `read ${read}`).toBeLessThan(1_000);
+      expect(body).toEqual({ investedUsd: 12.5 }); // the last value, never a zero or a guess
+    }
+    await new Promise((r) => setTimeout(r, 1_600));
+    expect(storedRow?.body).toEqual({ investedUsd: 12.5 }); // a failed refresh never overwrites the last value
+  });
+
   it("STALE beyond hard max age → recomputes synchronously instead of serving old data", async () => {
     // The age is pinned against an EXPLICIT maxStaleMs rather than the global default, so this test
     // asserts the blocking branch itself and cannot silently flip to the stale-serve branch the next time
