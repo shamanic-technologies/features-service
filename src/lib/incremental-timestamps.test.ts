@@ -22,7 +22,7 @@ function mockStatus(): void {
     return new Response(
       JSON.stringify({
         results: body.items
-          .filter((i) => i.email !== "unknown@x")
+          .filter((i) => i.email !== "unknown@x.io")
           .map((i) => ({ email: i.email, broadcast: { brand: { firstOpenedAt: `open-${i.email}` } } })),
       }),
       { status: 200 },
@@ -46,30 +46,37 @@ describe("incremental event timestamps", () => {
   });
 
   it("asks everything once, then only the emails whose flags changed", async () => {
-    const emails = ["a@x", "b@x", "unknown@x"];
-    registerEmailFingerprints(SCOPE, [row("1", "a@x"), row("2", "b@x"), row("3", "unknown@x")]);
+    const emails = ["a@x.io", "b@x.io", "unknown@x.io"];
+    registerEmailFingerprints(SCOPE, [row("1", "a@x.io"), row("2", "b@x.io"), row("3", "unknown@x.io")]);
     const first = await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, emails, H));
 
-    registerEmailFingerprints(SCOPE, [row("1", "a@x", { opened: true }), row("2", "b@x"), row("3", "unknown@x")]);
+    registerEmailFingerprints(SCOPE, [row("1", "a@x.io", { opened: true }), row("2", "b@x.io"), row("3", "unknown@x.io")]);
     const second = await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, emails, H));
 
-    expect(asked).toEqual([emails, ["a@x"]]);
+    expect(asked).toEqual([emails, ["a@x.io"]]);
     // Same map a full ask returns — an email the producer does not know stays absent.
-    expect([...second.keys()].sort()).toEqual(["a@x", "b@x"]);
-    expect(second.get("b@x")).toEqual(first.get("b@x"));
+    expect([...second.keys()].sort()).toEqual(["a@x.io", "b@x.io"]);
+    expect(second.get("b@x.io")).toEqual(first.get("b@x.io"));
   });
 
   it("asks every email, every time, outside a live-copy read", async () => {
-    registerEmailFingerprints(SCOPE, [row("1", "a@x")]);
-    await fetchEventTimestamps("brand-1", undefined, ["a@x"], H);
-    await fetchEventTimestamps("brand-1", undefined, ["a@x"], H);
-    expect(asked).toEqual([["a@x"], ["a@x"]]);
+    registerEmailFingerprints(SCOPE, [row("1", "a@x.io")]);
+    await fetchEventTimestamps("brand-1", undefined, ["a@x.io"], H);
+    await fetchEventTimestamps("brand-1", undefined, ["a@x.io"], H);
+    expect(asked).toEqual([["a@x.io"], ["a@x.io"]]);
   });
 
   it("asks an email the copy has no fingerprint for", async () => {
-    registerEmailFingerprints(SCOPE, [row("1", "a@x")]);
-    await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, ["a@x", "new@x"], H));
-    await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, ["a@x", "new@x"], H));
-    expect(asked).toEqual([["a@x", "new@x"], ["new@x"]]);
+    registerEmailFingerprints(SCOPE, [row("1", "a@x.io")]);
+    await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, ["a@x.io", "new@x.io"], H));
+    await withLiveLeadCopy(() => fetchEventTimestamps("brand-1", undefined, ["a@x.io", "new@x.io"], H));
+    expect(asked).toEqual([["a@x.io", "new@x.io"], ["new@x.io"]]);
+  });
+  it("leaves out an address email-gateway refuses (one would fail the whole batch) and still answers the rest", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const unsub = "x====@unsubscribe2.customer.io";
+    const got = await fetchEventTimestamps("brand-1", undefined, ["a@x.io", unsub], H);
+    expect(asked).toEqual([["a@x.io"]]);
+    expect([...got.keys()]).toEqual(["a@x.io"]);
   });
 });
