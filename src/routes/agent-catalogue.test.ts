@@ -583,6 +583,33 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(f.body).toMatchObject({ id: "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_paid_client", mixed: false, runnable: true, draft: false });
   });
 
+  it("runnableOnly (a customer write, owner 2026-10-16): a pipe we do not run is refused pipe_not_runnable, a runnable funnel is created", async () => {
+    const listed = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing" }).set(KEY);
+    const notRun = listed.body.rows[0].id as string;
+    expect(listed.body.rows[0].runnable).toBe(false);
+    const refused = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", notRun], runnableOnly: true, createdBy: "client@acme.com" });
+    expect(refused.status).toBe(400);
+    expect(refused.body.reason).toBe("pipe_not_runnable");
+    expect(refused.body.error).toContain(notRun);
+    expect(refused.body.error).toContain("no_workflow");
+    expect((await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: [notRun], runnableOnly: "yes", createdBy: "x" })).body.reason).toBe("runnable_only_invalid");
+
+    const team = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "your-team-closing-calls", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", createdBy: "copilot" });
+    expect(team.status).toBe(201);
+    const ok = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", "your-team-closing-calls|lead_found_to_paid_client"], runnableOnly: true, createdBy: "client@acme.com" });
+    expect(ok.status).toBe(201);
+    expect(ok.body).toMatchObject({ runnable: true });
+  });
+
   it("a platform pipe with an ACTIVE workflow runs; without one it does not (owner 2026-10-12: facts, never a staff click)", async () => {
     const listed = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing" }).set(KEY);
     const id = listed.body.rows[0].id as string;
