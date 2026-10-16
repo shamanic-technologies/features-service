@@ -13,7 +13,8 @@
  *                  already hold (`whatsapp_number_given`: crm-service's phone watch over the brand's connectors). Never
  *                  callable: we already hold the fact (our detectors use the internal door).
  *    Legacy exceptions, PARKED by the owner (C3 / D), the CLOSED list `LEGACY_CALLABLE_CONDITION_IDS`: the `reported`
- *    triggers (`follow_up_due`, `email_pushed_via_api`, `follow_up_date_reached`) stay callable, because a caller
+ *    triggers (`follow_up_due`, `email_pushed_via_api`, `follow_up_date_reached`, the last one merged into `follow_up_due`
+ *    2026-10-16, `TRIGGER_ID_MERGES`) stay callable, because a caller
  *    reports each occurrence through the door today (campaign-service, 2026-10-15), plus `lead_requested`, which is
  *    INLINE and so never callable anyway (`on_demand` too). Any other condition is never callable, whatever its kind:
  *    a fact a client legitimately pushes is modelled as an OUTCOME (TRIGGER-CATALOGUE-GAPS-1016).

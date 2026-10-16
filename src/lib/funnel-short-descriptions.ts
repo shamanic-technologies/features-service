@@ -27,7 +27,8 @@
  * catalogue AND the captured prod catalogue (`lib/__fixtures__/prod-funnel-catalogue.json`, DB declarations included).
  */
 import type { PublicChannel } from "./channel-catalogue.js";
-import { triggerForStep } from "./channel-triggers.js";
+import { canonicalTriggerId, triggerForStep } from "./channel-triggers.js";
+import { conditionAudience, triggerCondition } from "./trigger-conditions.js";
 
 export const MAX_WORDS = 12;
 
@@ -155,13 +156,11 @@ const AUDIENCE: Readonly<Record<string, string>> = {
 };
 const DEFAULT_AUDIENCE = "your leads";
 
-/** Who a reactive funnel answers when its trigger is not its step's own (a delay, a report, a push). */
+/** Who a reactive funnel answers when its trigger is not its step's own (a report, a push). A CONDITION instance ("X
+ *  reached, still not Y after N") is never listed here: its audience is composed from its parameters
+ *  (`conditionAudience`, `lib/trigger-conditions.ts`), so a new instance reads right with no code. */
 const TRIGGER_AUDIENCE: Readonly<Record<string, string>> = {
-  website_visit_no_signup_30_min: "site visitors who did not sign up",
-  signup_not_paid_30_min: "signups who have not paid yet",
-  signup_not_paid_24_hours: "signups who have not paid yet",
   follow_up_due: "leads due a follow-up",
-  follow_up_date_reached: "leads due a follow-up",
   email_pushed_via_api: "the leads you send us",
 };
 
@@ -336,7 +335,11 @@ export function funnelShortDescription(input: SummaryInput): { shortDescription:
 function whoIsAnswered(input: SummaryInput, leg: SummaryLeg): string {
   const firstLeg = input.legs[0];
   if (input.reactive && firstLeg === leg && input.triggerId !== null) {
-    if (TRIGGER_AUDIENCE[input.triggerId]) return TRIGGER_AUDIENCE[input.triggerId];
+    const triggerId = canonicalTriggerId(input.triggerId);
+    const condition = triggerCondition(triggerId);
+    const conditional = condition ? conditionAudience(condition) : null;
+    if (conditional) return conditional;
+    if (TRIGGER_AUDIENCE[triggerId]) return TRIGGER_AUDIENCE[triggerId];
     // A trigger other than its step's own ("GitHub Issue In Prod") answers no step's audience.
     const own = leg.fromStep === null ? null : (triggerForStep(leg.fromStep as Parameters<typeof triggerForStep>[0])?.id ?? null);
     if (input.triggerId !== own) return DEFAULT_AUDIENCE;
