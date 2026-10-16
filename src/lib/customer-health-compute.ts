@@ -228,6 +228,8 @@ export interface CustomerHealthRow {
   status: AccountRowStatus;
   /** Why `status` is "unknown" (e.g. `billing payment-outlook unreadable: … (502)`); null whenever the status is known. */
   statusUnknownReason: string | null;
+  /** billing's reason the account is CHURNED (`subscription_ended` | `subscription_canceling`) when `status` is "churned"; null otherwise. */
+  churnedReason: string | null;
   /** billing's reason it cannot charge the org when `status` is "payment_declined" (e.g. `card_declined`) or "no_payment_method" (`no_chargeable_card`); null otherwise. */
   paymentDeclinedReason: string | null;
   /** Every ceiling this (org, brand) configured, in USD — what they set. */
@@ -293,6 +295,10 @@ export interface CustomerHealthStats {
   paymentDeclinedCount: number;
   noPaymentMethodCount: number;
   pausedCount: number;
+  /** Rows whose customer CANCELLED (status "churned", same rule as /internal/stats/accounts): not current clients. */
+  churnedCount: number;
+  /** Why churn could not be read (`billing_revenue_unavailable` / `not_requested`), or null when it was. */
+  churnUnavailableReason: "billing_revenue_unavailable" | "not_requested" | null;
   /** Rows running a proactive campaign with no credit to fund the next day and no auto-topup (status out_of_credit). */
   outOfCreditCount: number;
   /** Rows whose status could not be read (status "unknown"); not counted as inactive. */
@@ -368,7 +374,7 @@ export function customerHealthAccountsAudit(
   accountsDeps?: AccountsDeps,
   paymentHoldRetryDelayMs?: number,
 ): Promise<AccountsAudit> {
-  return buildAccountsAudit(csv, now, accountsDeps, { orgReadsFailSoft: true, paymentHoldRetryDelayMs });
+  return buildAccountsAudit(csv, now, accountsDeps, { orgReadsFailSoft: true, churnFromBilling: true, paymentHoldRetryDelayMs });
 }
 
 /**
@@ -551,7 +557,7 @@ function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow 
 
 /**
  * Compose the health badge (owned thresholds):
- *   red    — not active (payment declined / paused / inactive / no budget), or not KNOWN active (status "unknown"). Value can't be assessed while campaigns are held/stopped.
+ *   red    — not active (payment declined / paused / inactive / churned / no budget), or not KNOWN active (status "unknown"). Value can't be assessed while campaigns are held/stopped.
  *   green  — active AND ROI ≥ 1 (CAC below breakeven, known) AND audience NOT near-exhausted.
  *   yellow — active but ROI < 1 (or unknown) OR the audience is near-exhausted.
  */
@@ -579,7 +585,7 @@ function composeHealth(
   };
 }
 
-const STATUS_RANK: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7 };
+const STATUS_RANK: Record<AccountRowStatus, number> = { active: 0, payment_declined: 1, no_payment_method: 2, unknown: 3, out_of_credit: 4, reactive_only: 5, paused: 6, inactive: 7, churned: 8 };
 
 /**
  * Build the full customer-health board. Reuses the accounts audit (identity + status + budget + balance)
@@ -804,6 +810,7 @@ export async function buildCustomerHealthBoard(
       orgCashPaidUsd: paid ? paid.cashPaidUsd : null,
       status: account.status,
       statusUnknownReason: account.statusUnknownReason ?? null,
+      churnedReason: account.churnedReason ?? null,
       paymentDeclinedReason: account.paymentDeclinedReason,
       configuredDailyBudgetUsd: account.configuredDailyBudgetUsd,
       runningDailyBudgetUsd: account.runningDailyBudgetUsd,
@@ -855,6 +862,7 @@ export async function buildCustomerHealthBoard(
   let paymentDeclinedCount = 0;
   let noPaymentMethodCount = 0;
   let statusUnknownCount = 0;
+  let churnedCount = 0;
   let greenCount = 0;
   let yellowCount = 0;
   let redCount = 0;
@@ -866,6 +874,7 @@ export async function buildCustomerHealthBoard(
     else if (row.status === "payment_declined") paymentDeclinedCount += 1;
     else if (row.status === "no_payment_method") noPaymentMethodCount += 1;
     else if (row.status === "unknown") statusUnknownCount += 1;
+    else if (row.status === "churned") churnedCount += 1;
     if (row.health.badge === "green") greenCount += 1;
     else if (row.health.badge === "yellow") yellowCount += 1;
     else redCount += 1;
@@ -880,10 +889,12 @@ export async function buildCustomerHealthBoard(
       paymentDeclinedCount,
       noPaymentMethodCount,
       pausedCount,
+      churnedCount,
+      churnUnavailableReason: audit.stats.churnUnavailableReason,
       outOfCreditCount,
       statusUnknownCount,
       inactiveCount:
-        rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount,
+        rows.length - activeCount - reactiveOnlyCount - pausedCount - outOfCreditCount - paymentDeclinedCount - noPaymentMethodCount - statusUnknownCount - churnedCount,
       greenCount,
       yellowCount,
       redCount,

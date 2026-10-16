@@ -3088,7 +3088,9 @@ export async function handleAccounts(res: import("express").Response): Promise<v
 
     // Per-org reads fail-SOFT (2026-10-03): one org's billing timeout degrades THAT org's row to
     // status "unknown" and is named in `unreadOrgReads`, never a 500 of the whole staff page.
-    return buildAccountsAudit(coldCsv, new Date(), undefined, { recurringRevenue: true, orgReadsFailSoft: true });
+    // churnFromBilling (BOARD-CHURNED-TRIAL-1016): a cancelled account reads "churned", from the same
+    // billing fleet read the MRR already makes (shared, no extra call).
+    return buildAccountsAudit(coldCsv, new Date(), undefined, { recurringRevenue: true, orgReadsFailSoft: true, churnFromBilling: true });
     },
   });
   res.json(payload);
