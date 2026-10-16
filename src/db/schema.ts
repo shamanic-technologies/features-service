@@ -417,7 +417,7 @@ export const salesPathCombinationNames = pgTable("sales_path_combination_names",
 export const channelTriggerTypes = pgTable("channel_trigger_types", {
   /** The trigger's SLUG, unique. */
   id: text("id").primaryKey(),
-  /** The trigger's NAME, unique case-insensitive (index `channel_trigger_types_label_lower_unique`, migration 0026). */
+  /** The trigger's NAME, unique case-insensitive among live triggers (index `channel_trigger_types_label_lower_unique`, migration 0026, partial on `retired_at IS NULL` since 0035). */
   label: text("label").notNull(),
   description: text("description").notNull(),
   icon: text("icon").notNull(),
@@ -438,6 +438,11 @@ export const channelTriggerTypes = pgTable("channel_trigger_types", {
   params: jsonb("params"),
   createdBy: text("created_by"),
   requestedByOrgId: text("requested_by_org_id"),
+  // RETIRED (CATALOGUE-RETIRE-1016): a DECLARED trigger created by mistake that no pipe, sales funnel or campaign uses,
+  // out of every catalogue read; the row stays (who created it, who retired it, why). Declaring the id again revives it.
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  retiredBy: text("retired_by"),
+  retireNote: text("retire_note"),
 });
 
 /**
@@ -500,6 +505,11 @@ export const declaredSalesPaths = pgTable("declared_sales_paths", {
   createdBy: text("created_by").notNull(),
   requestedByOrgId: text("requested_by_org_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // RETIRED (CATALOGUE-RETIRE-1016): a sales funnel declared by mistake that no campaign of any org runs or ran, out of
+  // every catalogue read; the row stays. Declaring the same funnel again revives it.
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  retiredBy: text("retired_by"),
+  retireNote: text("retire_note"),
 });
 
 /**

@@ -188,10 +188,14 @@ describe("workflow-projection: a channel with no history still answers who it co
     const res = await request(app).get(`${URL_BASE}?${QUERY}`).set(AUTH);
 
     expect(res.status).toBe(200);
-    expect(res.body.rows).toEqual([]);
+    // NO-WORKFLOW-NEW-BRAND-1016: no audience row, but every active workflow still answers its
+    // BRAND-LEVEL row: a pipe on a trigger reaches people no audience holds, and its workflow is the
+    // fleet's pick. `rows: []` here refused every new brand's follow-up funnel `no_workflow`.
+    expect(res.body.rows.filter((r: any) => r.audienceId !== null)).toEqual([]);
+    expect(res.body.rows.map((r: any) => r.workflow.workflowDynastySlug).sort()).toEqual(["dyn-a", "dyn-b"]);
+    for (const row of res.body.rows) expect(row.measured).toBe(false);
     expect(res.body.measured).toBe(false);
-    // The reason is what a caller acts on: nothing to serve through ANY channel, vs a channel waiting
-    // for its first run. Both answer `rows: []`-shaped emptiness at the audience level.
+    // The reason is what a caller acts on: the brand works no audience, vs a channel waiting for its first run.
     expect(res.body.unmeasuredReason).toBe("no_active_audiences");
   });
 

@@ -1352,7 +1352,7 @@ const workflowProjectionResponseSchema = z.object({
     measured: z.boolean().describe("TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."),
     unmeasuredReason: z.enum(["serve_dates_unavailable", "mature_evidence_unavailable", "leg_scope_unavailable"]).nullable().describe("Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."),
   }).optional().describe("THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."),
-  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience, so there is nothing to serve through ANY channel (rows is empty). `no_active_workflows` = this feature has no active workflow (rows is empty). A `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`) answers 200 with one unmeasured brand-level row per workflow ASSIGNED to the pipe (rank 1 recommended as `cold_start`), `no_spend_recorded`, or `rows: []` + `no_active_workflows` when nothing is assigned; no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
+  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience: no audience row exists, but every active workflow of the channel still answers its brand-level row (`audienceId: null`, unmeasured unless the fleet measured it), so a pipe on a trigger still gets its fleet-ranked workflow (rank 1 = the pick). `no_active_workflows` = this feature has no active workflow (rows is empty). A `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`) answers 200 with one unmeasured brand-level row per workflow ASSIGNED to the pipe (rank 1 recommended as `cold_start`), `no_spend_recorded`, or `rows: []` + `no_active_workflows` when nothing is assigned; no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -7341,6 +7341,48 @@ registry.registerPath({
     401: { description: "Missing or wrong service key." },
     404: { description: "`pipe_not_found` (unknown, already retired, or a play id)." },
     409: { description: "`pipe_coded`, `pipe_in_use` or `pipe_in_sales_funnel`." },
+    502: { description: "`campaigns_unreadable`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/catalogue/sales-funnels/{id}/retire",
+  summary: "Retire a sales funnel declared by mistake (internal, api-key, staff)",
+  description:
+    "CATALOGUE-RETIRE-1016. Takes a DECLARED sales funnel no campaign of any org runs or ran out of every catalogue read (a trigger-headed funnel then lists nowhere); the row is kept (who declared it, who retired it, why). A funnel the pipes compose on their own (no trigger head) stays composable from its pipes: the answer says so (`stillComposable: true`). Declaring it again (`POST /internal/catalogue/sales-funnels`) revives it. Refused, never forced: 404 `sales_funnel_not_declared`; 409 `sales_funnel_in_use` (any campaign of any org, stopped ones included: delete a stopped campaign that never ran first, campaign-service `DELETE /sales-funnel-campaigns/{id}`); 502 `campaigns_unreadable` (nothing retired).",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("The sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id), URL-encoded.") }),
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters."), allowStoppedCampaigns: z.boolean().optional().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`."), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.") }) } } },
+  },
+  responses: {
+    200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("sales_funnel"), id: z.string(), name: z.string().nullable(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable(), stillComposable: z.boolean().describe("True when the pipes still compose this funnel (no trigger head): its declaration is retired, the funnel is not gone.") , stoppedCampaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), status: z.string().nullable() })).describe("The stopped campaigns on it that `allowStoppedCampaigns` let through (empty otherwise).") }) } } },
+    400: { description: "`retiredBy_required`, `note_invalid` or `allow_stopped_campaigns_invalid`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`sales_funnel_not_declared` (unknown, never declared, or already retired)." },
+    409: { description: "`sales_funnel_in_use`." },
+    502: { description: "`campaigns_unreadable`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/catalogue/triggers/{id}/retire",
+  summary: "Retire a trigger declared by mistake (internal, api-key, staff)",
+  description:
+    "CATALOGUE-RETIRE-1016. Takes a DECLARED trigger nothing uses out of every catalogue read (trigger lists, the channel catalogue, every validation); the row is kept and its name may be given again. Declaring the same id again (`POST /internal/declarations/trigger-types`) revives it. Refused, never forced: 404 `trigger_not_found`; 409 `trigger_coded` (stated in code), `trigger_on_pipe` (a pipe answers it: retire the pipe first), `trigger_heads_sales_funnel` (a declared sales funnel or path starts on it: retire that first), `trigger_in_use` (any campaign of any org runs or ran on it, stopped ones included); 502 `campaigns_unreadable` (nothing retired).",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("The trigger id (`GET /internal/catalogue/triggers` rows[].id).") }),
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters."), allowStoppedCampaigns: z.boolean().optional().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`."), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.") }) } } },
+  },
+  responses: {
+    200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("trigger"), id: z.string(), name: z.string(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable() , stoppedCampaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), status: z.string().nullable() })).describe("The stopped campaigns on it that `allowStoppedCampaigns` let through (empty otherwise).") }) } } },
+    400: { description: "`retiredBy_required`, `note_invalid` or `allow_stopped_campaigns_invalid`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`trigger_not_found` (unknown or already retired)." },
+    409: { description: "`trigger_coded`, `trigger_on_pipe`, `trigger_heads_sales_funnel` or `trigger_in_use`." },
     502: { description: "`campaigns_unreadable`." },
   },
 });

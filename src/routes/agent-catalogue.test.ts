@@ -71,11 +71,17 @@ vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
 }));
 // Every org's campaigns (campaign-service /campaigns/list), per pipe group.
 const fleetCampaigns = vi.hoisted(() => ({ rows: [] as Array<{ campaignId: string; orgId: string; brandId: string | null; channelSlug: string; legKey: string }>, fail: false }));
+// The raw campaign rows (`GET /campaigns/list`) the funnel and trigger retires read (CATALOGUE-RETIRE-1016).
+const fleetRows = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 vi.mock("../lib/fleet-leg-campaigns.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   fetchFleetLegCampaignsFor: async (groups: Array<Array<{ channelSlug: string; computedLegKey: string }>>) => {
     if (fleetCampaigns.fail) throw new Error("campaign-service /campaigns/list failed (503): down");
     return groups.map((g) => fleetCampaigns.rows.filter((c) => g.some((p) => p.channelSlug === c.channelSlug && p.computedLegKey === c.legKey)));
+  },
+  fetchFleetCampaignRows: async () => {
+    if (fleetCampaigns.fail) throw new Error("campaign-service /campaigns/list failed (503): down");
+    return fleetRows.rows;
   },
 }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
@@ -94,6 +100,18 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   };
   return {
     listTriggerTypes: async () => mem.triggers,
+    retireTrigger: async (id: string) => {
+      const i = mem.triggers.findIndex((t) => t.id === id && t.origin === "declared");
+      if (i < 0) return null;
+      mem.triggers.splice(i, 1);
+      return { retiredAt: "2026-10-16T10:00:00.000Z" };
+    },
+    retireSalesPath: async (combinationKey: string) => {
+      const i = mem.paths.findIndex((p) => p.combinationKey === combinationKey);
+      if (i < 0) return null;
+      mem.paths.splice(i, 1);
+      return { retiredAt: "2026-10-16T10:00:00.000Z" };
+    },
     listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g),
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
@@ -103,7 +121,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
     registerStepDeclarations: register,
     loadChannelCatalogue: async (opts: { publishedOnly: boolean }) => {
       await register();
-      const declared = { channels: [], legs: mem.legs, triggers: [] };
+      const declared = { channels: [], legs: mem.legs, triggers: mem.triggers };
       const m = mergeDeclarations(seeded, declared, opts, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
       return { channels: buildChannelCatalogue(m.rows, m.shortDescriptionOf, m.channelTypeOfSlug, m.triggerOf), declared };
     },
@@ -165,6 +183,7 @@ beforeEach(() => {
   mem.legs = [];
   fleetCampaigns.rows = [];
   fleetCampaigns.fail = false;
+  fleetRows.rows = [];
   mem.steps = [];
   mem.rates = [];
   mem.chains = [];
@@ -916,3 +935,110 @@ describe("MCP-PIPE-GAPS-1015: where a pipe on a trigger starts, and retiring a p
     expect(r.body.reason).toBe("pipe_in_sales_funnel");
   });
 });
+
+// CATALOGUE-RETIRE-1016 (2026-10-16): a staff test left a declared delay trigger and the funnel it heads in the shared
+// catalogue. Both leave every read, with the pipe retire's guard: never while a campaign of any org runs or ran them.
+describe("retiring a declared trigger and the sales funnel it heads", () => {
+  const TRIGGER = {
+    id: "signup_not_paid_5_min",
+    label: "Signup Not Paid In 5 Min",
+    description: "A person signed up and has not paid 5 minutes later.",
+    icon: "timer",
+    fromStep: "signup",
+    firedBy: "campaign-service",
+    coded: false,
+    origin: "declared",
+    kind: "delay",
+    params: { minutes: 5, afterStep: "signup", unlessStep: "paid_client" },
+    displayOrder: 18,
+    createdBy: "staff",
+    requestedByOrgId: null,
+  };
+  const PIPES = ["ai-follow-up-email|signup_to_paid_client"];
+  const FUNNEL = "trigger:signup_not_paid_5_min+signup_to_paid_client@ai-follow-up-email";
+  const retireFunnel = (b: Record<string, unknown> = { retiredBy: "staff@distribute.you", note: "test leftover" }) =>
+    request(app).post(`/internal/catalogue/sales-funnels/${encodeURIComponent(FUNNEL)}/retire`).set(KEY).send(b);
+  const retireTrigger = (b: Record<string, unknown> = { retiredBy: "staff@distribute.you" }) =>
+    request(app).post(`/internal/catalogue/triggers/${TRIGGER.id}/retire`).set(KEY).send(b);
+
+  beforeEach(async () => {
+    mem.triggers = [{ ...TRIGGER }];
+    const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: PIPES, triggerId: TRIGGER.id, createdBy: "staff" });
+    expect(f.status).toBe(201);
+    expect(f.body.id).toBe(FUNNEL);
+  });
+
+  it("the trigger is refused while its funnel is declared; the funnel is refused while a campaign of any org runs it (stopped included)", async () => {
+    const headed = await retireTrigger();
+    expect(headed.status).toBe(409);
+    expect(headed.body.reason).toBe("trigger_heads_sales_funnel");
+    fleetRows.rows = [{ id: "unit-1", orgId: "org-x", status: "stopped", salesFunnelId: FUNNEL, runsOnTriggerId: TRIGGER.id }];
+    const used = await retireFunnel();
+    expect(used.status).toBe(409);
+    expect(used.body.reason).toBe("sales_funnel_in_use");
+    expect(used.body.error).toContain("unit-1 (stopped)");
+    expect(mem.paths.map((p) => p.combinationKey)).toContain(FUNNEL);
+    // A RUNNING campaign blocks even when staff lets stopped ones through.
+    fleetRows.rows = [{ id: "unit-9", orgId: "org-x", status: "ongoing", salesFunnelId: FUNNEL, runsOnTriggerId: TRIGGER.id }];
+    const running = await retireFunnel({ retiredBy: "staff@distribute.you", allowStoppedCampaigns: true });
+    expect(running.status).toBe(409);
+    expect(running.body.reason).toBe("sales_funnel_in_use");
+  });
+
+  it("a test whose stopped campaign already ran: allowStoppedCampaigns retires the funnel and the trigger, naming that campaign", async () => {
+    fleetRows.rows = [{ id: "unit-1", orgId: "org-x", status: "stopped", salesFunnelId: FUNNEL, runsOnTriggerId: TRIGGER.id }];
+    const f = await retireFunnel({ retiredBy: "staff@distribute.you", allowStoppedCampaigns: true });
+    expect(f.status).toBe(200);
+    expect(f.body.stoppedCampaigns).toEqual([{ campaignId: "unit-1", orgId: "org-x", status: "stopped" }]);
+    expect((await retireTrigger()).body.reason).toBe("trigger_in_use");
+    const t = await retireTrigger({ retiredBy: "staff@distribute.you", allowStoppedCampaigns: true });
+    expect(t.status).toBe(200);
+    expect(t.body.stoppedCampaigns).toHaveLength(1);
+    expect((await retireTrigger({ retiredBy: "s", allowStoppedCampaigns: "yes" })).body.reason).toBe("allow_stopped_campaigns_invalid");
+  });
+
+  it("an unreadable campaign list retires nothing (502)", async () => {
+    fleetCampaigns.fail = true;
+    const r = await retireFunnel();
+    expect(r.status).toBe(502);
+    expect(r.body.reason).toBe("campaigns_unreadable");
+    expect(mem.paths).toHaveLength(1);
+  });
+
+  it("retires the funnel, then the trigger: both gone from every catalogue read", async () => {
+    // A campaign on ANOTHER funnel never blocks.
+    fleetRows.rows = [{ id: "unit-2", orgId: "org-x", status: "ongoing", salesFunnelId: "start_to_signup@cold-whatsapp-outreach+signup_to_paid_client", runsOnTriggerId: null }];
+    const f = await retireFunnel();
+    expect(f.status).toBe(200);
+    expect(f.body).toMatchObject({ object: "sales_funnel", id: FUNNEL, retired: true, retiredBy: "staff@distribute.you", note: "test leftover", stillComposable: false });
+    expect((await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(FUNNEL)}`).set(KEY)).status).toBe(404);
+    expect((await retireFunnel()).status).toBe(404);
+
+    const t = await retireTrigger();
+    expect(t.status).toBe(200);
+    expect(t.body).toMatchObject({ object: "trigger", id: TRIGGER.id, name: TRIGGER.label, retired: true });
+    expect((await request(app).get(`/internal/catalogue/triggers/${TRIGGER.id}`).set(KEY)).status).toBe(404);
+    const listed = await request(app).get("/internal/catalogue/triggers").query({ includeInline: "true", q: "signup" }).set(KEY);
+    expect(listed.body.rows.map((r: { id: string }) => r.id)).not.toContain(TRIGGER.id);
+  });
+
+  it("never retires a trigger a campaign runs on, one stated in code, or one a pipe answers", async () => {
+    await retireFunnel();
+    fleetRows.rows = [{ id: "unit-3", orgId: "org-y", status: "stopped", salesFunnelId: null, runsOnTriggerId: TRIGGER.id }];
+    const used = await retireTrigger();
+    expect(used.status).toBe(409);
+    expect(used.body.reason).toBe("trigger_in_use");
+    fleetRows.rows = [];
+    mem.legs.push({ channelSlug: "cold-whatsapp-outreach", legKey: "signup_to_paid_client", fromStep: "signup", toStep: "paid_client", mode: "reactive", triggerId: TRIGGER.id, published: true, createdBy: "s", requestedByOrgId: null, createdAt: "", updatedAt: "" });
+    const onPipe = await retireTrigger();
+    expect(onPipe.status).toBe(409);
+    expect(onPipe.body.reason).toBe("trigger_on_pipe");
+    mem.legs = [];
+    mem.triggers = [{ ...TRIGGER, origin: "code" }];
+    const coded = await retireTrigger();
+    expect(coded.status).toBe(409);
+    expect(coded.body.reason).toBe("trigger_coded");
+    expect((await retireTrigger({})).body.reason).toBe("retiredBy_required");
+  });
+});
+
