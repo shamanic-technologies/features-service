@@ -21,7 +21,9 @@
  * ECONOMICS COHERENCE (owned formula). All value metrics derive from ONE set of realized numbers so they
  * cannot contradict each other:
  *   - breakevenCacUsd = ltrUsd = the brand's own lifetime revenue per customer (SalesEconomics.lifetimeRevenueUsd).
- *   - the revenue engine yields realized (billed) spend + expected pipeline; from its costEconomics:
+ *   - the revenue engine yields the brand's NET committed spend (what the client PAID: every channel, read as
+ *     `GET /brands/:brandId/revenue?pricing=net` reads it, SHOCKWAVE-ROI-NET-1016) + expected pipeline; from
+ *     its costEconomics:
  *       roiMultiple = pipeline / spend          (= LTR / CAC, by construction)
  *       cacPct      = spend / pipeline × 100     (= CAC / LTR × 100, by construction — pipeline = conversions × LTR)
  *   - currentCacUsd = (cacPct / 100) × ltrUsd     (the realized cost to acquire one paying customer)
@@ -52,12 +54,12 @@ import {
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
 import { fetchActiveAudiencePoolSoft, type AudiencePool } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
-import { getFunnel, type SalesEconomics } from "./funnel-registry.js";
+import type { SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import { SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
 import { primaryDeclaredFunnel } from "./brand-funnels.js";
 import type { Request } from "express";
-import { computeFeatureRevenue, type DownstreamHeaders } from "../routes/revenue.js";
+import { computeBrandRevenueForOrg } from "../routes/brand-economics.js";
 import { fetchFunnelPricedEconomics, type FunnelPricedEconomics } from "./offer-pricing.js";
 import {
   computeWorkflowProjection,
@@ -76,7 +78,7 @@ export type HealthBadge = "green" | "yellow" | "red";
 
 /** The economics slice of a row, computed from the revenue engine (priced economics only). */
 interface CurrentEconomics {
-  /** COMMITTED acquisition spend in USD — the single basis roiMultiple/cacPct/currentCacUsd ride. */
+  /** NET COMMITTED acquisition spend in USD (what the client paid, every channel) — the single basis roiMultiple/cacPct/currentCacUsd ride. */
   committedSpendUsd: number | null;
   /** Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration,
    * divided by nowhere. null when not computed (no priced economics). */
@@ -167,6 +169,22 @@ interface NotTrackedYet {
   budgetChangeHistory: BudgetChangeEntry[] | null;
   /** Pause on/off transition timeline (campaign-service, forward-only, oldest-first). Empty array = no flips yet; null = read failed/unconfigured. */
   pauseHistory: PauseTransition[] | null;
+}
+
+/**
+ * One read behind a row that FAILED, named on the row (SHOCKWAVE-ROI-NET-1016): a blank ROI must say why
+ * instead of reading as "no data" (the staff console then kept showing an older x0.8). Each part fails on
+ * its own: an email-gateway timeout in the best-workflow read no longer blanks the ROI beside it.
+ */
+export interface CustomerHealthUnreadPart {
+  part: "pricing" | "revenue" | "audiences" | "best_workflow";
+  reason: string;
+}
+
+const UNREAD_REASON_MAX_CHARS = 300;
+
+function unreadPart(part: CustomerHealthUnreadPart["part"], error: unknown): CustomerHealthUnreadPart {
+  return { part, reason: ((error as Error)?.message ?? String(error)).slice(0, UNREAD_REASON_MAX_CHARS) };
 }
 
 export interface CustomerHealthRow {
@@ -263,6 +281,9 @@ export interface CustomerHealthRow {
 
   // ── Known gaps (explicit null — do NOT fabricate) ────────────────────────────
   notTrackedYet: NotTrackedYet;
+  /** The reads behind this row that failed, each with its reason; `[]` when every read answered. A part
+   * named here has its fields null on the row (never a stale or substituted figure). */
+  unreadParts: CustomerHealthUnreadPart[];
 }
 
 export interface CustomerHealthStats {
@@ -291,7 +312,7 @@ export interface CustomerHealthBoard {
 }
 
 /** Economics returned by the revenue-engine dep. */
-interface BrandRevenueResult {
+export interface BrandRevenueResult {
   /** COMMITTED spend — the basis roiMultiple/cacPct below are computed on. */
   committedCostUsd: number;
   /** Billed-only spend. Reported, never divided by. */
@@ -313,8 +334,10 @@ export interface CustomerHealthDeps {
    * membership (`BrandOwnershipError`) throws. */
   pricedEconomics: (brandId: string, orgId: string) => Promise<FunnelPricedEconomics>;
   conversionCounts: (brandId: string) => Promise<ConversionCounts>;
-  /** Realized ROI/spend for one (org, brand) via the revenue engine. Called ONLY with priced economics. */
-  brandRevenue: (featureSlug: string, brandId: string, orgId: string, priced: FunnelPricedEconomics) => Promise<BrandRevenueResult>;
+  /** Realized ROI/spend for one (org, brand): the brand body `GET /brands/:brandId/revenue?pricing=net` serves
+   * (every channel, NET = what the client paid), so the board and the brand page state one ROI. Called ONLY
+   * with priced economics. */
+  brandRevenue: (brandId: string, orgId: string) => Promise<BrandRevenueResult>;
   /** Ranked audience evidence for one (org, brand, sales funnel). null when the feature is unknown (404). */
   audienceStats: (featureSlug: string, brandId: string, orgId: string, funnel: SalesFunnelKey) => Promise<AudienceStatsEnvelope | null>;
   /** Each ACTIVE audience's pool (size + still servable) for one (org, brand), from human-service. Fail-soft: null when unreadable. */
@@ -348,6 +371,22 @@ export function customerHealthAccountsAudit(
   return buildAccountsAudit(csv, now, accountsDeps, { orgReadsFailSoft: true, paymentHoldRetryDelayMs });
 }
 
+/**
+ * The board's ROI = the brand page's own body on the NET basis (SHOCKWAVE-ROI-NET-1016): what the client
+ * PAID, every channel, sourcing included. Before, the board priced ONE channel on GROSS spend
+ * (Shockwavecenters read 0.83x on $1,323 gross while it paid $684 and its brand page read 4.5x).
+ */
+export async function boardBrandRevenue(brandId: string, orgId: string): Promise<BrandRevenueResult> {
+  const body = await computeBrandRevenueForOrg(brandId, orgId, "net");
+  return {
+    committedCostUsd: body.costEconomics.committedCostUsd,
+    actualCostUsd: body.costEconomics.actualCostUsd,
+    expectedPipelineUsd: body.headline.totalPipelineUsd,
+    roiMultiple: body.costEconomics.roiMultiple,
+    cacPct: body.costEconomics.costOfAcquisitionPct,
+  };
+}
+
 const REAL_DEPS: CustomerHealthDeps = {
   featureMemberships: fetchFeatureMemberships,
   accountsAudit: (csv, now) => customerHealthAccountsAudit(csv, now),
@@ -361,19 +400,7 @@ const REAL_DEPS: CustomerHealthDeps = {
   budgetHistory: fetchBudgetChangeHistory,
   pauseHistory: fetchPauseHistory,
   orgPaidActivity: (orgId, csv, isAgency) => fetchOrgPaidActivity(orgId, csv, INCEPTION_ISO, isAgency),
-  brandRevenue: async (featureSlug, brandId, orgId, priced) => {
-    const funnel = getFunnel(featureSlug);
-    const headers: DownstreamHeaders = { orgId, featureSlug };
-    // The pricing already read for the row rides as the override, so the engine reads it once.
-    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, priced);
-    return {
-      committedCostUsd: body.costEconomics.committedCostUsd,
-      actualCostUsd: body.costEconomics.actualCostUsd,
-      expectedPipelineUsd: body.headline.totalPipelineUsd,
-      roiMultiple: body.costEconomics.roiMultiple,
-      cacPct: body.costEconomics.costOfAcquisitionPct,
-    };
-  },
+  brandRevenue: boardBrandRevenue,
   audienceStats: async (featureSlug, brandId, orgId, funnel) => {
     // computeAudienceStats reads its inputs off an Express Request; a synthetic org-only req (no user)
     // mirrors the cross-org public-revenue read pattern (service api-key + x-org-id, no faked user).
@@ -658,6 +685,7 @@ export async function buildCustomerHealthBoard(
     const audiencePoolP = deps.audiencePool(account.brandId, account.orgId);
     let workflowProjection: WorkflowProjectionResponse | null = null;
     let ownershipSkipped = false;
+    const unreadParts: CustomerHealthUnreadPart[] = [];
 
     try {
       // Light reads first: this (org, brand) pair's pricing (the funnels its campaigns walk + the offer's
@@ -677,16 +705,28 @@ export async function buildCustomerHealthBoard(
         // Audience rollup is funnel-independent (the evidence is); a placeholder funnel only sets the
         // sort metric, and best-audience is nulled when the brand declared none (see summarizeAudiences).
         const funnelForAudience: SalesFunnelKey = primaryFunnel ?? "sales_meetings_from_website";
-        const [audienceRes, revenueRes, workflowRes] = await Promise.all([
+        // Three INDEPENDENT reads: one failing nulls only its own fields and is named in `unreadParts`
+        // (an email-gateway timeout in the best-workflow read used to blank the ROI beside it).
+        const [audienceSettled, revenueSettled, workflowSettled] = await Promise.allSettled([
           deps.audienceStats(featureSlug, account.brandId, account.orgId, funnelForAudience),
           // Realized ROI only with priced economics (the offer's terms) — never an average.
-          economics ? deps.brandRevenue(featureSlug, account.brandId, account.orgId, priced) : Promise.resolve<BrandRevenueResult | null>(null),
+          economics ? deps.brandRevenue(account.brandId, account.orgId) : Promise.resolve<BrandRevenueResult | null>(null),
           // Best workflow needs a funnel the brand actually declared — it selects which outcome's cost is
           // being minimised, and the two meeting funnels do not have the same answer.
           primaryFunnel ? deps.workflowProjection(featureSlug, account.brandId, account.orgId, primaryFunnel) : Promise.resolve<WorkflowProjectionResponse | null>(null),
         ]);
-        audienceEnvelope = audienceRes;
-        workflowProjection = workflowRes;
+        const settledOrNamed = <T>(settled: PromiseSettledResult<T>, part: CustomerHealthUnreadPart["part"]): T | null => {
+          if (settled.status === "fulfilled") return settled.value;
+          if (settled.reason instanceof BrandOwnershipError) throw settled.reason;
+          console.error(
+            `[features-service] customer-health ${part} unread (org=${account.orgId} brand=${account.brandId}): ${(settled.reason as Error)?.message}`,
+          );
+          unreadParts.push(unreadPart(part, settled.reason));
+          return null;
+        };
+        audienceEnvelope = settledOrNamed(audienceSettled, "audiences");
+        const revenueRes = settledOrNamed(revenueSettled, "revenue");
+        workflowProjection = settledOrNamed(workflowSettled, "best_workflow");
 
         if (revenueRes && economics) {
           const ltr = economics.lifetimeRevenueUsd;
@@ -720,6 +760,7 @@ export async function buildCustomerHealthBoard(
         console.error(
           `[features-service] customer-health row degraded (org=${account.orgId} brand=${account.brandId}): ${(error as Error).message}`,
         );
+        unreadParts.push(unreadPart("pricing", error));
       }
     }
 
@@ -790,6 +831,7 @@ export async function buildCustomerHealthBoard(
         budgetChangeHistory,
         pauseHistory,
       },
+      unreadParts,
     };
   });
 

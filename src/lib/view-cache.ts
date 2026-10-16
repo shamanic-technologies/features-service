@@ -540,12 +540,17 @@ async function serveCell(
   // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the
   // declaration the body is priced on), the previous cell of the SAME org + view + every other key part
   // is served NOW and the new cell is computed behind the response. See `familyKeyOf`.
+  // Only a RECENT previous cell (computed within `factsGateMaxMs()`): it was priced on economics at most
+  // that old, the drift of a brand someone is reading. An older one was priced on terms that may be long
+  // gone, and serving it made two reads a minute apart disagree (SHOCKWAVE-ROI-NET-1016: a cell priced on
+  // leg rates brand-service deleted the day before read $360 per positive reply, the next read $112.50).
+  // That read computes live instead, like any miss.
   const familyKey = family;
   if (familyKey !== scopeKey) {
-    let prior: { bodyText: string | null; body: unknown } | undefined;
+    let prior: { bodyText: string | null; body: unknown; computedAt: Date } | undefined;
     try {
       [prior] = await db
-        .select(storedBodyColumns)
+        .select({ ...storedBodyColumns, computedAt: featureViewSnapshots.computedAt })
         .from(featureViewSnapshots)
         .where(
           and(
@@ -559,7 +564,7 @@ async function serveCell(
     } catch (err) {
       console.error(`[features-service] view-cache family read failed (computing live) view=${view}: ${(err as Error).message}`);
     }
-    if (prior) {
+    if (prior && Date.now() - new Date(prior.computedAt).getTime() <= factsGateMaxMs()) {
       void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
       });
