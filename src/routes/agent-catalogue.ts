@@ -77,7 +77,7 @@ import {
 } from "../lib/channel-declarations-store.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, parseLegInput, requestedByOrgIdOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
-import { allNamesByKey, salesPathNamesFor, SalesPathNamePoolExhaustedError } from "../lib/sales-path-names.js";
+import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf } from "../lib/outcome-vocabulary.js";
 import { triggerCallable } from "../lib/channel-triggers.js";
@@ -1532,6 +1532,36 @@ router.post("/internal/catalogue/pipes/:id/retire", apiKeyOnly, async (req, res)
     res.json({ object: "pipe", id: p.id, name, retired: true, retiredAt: done.retiredAt, retiredBy, note });
   } catch (err) {
     fail(res, err, "retire pipe");
+  }
+});
+
+/**
+ * FUNNEL-NAMES-1016 (owner 2026-10-16): every sales funnel still named with a word takes the name that says what it does
+ * (`lib/funnel-names.ts`); old words are retired. Dry run unless `apply: true`; the body's `firstKeys` (the funnel ids
+ * customers run, read from campaign-service by the caller) are named first. Answers every rename with the new name and
+ * the funnel's short description. Idempotent: a second run renames nothing.
+ */
+router.post("/internal/catalogue/sales-funnels/descriptive-names", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    if (body.apply !== undefined && typeof body.apply !== "boolean") throw bad("apply_invalid", "apply must be a boolean");
+    const firstKeys = body.firstKeys === undefined ? [] : body.firstKeys;
+    if (!Array.isArray(firstKeys) || firstKeys.some((k) => typeof k !== "string")) throw bad("first_keys_invalid", "firstKeys must be a list of funnel ids");
+    const { model, cat } = await loadModel();
+    const triggers = new Map(
+      cat.channels.flatMap((c) =>
+        c.stepTransitions.flatMap((t) => (t.triggerId ? [[`${c.slug}|${servedPipeLegKey(c.slug, t.legKey)}`, t.triggerId] as const, [`${c.slug}|${t.legKey}`, t.triggerId] as const] : [])),
+      ),
+    );
+    const triggerOf = (slug: string, legKey: string) => triggers.get(`${slug}|${legKey}`) ?? seedPipeTriggerOf(slug, legKey);
+    const plan = await renameFunnelsToDescriptiveNames({ apply: body.apply === true, firstKeys: firstKeys as string[], triggerOf });
+    const renames = plan.map((r) => {
+      const f = funnelById(model, r.combinationKey);
+      return { ...r, shortDescription: f ? funnelShortDescriptionOf(model, f).shortDescription : null };
+    });
+    res.json({ applied: body.apply === true, count: renames.length, renames });
+  } catch (err) {
+    fail(res, err, "rename sales funnels");
   }
 });
 
