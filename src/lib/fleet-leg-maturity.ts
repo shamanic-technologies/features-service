@@ -30,6 +30,62 @@ export interface DynastyLegEvidence {
   replies: number;
 }
 
+/** A per-slug cost group as runs-service states it (`groupBy=workflowSlug`). */
+export interface SlugCostGroup {
+  dimensions: Record<string, string | null>;
+  totalCostInUsdCents: string;
+  runCount?: number | null;
+}
+
+/**
+ * PURE. A leg's per-SLUG evidence rolled up to workflow DYNASTIES, keyed on each version's OWN
+ * `workflowDynastySlug` (workflow-service's field). Spend summed EXACTLY (no per-slug rounding).
+ *
+ * Every version counts, whatever its status: a dynasty whose every version is deprecated still spent and
+ * still earned on the leg, and states it on the same basis as every other dynasty (LEG-SPEND-MISSING-1016:
+ * the old roll-up seeded dynasties from ACTIVE versions only, so lithium's $2.2k and 21 positive replies on
+ * the conversation leg read 0). Which dynasty may RUN is the reader's question (`executableDynasties`),
+ * never a filter on the evidence.
+ *
+ * A dynasty is present when one of its versions has a cost group (runs-service emits a group only for runs
+ * holding a cost row); its outcomes are those of every one of its versions. A cost group whose slug no
+ * workflow states is returned in `unmapped` (the caller logs it): never silently dropped.
+ */
+export function rollUpLegEvidenceByDynasty(
+  workflows: ReadonlyArray<{ workflowSlug: string; workflowDynastySlug: string }>,
+  costGroups: readonly SlugCostGroup[],
+  emailStats: ReadonlyMap<string, Record<string, number>>,
+): { byDynasty: Map<string, DynastyLegEvidence>; unmapped: Array<{ workflowSlug: string; spentCents: number }> } {
+  const dynastyOf = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const byDynasty = new Map<string, DynastyLegEvidence>();
+  const unmapped: Array<{ workflowSlug: string; spentCents: number }> = [];
+  for (const g of costGroups) {
+    const slug = g.dimensions.workflowSlug;
+    if (!slug || slug === "__total__") continue;
+    const cents = Number(g.totalCostInUsdCents);
+    const dynasty = dynastyOf.get(slug);
+    if (!dynasty) {
+      unmapped.push({ workflowSlug: slug, spentCents: cents });
+      continue;
+    }
+    if (Number(g.runCount ?? 1) <= 0) continue;
+    const prev = byDynasty.get(dynasty) ?? { spentCents: 0, contacted: 0, clicks: 0, replies: 0 };
+    byDynasty.set(dynasty, { ...prev, spentCents: prev.spentCents + cents });
+  }
+  for (const [slug, o] of emailStats) {
+    const dynasty = dynastyOf.get(slug);
+    const prev = dynasty ? byDynasty.get(dynasty) : undefined;
+    if (!dynasty || !prev) continue;
+    byDynasty.set(dynasty, {
+      spentCents: prev.spentCents,
+      contacted: prev.contacted + (o.recipientsContacted ?? 0),
+      clicks: prev.clicks + (o.recipientsClicked ?? 0),
+      replies: prev.replies + (o.recipientsRepliesPositive ?? 0),
+    });
+  }
+  return { byDynasty, unmapped };
+}
+
 /** The figures of one dynasty on one version: the leg's own outcome is its counted signal. */
 export function legFiguresOf(legKey: string, ev: DynastyLegEvidence | undefined): OutcomeFigures {
   const signal = legMaturity(legKey).outcomeSignal;
