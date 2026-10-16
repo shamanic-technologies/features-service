@@ -82,8 +82,9 @@ const triggerOf = (r: TriggerRow): TriggerTypeRecord => ({
 
 // ── Reads ───────────────────────────────────────────────────────────────────────────────────────────
 
+/** Every trigger type still in the catalogue: a RETIRED one (CATALOGUE-RETIRE-1016) is out of every read. */
 export async function listTriggerTypes(): Promise<TriggerTypeRecord[]> {
-  const triggers = (await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder))).map(triggerOf);
+  const triggers = (await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder))).filter((r) => r.retiredAt == null).map(triggerOf);
   // Every reader composing words out of a condition instance reads its parameters from here (`lib/trigger-conditions.ts`).
   registerTriggerConditions(triggers);
   return triggers;
@@ -102,8 +103,9 @@ export async function listDeclaredLegs(): Promise<DeclaredLeg[]> {
     .map((l) => (l.triggerId === null ? l : { ...l, triggerId: canonicalTriggerId(l.triggerId) }));
 }
 
+/** Every declared sales funnel still in the catalogue: a RETIRED one (CATALOGUE-RETIRE-1016) is out of every read. */
 export async function listDeclaredSalesPaths(): Promise<DeclaredSalesPath[]> {
-  return (await db.select().from(declaredSalesPaths).orderBy(asc(declaredSalesPaths.createdAt))).map((r) => ({
+  return (await db.select().from(declaredSalesPaths).orderBy(asc(declaredSalesPaths.createdAt))).filter((r) => r.retiredAt == null).map((r) => ({
     combinationKey: r.combinationKey,
     legs: r.legs as DeclaredSalesPathLeg[],
     createdBy: r.createdBy,
@@ -224,30 +226,58 @@ export async function updateLeg(
   return legOf(row);
 }
 
+/** Declares a trigger type; the same id declared again after it was RETIRED revives its row with the new statement. */
 export async function insertTrigger(input: TriggerInput, createdBy: string, requestedByOrgId: string | null): Promise<TriggerTypeRecord> {
   const [{ next }] = await db
     .select({ next: sql<number>`coalesce(max(${channelTriggerTypes.displayOrder}) + 1, 0)::int` })
     .from(channelTriggerTypes);
+  const values = {
+    id: input.id,
+    label: input.label,
+    description: input.description,
+    icon: input.icon,
+    fromStep: input.fromStep,
+    firedBy: input.firedBy,
+    // A declared trigger never claims a detector; `isTriggerCoded` reads its KIND.
+    coded: false,
+    displayOrder: next,
+    origin: "declared",
+    kind: input.kind,
+    params: input.params,
+    createdBy,
+    requestedByOrgId,
+  };
   const [row] = await db
     .insert(channelTriggerTypes)
-    .values({
-      id: input.id,
-      label: input.label,
-      description: input.description,
-      icon: input.icon,
-      fromStep: input.fromStep,
-      firedBy: input.firedBy,
-      // A declared trigger never claims a detector; `isTriggerCoded` reads its KIND.
-      coded: false,
-      displayOrder: next,
-      origin: "declared",
-      kind: input.kind,
-      params: input.params,
-      createdBy,
-      requestedByOrgId,
+    .values(values)
+    .onConflictDoUpdate({
+      target: channelTriggerTypes.id,
+      set: { ...values, updatedAt: new Date(), retiredAt: null, retiredBy: null, retireNote: null },
+      setWhere: sql`${channelTriggerTypes.retiredAt} IS NOT NULL`,
     })
     .returning();
+  if (!row) throw new Error(`[features-service] trigger type ${input.id} exists and is not retired, yet the catalogue did not list it`);
   return triggerOf(row);
+}
+
+/** RETIRES a declared trigger type (CATALOGUE-RETIRE-1016): out of every catalogue read, the row kept. Null when no live declared row. */
+export async function retireTrigger(id: string, retiredBy: string, note: string | null): Promise<{ retiredAt: string } | null> {
+  const [row] = await db
+    .update(channelTriggerTypes)
+    .set({ retiredAt: new Date(), retiredBy, retireNote: note, updatedAt: new Date() })
+    .where(and(eq(channelTriggerTypes.id, id), eq(channelTriggerTypes.origin, "declared"), isNull(channelTriggerTypes.retiredAt)))
+    .returning();
+  return row?.retiredAt ? { retiredAt: row.retiredAt.toISOString() } : null;
+}
+
+/** RETIRES a declared sales funnel (CATALOGUE-RETIRE-1016): out of every catalogue read, the row kept. Null when no live row. */
+export async function retireSalesPath(combinationKey: string, retiredBy: string, note: string | null): Promise<{ retiredAt: string } | null> {
+  const [row] = await db
+    .update(declaredSalesPaths)
+    .set({ retiredAt: new Date(), retiredBy, retireNote: note })
+    .where(and(eq(declaredSalesPaths.combinationKey, combinationKey), isNull(declaredSalesPaths.retiredAt)))
+    .returning();
+  return row?.retiredAt ? { retiredAt: row.retiredAt.toISOString() } : null;
 }
 
 export async function updateTrigger(id: string, patch: TriggerPatch): Promise<TriggerTypeRecord> {
@@ -265,7 +295,18 @@ export async function insertSalesPath(
   createdBy: string,
   requestedByOrgId: string | null,
 ): Promise<DeclaredSalesPath> {
-  const [row] = await db.insert(declaredSalesPaths).values({ combinationKey, legs, createdBy, requestedByOrgId }).returning();
+  // The same funnel declared again after it was RETIRED revives its row.
+  const values = { combinationKey, legs, createdBy, requestedByOrgId };
+  const [row] = await db
+    .insert(declaredSalesPaths)
+    .values(values)
+    .onConflictDoUpdate({
+      target: declaredSalesPaths.combinationKey,
+      set: { ...values, createdAt: new Date(), retiredAt: null, retiredBy: null, retireNote: null },
+      setWhere: sql`${declaredSalesPaths.retiredAt} IS NOT NULL`,
+    })
+    .returning();
+  if (!row) throw new Error(`[features-service] declared sales path ${combinationKey} exists and is not retired, yet the catalogue did not list it`);
   return { combinationKey: row.combinationKey, legs: row.legs as DeclaredSalesPathLeg[], createdBy: row.createdBy, requestedByOrgId: row.requestedByOrgId, createdAt: row.createdAt.toISOString() };
 }
 

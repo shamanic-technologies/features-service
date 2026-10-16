@@ -74,3 +74,57 @@ export async function fetchFleetLegCampaignsFor(
     return [...byId.values()];
   });
 }
+
+// ── Which campaigns run a sales funnel or a trigger (CATALOGUE-RETIRE-1016) ──────────────────────────────────────────
+
+/** A campaign of any org, any status, named by what it is: what a catalogue retire refusal quotes. */
+export interface FleetCampaignRef {
+  campaignId: string;
+  orgId: string;
+  status: string | null;
+}
+
+const refOf = (raw: unknown): (FleetCampaignRef & { salesFunnelId: string | null; runsOnTriggerId: string | null }) | null => {
+  const c = raw as { id?: unknown; orgId?: unknown; status?: unknown; salesFunnelId?: unknown; runsOnTriggerId?: unknown };
+  if (typeof c.id !== "string" || typeof c.orgId !== "string") return null;
+  return {
+    campaignId: c.id,
+    orgId: c.orgId,
+    status: typeof c.status === "string" ? c.status : null,
+    salesFunnelId: typeof c.salesFunnelId === "string" ? c.salesFunnelId : null,
+    runsOnTriggerId: typeof c.runsOnTriggerId === "string" ? c.runsOnTriggerId : null,
+  };
+};
+const plainRef = ({ campaignId, orgId, status }: FleetCampaignRef): FleetCampaignRef => ({ campaignId, orgId, status });
+
+/** PURE: every campaign (unit) born on one of `funnelIds` (campaign-service's own `salesFunnelId`, verbatim), any status. */
+export function campaignsRunningFunnel(rows: unknown[], funnelIds: readonly string[]): FleetCampaignRef[] {
+  const ids = new Set(funnelIds);
+  return rows.flatMap((raw) => {
+    const c = refOf(raw);
+    return c && c.salesFunnelId !== null && ids.has(c.salesFunnelId) ? [plainRef(c)] : [];
+  });
+}
+
+/** PURE: every campaign that runs on `triggerId` (a unit stating it, or a unit of a funnel it heads), any status. */
+export function campaignsOnTrigger(rows: unknown[], triggerId: string): FleetCampaignRef[] {
+  const head = `trigger:${triggerId}+`;
+  return rows.flatMap((raw) => {
+    const c = refOf(raw);
+    return c && (c.runsOnTriggerId === triggerId || (c.salesFunnelId !== null && c.salesFunnelId.startsWith(head))) ? [plainRef(c)] : [];
+  });
+}
+
+/** Every campaign row of every org (`GET /campaigns/list`), verbatim. FAIL-LOUD: an unreadable list never reads as none. */
+export async function fetchFleetCampaignRows(): Promise<unknown[]> {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const response = await fetchWithRetry(`${url}/campaigns/list`, { headers: { "x-api-key": apiKey } });
+  if (!response.ok) {
+    throw new Error(`campaign-service /campaigns/list failed (${response.status}): ${await response.text()}`);
+  }
+  const data = (await response.json()) as { campaigns?: unknown };
+  if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
+  return data.campaigns;
+}

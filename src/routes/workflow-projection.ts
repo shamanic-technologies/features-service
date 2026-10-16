@@ -2863,8 +2863,12 @@ export function projectFromEvidence(input: {
     //     — and the dashboard's Strategy pick).
     //   • it states a COST FLOOR and nothing else: no paid-client cost, no return, no %CAC.
     //   • only ACTIVE dynasties are enumerated, so a deprecated or retired workflow stays unreachable.
-    //   • no active audience ⇒ nothing is serveable through ANY channel, so nothing is enumerated —
-    //     that is the brand fact `no_active_audiences` names, and it is unchanged.
+    //   • the BRAND-LEVEL row is emitted whether or not the brand works an audience (NO-WORKFLOW-NEW-BRAND-1016,
+    //     supersedes "no active audience ⇒ nothing enumerated"): a pipe on a trigger (a follow-up on a signup, a
+    //     website visit) reaches people no audience holds, and the workflow on a pipe is the FLEET's pick for that
+    //     pipe, never a brand's. Prod 2026-10-16: a staff test brand with no audience got `rows: []` on
+    //     `website_visit_to_signup@ai-follow-up-email`, so campaign-service refused the funnel `no_workflow` while
+    //     distribute.you (with audiences) got the same workflow. Audience rows still need an audience.
     //
     // A channel with no measured evidence whatsoever has no outreach price either, so its rows carry
     // the all-null resolved block: #805's answer, byte for byte.
@@ -2895,16 +2899,14 @@ export function projectFromEvidence(input: {
         },
       };
     };
-    if (audienceEvidence.length > 0) {
-      for (const dynastySlug of unprovenDynasties) {
-        const workflow = {
-          workflowDynastySlug: dynastySlug,
-          workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
-        };
-        rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, false) });
-        for (const ev of audienceEvidence) {
-          rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, true) });
-        }
+    for (const dynastySlug of unprovenDynasties) {
+      const workflow = {
+        workflowDynastySlug: dynastySlug,
+        workflowDynastyName: dynastyNameBySlug.get(dynastySlug) ?? null,
+      };
+      rows.push({ audienceId: null, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, false) });
+      for (const ev of audienceEvidence) {
+        rows.push({ audienceId: ev.audienceId, workflow, estimatesByGrain: {}, resolved: { ...unprovenResolved }, measured: false, ...unprovenMaturity(dynastySlug, true) });
       }
     }
 
