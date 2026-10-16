@@ -154,6 +154,13 @@ export interface EnginePerson {
    * counting anybody twice. The engine never reads it. Null / absent otherwise.
    */
   crmPositiveReplyAt?: string | null;
+  /**
+   * Which of the person's signals the row it is attributed to (`campaignId` / `workflowSlug`) EARNED: its
+   * campaign acted on the person, and the reply / click answered that contact (`lib/serving-row-credit.ts`).
+   * Stamped by `fetchScopePersons`; read ONLY by counts partitioned by workflow or campaign. The engine never
+   * reads it. Absent on a person built elsewhere.
+   */
+  servingRowCredit?: import("./serving-row-credit.js").ServingRowCredit;
   /** Which funnel signals fired for this person (e.g. { clicked: true, positiveReply: false }). */
   signals: Record<string, boolean>;
   /** ISO timestamp of each signal's first occurrence, when known (null otherwise). */

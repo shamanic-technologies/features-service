@@ -42,6 +42,8 @@ export const TIMELINE_LABEL_STEP_ALIASES: Readonly<Record<string, string>> = {
 
 export interface JourneyFact {
   label: string;
+  /** lead-service's fact source (`reply`, `outreach`, `crm`, ...); absent when the producer states none. */
+  source?: string;
   occurredAt: string | null;
   campaignId: string | null;
   /** Ours (true), not ours (false), nobody could tell (null). */
