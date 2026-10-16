@@ -48,7 +48,7 @@ export interface ChannelTriggerType {
    * How it fires (`lib/channel-declarations.ts` kinds). Absent = `event` (a service detects it on a lead and rings
    * campaign-service). `reported` = a CALLER reports each occurrence to campaign-service's trigger-events record route.
    */
-  kind?: "event" | "reported" | "github_issue_in_prod";
+  kind?: "event" | "reported" | "github_issue_in_prod" | "any_of";
 }
 
 /**
@@ -222,7 +222,55 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     coded: true,
     kind: "github_issue_in_prod",
   },
+  {
+    // ANY FACT ABOUT A PERSON (owner 2026-10-16, LEAD-EVENT-TRIGGER-1016: "je les veux tous, et c'est le channel followup
+    // qui jugera s'il faut écrire ou pas"): ONE trigger instead of one reactive campaign per fact. Whenever any member
+    // fires for a person (a positive reply, a visit, a signup, a computed condition...), campaign-service records ONE
+    // occurrence of this trigger for that person, keeping which member it was, and fires the campaigns starting on it.
+    // Who is worth acting on is the pipe's tactic/strategy, never this trigger. Its members are DATA served on every
+    // trigger list (`params.memberTriggerIds`, `withAnyOfMembers`): every fact trigger, so a fact declared later joins
+    // by itself. Computed from its members: never fired by an outside caller (`callable` false), still listed so a
+    // funnel can be headed by it.
+    id: "lead_event",
+    label: "Lead event",
+    description: "Anything happens with a person: a reply, a visit, a signup, a meeting, a payment.",
+    icon: "pulse",
+    fromStep: null,
+    firedBy: "campaign-service",
+    coded: true,
+    kind: "any_of",
+  },
 ];
+
+/**
+ * NOT A FACT ABOUT A PERSON (owner 2026-10-16, LEAD-EVENT-TRIGGER-1016): the triggers an `any_of` trigger never takes as
+ * members. Our OWN actions (`lead_found`: we found them; `email_sent`: we wrote; `email_pushed_via_api`: a client asked
+ * us to write) and our internal requests (`follow_up_due`, `github_issue_in_prod`; the inline `on_demand` /
+ * `lead_requested` are out by `isEntryDoor`). Closed: a fact trigger declared later is a member with no code.
+ */
+export const NOT_A_LEAD_FACT_TRIGGER_IDS: ReadonlySet<string> = new Set([
+  "lead_found",
+  "email_sent",
+  "email_pushed_via_api",
+  "follow_up_due",
+  "follow_up_date_reached",
+  "github_issue_in_prod",
+]);
+
+/** PURE: the members of an `any_of` trigger among `triggers`: every canonical entry door that is a fact about a person
+ *  (not in `NOT_A_LEAD_FACT_TRIGGER_IDS`, never another `any_of`), in the list's order. */
+export function anyOfMemberIds(triggers: ReadonlyArray<{ id: string; kind?: string | null }>): string[] {
+  return triggers
+    .filter((t) => (t.kind ?? "event") !== "any_of" && canonicalTriggerId(t.id) === t.id && isEntryDoor(t) && !NOT_A_LEAD_FACT_TRIGGER_IDS.has(t.id))
+    .map((t) => t.id);
+}
+
+/** PURE: `triggers` with every `any_of` trigger's `params` = `{memberTriggerIds}` (`anyOfMemberIds`), what
+ *  campaign-service reads to record one occurrence of it per member occurrence. Every other row unchanged. */
+export function withAnyOfMembers<T extends { id: string; kind?: string | null; params?: Record<string, unknown> | null }>(triggers: readonly T[]): T[] {
+  const members = anyOfMemberIds(triggers);
+  return triggers.map((t) => (t.kind === "any_of" ? { ...t, params: { memberTriggerIds: members } } : t));
+}
 
 /**
  * ONE TRIGGER PER FACT (owner 2026-10-16, STD-VOCAB-CONDITION-1016): a trigger id MERGED into another. Keys are frozen
