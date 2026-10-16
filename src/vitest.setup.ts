@@ -147,3 +147,12 @@ vi.mock("./lib/disqualification-marks.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/disqualification-marks.js")>()),
   fetchDisqualifiedLeadIds: vi.fn(async () => new Set<string>()),
 }));
+
+/**
+ * Suite-wide default: lead-service's "is a lead? wants business?" tags (lib/relationship-intent.ts,
+ * HOT-INBOUND-UNANSWERED-1016). Nobody wrote to the brand here, so families are the pipeline's alone.
+ */
+vi.mock("./lib/relationship-intent.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/relationship-intent.js")>()),
+  fetchBrandIntent: vi.fn(async () => []),
+}));

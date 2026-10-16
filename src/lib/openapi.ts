@@ -2077,20 +2077,39 @@ const brandLeadFamiliesResponseRef = registry.register(
   z.object({
     brandId: z.string(),
     outcomeCauses: z.object({ priced: z.array(z.string()) }),
-    counts: leadFamilyCountsSchema.describe("People per family over the whole brand (a person counted once, in its strongest family)."),
-    lostBreakdown: z.object({
-      wentCold: z.number().int().describe("Lost because they went cold on interest we caused (= Today's Lost leads, coldLeads.count)."),
-      ruledOut: z.number().int().describe("Lost because a human ruled them out and nothing priced is left."),
+    counts: leadFamilyCountsSchema.describe("People per family over the whole brand (a person counted once, in its strongest family). hot = hotBreakdown.pipeline + hotBreakdown.wantsBusiness."),
+    hotBreakdown: z.object({
+      pipeline: z.number().int().describe("Hot on our outreach pipeline's verdict (= Today's Hot leads over the brand's offers)."),
+      wantsBusiness: z.number().int().describe("Hot because lead-service tags them lead yes AND wants business yes, any channel (inbound email, WhatsApp, signup, form, Copilot, API), last word within intent.freshDays, and our pipeline did not already have them Hot or Won. Includes people who are none of our outreach leads (leadId null)."),
     }),
-    offers: z.array(z.object({ offerId: z.string(), counts: leadFamilyCountsSchema })).describe("Per offer, before the union: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."),
+    lostBreakdown: z.object({
+      wentCold: z.number().int().describe("Lost because they went cold on interest we caused (Today's Lost leads, coldLeads.count, minus anyone now Hot on the tags)."),
+      ruledOut: z.number().int().describe("Lost because a human ruled them out and nothing priced is left (minus anyone now Hot on the tags)."),
+    }),
+    pipelineCounts: leadFamilyCountsSchema.describe("The outreach pipeline's families alone, before lead-service's tags (what Today's Hot / Lost leads count over the brand's offers)."),
+    intent: z.object({
+      writers: z.number().int().describe("People who wrote to the brand (lead-service relationships/intent)."),
+      leadsWantingBusiness: z.number().int().describe("Among them, tagged lead yes AND wants business yes."),
+      silentTooLong: z.number().int().describe("Of those, last word to us older than freshDays: not made Hot."),
+      alreadyWon: z.number().int(),
+      alreadyHot: z.number().int(),
+      promotedFromLost: z.number().int().describe("Lost on the pipeline, Hot now: they wrote wanting business."),
+      promotedFromCold: z.number().int().describe("Cold on the pipeline, Hot now."),
+      addedInbound: z.number().int().describe("None of our outreach leads (inbound only), Hot now."),
+      addedWithoutEmail: z.number().int().describe("Of the added people, those with no email address (listed with email null, not matchable by email)."),
+      freshDays: z.number().int().describe("How recent their last word must be for a wants-business yes to make them Hot."),
+    }).describe("How lead-service's two tags (is a lead? wants business?) moved the families (HOT-INBOUND-UNANSWERED-1016)."),
+    offers: z.array(z.object({ offerId: z.string(), counts: leadFamilyCountsSchema })).describe("Per offer, before the union and before the tags: won = that offer's customersWon.leadCount, hot = hotLeads.totalCount, lost = coldLeads.count + ruled out."),
     people: z.array(z.object({
-      leadId: z.string(),
-      email: z.string().nullable().describe("Trimmed, lower-cased. Null when lead-service states none."),
-      campaignLeadIds: z.array(z.string()).describe("The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer."),
+      leadId: z.string().nullable().describe("lead-service's lead; null for a person who is none of our outreach leads (Hot on the tags, see humanId)."),
+      email: z.string().nullable().describe("Trimmed, lower-cased. Null when no address is known. A tagged person holding several addresses gets one row per address."),
+      campaignLeadIds: z.array(z.string()).describe("The person's leads_campaigns row ids (the id lead-service's step-statement write takes), across every offer. Empty on a tags-only row."),
       family: leadFamilyEnum,
       lostReason: z.enum(["went_cold", "ruled_out"]).nullable(),
-      offerId: z.string().describe("The offer whose verdict gave the family."),
-    })).describe("Every person with a family, won > hot > lost > cold, then lead id. A person with no family (engaged or gone cold on another cause) is absent. Unpaged."),
+      offerId: z.string().nullable().describe("The offer whose verdict gave the family; null on a tags-only row."),
+      hotBasis: z.enum(["pipeline", "wants_business"]).nullable().describe("How a Hot row is Hot; null when not Hot."),
+      humanId: z.string().nullable().describe("lead-service's person, on a row its tags made Hot; null otherwise."),
+    })).describe("Every person with a family, won > hot > lost > cold, then lead id (human id on tags-only rows). A person with no family (engaged or gone cold on another cause) is absent. Unpaged."),
   }),
 );
 
@@ -2099,7 +2118,7 @@ registry.registerPath({
   path: "/brands/{brandId}/lead-families",
   summary: "Every person of a brand's offers in its family: won client, hot lead, lost lead, cold lead",
   description:
-    "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. " +
+    "The Unibox filters. Each family is the offer outcomes pipeline's own verdict (GET /offers/{offerId}/outcomes), off the same inputs: won = a paying client on the priced causes; hot = a hot lead (all of them, not only the listed top) OR anyone lead-service tags lead yes AND wants business yes, any channel, whose last word is recent (HOT-INBOUND-UNANSWERED-1016); lost = interested thanks to us then went cold, or engaged and ruled out by a human (now $0); cold = contacted by us, never engaged. " +
     "Unioned across the brand's offers, the strongest family wins (won > hot > lost > cold). Additive read.",
   tags: ["Stats"],
   request: {

@@ -29,12 +29,19 @@ import {
   type LeadFamilyRow,
 } from "../lib/offer-pipeline-explained.js";
 import { catalogueEntry, readOfferPersons } from "./offer-outcomes.js";
+import { fetchBrandIntent, foldIntentIntoFamilies, type IntentFoldSummary } from "../lib/relationship-intent.js";
 
 const router = Router();
 
-export interface BrandLeadFamilyRow extends LeadFamilyRow {
-  /** The offer whose verdict gave the family (the strongest, offer id ascending on a tie). */
-  offerId: string;
+export interface BrandLeadFamilyRow extends Omit<LeadFamilyRow, "leadId"> {
+  /** lead-service's lead; null on a person who is none of our outreach leads (Hot from lead-service's tags). */
+  leadId: string | null;
+  /** The offer whose verdict gave the family (the strongest, offer id ascending on a tie); null when the tags did. */
+  offerId: string | null;
+  /** How a Hot row is Hot: the outreach pipeline's verdict, or lead-service's tags (lead + wants business). */
+  hotBasis: "pipeline" | "wants_business" | null;
+  /** lead-service's person on a row its tags made Hot; null otherwise. */
+  humanId: string | null;
 }
 
 const FAMILIES: readonly LeadFamily[] = ["won", "hot", "lost", "cold"];
@@ -73,8 +80,9 @@ export function leadFamiliesScopeKey(
     ),
     econ: hashKeyPart(offers.map((o) => `${o.offerId}>${pricedFingerprint(priceOnDeclaredFunnel(o.declared))}`).join(";")),
     cause,
-    // A lead lead-service marks Disqualified is priced at 0 and lands in `lost` (owner 2026-10-13).
-    m: "disq-mark-1",
+    // A lead lead-service marks Disqualified is priced at 0 and lands in `lost` (owner 2026-10-13);
+    // a person lead-service tags lead + wants business is Hot, any channel (HOT-INBOUND-UNANSWERED-1016).
+    m: "disq-mark-1+intent-hot-1",
   });
 }
 
@@ -85,30 +93,59 @@ export function unionBrandFamilies(perOffer: ReadonlyArray<{ offerId: string; fa
     for (const row of families) {
       const current = byLead.get(row.leadId);
       if (!current) {
-        byLead.set(row.leadId, { ...row, campaignLeadIds: [...row.campaignLeadIds], offerId });
+        byLead.set(row.leadId, { ...row, campaignLeadIds: [...row.campaignLeadIds], offerId, hotBasis: null, humanId: null });
         continue;
       }
       const ids = [...new Set([...current.campaignLeadIds, ...row.campaignLeadIds])];
       if (LEAD_FAMILY_RANK[row.family] < LEAD_FAMILY_RANK[current.family]) {
-        byLead.set(row.leadId, { ...row, email: row.email ?? current.email, campaignLeadIds: ids, offerId });
+        byLead.set(row.leadId, { ...row, email: row.email ?? current.email, campaignLeadIds: ids, offerId, hotBasis: null, humanId: null });
       } else {
         current.campaignLeadIds = ids;
         current.email = current.email ?? row.email;
       }
     }
   }
-  const people = [...byLead.values()].sort(
-    (a, b) => LEAD_FAMILY_RANK[a.family] - LEAD_FAMILY_RANK[b.family] || (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0),
+  return summarizeFamilies([...byLead.values()]);
+}
+
+/** PURE: sort rows strongest first and count PEOPLE (one lead, or one tagged person over all their addresses). */
+export function summarizeFamilies(rows: BrandLeadFamilyRow[]) {
+  const keyOf = (p: BrandLeadFamilyRow) => p.leadId ?? `human:${p.humanId}`;
+  const people = rows.sort(
+    (a, b) => LEAD_FAMILY_RANK[a.family] - LEAD_FAMILY_RANK[b.family] || (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0),
   );
-  const counts = Object.fromEntries(FAMILIES.map((f) => [f, people.filter((p) => p.family === f).length])) as Record<LeadFamily, number>;
+  const countOf = (pred: (p: BrandLeadFamilyRow) => boolean) => new Set(people.filter(pred).map(keyOf)).size;
+  const counts = Object.fromEntries(FAMILIES.map((f) => [f, countOf((p) => p.family === f)])) as Record<LeadFamily, number>;
   return {
     counts,
+    hotBreakdown: {
+      pipeline: countOf((p) => p.family === "hot" && p.hotBasis !== "wants_business"),
+      wantsBusiness: countOf((p) => p.family === "hot" && p.hotBasis === "wants_business"),
+    },
     lostBreakdown: {
-      wentCold: people.filter((p) => p.lostReason === "went_cold").length,
-      ruledOut: people.filter((p) => p.lostReason === "ruled_out").length,
+      wentCold: countOf((p) => p.lostReason === "went_cold"),
+      ruledOut: countOf((p) => p.lostReason === "ruled_out"),
     },
     people,
   };
+}
+
+/**
+ * PURE: the outreach pipeline's families + lead-service's tags (HOT-INBOUND-UNANSWERED-1016): whoever is
+ * tagged lead yes AND wants business yes, any channel, last word within the fresh window, is Hot.
+ */
+export function withIntentHot(pipelineRows: readonly BrandLeadFamilyRow[], intent: Parameters<typeof foldIntentIntoFamilies>[1], now: Date) {
+  const folded = foldIntentIntoFamilies<BrandLeadFamilyRow>(pipelineRows, intent, now, (p, email) => ({
+    leadId: null,
+    email,
+    campaignLeadIds: [],
+    family: "hot",
+    lostReason: null,
+    offerId: null,
+    hotBasis: "wants_business",
+    humanId: p.humanId,
+  }));
+  return { ...summarizeFamilies(folded.rows), intent: folded.summary as IntentFoldSummary };
 }
 
 router.get("/brands/:brandId/lead-families", apiKeyAuth, async (rawReq, res) => {
@@ -172,12 +209,17 @@ router.get("/brands/:brandId/lead-families", apiKeyAuth, async (rawReq, res) => 
           });
           perOffer.push({ offerId: o.offerId, families, counts: unionBrandFamilies([{ offerId: o.offerId, families }]).counts });
         }
-        const union = unionBrandFamilies(perOffer);
+        const pipeline = unionBrandFamilies(perOffer);
+        const intent = await fetchBrandIntent(brandId, headers);
+        const union = withIntentHot(pipeline.people, intent, new Date());
         return {
           brandId,
           outcomeCauses: { priced: [...causes] },
           counts: union.counts,
+          hotBreakdown: union.hotBreakdown,
           lostBreakdown: union.lostBreakdown,
+          pipelineCounts: pipeline.counts,
+          intent: union.intent,
           offers: perOffer.map((o) => ({ offerId: o.offerId, counts: o.counts })),
           people: union.people,
         };
