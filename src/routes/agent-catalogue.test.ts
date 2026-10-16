@@ -610,6 +610,44 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(ok.body).toMatchObject({ runnable: true });
   });
 
+  it("runnableOnly (a customer write, 2026-10-16): a customer creates no pipe and no outcome (403 staff_only); staff unchanged", async () => {
+    const pipe = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "your-team-closing-calls", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", runnableOnly: true, createdBy: "client@acme.com" });
+    expect(pipe.status).toBe(403);
+    expect(pipe.body.reason).toBe("staff_only");
+    expect(pipe.body.error).toContain("feature request");
+    const step = await request(app)
+      .post("/internal/catalogue/steps")
+      .set(KEY)
+      .send({ key: "demo_watched", label: "Demo watched", icon: "play", description: "d", shortDescription: "d", towardStep: "paid_client", towardRatePct: 10, runnableOnly: true, createdBy: "client@acme.com" });
+    expect(step.status).toBe(403);
+    expect(step.body.reason).toBe("staff_only");
+    expect((await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "x", runnableOnly: "yes", createdBy: "x" })).body.reason).toBe("runnable_only_invalid");
+    // Staff (runnableOnly absent or false) still creates the pipe.
+    const staff = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "your-team-closing-calls", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", runnableOnly: false, createdBy: "copilot" });
+    expect(staff.status).toBe(201);
+  });
+
+  it("runnableOnly on a sales path (a customer write, 2026-10-16): every leg needs a pipe we run; a runnable path is created", async () => {
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "organic-linkedin-publishing", fromStep: null, toStep: "linkedin_post", mode: "proactive", createdBy: "agent" });
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "organic-linkedin-publishing", fromStep: "linkedin_post", toStep: "conversation", mode: "proactive", createdBy: "agent" });
+    const paths = await request(app).get("/internal/catalogue/sales-paths").query({ containsSteps: "LinkedIn post", limit: 10 }).set(KEY);
+    const idle = (paths.body.rows[0].id as string).split("+");
+    const refused = await request(app).post("/internal/catalogue/sales-paths").set(KEY).send({ legKeys: idle, runnableOnly: true, createdBy: "client@acme.com" });
+    expect(refused.status).toBe(400);
+    expect(refused.body.reason).toBe("leg_not_runnable");
+    expect(refused.body.error).toContain("start_to_linkedin_post");
+
+    await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "your-team-closing-calls", fromStep: "lead_found", toStep: "paid_client", mode: "proactive", createdBy: "copilot" });
+    const ok = await request(app).post("/internal/catalogue/sales-paths").set(KEY).send({ legKeys: ["start_to_lead_found", "lead_found_to_paid_client"], runnableOnly: true, createdBy: "client@acme.com" });
+    expect([200, 201]).toContain(ok.status);
+  });
+
   it("a platform pipe with an ACTIVE workflow runs; without one it does not (owner 2026-10-12: facts, never a staff click)", async () => {
     const listed = await request(app).get("/internal/catalogue/pipes").query({ channels: "organic-linkedin-publishing" }).set(KEY);
     const id = listed.body.rows[0].id as string;
@@ -755,8 +793,10 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
   it("lists every trigger in catalogue order, lightning glyph, unique name, with the count of reactive pipes it starts", async () => {
     const r = await request(app).get("/internal/catalogue/triggers").query({ limit: 25 }).set(KEY);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ object: "trigger", order: "catalogue", total: CHANNEL_TRIGGER_TYPES.length });
-    expect(r.body.rows.map((x: { id: string }) => x.id)).toEqual(CHANNEL_TRIGGER_TYPES.slice(0, 25).map((t) => t.id));
+    // Entry doors only (2026-10-16): the inline triggers (our services asking each other) are never listed.
+    const doors = CHANNEL_TRIGGER_TYPES.filter((t) => t.inline !== true);
+    expect(r.body).toMatchObject({ object: "trigger", order: "catalogue", total: doors.length });
+    expect(r.body.rows.map((x: { id: string }) => x.id)).toEqual(doors.slice(0, 25).map((t) => t.id));
     const names = r.body.rows.map((x: { name: string }) => x.name);
     expect(new Set(names).size).toBe(names.length);
     const reply = r.body.rows.find((x: { id: string }) => x.id === "positive_reply_received");
@@ -766,8 +806,26 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     // Owner 2026-10-15: an outcome trigger reports its outcome, is callable and carries the outcome's value.
     expect(reply).toMatchObject({ type: "outcome", outcomeKey: "conversation", callable: true });
     expect(reply.valueUsd).toBeTypeOf("number");
-    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: false });
+    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: true });
     expect(r.body.rows.find((x: { id: string }) => x.id === "github_issue_in_prod")).toMatchObject({ type: "condition", outcomeKey: null, callable: false, valueUsd: null });
+  });
+
+  it("lists ENTRY DOORS only: on_demand / lead_requested leave the list, stay readable by id and with includeInline=true (2026-10-16)", async () => {
+    const ids = async (query: Record<string, string>) =>
+      (await request(app).get("/internal/catalogue/triggers").query({ limit: 25, ...query }).set(KEY)).body.rows.map((x: { id: string }) => x.id);
+    for (const q of [{}, { includeInline: "false" }, { q: "demand" }, { q: "requested" }] as Array<Record<string, string>>) {
+      const listed = await ids(q);
+      expect(listed, JSON.stringify(q)).not.toContain("on_demand");
+      expect(listed, JSON.stringify(q)).not.toContain("lead_requested");
+    }
+    expect(await ids({ includeInline: "true" })).toEqual(expect.arrayContaining(["on_demand", "lead_requested", "positive_reply_received"]));
+    // Read by id: our services (workflow-service names a fact by its trigger) and every pipe naming it keep working.
+    const one = await request(app).get("/internal/catalogue/triggers/on_demand").set(KEY);
+    expect(one.status).toBe(200);
+    expect(one.body).toMatchObject({ id: "on_demand", callable: false });
+    const bad = await request(app).get("/internal/catalogue/triggers").query({ includeInline: "yes" }).set(KEY);
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("include_inline_unrecognised");
   });
 
   it("searches and pages", async () => {

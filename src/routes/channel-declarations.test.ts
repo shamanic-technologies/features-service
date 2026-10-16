@@ -178,10 +178,16 @@ describe("/internal/declarations: a staff caller declares a channel, a reactive 
 
   it("refuses a leg on a trigger nothing fires; a declared delay trigger is fired, malformed params refused", async () => {
     await request(app).post("/internal/declarations/channels").set(KEY).send(channelBody).expect(201);
+    // A declared event: nothing fires it (every outcome trigger in code is fired since STD-VOCAB-1016).
+    await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "webinar_joined", label: "Webinar joined", description: "A person joined a webinar.", icon: "video-camera", kind: "event", createdBy: "kevin@distribute.you" })
+      .expect(201);
     const res = await request(app)
       .post(`/internal/declarations/channels/${SLUG}/legs`)
       .set(KEY)
-      .send({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "meeting_booked", createdBy: "kevin@distribute.you" });
+      .send({ fromStep: "meeting_booked", toStep: "meeting_attended", mode: "reactive", triggerId: "webinar_joined", createdBy: "kevin@distribute.you" });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe("trigger_not_fired");
     expect(mem.legs).toHaveLength(0);
@@ -305,8 +311,55 @@ describe("/public/channels serves the outcome and trigger catalogues (owner 2026
     expect(byId.get("positive_reply_received")).toMatchObject({ label: "Positive reply", type: "outcome", outcomeKey: "conversation", callable: true });
     expect(byId.get("lead_found")).toMatchObject({ label: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true });
     expect(byId.get("signup_not_paid_24_hours")).toMatchObject({ type: "condition", outcomeKey: null, callable: false });
-    expect(byId.get("lead_requested")).toMatchObject({ type: "condition", callable: false });
-    expect(byId.get("on_demand")).toMatchObject({ type: "condition", callable: false });
+    // Entry doors only (2026-10-16): the inline triggers are our services asking each other, never offered.
+    expect(byId.has("lead_requested")).toBe(false);
+    expect(byId.has("on_demand")).toBe(false);
     expect(byId.get("follow_up_due")).toMatchObject({ type: "condition", callable: true });
+    // Our own services (campaign-service's door validates every declared trigger) ask for them all, from the same cache.
+    const all = await request(app).get("/public/channels").query({ includeInline: "true" });
+    const allById = new Map((all.body.triggers as Array<{ id: string }>).map((t) => [t.id, t]));
+    expect(allById.get("lead_requested")).toMatchObject({ type: "condition", callable: false });
+    expect(allById.get("on_demand")).toMatchObject({ type: "condition", callable: false });
+    expect((all.body.triggers as Array<{ id: string }>).filter((t) => t.id !== "on_demand" && t.id !== "lead_requested")).toEqual(res.body.triggers);
+    // A channel leg naming on_demand is served unchanged (the pipe keeps working).
+    expect(all.body.channels).toEqual(res.body.channels);
+    const bad = await request(app).get("/public/channels").query({ includeInline: "1" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("include_inline_unrecognised");
+  });
+
+  it("/internal/declarations/trigger-types lists entry doors only; by id and includeInline=true still answer the inline ones", async () => {
+    const { CHANNEL_TRIGGER_TYPES } = await import("../lib/channel-triggers.js");
+    mem.triggers.push(...CHANNEL_TRIGGER_TYPES.map((t, i) => ({ ...t, origin: "code", kind: t.kind ?? "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null })));
+    const ids = (r: { body: { triggerTypes: Array<{ id: string }> } }) => r.body.triggerTypes.map((t) => t.id);
+    const listed = await request(app).get("/internal/declarations/trigger-types").set(KEY);
+    expect(listed.status).toBe(200);
+    expect(ids(listed)).not.toContain("on_demand");
+    expect(ids(listed)).not.toContain("lead_requested");
+    expect(ids(listed)).toContain("positive_reply_received");
+    expect(ids(await request(app).get("/internal/declarations/trigger-types").query({ includeInline: "true" }).set(KEY))).toEqual(expect.arrayContaining(["on_demand", "lead_requested"]));
+    expect((await request(app).get("/internal/declarations/trigger-types/on_demand").set(KEY)).status).toBe(200);
+  });
+});
+
+describe("a customer write (runnableOnly, 2026-10-16) declares no channel, pipe or trigger", () => {
+  it("403 staff_only on channel, leg and trigger declarations; nothing stored", async () => {
+    const ch = await request(app).post("/internal/declarations/channels").set(KEY).send({ ...channelBody, runnableOnly: true });
+    expect(ch.status).toBe(403);
+    expect(ch.body.reason).toBe("staff_only");
+    expect(mem.channels).toHaveLength(0);
+    const tr = await request(app)
+      .post("/internal/declarations/trigger-types")
+      .set(KEY)
+      .send({ id: "no_reply_after_9_days", label: "No reply in 9 days", description: "x", icon: "clock", kind: "delay", params: { afterStep: "lead_found", days: 9 }, runnableOnly: true, createdBy: "client@acme.com" });
+    expect(tr.status).toBe(403);
+    expect(tr.body.reason).toBe("staff_only");
+    expect(tr.body.error).toContain("feature request");
+    const leg = await request(app)
+      .post(`/internal/declarations/channels/${SLUG}/legs`)
+      .set(KEY)
+      .send({ fromStep: null, toStep: "conversation", mode: "proactive", runnableOnly: true, createdBy: "client@acme.com" });
+    expect(leg.status).toBe(403);
+    expect(mem.legs).toHaveLength(0);
   });
 });
