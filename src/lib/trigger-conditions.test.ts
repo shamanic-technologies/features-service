@@ -51,6 +51,16 @@ describe("one generic condition trigger, many instances (STD-VOCAB-CONDITION-101
   });
 });
 
+describe("a funnel HEADED by a condition instance (trigger:<instance>+...)", () => {
+  it("is named after the people of its condition, not its first pipe's trigger", () => {
+    registerTriggerConditions([...PROD_CONDITIONS, { id: "signup_not_paid_5_min", kind: "delay", params: { minutes: 5, afterStep: "signup", unlessStep: "paid_client" } }]);
+    expect(funnelNameCandidates("trigger:signup_not_paid_5_min+signup_to_paid_client@ai-follow-up-email", () => "follow_up_due")[0]).toBe("Signup Follow-up");
+    // A head that is not a condition instance names as before.
+    expect(funnelNameCandidates("trigger:lead_found+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client", () => null))
+      .toEqual(funnelNameCandidates("trigger:lead_found+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client"));
+  });
+});
+
 describe("one trigger per fact: follow_up_date_reached is merged into follow_up_due", () => {
   it("resolves the merged id and publishes the table", () => {
     expect(canonicalTriggerId("follow_up_date_reached")).toBe("follow_up_due");
