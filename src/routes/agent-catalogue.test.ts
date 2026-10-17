@@ -143,6 +143,12 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       mem.steps.push(row);
       return row;
     },
+    updateStepLifecycleRung: async (key: string, lifecycleRung: string) => {
+      const row = mem.steps.find((st: { key: string }) => st.key === key);
+      if (!row) return null;
+      row.lifecycleRung = lifecycleRung;
+      return row;
+    },
     insertSalesPathChain: async (pathId: string, legKeys: string[], createdBy: string) => {
       const row = { pathId, legKeys, createdBy, requestedByOrgId: null, createdAt: "" };
       mem.chains.push(row);
@@ -170,6 +176,7 @@ const expectComposedFunnelName = (id: string, name: string) => expect(isComposed
 const { PIPE_BIRD_WORDS, PATH_RIVER_WORDS } = await import("../lib/catalogue-names.js");
 
 const { CHANNEL_TRIGGER_TYPES } = await import("../lib/channel-triggers.js");
+const { CHANNEL_STEP_KEYS } = await import("../lib/acquisition-channels.js");
 const KEY = { "x-api-key": "test-key" };
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
 const MEET = "ai-meeting-booking|conversation_to_meeting_booked";
@@ -473,7 +480,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(pub.body.object).toBe("step");
     const internal = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
     expect(internal.body.truncated).toBe(false);
-    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon }]));
+    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank }]));
     expect(pub.body.total).toBe(staff.size);
     expect(pub.body.rows).toHaveLength(staff.size);
     for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
@@ -821,6 +828,56 @@ describe("agent catalogue creates (data, never a PR)", () => {
     const step = (await request(app).get("/internal/catalogue/steps/email_found").set(KEY)).body;
     expect(step).toMatchObject({ producedBy: "apollo-service POST /people/match", declared: true });
     expect(step.valueUsd).toBeCloseTo(0.9 * 1.5, 5);
+  });
+});
+
+describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
+  const rungs = (rows: Array<{ key?: string; id?: string; lifecycleRung: string | null }>) => new Map(rows.map((r) => [r.key ?? r.id, r.lifecycleRung]));
+
+  it("one public read serves every step's rung and rank, and the ladder itself", async () => {
+    const pub = await request(app).get("/public/catalogue/steps");
+    expect(pub.status).toBe(200);
+    expect(pub.body.lifecycleLadder.map((r: { key: string }) => r.key)).toEqual(["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]);
+    const byKey = rungs(pub.body.rows);
+    expect(Object.fromEntries(byKey)).toMatchObject({
+      lead_found: "lead_found",
+      conversation: "engaged",
+      website_visit: "engaged",
+      signup: "signup_or_form",
+      form_submitted: "signup_or_form",
+      meeting_booked: "meeting_booked",
+      meeting_attended: "meeting_attended",
+      paid_client: "paid_client",
+    });
+    // Every coded step states one (a rung or `none`).
+    const coded = new Set<string>(CHANNEL_STEP_KEYS);
+    const codedRows = pub.body.rows.filter((x: { key: string }) => coded.has(x.key));
+    expect(codedRows).toHaveLength(coded.size);
+    for (const r of codedRows) expect(r.lifecycleRung, r.key).not.toBeNull();
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "meeting_booked")).toMatchObject({ lifecycleRank: 5 });
+    const staff = await request(app).get("/internal/catalogue/steps/paid_client").set(KEY);
+    expect(staff.body).toMatchObject({ lifecycleRung: "paid_client", lifecycleRank: 7 });
+  });
+
+  it("a declared step states its rung as data, at creation or later, never through code", async () => {
+    const base = { label: "Post engaged", description: "A person engages with a post.", shortDescription: "Engages with a post", icon: "heart", towardStep: "conversation", towardRatePct: 5, createdBy: "agent" };
+    const bad = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "post_engaged", lifecycleRung: "warm" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("lifecycle_rung_invalid");
+    const created = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "post_engaged", lifecycleRung: "engaged" });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ lifecycleRung: "engaged", lifecycleRank: 3 });
+
+    const unstated = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "ping_sent", label: "Ping sent", lifecycleRung: undefined });
+    expect(unstated.body).toMatchObject({ lifecycleRung: null, lifecycleRank: null });
+    const patched = await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ lifecycleRung: "none", createdBy: "staff" });
+    expect(patched.status).toBe(200);
+    expect(patched.body).toMatchObject({ lifecycleRung: "none", lifecycleRank: null });
+    expect(rungs((await request(app).get("/public/catalogue/steps")).body.rows).get("ping_sent")).toBe("none");
+
+    expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(409);
+    expect((await request(app).patch("/internal/catalogue/steps/nope").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(404);
+    expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ createdBy: "staff" })).body.reason).toBe("lifecycleRung_required");
   });
 });
 

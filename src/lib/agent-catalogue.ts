@@ -110,6 +110,7 @@ import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-pa
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { STEP_SIGNAL } from "./value-added.js";
+import { codedStepLifecycleRungOf, isStepLifecycleRung, type StepLifecycleRung } from "./lifecycle-ladder.js";
 import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug, type PlayBlock } from "./plays.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
@@ -194,6 +195,8 @@ export interface DeclaredStepInput {
   towardStep: string;
   towardRatePct: number;
   producedBy: string | null;
+  /** Its rung on the lifecycle ladder or `none` (`lib/lifecycle-ladder.ts`); null/absent = never stated. */
+  lifecycleRung?: string | null;
 }
 
 /** What the fleet measured for one pipe (the best workflow, `pickLegPrice`). Keyed by pipe id. */
@@ -316,6 +319,8 @@ export interface CatalogueStep {
   /** Where its value comes from: the best next step and its rate. Null on Paid client and when unvalued. */
   valueVia: { toStep: string; ratePct: number } | null;
   producedBy: string | null;
+  /** Its rung on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`), `none` when on no rung; null = a declared step that never stated one. */
+  lifecycleRung: StepLifecycleRung | null;
 }
 
 export interface CataloguePipe {
@@ -784,6 +789,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
       valueUsd: value === null ? null : round2(value),
       valueVia: via,
       producedBy: d?.producedBy ?? null,
+      lifecycleRung: d ? (isStepLifecycleRung(d.lifecycleRung) ? d.lifecycleRung : null) : (codedStepLifecycleRungOf(key) ?? null),
     });
   }
 

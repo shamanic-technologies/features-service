@@ -253,6 +253,13 @@
       "when": 1792717200000,
       "tag": "0035_retired_triggers_and_funnels",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792720800000,
+      "tag": "0036_step_lifecycle_rung",
+      "breakpoints": true
     }
   ]
 }
