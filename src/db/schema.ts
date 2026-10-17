@@ -528,6 +528,8 @@ export const declaredSteps = pgTable("declared_steps", {
   towardRatePct: doublePrecision("toward_rate_pct").notNull(),
   /** What produces it, free text (an endpoint, a service): provenance for "ROI per API output". */
   producedBy: text("produced_by"),
+  /** Its rung on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */
+  lifecycleRung: text("lifecycle_rung"),
   createdBy: text("created_by").notNull(),
   requestedByOrgId: text("requested_by_org_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
