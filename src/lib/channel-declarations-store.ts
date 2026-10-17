@@ -321,6 +321,8 @@ export interface DeclaredStep {
   towardStep: string;
   towardRatePct: number;
   producedBy: string | null;
+  /** Its rung on the lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */
+  lifecycleRung: string | null;
   createdBy: string;
   requestedByOrgId: string | null;
   createdAt: string;
@@ -382,6 +384,12 @@ export async function registerStepDeclarations(): Promise<{ steps: DeclaredStep[
 export async function insertStep(input: Omit<DeclaredStep, "createdAt">): Promise<DeclaredStep> {
   const [row] = await db.insert(declaredSteps).values(input).returning();
   return { ...row, createdAt: row.createdAt.toISOString() };
+}
+
+/** Sets a DECLARED step's lifecycle rung (`lib/lifecycle-ladder.ts`); null when no declared step has the key. */
+export async function updateStepLifecycleRung(key: string, lifecycleRung: string): Promise<DeclaredStep | null> {
+  const [row] = await db.update(declaredSteps).set({ lifecycleRung }).where(eq(declaredSteps.key, key)).returning();
+  return row ? { ...row, createdAt: row.createdAt.toISOString() } : null;
 }
 
 /** First statement wins: a rate already stated for the leg is kept (ON CONFLICT DO NOTHING). */

@@ -44,6 +44,7 @@ import {
   stepLabel,
   type CatalogueFunnel,
   type CatalogueModel,
+  type CatalogueStep,
   type CataloguePath,
   type CataloguePipe,
   type Economics,
@@ -60,12 +61,14 @@ import {
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
 import { getPipeStats, type PipeStatsPipe, type PipeStatsScope } from "../lib/pipe-stats.js";
 import { matchChannelStepKey, CHANNEL_STEPS } from "../lib/acquisition-channels.js";
+import { codedStepLifecycleRungOf, isStepLifecycleRung, lifecycleRankOf, LIFECYCLE_RUNG_VALUES, servedLifecycleLadder, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
 import {
   insertLeg,
   insertLegRate,
   insertSalesPath,
   insertSalesPathChain,
   insertStep,
+  updateStepLifecycleRung,
   listDeclaredSalesPathChains,
   listDeclaredSalesPaths,
   listDeclaredSteps,
@@ -684,6 +687,9 @@ const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof f
 
 // ── Steps ─────────────────────────────────────────────────────────────────────────────────────────
 
+/** A step's place on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`): rung key (or `none`) and its rank. */
+const lifecycleWire = (s: CatalogueStep) => ({ lifecycleRung: s.lifecycleRung, lifecycleRank: lifecycleRankOf(s.lifecycleRung) });
+
 router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   try {
     const limit = limitOf(req);
@@ -693,8 +699,8 @@ router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       .filter((s) => matchesQuery(q, [s.label, s.key, s.shortDescription, s.description, s.producedBy]))
       .map((s) => ({ s, e: stepEconomics(model, s.key) }))
       .sort((a, b) => (b.s.valueUsd ?? -1) - (a.s.valueUsd ?? -1) || a.s.key.localeCompare(b.s.key))
-      .map(({ s, e }) => ({ id: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...(s.declared ? { declared: true } : {}) }));
-    res.json({ object: "step", costUnit: "per_outcome", order: "value_desc", ...page(rows, limit) });
+      .map(({ s, e }) => ({ id: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...lifecycleWire(s), ...(s.declared ? { declared: true } : {}) }));
+    res.json({ object: "step", costUnit: "per_outcome", order: "value_desc", lifecycleLadder: servedLifecycleLadder(), ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list steps");
   }
@@ -718,6 +724,7 @@ router.get("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
       line: s.shortDescription,
       declared: s.declared,
       producedBy: s.producedBy,
+      ...lifecycleWire(s),
       valueUsd: s.valueUsd,
       valueVia: s.valueVia ? { toStep: s.valueVia.toStep, toStepName: stepLabel(model, s.valueVia.toStep), ratePct: s.valueVia.ratePct } : null,
       valueBasis: "fleet median lifetime revenue x the best rated route to Paid client",
@@ -1406,6 +1413,11 @@ function text(body: Body, field: string, max: number): string {
   return v.trim();
 }
 
+function lifecycleRungOf(raw: unknown): StepLifecycleRung {
+  if (!isStepLifecycleRung(raw)) throw bad("lifecycle_rung_invalid", `lifecycleRung must be one of ${LIFECYCLE_RUNG_VALUES.join(", ")}, got ${JSON.stringify(raw)}`);
+  return raw;
+}
+
 function ratePct(raw: unknown, field: string): number {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > 100) throw bad(`${field}_invalid`, `${field} must be a percentage in (0, 100]`);
   return raw;
@@ -1431,6 +1443,7 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
     if (!towardStep) throw new DeclarationError(404, "toward_step_not_found", `towardStep ${towardRaw} is no step`);
     const towardRatePct = ratePct(body.towardRatePct, "towardRatePct");
     const producedBy = body.producedBy === undefined || body.producedBy === null ? null : text(body, "producedBy", 200);
+    const lifecycleRung = body.lifecycleRung === undefined || body.lifecycleRung === null ? null : lifecycleRungOf(body.lifecycleRung);
     const created = await insertStep({
       key,
       label,
@@ -1440,6 +1453,7 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       towardStep,
       towardRatePct,
       producedBy,
+      lifecycleRung,
       createdBy,
       requestedByOrgId,
     });
@@ -1448,9 +1462,32 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
     console.log(`[features-service] agent catalogue: step ${key} declared by ${createdBy} (toward ${towardStep} at ${towardRatePct}%)`);
     const { model } = await loadModel();
     const s = model.steps.get(created.key)!;
-    res.status(201).json({ object: "step", id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, declared: true, producedBy: s.producedBy });
+    res.status(201).json({ object: "step", id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, declared: true, producedBy: s.producedBy, ...lifecycleWire(s) });
   } catch (err) {
     fail(res, err, "create step");
+  }
+});
+
+/** States a DECLARED step's lifecycle rung (a coded step's rung is code, `lib/lifecycle-ladder.ts`). */
+router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    refuseCustomer(body, "a step", "a step's place on the lifecycle ladder is ours to state");
+    const updatedBy = actorOf(body);
+    if (body.lifecycleRung === undefined || body.lifecycleRung === null) throw bad("lifecycleRung_required", "lifecycleRung is required");
+    const lifecycleRung = lifecycleRungOf(body.lifecycleRung);
+    const key = req.params.id;
+    if (codedStepLifecycleRungOf(key) !== null) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its lifecycle rung is set in code`);
+    const updated = await updateStepLifecycleRung(key, lifecycleRung);
+    if (!updated) throw new DeclarationError(404, "step_not_found", `no declared step ${key}`);
+    await registerStepDeclarations();
+    invalidateChannelCatalogue();
+    console.log(`[features-service] agent catalogue: step ${key} lifecycle rung set to ${lifecycleRung} by ${updatedBy}`);
+    const { model } = await loadModel();
+    const s = model.steps.get(key)!;
+    res.json({ object: "step", id: s.key, name: s.label, declared: true, ...lifecycleWire(s) });
+  } catch (err) {
+    fail(res, err, "update step");
   }
 });
 
@@ -2188,8 +2225,8 @@ router.get("/public/catalogue/steps", async (_req, res) => {
     ]);
     const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
     const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), lifetimeRevenueUsd: null });
-    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon }));
-    res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, rows });
+    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, ...lifecycleWire(s) }));
+    res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, lifecycleLadder: servedLifecycleLadder(), rows });
   } catch (err) {
     fail(res, err, "list public steps");
   }

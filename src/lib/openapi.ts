@@ -6730,7 +6730,21 @@ const catalogueErrors = {
   503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`." },
 };
 
-const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time.") });
+const catalogueLifecycleRungs = ["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"] as const;
+const catalogueLifecycleFields = {
+  lifecycleRung: z
+    .enum([...catalogueLifecycleRungs, "none"])
+    .nullable()
+    .describe(
+      "The step's rung on the ONE lifecycle ladder (owner 2026-10-17, the same for every campaign, sales funnel, brand and channel): lead_found < contacted < engaged (post engaged, positive reply, website visit) < signup_or_form (Signup, Form submitted) < meeting_booked < meeting_attended < paid_client. `none` = on no rung, stated explicitly. Null = a step declared at run time that never stated one. A lead's Lifecycle = the highest rung of any step they reached.",
+    ),
+  lifecycleRank: z.number().int().nullable().describe("The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."),
+};
+const catalogueLifecycleLadder = z
+  .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
+  .describe("The lifecycle ladder itself, lowest rung first.");
+
+const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time."), ...catalogueLifecycleFields });
 const catalogueTriggerField = { trigger: z.object({ slug: z.string(), name: z.string() }).nullable().describe("A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."), };
 const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only."), trigger: catalogueTriggerField.trigger.optional() });
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
@@ -6779,6 +6793,7 @@ const catalogueFace = z.object({ animal: z.string(), color: z.string(), eyes: z.
 const catalogueStepDetail = z.object({
   object: z.literal("step"), id: z.string(), name: z.string(), pluralName: z.string(), icon: z.string(), description: z.string(), line: z.string(), declared: z.boolean(),
   producedBy: z.string().nullable().describe("What produces it (an endpoint, a service), as declared."),
+  ...catalogueLifecycleFields,
   valueUsd: z.number().nullable(), valueVia: z.object({ toStep: z.string(), toStepName: z.string(), ratePct: z.number() }).nullable(), valueBasis: z.string(), lifetimeRevenueUsd: z.number().nullable(),
   ...catalogueEconDetail, costUnit: z.literal("per_outcome"), producingPipeIds: z.array(z.string()), salesPathCount: z.number().int(),
 });
@@ -6869,7 +6884,7 @@ const catalogueRead = (path: string, summary: string, query: Record<string, z.Zo
 
 const idParam = (what: string) => ({ id: z.string().describe(`${what} (URL-encoded).`) });
 
-catalogueRead("/internal/catalogue/steps", "List steps (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueStepRow, "step", "per_outcome"));
+catalogueRead("/internal/catalogue/steps", "List steps (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueStepRow, "step", "per_outcome").extend({ lifecycleLadder: catalogueLifecycleLadder }));
 catalogueRead("/internal/catalogue/steps/{id}", "One step (internal, api-key)", {}, catalogueStepDetail, idParam("A step key or label"));
 const catalogueOfferQuery = {
   offerId: z.string().optional().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."),
@@ -7231,9 +7246,28 @@ catalogueCreate(
   "/internal/catalogue/steps",
   "Declare a step (internal, api-key)",
   "A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
-  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
-  z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable() }),
+  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
+  z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable(), ...catalogueLifecycleFields }),
 );
+
+registry.registerPath({
+  method: "patch",
+  path: "/internal/catalogue/steps/{id}",
+  summary: "State a declared step's lifecycle rung (internal, api-key)",
+  description: "Sets where a step DECLARED at run time stands on the lifecycle ladder, live, no deploy. A coded step's rung is code (409 `step_coded`). 400 `lifecycleRung_required` / `lifecycle_rung_invalid`; 404 `step_not_found`; a customer write is refused.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("The declared step key.") }),
+    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
+  },
+  responses: {
+    200: { description: "The step's rung, as now served.", content: { "application/json": { schema: z.object({ object: z.literal("step"), id: z.string(), name: z.string(), declared: z.literal(true), ...catalogueLifecycleFields }) } } },
+    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`step_not_found`." },
+    409: { description: "`step_coded`." },
+  },
+});
 catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
@@ -7506,7 +7540,7 @@ registry.registerPath({
   path: "/public/catalogue/steps",
   summary: "Every catalogue step's key, name and icon (public)",
   description:
-    "The step vocabulary with nothing economic: one row per step of the agent catalogue, `key` = the canonical step key the fleet uses, `name` and `icon` (Phosphor) byte-equal to `GET /internal/catalogue/steps` `name`/`icon` for that step (a declared step states its own icon). No identity. Read by the customer dashboard's Outcomes entries (owner 2026-10-11). Sorted by key.",
+    "The step vocabulary with nothing economic, plus each step's place on the ONE lifecycle ladder (`lifecycleRung`, `lifecycleRank`, the ladder in `lifecycleLadder`; owner 2026-10-17, lead-service reads it for a lead's Lifecycle): one row per step of the agent catalogue, `key` = the canonical step key the fleet uses, `name` and `icon` (Phosphor) byte-equal to `GET /internal/catalogue/steps` `name`/`icon` for that step (a declared step states its own icon). No identity. Read by the customer dashboard's Outcomes entries (owner 2026-10-11). Sorted by key.",
   tags: ["Public"],
   responses: {
     200: {
@@ -7516,7 +7550,8 @@ registry.registerPath({
           schema: z.object({
             object: z.literal("step"),
             total: z.number().int(),
-            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads', 'Positive replies')."), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...).") })),
+            lifecycleLadder: catalogueLifecycleLadder,
+            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads', 'Positive replies')."), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...)."), ...catalogueLifecycleFields })),
           }),
         },
       },
