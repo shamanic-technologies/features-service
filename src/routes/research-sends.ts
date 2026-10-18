@@ -129,30 +129,61 @@ export async function readReplyAuthors(): Promise<JevInput["replies"]> {
   return { person: Number(r.person), outOfOffice: Number(r.ooo), otherAuto: Number(r.other), orgs: Number(r.orgs) };
 }
 
-/** The leg's spend of runs started before the cutoff, split into per-email sending charges and the rest. */
-export async function readLegSpendSplit(featureSlug: string, campaignIds: readonly string[], pricing: Pricing, cutoffIso: string | null): Promise<LegSpendSplit> {
+/**
+ * What one email cost in per-email sending charges, per send month (`YYYY-MM`) and step, fleet-wide: runs-service's
+ * task-units rollup over instantly-service's `email-send-step-N` runs, billed cents ÷ runs (one run per email sent). Held an
+ * hour. A grouped read by COST NAME over the leg's campaigns has no rollup at runs-service and timed out (30 s, 2026-10-18).
+ */
+let perEmailHeld: { at: number; value: Map<string, number> } | null = null;
+export async function readPerEmailPrices(): Promise<Map<string, number>> {
+  if (perEmailHeld && Date.now() - perEmailHeld.at < 60 * 60_000) return perEmailHeld.value;
+  const names = [...PER_EMAIL_COST_NAMES].join(",");
+  const body = await getJson<TaskUnitsBody>(
+    `${process.env.RUNS_SERVICE_URL}/internal/stats/costs/task-units?serviceName=instantly-service&costNames=${names}&groupBy=month,taskName,costName`,
+    process.env.RUNS_SERVICE_API_KEY,
+    "runs-service task-units (per-email charges)",
+  );
+  // per (month, step) run counts once (a run carries one row per cost name), cents summed over the names
+  const runs = new Map<string, number>();
+  const cents = new Map<string, number>();
+  for (const g of body.groups) {
+    const k = `${g.month}|${g.taskName}`;
+    runs.set(k, Math.max(runs.get(k) ?? 0, Number(g.runCount)));
+    cents.set(k, (cents.get(k) ?? 0) + Number(g.billedCostInUsdCents));
+  }
+  const byMonth = new Map<string, { runs: number; cents: number }>();
+  for (const [k, r] of runs) {
+    const m = k.slice(0, 7);
+    const t = byMonth.get(m) ?? { runs: 0, cents: 0 };
+    t.runs += r;
+    t.cents += cents.get(k) ?? 0;
+    byMonth.set(m, t);
+  }
+  const value = new Map([...byMonth].filter(([, t]) => t.runs > 0).map(([m, t]) => [m, t.cents / 100 / t.runs]));
+  perEmailHeld = { at: Date.now(), value };
+  return value;
+}
+
+/** The leg's spend of runs started before the cutoff (incurred, the ranking's basis), on the read's pricing. */
+export async function readLegSpendTotal(featureSlug: string, campaignIds: readonly string[], pricing: Pricing, cutoffIso: string | null): Promise<number> {
   const base = process.env.RUNS_SERVICE_URL;
   const key = process.env.RUNS_SERVICE_API_KEY;
   if (!base || !key) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const ids = [...new Set(campaignIds)].sort();
-  let perEmail = 0;
   let total = 0;
   for (let i = 0; i < ids.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-    const params = new URLSearchParams({ groupBy: "costName", featureSlugs: runsSpendSlugsParam(featureSlug, "own"), campaignIds: ids.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST).join(",") });
+    const params = new URLSearchParams({ groupBy: "workflowSlug", featureSlugs: runsSpendSlugsParam(featureSlug, "own"), campaignIds: ids.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST).join(",") });
     if (cutoffIso) params.set("startedBefore", startedBeforeParam(cutoffIso));
     const res = await fetchWithRetry(runsCostsUrl(base, "public", pricing, params), { headers: { "x-api-key": key } });
-    if (!res.ok) throw new Error(`runs-service research spend split failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`runs-service research leg spend failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
     const body = (await res.json()) as { groups?: CostGroup[] };
-    if (!Array.isArray(body.groups)) throw new Error("runs-service research spend split: no groups array");
+    if (!Array.isArray(body.groups)) throw new Error("runs-service research leg spend: no groups array");
     for (const g of body.groups) {
-      const name = g.dimensions.costName;
-      if (!name || name === "__total__") continue;
-      const usd = Number(selectCostCentsString(g, "totalCostInUsdCents", pricing, "incurred")) / 100;
-      total += usd;
-      if (PER_EMAIL_COST_NAMES.has(name)) perEmail += usd;
+      if (!g.dimensions.workflowSlug || g.dimensions.workflowSlug === "__total__") continue;
+      total += Number(selectCostCentsString(g, "totalCostInUsdCents", pricing, "incurred")) / 100;
     }
   }
-  return { perEmailUsd: perEmail, perPersonUsd: total - perEmail };
+  return total;
 }
 
 async function getJson<T>(url: string, apiKey: string | undefined, what: string): Promise<T> {

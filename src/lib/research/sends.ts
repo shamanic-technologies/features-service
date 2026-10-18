@@ -37,10 +37,11 @@ export interface SendGroup {
   clicks: number;
 }
 
-/** The leg's mature spend, split by what it buys. */
+/** The leg's mature spend, and what one provider-sent email cost in per-email charges, per send month. */
 export interface LegSpendSplit {
-  perEmailUsd: number;
-  perPersonUsd: number;
+  totalUsd: number;
+  /** `YYYY-MM` → per-email sending charges of one email (fleet average that month). A month absent = none known. */
+  perEmailUsdByMonth: Record<string, number>;
 }
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -56,28 +57,32 @@ export interface SendsPipe {
 
 interface Scoped {
   rows: SendGroup[];
-  /** Spend per email sent and per person reached, scaled to the counted emails. */
-  perEmail: number;
+  /** One provider-sent email's per-email charges, by send month; and what reaching one person cost on top. */
+  perEmailOf: (month: string) => number;
   perPerson: number;
   outcomesOf: (g: SendGroup) => number;
 }
 
+/**
+ * The per-email charges are the PROVIDER's (its mailbox and domain per email sent): they land on the emails the provider
+ * sent, at that month's per-email price; an email from our own sender adds no per-email charge (the snapshot: "sending is
+ * not charged per email"). Everything else the leg spent lands on the first emails (one per person).
+ */
 function scope(p: SendsPipe): Scoped {
   const all = p.groups;
   const rows = p.visit ? all.filter((g) => g.screenable) : all;
-  // The per-email charges are the PROVIDER's (its mailbox and domain per email sent): they land on the emails the
-  // provider sent; an email from our own sender adds no per-email charge (the snapshot: "sending is not charged per email").
-  const providerEmails = all.filter((g) => !g.screenable).reduce((a, g) => a + g.emails, 0);
+  const perEmailOf = (m: string) => p.spend.perEmailUsdByMonth[m] ?? 0;
+  const perEmailTotal = all.filter((g) => !g.screenable).reduce((a, g) => a + g.emails * perEmailOf(g.month), 0);
   const firstAll = all.filter((g) => g.step === 1).reduce((a, g) => a + g.emails, 0);
   return {
     rows,
-    perEmail: providerEmails ? p.spend.perEmailUsd / providerEmails : 0,
-    perPerson: firstAll ? p.spend.perPersonUsd / firstAll : 0,
+    perEmailOf,
+    perPerson: firstAll ? Math.max(0, p.spend.totalUsd - perEmailTotal) / firstAll : 0,
     outcomesOf: (g) => (p.visit ? g.clicks : g.replies),
   };
 }
 
-const spendOf = (s: Scoped, g: SendGroup) => (g.screenable ? 0 : g.emails * s.perEmail) + (g.step === 1 ? g.emails * s.perPerson : 0);
+const spendOf = (s: Scoped, g: SendGroup) => (g.screenable ? 0 : g.emails * s.perEmailOf(g.month)) + (g.step === 1 ? g.emails * s.perPerson : 0);
 const stepLabel = (step: number) => (step === 1 ? "First email" : `Follow-up ${step - 1}`);
 const emailsNoun = (t: PipeTerms) => (t.pipe === "cold-email-website-visit" ? "emails from our sender" : "emails");
 const sendCounts = (t: PipeTerms, outcomes: number, emails: number) =>
