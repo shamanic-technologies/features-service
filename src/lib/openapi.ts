@@ -3273,6 +3273,87 @@ registry.registerPath({
   },
 });
 
+const timeToReplyFigureSchema = z
+  .object({
+    medianDays: z.number().nullable().describe("Median days from a lead's first email to its first positive reply (1 decimal)."),
+    averageDays: z.number().nullable().describe("Average days, same population (1 decimal). Long tails pull it above the median: state the median."),
+    medianMs: z.number().nullable(),
+    averageMs: z.number().nullable(),
+    sampleSize: z.number().int().describe("Leads with a measured first positive reply after their first email."),
+  })
+  .nullable();
+
+const campaignNextStepsResponseRef = registry.register(
+  "CampaignNextStepsResponse",
+  z.object({
+    salesFunnelCampaignId: z.string(),
+    name: z.string().describe("The campaign's name: report the campaign by it."),
+    status: z.string().describe("campaign-service's status: `ongoing` = running, `stopped` = paused."),
+    brandId: z.string(),
+    offerId: z.string(),
+    requestedPipeCampaignId: z.string().nullable().describe("Set when the id asked for was one pipe (unit campaign) of this campaign: the answer is the whole campaign's."),
+    emailSendQueue: z
+      .object({
+        asOf: z.string().describe("When the queue was read (a snapshot, not a period)."),
+        leadsAwaitingFirstEmail: z.number().int().describe("Leads whose first email is written and queued in our email sender, not sent yet."),
+        leadsWithFollowUpQueued: z.number().int().describe("Leads already emailed whose next follow-up email is queued."),
+        queuedEmails: z.number().int().describe("Every queued email, all steps."),
+        firstEmailsFrom: z.string().nullable().describe("Earliest moment (ISO) the sending window opens for a lead awaiting its first email: the earliest it MAY go out, never a promise (mailbox capacity can push it later). Null when no lead awaits."),
+        sendWindow: z.object({
+          weekdays: z.array(z.string()).describe("Local weekdays we send on."),
+          startHour: z.number().int().describe("Local hour the window opens."),
+          endHour: z.number().int().describe("Local hour the window closes."),
+          timezoneRule: z.string().describe("`lead_local`: hours are each lead's own local business hours."),
+        }),
+        timezones: z.array(z.object({ timezone: z.string(), timezoneIsDefault: z.boolean(), leadsAwaitingFirstEmail: z.number().int(), windowOpensAt: z.string() })).describe("Leads awaiting their first email per timezone, earliest window first."),
+      })
+      .nullable()
+      .describe("What waits in our email sender for this campaign's pipes, read from the sender (instantly-service) over every pipe of the campaign. Emails only: a pipe that writes by another channel queues nothing here. Null with emailSendQueueUnavailableReason."),
+    emailSendQueueUnavailableReason: z.enum(["sender_unreadable"]).nullable(),
+    timeToFirstPositiveReply: z
+      .object({
+        medianDays: z.number().nullable().describe("The delay to state: median days from a lead's first email to its first positive reply, on `basis`. Null while learning."),
+        averageDays: z.number().nullable(),
+        sampleSize: z.number().int().nullable(),
+        basis: z.enum(["campaign", "pipe_fleet"]).nullable().describe("campaign: this campaign's own reply pipes, once they hold minSample measured replies. pipe_fleet: the same pipes (channel x leg) across every client, once THAT holds minSample. Null: nothing measurable yet."),
+        learning: z.boolean().describe("True while no population reaches minSample: say it is too early to tell, never a number."),
+        minSample: z.number().int(),
+        campaign: timeToReplyFigureSchema.describe("This campaign's own figure, since inception (shown even below the bar)."),
+        pipeFleet: timeToReplyFigureSchema.describe("The same pipes across every client, since inception."),
+        unavailableReason: z.enum(["learning", "no_positive_reply_pipe", "reply_latency_unreadable"]).nullable().describe("Why medianDays is null. no_positive_reply_pipe: no pipe of this campaign ends on a positive reply."),
+      })
+      .describe("Measured time from the first email to the first positive reply, since inception. Never a default or another channel's delay."),
+    pipes: z.array(
+      z.object({
+        campaignId: z.string().describe("The pipe's own (unit) campaign id."),
+        pipeId: z.string(),
+        featureSlug: z.string().describe("The pipe's channel."),
+        legKey: z.string(),
+        status: z.string(),
+        endsOnPositiveReply: z.boolean().describe("The pipe's leg ends on a positive reply: its sends feed timeToFirstPositiveReply."),
+      }),
+    ),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps",
+  summary: "What comes next in one campaign: leads queued, when they go out, and the measured time to a positive reply",
+  description:
+    "For our assistant (owner 2026-10-18): per sales funnel campaign, the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string().describe("The campaign id (or one of its pipes' campaign ids).") }),
+  },
+  responses: {
+    200: { description: "The campaign's next steps.", content: { "application/json": { schema: campaignNextStepsResponseRef } } },
+    404: { description: "The caller does not hold this brand (reason: brand_not_found), or the brand has no campaign with this id (reason: sales_funnel_campaign_not_found).", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "campaign-service failed: no campaign is ever guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const measuredArrowRateSchema = z.object({
   basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),

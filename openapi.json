@@ -22259,6 +22259,311 @@
           "pipes"
         ]
       },
+      "CampaignNextStepsResponse": {
+        "type": "object",
+        "properties": {
+          "salesFunnelCampaignId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The campaign's name: report the campaign by it."
+          },
+          "status": {
+            "type": "string",
+            "description": "campaign-service's status: `ongoing` = running, `stopped` = paused."
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string"
+          },
+          "requestedPipeCampaignId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Set when the id asked for was one pipe (unit campaign) of this campaign: the answer is the whole campaign's."
+          },
+          "emailSendQueue": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "asOf": {
+                "type": "string",
+                "description": "When the queue was read (a snapshot, not a period)."
+              },
+              "leadsAwaitingFirstEmail": {
+                "type": "integer",
+                "description": "Leads whose first email is written and queued in our email sender, not sent yet."
+              },
+              "leadsWithFollowUpQueued": {
+                "type": "integer",
+                "description": "Leads already emailed whose next follow-up email is queued."
+              },
+              "queuedEmails": {
+                "type": "integer",
+                "description": "Every queued email, all steps."
+              },
+              "firstEmailsFrom": {
+                "type": "string",
+                "nullable": true,
+                "description": "Earliest moment (ISO) the sending window opens for a lead awaiting its first email: the earliest it MAY go out, never a promise (mailbox capacity can push it later). Null when no lead awaits."
+              },
+              "sendWindow": {
+                "type": "object",
+                "properties": {
+                  "weekdays": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Local weekdays we send on."
+                  },
+                  "startHour": {
+                    "type": "integer",
+                    "description": "Local hour the window opens."
+                  },
+                  "endHour": {
+                    "type": "integer",
+                    "description": "Local hour the window closes."
+                  },
+                  "timezoneRule": {
+                    "type": "string",
+                    "description": "`lead_local`: hours are each lead's own local business hours."
+                  }
+                },
+                "required": [
+                  "weekdays",
+                  "startHour",
+                  "endHour",
+                  "timezoneRule"
+                ]
+              },
+              "timezones": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "timezoneIsDefault": {
+                      "type": "boolean"
+                    },
+                    "leadsAwaitingFirstEmail": {
+                      "type": "integer"
+                    },
+                    "windowOpensAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "timezone",
+                    "timezoneIsDefault",
+                    "leadsAwaitingFirstEmail",
+                    "windowOpensAt"
+                  ]
+                },
+                "description": "Leads awaiting their first email per timezone, earliest window first."
+              }
+            },
+            "required": [
+              "asOf",
+              "leadsAwaitingFirstEmail",
+              "leadsWithFollowUpQueued",
+              "queuedEmails",
+              "firstEmailsFrom",
+              "sendWindow",
+              "timezones"
+            ],
+            "description": "What waits in our email sender for this campaign's pipes, read from the sender (instantly-service) over every pipe of the campaign. Emails only: a pipe that writes by another channel queues nothing here. Null with emailSendQueueUnavailableReason."
+          },
+          "emailSendQueueUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sender_unreadable"
+            ]
+          },
+          "timeToFirstPositiveReply": {
+            "type": "object",
+            "properties": {
+              "medianDays": {
+                "type": "number",
+                "nullable": true,
+                "description": "The delay to state: median days from a lead's first email to its first positive reply, on `basis`. Null while learning."
+              },
+              "averageDays": {
+                "type": "number",
+                "nullable": true
+              },
+              "sampleSize": {
+                "type": "integer",
+                "nullable": true
+              },
+              "basis": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "campaign",
+                  "pipe_fleet"
+                ],
+                "description": "campaign: this campaign's own reply pipes, once they hold minSample measured replies. pipe_fleet: the same pipes (channel x leg) across every client, once THAT holds minSample. Null: nothing measurable yet."
+              },
+              "learning": {
+                "type": "boolean",
+                "description": "True while no population reaches minSample: say it is too early to tell, never a number."
+              },
+              "minSample": {
+                "type": "integer"
+              },
+              "campaign": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "medianDays": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Median days from a lead's first email to its first positive reply (1 decimal)."
+                  },
+                  "averageDays": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Average days, same population (1 decimal). Long tails pull it above the median: state the median."
+                  },
+                  "medianMs": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "averageMs": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "sampleSize": {
+                    "type": "integer",
+                    "description": "Leads with a measured first positive reply after their first email."
+                  }
+                },
+                "required": [
+                  "medianDays",
+                  "averageDays",
+                  "medianMs",
+                  "averageMs",
+                  "sampleSize"
+                ],
+                "description": "This campaign's own figure, since inception (shown even below the bar)."
+              },
+              "pipeFleet": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "medianDays": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Median days from a lead's first email to its first positive reply (1 decimal)."
+                  },
+                  "averageDays": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "Average days, same population (1 decimal). Long tails pull it above the median: state the median."
+                  },
+                  "medianMs": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "averageMs": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "sampleSize": {
+                    "type": "integer",
+                    "description": "Leads with a measured first positive reply after their first email."
+                  }
+                },
+                "required": [
+                  "medianDays",
+                  "averageDays",
+                  "medianMs",
+                  "averageMs",
+                  "sampleSize"
+                ],
+                "description": "The same pipes across every client, since inception."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "learning",
+                  "no_positive_reply_pipe",
+                  "reply_latency_unreadable"
+                ],
+                "description": "Why medianDays is null. no_positive_reply_pipe: no pipe of this campaign ends on a positive reply."
+              }
+            },
+            "required": [
+              "medianDays",
+              "averageDays",
+              "sampleSize",
+              "basis",
+              "learning",
+              "minSample",
+              "campaign",
+              "pipeFleet",
+              "unavailableReason"
+            ],
+            "description": "Measured time from the first email to the first positive reply, since inception. Never a default or another channel's delay."
+          },
+          "pipes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string",
+                  "description": "The pipe's own (unit) campaign id."
+                },
+                "pipeId": {
+                  "type": "string"
+                },
+                "featureSlug": {
+                  "type": "string",
+                  "description": "The pipe's channel."
+                },
+                "legKey": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "endsOnPositiveReply": {
+                  "type": "boolean",
+                  "description": "The pipe's leg ends on a positive reply: its sends feed timeToFirstPositiveReply."
+                }
+              },
+              "required": [
+                "campaignId",
+                "pipeId",
+                "featureSlug",
+                "legKey",
+                "status",
+                "endsOnPositiveReply"
+              ]
+            }
+          }
+        },
+        "required": [
+          "salesFunnelCampaignId",
+          "name",
+          "status",
+          "brandId",
+          "offerId",
+          "requestedPipeCampaignId",
+          "emailSendQueue",
+          "emailSendQueueUnavailableReason",
+          "timeToFirstPositiveReply",
+          "pipes"
+        ]
+      },
       "BrandConversionRatesResponse": {
         "type": "object",
         "properties": {
@@ -39449,6 +39754,126 @@
           },
           "502": {
             "description": "A producer (campaign-service, lead-service) failed: no count is ever guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps": {
+      "get": {
+        "summary": "What comes next in one campaign: leads queued, when they go out, and the measured time to a positive reply",
+        "description": "For our assistant (owner 2026-10-18): per sales funnel campaign, the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The campaign id (or one of its pipes' campaign ids)."
+            },
+            "required": true,
+            "description": "The campaign id (or one of its pipes' campaign ids).",
+            "name": "salesFunnelCampaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's next steps.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignNextStepsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller does not hold this brand (reason: brand_not_found), or the brand has no campaign with this id (reason: sales_funnel_campaign_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "campaign-service failed: no campaign is ever guessed.",
             "content": {
               "application/json": {
                 "schema": {
