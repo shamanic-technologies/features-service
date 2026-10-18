@@ -38,7 +38,7 @@ import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
 import type { ResearchFile, ResearchStudy } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
-import { readGenerationRuns, readJevInputs, readLegSpendSplit, readOpensArms, readReplyAuthors, readReportingBrands, readSendGroups, readWorkflowRuns } from "./research-sends.js";
+import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readWorkflowRuns } from "./research-sends.js";
 
 const router = Router();
 
@@ -315,8 +315,17 @@ async function generationInputs(reply: ColdEmailPipeRead, visit: ColdEmailPipeRe
 async function sendsInputs(reply: { campaignIds: string[]; cutoffIso: string | null }, visit: { campaignIds: string[]; cutoffIso: string | null }, pricing: Pricing) {
   const [rg, vg] = await Promise.all([readSendGroups(reply.campaignIds, reply.cutoffIso), readSendGroups(visit.campaignIds, visit.cutoffIso)]);
   if (!rg.length && !vg.length) return null;
-  const rs = await readLegSpendSplit(COLD_EMAIL, reply.campaignIds, pricing, reply.cutoffIso);
-  const vs = await readLegSpendSplit(COLD_EMAIL, visit.campaignIds, pricing, visit.cutoffIso);
+  const prices = Object.fromEntries(await readPerEmailPrices());
+  // On the vendor basis the per-email charges are scaled by the leg's vendor ÷ billed spend (the rollup states billed).
+  const splitOf = async (r: { campaignIds: string[]; cutoffIso: string | null }) => {
+    const total = await readLegSpendTotal(COLD_EMAIL, r.campaignIds, pricing, r.cutoffIso);
+    if (pricing === "gross") return { totalUsd: total, perEmailUsdByMonth: prices };
+    const billed = await readLegSpendTotal(COLD_EMAIL, r.campaignIds, "gross", r.cutoffIso);
+    const k = billed > 0 ? total / billed : 0;
+    return { totalUsd: total, perEmailUsdByMonth: Object.fromEntries(Object.entries(prices).map(([m, v]) => [m, v * k])) };
+  };
+  const rs = await splitOf(reply);
+  const vs = await splitOf(visit);
   const opens = reply.cutoffIso ? await readOpensArms(reply.cutoffIso) : null;
   return { reply: { groups: rg, spend: rs }, visit: { groups: vg, spend: vs }, opens };
 }
