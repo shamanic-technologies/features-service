@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { rankLegWorkflows } from "./leg-workflow-ranking.js";
+import { orderLegWorkflows } from "./leg-workflow-order.js";
 
 const REPLY = "start_to_conversation";
 
@@ -30,13 +31,14 @@ describe("rankLegWorkflows", () => {
       nobelium: wf([45, 1000, 1], [45, 1000, 1]), // mature $45
       raven: wf([14, 400, 1], [0, 0, 0]), // learning $14
       rudder: wf([47, 500, 1], [0, 0, 0]), // learning $47 > $45
-      torrent: wf([14, 300, 0], [0, 0, 0]), // learning, no outcome → no price
+      torrent: wf([14, 300, 0], [0, 0, 0]), // learning, no outcome: $14 spent < $45, not proven worse yet
+      sirius: wf([60, 300, 0], [0, 0, 0]), // learning, no outcome: $60 spent > $45, proven no better
     });
-    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["raven", "nobelium", "azalea", "rudder", "torrent"]);
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["raven", "torrent", "nobelium", "azalea", "rudder", "sirius"]);
     expect(rows.find((r) => r.moneyGoesHere)?.workflowDynastySlug).toBe("nobelium");
     expect(rows[0]).toMatchObject({ goesFirst: true, basis: "flash", costPerOutcomeUsd: 14 });
     expect(rows.find((r) => r.workflowDynastySlug === "torrent")).toMatchObject({ costPerOutcomeUsd: null, outcomes: 0 });
-    expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("reads a mature workflow on its MATURE half and a learning one on its flash half", () => {
@@ -104,8 +106,9 @@ describe("rankLegWorkflows", () => {
       pipelineUsd: new Map(),
       billedSpendUsd: new Map(),
     });
-    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["raven", "algenib"]);
-    expect(rows[1]).toMatchObject({ assignment: "active", selectable: true, outcomes: 0, spentUsd: 0, costPerOutcomeUsd: null, basis: "flash" });
+    // Nothing mature: ordered on the explore price, so the never-run algenib ($0) goes before raven ($14).
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["algenib", "raven"]);
+    expect(rows[0]).toMatchObject({ assignment: "active", selectable: true, outcomes: 0, spentUsd: 0, costPerOutcomeUsd: null, basis: "flash" });
   });
 
   // RANKING-RETIRED-SELECTABLE-1013: allegro/atlantis/bastion read "active, selectable" on a cold email leg while
@@ -125,5 +128,27 @@ describe("rankLegWorkflows", () => {
     expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["lyonesse", "allegro"]);
     expect(rows[0]).toMatchObject({ selectable: true, executable: true, goesFirst: true, moneyGoesHere: true });
     expect(rows[1]).toMatchObject({ assignment: "active", executable: false, selectable: false, goesFirst: false, moneyGoesHere: false });
+  });
+
+  // WF-ORDER-EXPLORE-1018: the Research page's order IS the order campaign-service receives, one computation.
+  it("orders with the shared leg order, byte-same as orderLegWorkflows on the same evidence", () => {
+    const rows = rank({
+      lyonesse: wf([4.49, 326, 14], [4.49, 326, 14]),
+      rampart: wf([250, 4022, 160], [250, 4022, 160]),
+      acamar: wf([18.26, 108, 1], [0, 0, 0]),
+      albaldah: wf([0.94, 1, 0], [0, 0, 0]),
+      aldhanab: wf([0, 0, 0], [0, 0, 0]),
+      hamal: wf([0, 0, 0], [0, 0, 0]),
+    });
+    const shared = orderLegWorkflows(
+      rows.map((r) => ({
+        slug: r.workflowDynastySlug,
+        selectable: r.selectable,
+        mature: r.basis === "mature" && r.costPerOutcomeUsd ? { tier: 0, costPerOutcomeUsd: r.costPerOutcomeUsd } : null,
+        fleet: { spentUsd: r.spentUsd, outcomes: r.outcomes },
+      })),
+    );
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(shared);
+    expect(shared).toEqual(["aldhanab", "hamal", "lyonesse", "rampart", "albaldah", "acamar"]);
   });
 });

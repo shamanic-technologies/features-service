@@ -313,20 +313,22 @@ describe("the ORDER is served, and the recommendation is its head", () => {
 
     const rank1 = [...ranks.entries()].find(([, r]) => r === 1)![0];
     expect(rank1).toBe(res.body.recommendedWorkflowDynastySlug);
-    // lithium is $164.75 a conversation against sodium's $5,000/5 = $1,000 — it is rank 1 because it
-    // is cheapest, and the recommendation cannot disagree with the order it heads.
-    expect(rank1).toBe("lithium");
+    // argon never ran ($0 spent): not proven worse than anybody, so the leg order explores it first
+    // (WF-ORDER-EXPLORE-1018); then lithium ($164.75 a conversation) before sodium ($5,000/5 = $1,000).
+    expect(rank1).toBe("argon");
+    expect(res.body.recommendationBasis).toBe("explore");
+    expect(ranks.get("lithium")).toBeLessThan(ranks.get("sodium")!);
   });
 
-  it("a workflow that has never run never outranks one with measured evidence", async () => {
+  it("a workflow that has never run is explored before the measured ones (WF-ORDER-EXPLORE-1018)", async () => {
     const res = await get("leg=start_to_conversation");
     const rankOf = (slug: string) => res.body.rows.find((r: any) => r.workflow.workflowDynastySlug === slug).rank;
     const argon = res.body.rows.find((r: any) => r.workflow.workflowDynastySlug === "argon");
 
     expect(argon.measured).toBe(false);
-    expect(rankOf("argon")).toBe(3);
-    expect(rankOf("argon")).toBeGreaterThan(rankOf("lithium"));
-    expect(rankOf("argon")).toBeGreaterThan(rankOf("sodium"));
+    expect(rankOf("argon")).toBe(1);
+    expect(rankOf("argon")).toBeLessThan(rankOf("lithium"));
+    expect(rankOf("argon")).toBeLessThan(rankOf("sodium"));
     // Its allowance is still denominated in the LEG's step, or it would not be comparable to the rows
     // it is ranked beside: $2,141.76 + $5,000 over 1,300 + 900 people reached.
     expect(argon.resolved.costPerOutcomeUsd).toBeCloseTo((2141.76 + 5000) / 2200, 6);
@@ -338,7 +340,7 @@ describe("the ORDER is served, and the recommendation is its head", () => {
     const byRate = await get("leg=start_to_conversation&maximize=conversionRate");
     const rankOf = (body: any, slug: string) => body.rows.find((r: any) => r.workflow.workflowDynastySlug === slug).rank;
 
-    expect(rankOf(byReturn.body, "lithium")).toBe(1);
+    expect(rankOf(byReturn.body, "lithium")).toBeLessThan(rankOf(byReturn.body, "sodium"));
     expect(byRate.body.recommendedWorkflowDynastySlug).toBe(rankOf(byRate.body, "lithium") === 1 ? "lithium" : "sodium");
     expect(rankOf(byRate.body, byRate.body.recommendedWorkflowDynastySlug)).toBe(1);
   });

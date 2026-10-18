@@ -98,7 +98,7 @@ import { getBrandEffectiveRates, getFleetLifetimeRevenueMedian, legPairKey, peek
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { fetchTeamCrmLegRates } from "../lib/team-crm-leg-rates.js";
 import { fetchOfferSteps, OfferStepsOfferNotFoundError, OfferStepsUnreadableError, type OfferSteps } from "../lib/offer-steps-client.js";
-import { ALWAYS_PRESENT_STEPS, isCheckoutStep, missingStepsOf, setAsideCountByStep, splitByOfferSteps } from "../lib/offer-step-fit.js";
+import { ALWAYS_PRESENT_STEPS, missingStepsOf, setAsideCountByStep, splitByOfferSteps } from "../lib/offer-step-fit.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -405,19 +405,14 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
 
 /**
  * What the offer stated about its steps, served beside every per-offer list/detail (owner 2026-10-12):
- * `stated:false` = never said (only a checkout is set aside); `alwaysPresent` = the steps counted present by
- * definition; `neverAssumed` = the checkout steps an offer must state before a row walking them is proposed.
+ * `stated:false` = never said (nothing set aside); `alwaysPresent` = the steps counted present by definition.
  */
 const offerStepsEcho = (o: OfferContext, m: CatalogueModel) => ({
   stated: o.steps.stated,
   steps: o.steps.steps ? o.steps.steps.map((k) => ({ id: k, name: stepLabel(m, k) })) : null,
   statedAt: o.steps.statedAt,
   alwaysPresent: ALWAYS_PRESENT_STEPS.map((k) => ({ id: k, name: stepLabel(m, k) })),
-  neverAssumed: [...m.steps.keys()].filter((k) => isCheckoutStep(k, rungOfModel(m))).sort().map((k) => ({ id: k, name: stepLabel(m, k) })),
 });
-
-/** Each step's lifecycle rung as the catalogue states it (a declared checkout step counts like Direct purchase). */
-const rungOfModel = (m: CatalogueModel) => (k: string) => m.steps.get(k)?.lifecycleRung ?? null;
 
 /** The steps a set-aside row lacks, `{id, name}` like a path detail's steps. */
 const missingStepsWire = (m: CatalogueModel, keys: readonly string[]) => keys.map((k) => ({ id: k, name: stepLabel(m, k) }));
@@ -769,7 +764,7 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
       .map((p) => ({ p, e: pathEconomics(model, p) }))
       .sort(byRoi((x) => x.e, (x) => x.p.id, (x) => x.p.type));
     // Per offer (owner 2026-10-12): a path through a step the offer's business does not have is SET ASIDE.
-    const { kept: candidates, setAside } = offer ? splitByOfferSteps(matching, (x) => x.p.steps, offer.steps, rungOfModel(model)) : { kept: matching, setAside: [] };
+    const { kept: candidates, setAside } = offer ? splitByOfferSteps(matching, (x) => x.p.steps, offer.steps) : { kept: matching, setAside: [] };
     const shown = candidates.slice(0, limit);
     const shownAside = setAside.slice(0, limit);
     const n = await named([...shown, ...shownAside.map((x) => x.item)].map((x) => salesPathNameKeyOf(x.p.id)), names);
@@ -1146,7 +1141,7 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
     // Per offer (owner 2026-10-12): a funnel through a step the offer's business does not have is SET ASIDE, never proposed.
     const { kept: candidates, setAside } = offer
-      ? splitByOfferSteps(matching, (f) => model.paths.get(f.pathId)!.steps, offer.steps, rungOfModel(model))
+      ? splitByOfferSteps(matching, (f) => model.paths.get(f.pathId)!.steps, offer.steps)
       : { kept: matching, setAside: [] };
     const shown = candidates.slice(0, limit);
     const shownAside = setAside.slice(0, limit);
@@ -1224,7 +1219,7 @@ async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Ma
 
 /** A per-offer detail: the offer, its stated steps, and whether this funnel/path is set aside for a step it lacks. */
 function offerFitOf(model: CatalogueModel, offer: OfferContext, steps: readonly string[]) {
-  const missing = missingStepsOf(steps, offer.steps, rungOfModel(model));
+  const missing = missingStepsOf(steps, offer.steps);
   return { offer: offerEcho(offer), offerSteps: offerStepsEcho(offer, model), setAside: missing.length > 0, missingSteps: missingStepsWire(model, missing) };
 }
 
