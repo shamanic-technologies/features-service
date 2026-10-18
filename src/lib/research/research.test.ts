@@ -444,10 +444,87 @@ describe("research catalogue", () => {
       workflowRuns: [{ workflowSlug: "rampart-v3", dynasty: "rampart", status: "completed", startedAt: "2026-10-18T10:00:00Z", completedAt: "2026-10-18T10:00:30Z", costUsd: 0.21 }],
       generationRuns: [],
       templateTexts: new Set(),
+      runnableWorkflows: null,
+      writerOf: "workflow_definitions_unreadable",
     });
     expect(c.workflows.map((w) => [w.key, w.rank, w.cost])).toEqual([["rampart", 1, "$8.47"], ["pelican", null, null]]);
+    expect(c.workflows[0]!.writesWithNow).toBeNull();
+    expect(c.workflows[0]!.writesWithNowUnavailableReason).toBe("workflow_definitions_unreadable");
     expect(c.workflows[0]!.model).toEqual({ key: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", linked: false });
     expect(c.workflows[0]!.runs).toEqual([{ when: "Oct 18, 10:00 UTC", version: "v3", status: "completed", duration: "30s", cost: "$0.21" }]);
     expect(c.workflows[0]!.charts).toHaveLength(2);
+  });
+});
+
+import { dynastyWriters, resolveModelAlias, writerOfDag } from "./writers.js";
+describe("research catalogue: every runnable workflow, and what it writes with now (RESEARCH-PAGES-ALL-1018)", () => {
+  const models = [
+    { modelId: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro", aliases: ["pro"], formerAliases: [] },
+    { modelId: "deepseek-flash", displayName: "DeepSeek V4.1 Flash", aliases: ["deepseek-flash", "deepseek-pro"], formerAliases: [] },
+  ];
+  const dagOf = (type: string, model: string) => ({
+    nodes: [
+      { id: "fetch-lead", type: "http.call", config: { service: "lead", path: "/orgs/buffer/next" } },
+      { id: "email-generate", type: "http.call", config: { service: "content-generation", path: "/generate", body: { type, model } } },
+    ],
+  });
+  const def = (slug: string, dynasty: string, version: number, active: boolean, type: string, model: string) => ({ workflowSlug: slug, workflowDynastySlug: dynasty, version, versionActive: active, description: null, dag: dagOf(type, model) });
+
+  it("reads the template and model alias off the DAG's content-generation step, the alias resolved by chat-service's list", () => {
+    expect(writerOfDag(dagOf("blind-discovery-email-v47", "pro"))).toEqual({ template: "blind-discovery-email-v47", modelAlias: "pro" });
+    expect(writerOfDag({ nodes: [{ config: { service: "lead" } }] })).toBeNull();
+    expect(resolveModelAlias("pro", models)).toEqual({ id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" });
+    expect(resolveModelAlias("deepseek-flash", models)).toEqual({ id: "deepseek-flash", label: "DeepSeek V4.1 Flash" });
+    expect(resolveModelAlias("nope", models)).toBeNull();
+  });
+
+  it("takes the RUNNABLE version, never the old versions' template", () => {
+    const w = dynastyWriters(
+      [def("azalea", "azalea", 1, false, "blind-discovery-email-v9", "pro"), def("azalea-v8", "azalea", 8, true, "blind-discovery-email-v47", "pro"), def("gone", "gone", 1, false, "x-v1", "pro")],
+      models,
+    );
+    expect(w.get("azalea")).toEqual({ ok: true, workflowSlug: "azalea-v8", version: 8, template: "blind-discovery-email-v47", modelAlias: "pro", model: { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" } });
+    expect(w.get("gone")).toEqual({ ok: false, reason: "no_runnable_version" });
+  });
+
+  it("gives every runnable workflow a page, and its current template and model pages, all zero until used", () => {
+    const writers = dynastyWriters([def("azalea-v8", "azalea", 8, true, "blind-discovery-email-v47", "pro"), def("aldhanab-v2", "aldhanab", 2, true, "cold-email-v53", "deepseek-flash")], models);
+    const c = pipeCatalog({
+      terms,
+      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 100, contacted: 500, outcomes: 10 }, learning: false, months: null, strata: null }],
+      templates: [{ key: "blind-discovery-email-v9", label: "Blind discovery v9", basis: "mature", figures: { spentUsd: 100, contacted: 500, outcomes: 10 }, learning: false, months: null, strata: null }],
+      models: [{ key: "gemini-3.1-pro", label: "Gemini 3.1 Pro", basis: "mature", figures: { spentUsd: 100, contacted: 500, outcomes: 10 }, learning: false, months: null, strata: null }],
+      nameOf: () => null,
+      mainOf: (d) => (d === "azalea" ? { model: "gemini-3.1-pro-preview", template: "blind-discovery-email-v9" } : { model: null, template: null }),
+      modelLabel: (id) => (id === "gemini-3.1-pro-preview" ? "Gemini 3.1 Pro" : id),
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(["blind-discovery-email-v47"]),
+      runnableWorkflows: [
+        { key: "azalea", label: "Azalea", name: "Sales Cold Email Outreach Azalea" },
+        { key: "aldhanab", label: "Aldhanab", name: "Sales Cold Email Outreach Aldhanab" },
+      ],
+      writerOf: (d) => writers.get(d) ?? null,
+    });
+    expect(c.workflows.map((w) => [w.key, w.runnable, w.emails, w.spend, w.cost, w.rank])).toEqual([
+      ["azalea", true, "500", "$100", "$10", 1],
+      ["aldhanab", true, "0", "$0.00", null, null],
+    ]);
+    const azalea = c.workflows[0]!;
+    expect(azalea.wroteWithMost.template).toEqual({ key: "blind-discovery-email-v9", label: "Blind discovery v9", linked: true });
+    expect(azalea.writesWithNow).toEqual({
+      version: "v8",
+      template: { key: "blind-discovery-email-v47", label: "Blind discovery v47", linked: true },
+      model: { key: "gemini-3.1-pro", label: "Gemini 3.1 Pro", linked: true },
+      modelAlias: "pro",
+    });
+    const aldhanab = c.workflows[1]!;
+    expect(aldhanab.name).toBe("Sales Cold Email Outreach Aldhanab");
+    expect(aldhanab.writesWithNow?.model).toEqual({ key: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", linked: true });
+    expect(c.templates.map((t) => [t.key, t.emails, t.hasText])).toEqual([["blind-discovery-email-v9", "500", false], ["blind-discovery-email-v47", "0", true], ["cold-email-v53", "0", false]]);
+    expect(c.templates.find((t) => t.key === "blind-discovery-email-v47")!.workflows).toEqual([{ key: "azalea", label: "Azalea" }]);
+    expect(c.models.map((m) => [m.key, m.emails])).toEqual([["gemini-3.1-pro", "500"], ["deepseek-v4.1-flash", "0"]]);
+    expect(c.models[1]!.sample).toMatch(/^0 /);
   });
 });

@@ -63629,6 +63629,10 @@
                               "type": "string",
                               "nullable": true
                             },
+                            "runnable": {
+                              "type": "boolean",
+                              "description": "A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."
+                            },
                             "model": {
                               "type": "object",
                               "nullable": true,
@@ -63648,7 +63652,8 @@
                                 "key",
                                 "label",
                                 "linked"
-                              ]
+                              ],
+                              "description": "Same as `wroteWithMost.model` (kept for readers typed on it)."
                             },
                             "template": {
                               "type": "object",
@@ -63669,6 +63674,133 @@
                                 "key",
                                 "label",
                                 "linked"
+                              ],
+                              "description": "Same as `wroteWithMost.template` (kept for readers typed on it)."
+                            },
+                            "wroteWithMost": {
+                              "type": "object",
+                              "properties": {
+                                "model": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ]
+                                },
+                                "template": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "template"
+                              ],
+                              "description": "What most of its people's sequences were written with (null when none was written yet)."
+                            },
+                            "writesWithNow": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "version": {
+                                  "type": "string",
+                                  "description": "Its runnable version (`v8`)."
+                                },
+                                "template": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ]
+                                },
+                                "model": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ],
+                                  "description": "The real model the alias resolves to (chat-service), keyed like every model page; null when chat-service names no model for the alias."
+                                },
+                                "modelAlias": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The alias the workflow names (`pro`)."
+                                }
+                              },
+                              "required": [
+                                "version",
+                                "template",
+                                "model",
+                                "modelAlias"
+                              ],
+                              "description": "What its runnable version writes with NOW (workflow-service DAG), whether or not it sent anything. Its template and model each have a page (zero figures until used)."
+                            },
+                            "writesWithNowUnavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "workflow_definitions_unreadable",
+                                "no_runnable_version",
+                                "no_writing_step"
                               ]
                             },
                             "rank": {
@@ -63867,8 +63999,12 @@
                             "key",
                             "label",
                             "name",
+                            "runnable",
                             "model",
                             "template",
+                            "wroteWithMost",
+                            "writesWithNow",
+                            "writesWithNowUnavailableReason",
                             "rank",
                             "emails",
                             "emailsNoun",
