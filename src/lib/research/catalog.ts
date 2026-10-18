@@ -7,6 +7,7 @@
 import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
+import type { DynastyWriter, WriterReason } from "./writers.js";
 
 export interface CatalogRef {
   key: string;
@@ -27,12 +28,27 @@ export interface CatalogFigures {
   charts: ResearchChart[];
 }
 
+/** What a workflow's runnable version writes with NOW (its DAG), whether or not it sent anything yet. */
+export interface CatalogWriter {
+  version: string;
+  template: CatalogRef | null;
+  model: CatalogRef | null;
+  /** The alias the DAG names (`pro`); `model` is the real model it resolves to (null when chat-service names none). */
+  modelAlias: string | null;
+}
+
 export interface CatalogWorkflow extends CatalogFigures {
   key: string;
   label: string;
   name: string | null;
+  /** A run may still pick it on this pipe (assigned active AND executable). */
+  runnable: boolean;
+  /** What most of its people's sequences were written with (= `wroteWithMost`, kept for the readers typed on it). */
   model: CatalogRef | null;
   template: CatalogRef | null;
+  wroteWithMost: { model: CatalogRef | null; template: CatalogRef | null };
+  writesWithNow: CatalogWriter | null;
+  writesWithNowUnavailableReason: WriterReason | null;
   runs: Array<{ when: string; version: string; status: string; duration: string | null; cost: string | null }>;
 }
 
@@ -85,12 +101,18 @@ function durationText(a: string, b: string | null): string | null {
 }
 const versionText = (slug: string) => `v${/-v(\d+)$/.exec(slug)?.[1] ?? "1"}`;
 
+/** A page with nothing sent yet: every figure zero, stated as such (never a borrowed figure). */
+export function emptyBucket(key: string, label: string): ResearchBucket {
+  return { key, label, basis: "flash", figures: { spentUsd: 0, contacted: 0, outcomes: 0 }, learning: true, months: null, strata: null };
+}
+
 const costOf = (b: ResearchBucket) => (b.figures.outcomes > 0 && b.figures.spentUsd > 0 ? b.figures.spentUsd / b.figures.outcomes : null);
-/** Cheapest first (the study's ROI order), then the unpriced ones by people reached. */
+/** Cheapest first (the study's ROI order), then the unpriced ones by people reached, then the pages nobody was reached on. */
 function catalogOrder(rows: readonly ResearchBucket[]): ResearchBucket[] {
   const priced = rows.filter((r) => costOf(r) !== null).sort((a, b) => costOf(a)! - costOf(b)! || b.figures.outcomes - a.figures.outcomes);
   const rest = rows.filter((r) => costOf(r) === null && r.figures.contacted > 0).sort((a, b) => b.figures.contacted - a.figures.contacted);
-  return [...priced, ...rest];
+  const unreached = rows.filter((r) => costOf(r) === null && !(r.figures.contacted > 0)).sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  return [...priced, ...rest, ...unreached];
 }
 
 function figures(t: PipeTerms, r: ResearchBucket, rank: number | null): CatalogFigures {
@@ -127,13 +149,39 @@ export interface PipeCatalogInput {
   workflowRuns: readonly WorkflowRun[];
   generationRuns: readonly GenerationRun[];
   templateTexts: ReadonlySet<string>;
+  /**
+   * Every workflow a run may still pick on the pipe (the leg ranking's selectable rows): each has a page, an empty one
+   * until it sends. Null when the ranking could not be read (only the bars are listed then).
+   */
+  runnableWorkflows: ReadonlyArray<{ key: string; label: string; name: string | null }> | null;
+  /** Dynasty → what its runnable version writes with now; a string when the definitions could not be read at all. */
+  writerOf: ((dynasty: string) => DynastyWriter | null) | WriterReason;
 }
 
 /** PURE. One pipe's catalogue. */
 export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]; templates: CatalogTemplate[]; models: CatalogModel[] } {
-  const wfRows = catalogOrder(p.workflows);
-  const tplRows = catalogOrder(p.templates);
-  const mdRows = catalogOrder(p.models);
+  // Every runnable workflow has a page, and so do the template and model it writes with now (empty until used).
+  const runnableKeys = new Set((p.runnableWorkflows ?? []).map((w) => w.key));
+  const barKeys = new Set(p.workflows.map((r) => r.key));
+  const pageNames = new Map((p.runnableWorkflows ?? []).map((w) => [w.key, w.name]));
+  const allWorkflows = [...p.workflows, ...(p.runnableWorkflows ?? []).filter((w) => !barKeys.has(w.key)).map((w) => emptyBucket(w.key, w.label))];
+  const writer = (dynasty: string): DynastyWriter =>
+    typeof p.writerOf === "string" ? { ok: false, reason: p.writerOf } : (p.writerOf(dynasty) ?? { ok: false, reason: "no_runnable_version" });
+  const writers = new Map(allWorkflows.map((r) => [r.key, writer(r.key)]));
+  const nowTemplates = new Set<string>();
+  const nowModels = new Map<string, string>();
+  for (const w of writers.values()) {
+    if (!w.ok) continue;
+    if (w.template) nowTemplates.add(w.template);
+    if (w.model) nowModels.set(modelKey(w.model.label), w.model.label);
+  }
+  const tplHave = new Set(p.templates.map((r) => r.key));
+  const mdHave = new Set(p.models.map((r) => r.key));
+  const allTemplates = [...p.templates, ...[...nowTemplates].filter((t) => !tplHave.has(t)).map((t) => emptyBucket(t, templateLabel(t)))];
+  const allModels = [...p.models, ...[...nowModels].filter(([k]) => !mdHave.has(k)).map(([k, label]) => emptyBucket(k, label))];
+  const wfRows = catalogOrder(allWorkflows);
+  const tplRows = catalogOrder(allTemplates);
+  const mdRows = catalogOrder(allModels);
   const wfKeys = new Set(wfRows.map((r) => r.key));
   const tplKeys = new Set(tplRows.map((r) => r.key));
   const mdKeys = new Set(mdRows.map((r) => r.key));
@@ -146,6 +194,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     return { key, label, linked: mdKeys.has(key) };
   };
   const tplRef = (id: string | null): CatalogRef | null => (id ? { key: id, label: templateLabel(id), linked: tplKeys.has(id) } : null);
+  const resolvedModelRef = (m: { label: string } | null): CatalogRef | null => (m ? { key: modelKey(m.label), label: m.label, linked: mdKeys.has(modelKey(m.label)) } : null);
   const wfRef = (slug: string | null) => {
     if (!slug) return null;
     const d = p.dynastyOf(slug);
@@ -153,12 +202,18 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   };
   const workflows: CatalogWorkflow[] = wfRows.map((r, i) => {
     const main = p.mainOf(r.key);
+    const most = { model: modelRef(main.model), template: tplRef(main.template) };
+    const w = writers.get(r.key)!;
     return {
       key: r.key,
       label: r.label,
-      name: p.nameOf(r.key),
-      model: modelRef(main.model),
-      template: tplRef(main.template),
+      name: p.nameOf(r.key) ?? pageNames.get(r.key) ?? null,
+      runnable: runnableKeys.has(r.key),
+      model: most.model,
+      template: most.template,
+      wroteWithMost: most,
+      writesWithNow: w.ok ? { version: `v${w.version}`, template: tplRef(w.template), model: resolvedModelRef(w.model), modelAlias: w.modelAlias } : null,
+      writesWithNowUnavailableReason: w.ok ? null : w.reason,
       ...figures(p.terms, r, rankOf(r, i)),
       runs: p.workflowRuns
         .filter((x) => x.dynasty === r.key)
@@ -171,7 +226,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     label: r.label,
     hasText: p.templateTexts.has(r.key),
     ...figures(p.terms, r, rankOf(r, i)),
-    workflows: workflows.filter((w) => w.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
+    workflows: workflows.filter((w) => w.template?.key === r.key || w.writesWithNow?.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => x.promptType === r.key)
       .slice(0, RUNS_SHOWN)
@@ -181,7 +236,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     key: r.key,
     label: r.label,
     ...figures(p.terms, r, rankOf(r, i)),
-    workflows: workflows.filter((w) => w.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
+    workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => modelKey(p.modelLabel(x.model)) === r.key)
       .slice(0, RUNS_SHOWN)

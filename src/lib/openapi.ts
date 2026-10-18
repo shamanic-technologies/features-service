@@ -7844,7 +7844,25 @@ const researchCatalogFigures = {
   charts: z.array(researchChartSchema),
 };
 const researchCatalogPipeSchema = z.object({
-  workflows: z.array(z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), model: researchRefSchema.nullable(), template: researchRefSchema.nullable(), ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
+  workflows: z.array(z.object({
+    key: z.string(),
+    label: z.string(),
+    name: z.string().nullable(),
+    runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."),
+    model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
+    template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
+    wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
+    writesWithNow: z
+      .object({
+        version: z.string().describe("Its runnable version (`v8`)."),
+        template: researchRefSchema.nullable(),
+        model: researchRefSchema.nullable().describe("The real model the alias resolves to (chat-service), keyed like every model page; null when chat-service names no model for the alias."),
+        modelAlias: z.string().nullable().describe("The alias the workflow names (`pro`)."),
+      })
+      .nullable()
+      .describe("What its runnable version writes with NOW (workflow-service DAG), whether or not it sent anything. Its template and model each have a page (zero figures until used)."),
+    writesWithNowUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_runnable_version", "no_writing_step"]).nullable(),
+    ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
   templates: z.array(z.object({ key: z.string(), label: z.string(), hasText: z.boolean(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
   models: z.array(z.object({ key: z.string(), label: z.string(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
 });

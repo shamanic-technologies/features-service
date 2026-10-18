@@ -32,6 +32,9 @@ import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
+import { dynastyWriters, type DynastyWriter, type ModelIdRow, type WriterReason } from "../lib/research/writers.js";
+import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
+import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { pipeCatalog, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
@@ -144,14 +147,15 @@ async function fetchDatedSpend(featureSlug: string, campaigns: ReadonlyArray<{ c
 }
 
 /** A dynasty's name as the page shows it: workflow-service's name less the channel's words ("Rampart"). */
+function shortName(name: string): string {
+  return name.replace(/^(Sales Cold Email Outreach|Ai Meeting Booking)\s+/i, "") || name;
+}
 function labelFor(workflows: readonly WorkflowMetadata[]): (dynasty: string) => string {
   const names = new Map<string, string>();
   for (const w of workflows) if (w.workflowDynastyName && !names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName);
   return (dynasty) => {
     const name = names.get(dynasty);
-    if (!name) return dynasty;
-    const short = name.replace(/^(Sales Cold Email Outreach|Ai Meeting Booking)\s+/i, "");
-    return short || name;
+    return name ? shortName(name) : dynasty;
   };
 }
 
@@ -225,13 +229,38 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<C
   };
 }
 
-/** chat-service's names and tiers of every concrete model id we wrote with (cheap = Flash, strong / frontier = Pro). */
-async function readModelNames(): Promise<Map<string, ModelName>> {
+/** chat-service's served models: id, name, tier and the aliases a workflow names them by. */
+async function readModelIds(): Promise<Array<ModelIdRow & { capabilityTier: string }>> {
   const res = await fetchWithRetry(`${process.env.CHAT_SERVICE_URL}/internal/model-ids`, { headers: { "x-api-key": process.env.CHAT_SERVICE_API_KEY ?? "" } });
   if (!res.ok) throw new Error(`chat-service model-ids ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const body = (await res.json()) as { models?: Array<{ modelId: string; displayName: string; capabilityTier: string }> };
+  const body = (await res.json()) as { models?: Array<{ modelId: string; displayName: string; capabilityTier: string; aliases?: string[]; formerAliases?: string[] }> };
   if (!Array.isArray(body.models)) throw new Error("chat-service model-ids: no models array");
-  return new Map(body.models.map((m) => [m.modelId, { label: m.displayName, tier: m.capabilityTier === "cheap" ? "Flash" : "Pro" } as ModelName]));
+  return body.models.map((m) => ({ modelId: m.modelId, displayName: m.displayName, capabilityTier: m.capabilityTier, aliases: m.aliases ?? [], formerAliases: m.formerAliases ?? [] }));
+}
+
+/** chat-service's names and tiers of every concrete model id we wrote with (cheap = Flash, strong / frontier = Pro). */
+async function readModelNames(): Promise<Map<string, ModelName>> {
+  return new Map((await readModelIds()).map((m) => [m.modelId, { label: m.displayName, tier: m.capabilityTier === "cheap" ? "Flash" : "Pro" } as ModelName]));
+}
+
+/**
+ * What every cold email workflow's runnable version writes with now (RESEARCH-PAGES-ALL-1018). Unreadable = every
+ * workflow states `workflow_definitions_unreadable` (logged), never a guessed template.
+ */
+async function readDynastyWriters(): Promise<Map<string, DynastyWriter> | WriterReason> {
+  try {
+    const [definitions, models] = await Promise.all([fetchWorkflowDefinitions(COLD_EMAIL), readModelIds()]);
+    return dynastyWriters(definitions, models);
+  } catch (error) {
+    console.error("[features-service] research catalogue: what the workflows write with now could not be read this time:", error);
+    return "workflow_definitions_unreadable";
+  }
+}
+
+/** The workflows a run may still pick on a leg: the leg ranking's selectable rows. */
+function runnableWorkflowsOf(rows: readonly LegWorkflowRankingRow[] | null) {
+  if (!rows) return null;
+  return rows.filter((r) => r.selectable).map((r) => ({ key: r.workflowDynastySlug, label: r.workflowDynastyName ? shortName(r.workflowDynastyName) : r.workflowDynastySlug, name: r.workflowDynastyName || null }));
 }
 
 /** Each template's prompt text (content-generation-service, no identity), held 6 hours: a versioned template never changes. */
@@ -395,13 +424,34 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   });
   // The catalogue: one page per workflow, template and model, per pipe, from the same bars.
   const note = ruleNote(reply.input, visit.input);
-  const [replyRuns, visitRuns, replyGens, visitGens] = await Promise.all([
+  // Every workflow a run may still pick has a page (the actual basis reads the ranking only for this list).
+  const rankingOf = async (r: ColdEmailPipeRead) =>
+    r.input.rankingRows ??
+    (await readLegWorkflowRanking(COLD_EMAIL, r.input.legKey, RANKING_WAIT_MS).then(
+      (x) => x?.rows ?? null,
+      (err) => {
+        console.error(`[features-service] research catalogue: leg ranking ${r.input.legKey} unreadable, only the bars are listed:`, err);
+        return null;
+      },
+    ));
+  const [replyRuns, visitRuns, replyGens, visitGens, replyRanking, visitRanking, writers] = await Promise.all([
     readWorkflowRuns(reply.campaigns, (slug) => reply.input.dynastyOf.get(slug) ?? slug, basis),
     readWorkflowRuns(visit.campaigns, (slug) => visit.input.dynastyOf.get(slug) ?? slug, basis),
     readGenerationRuns(reply.campaignIds).catch(() => []),
     readGenerationRuns(visit.campaignIds).catch(() => []),
+    rankingOf(reply),
+    rankingOf(visit),
+    readDynastyWriters(),
   ]);
-  const catalogOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, runs: WorkflowRun[], gensRuns: GenerationRun[]) =>
+  // The text of every template a workflow writes with now, beside the ones its people were written with.
+  const nowTemplates = typeof writers === "string" ? [] : [...writers.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []));
+  const nowTexts = await readTemplateTexts(nowTemplates).catch((err) => {
+    console.error("[features-service] research catalogue: template texts unreadable this time:", err);
+    return new Map<string, string>();
+  });
+  const allTexts = new Map([...gens.templateTexts, ...nowTexts]);
+  const writerOf = typeof writers === "string" ? writers : (d: string) => writers.get(d) ?? null;
+  const catalogOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, runs: WorkflowRun[], gensRuns: GenerationRun[], ranking: readonly LegWorkflowRankingRow[] | null) =>
     pipeCatalog({
       terms: termsOf(pipe, r.input, note),
       workflows: workflowBuckets(r.input),
@@ -413,15 +463,17 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
       workflowRuns: runs,
       generationRuns: gensRuns,
-      templateTexts: new Set(gens.templateTexts.keys()),
+      templateTexts: new Set(allTexts.keys()),
+      runnableWorkflows: runnableWorkflowsOf(ranking),
+      writerOf,
     });
   const catalog: ResearchCatalog = {
-    [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens),
-    [WEBSITE_VISIT_PIPE]: catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens),
+    [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),
+    [WEBSITE_VISIT_PIPE]: catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking),
     [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
   const listed = new Set(Object.values(catalog).flatMap((c) => c.templates.map((t) => t.key)));
-  const texts = Object.fromEntries([...gens.templateTexts].filter(([k]) => listed.has(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const texts = Object.fromEntries([...allTexts].filter(([k]) => listed.has(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
   return { file, catalog, texts };
 }
 
