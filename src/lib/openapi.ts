@@ -6897,10 +6897,13 @@ const catalogueOfferEcho = z
 const catalogueStepRef = z.object({ id: z.string().describe("Step key."), name: z.string() });
 const catalogueOfferSteps = z
   .object({
-    stated: z.boolean().describe("false = the offer never stated its steps: nothing is set aside."),
+    stated: z.boolean().describe("false = the offer never stated its steps: every step is assumed present except a checkout (`neverAssumed`), whose rows are set aside until the offer states it."),
     steps: z.array(catalogueStepRef).nullable().describe("The steps the offer's business has (null when never stated)."),
     statedAt: z.string().nullable(),
     alwaysPresent: z.array(catalogueStepRef).describe("Steps every business has by definition (Lead found, Paid client), counted present."),
+    neverAssumed: z
+      .array(catalogueStepRef)
+      .describe("Checkout steps (the sale itself on the brand's own site, e.g. Direct purchase): never assumed, even when the offer never stated its steps. A row walking one is proposed only once the offer states it (owner 2026-10-18: a $12,000 executive offer was put on a checkout path priced on the 0.2% e-commerce default)."),
   })
   .optional()
   .describe("Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has.");
