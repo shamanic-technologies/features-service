@@ -5526,6 +5526,15 @@ const channelStepTransitionSchema = z.object({
   to: channelStepSchema.describe("The step this channel moves the lead TO."),
   crewName: z.null().describe("RETIRED 2026-10-04: always null. Crew names (Herald, Scout, Pilot, …) no longer name a (channel, leg); the poetic names now name sales path COMBINATIONS (`GET /offers/{offerId}/sales-paths` `paths[].name`). Superseded by campaignName. Kept as null so no reader breaks."),
   campaignName: z.string().nullable().describe("The CAMPAIGN's name: this channel on this leg (owner 2026-10-04; the offer's Sales path page lists its campaigns, each with a name and a face). One curated English word from the same pool as the sales path names, shared across every client, written once and never changed nor reused, and never equal to any sales path name (`GET /offers/{offerId}/sales-paths` `paths[].name`). Set on every leg of a salesPathEligible channel; null otherwise. The same word rides each sales path leg as `legs[].channel.campaignName`."),
+  pipe: z
+    .object({
+      id: z.string().describe("The pipe's id, `<channel slug>|<leg key>` in the served spelling (an outbound channel's entry leg reads `lead_found_to_*`): the id the staff catalogue serves for this pipe."),
+      name: z.string().describe("The pipe's name (a bird), shared across every client and never reused; the same word the staff catalogue serves."),
+      icon: z.string().describe("The pipe family glyph (Phosphor), `bird`."),
+      color: z.string().describe("`#RRGGBB` the glyph is drawn in, derived from the name."),
+    })
+    .nullable()
+    .describe("The PIPE this leg is (this channel on this leg; owner 2026-10-18): id, name, icon and colour, byte-equal to the staff catalogue's pipe row so a customer page draws the same logo a staff page does. Set on every leg of GET /public/channels (null only on reads that serve the unnamed catalogue). Identity only: no cost, no ROI."),
   reactive: z.boolean().describe("True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."),
   mode: z.enum(["proactive", "reactive"]).describe("How the leg runs (owner 2026-10-09). `proactive`: it goes and finds or contacts people on its own budget; campaign-service checks it every tick against its budget and billing; it has NO trigger. `reactive`: it runs ON DEMAND when its `triggerId` asks for it (a campaign asking for a lead, a positive reply received, a meeting booked...)."),
   triggerId: z.string().nullable().describe("The trigger that asks for a REACTIVE leg: an id of `triggers[]` on this payload (label, icon, the service that fires it). Null exactly on a proactive leg. A leg of a channel we run (`managed`) always names a trigger a service fires today (`coded`)."),

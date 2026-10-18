@@ -1124,3 +1124,24 @@ describe("retiring a declared trigger and the sales funnel it heads", () => {
   });
 });
 
+
+describe("a pipe's identity on the public channel catalogue (PIPE-PUBLIC-MARK-1018)", () => {
+  it("states the same id, name, icon and colour as the staff catalogue, and nothing economic", async () => {
+    const { loadChannelCatalogue } = await import("../lib/channel-declarations-store.js");
+    const { withPipeIdentities } = await import("../lib/pipe-identities.js");
+    // The staff list names the pipes first (Auk/Dotterel in prod; here the test table's words).
+    const staff = await request(app).get("/internal/catalogue/pipes").query({ channels: "ai-meeting-booking,sales-cold-email-outreach" }).set(KEY);
+    expect(staff.status).toBe(200);
+    const pub = await withPipeIdentities((await loadChannelCatalogue({ publishedOnly: true })).channels);
+    const publicPipes = new Map(pub.flatMap((c) => c.stepTransitions.map((t) => [t.pipe!.id, t.pipe!] as const)));
+    for (const id of [COLD, MEET]) {
+      const row = staff.body.rows.find((r: { id: string }) => r.id === id);
+      expect(row, id).toBeDefined();
+      expect(publicPipes.get(id)).toEqual({ id: row.id, name: row.name, icon: row.icon, color: row.color });
+    }
+    expect(publicPipes.get(MEET)!.name).toBe("Prism");
+    expect(publicPipes.get(MEET)!.icon).toBe("bird");
+    // Every leg carries one, identity only.
+    for (const c of pub) for (const t of c.stepTransitions) expect(Object.keys(t.pipe!).sort()).toEqual(["color", "icon", "id", "name"]);
+  });
+});
