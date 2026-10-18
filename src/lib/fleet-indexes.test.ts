@@ -90,3 +90,12 @@ describe("fleet indexes", () => {
     for (const d of FLEET_INDEXES) expect(d.unit).toBe(d.metric === "cost_per_outcome" ? "usd" : "percent");
   });
 });
+
+describe("public index names (owner 2026-10-18)", () => {
+  it("read \"Distribute.you <metric> Index\" and never carry the internal SCEO prefix", () => {
+    for (const def of FLEET_INDEXES) {
+      expect(def.name).toMatch(/^Distribute\.you .+ Index$/);
+      expect(def.name).not.toContain("SCEO");
+    }
+  });
+});

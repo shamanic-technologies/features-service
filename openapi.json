@@ -27931,7 +27931,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Display name, e.g. `SCEO Cost Per Click Index`."
+            "description": "Display name, e.g. `Distribute.you Cost Per Click Index`."
           },
           "channelSlug": {
             "type": "string"
