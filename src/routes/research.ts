@@ -93,14 +93,31 @@ async function fetchWindowSpend(featureSlug: string, ids: readonly string[], fro
   return body.groups;
 }
 
+/**
+ * A window that ENDED more than a day ago is read once a day (its runs are started; a late actualization is rare and
+ * lands within the day): the runs ledger's vendor-priced aggregation is heavy, and each build would otherwise re-read
+ * every month since February. The open windows are read on every build.
+ */
+const CLOSED_WINDOW_HOLD_MS = 24 * 60 * 60_000;
+const closedWindows = new Map<string, { at: number; groups: CostGroup[] }>();
+async function closedWindowSpend(featureSlug: string, ids: readonly string[], from: string, to: string, now: Date): Promise<CostGroup[]> {
+  const closed = Date.parse(to) < now.getTime() - 24 * 60 * 60_000;
+  const key = `${featureSlug}|${from}|${to}|${ids.join(",")}`;
+  const held = closedWindows.get(key);
+  if (closed && held && now.getTime() - held.at < CLOSED_WINDOW_HOLD_MS) return held.groups;
+  const groups = await fetchWindowSpend(featureSlug, ids, from, to);
+  if (closed) closedWindows.set(key, { at: now.getTime(), groups });
+  return groups;
+}
+
 async function fetchDatedSpend(featureSlug: string, campaignIds: readonly string[], pricing: Pricing, cutoffIso: string | null, now: Date): Promise<DatedSpendRow[]> {
   const ids = [...new Set(campaignIds)].sort();
   if (!ids.length) return [];
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) chunks.push(ids.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
   const reads = spendWindows(now, cutoffIso).flatMap((w) => chunks.map((c) => ({ w, c })));
-  const rows = await mapWithConcurrency(reads, 3, async ({ w, c }) => {
-    const groups = await fetchWindowSpend(featureSlug, c, w.from, w.to);
+  const rows = await mapWithConcurrency(reads, 1, async ({ w, c }) => {
+    const groups = await closedWindowSpend(featureSlug, c, w.from, w.to, now);
     return groups.flatMap((g): DatedSpendRow[] => {
       const slug = g.dimensions.workflowSlug;
       const campaignId = g.dimensions.campaignId;
@@ -126,11 +143,13 @@ function labelFor(workflows: readonly WorkflowMetadata[]): (dynasty: string) => 
 
 async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{ input: ColdEmailPipeInput; unpricedUsd: number }> {
   const pricing: Pricing = basis === "actual" ? "vendor" : "gross";
-  const [ev, ranking, unpriced] = await Promise.all([
+  // The vendor-cost twin is read one aggregation at a time: runs-service's vendor-priced fleet read takes ~16 s on a leg
+  // (0.15 s billed) and timed out when asked several at once (2026-10-18).
+  const [ev, ranking] = await Promise.all([
     fetchFleetLegSlugEvidence(COLD_EMAIL, legKey, "own", pricing),
     basis === "user" ? readLegWorkflowRanking(COLD_EMAIL, legKey, RANKING_WAIT_MS) : Promise.resolve(null),
-    basis === "actual" ? fetchFleetLegSlugEvidence(COLD_EMAIL, legKey, "own", "vendorUnpriced") : Promise.resolve(null),
   ]);
+  const unpriced = basis === "actual" ? await fetchFleetLegSlugEvidence(COLD_EMAIL, legKey, "own", "vendorUnpriced") : null;
   if (basis === "user" && !ranking) throw new Error(`leg workflow ranking ${COLD_EMAIL}|${legKey} not built yet`);
   const campaignIds = ev.campaigns.map((c) => c.campaignId);
   const [persons, spend] = await Promise.all([
@@ -177,9 +196,16 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchFile> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
-  const [reply, visit, meetingRanking, meetingFleet, beforeAfter] = await Promise.all([
-    coldEmailPipe(REPLY_LEG, basis, now),
-    coldEmailPipe(VISIT_LEG, basis, now),
+  // The two legs in turn on the vendor basis (one heavy aggregation at a time), together on the billed one.
+  const legs =
+    basis === "actual"
+      ? (async () => {
+          const r = await coldEmailPipe(REPLY_LEG, basis, now);
+          return [r, await coldEmailPipe(VISIT_LEG, basis, now)] as const;
+        })()
+      : Promise.all([coldEmailPipe(REPLY_LEG, basis, now), coldEmailPipe(VISIT_LEG, basis, now)]);
+  const [[reply, visit], meetingRanking, meetingFleet, beforeAfter] = await Promise.all([
+    legs,
     basis === "user" ? readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS) : Promise.resolve(null),
     basis === "user" ? getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked") : Promise.resolve(null),
     fetchMeetingBookingBeforeAfter(),
@@ -204,6 +230,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
 
 const store = new Map<Basis, { value: ResearchFile; computedAt: number }>();
 const warming = new Map<Basis, Promise<void>>();
+const failedAt = new Map<Basis, number>();
+const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
 const cellKey = (basis: Basis) => `research:${basis}`;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -229,9 +257,14 @@ async function buildResearch(basis: Basis): Promise<ResearchFile> {
   return computeResearch(basis);
 }
 
+/** The vendor-cost twin reads runs-service's heaviest aggregation per org: rebuilt every 6 hours, not every 15 minutes. */
+const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRESH_MS);
+
 export function warmResearch(basis: Basis): Promise<void> {
   const entry = store.get(basis);
-  if (entry && Date.now() - entry.computedAt < FRESH_MS) return Promise.resolve();
+  if (entry && Date.now() - entry.computedAt < freshMsOf(basis)) return Promise.resolve();
+  // A failed build is not retried on every read (each read would re-ask runs-service's heaviest aggregation).
+  if (Date.now() - (failedAt.get(basis) ?? 0) < RETRY_AFTER_FAILURE_MS) return Promise.resolve();
   const inFlight = warming.get(basis);
   if (inFlight) return inFlight;
   const p = withTimeout(buildResearch(basis), BUILD_TIMEOUT_MS, `research ${basis}`)
@@ -240,7 +273,10 @@ export function warmResearch(basis: Basis): Promise<void> {
       store.set(basis, { value, computedAt });
       await storeFleetCell(cellKey(basis), JSON.stringify(value), computedAt);
     })
-    .catch((error) => console.error(`[features-service] research ${basis} build failed, keeping the previous one:`, error))
+    .catch((error) => {
+      failedAt.set(basis, Date.now());
+      console.error(`[features-service] research ${basis} build failed, keeping the previous one (next try in 10 min):`, error);
+    })
     .finally(() => warming.delete(basis));
   warming.set(basis, p);
   return p;
@@ -266,6 +302,8 @@ export async function readResearch(basis: Basis): Promise<ResearchFile | null> {
 export function __resetResearch(): void {
   store.clear();
   warming.clear();
+  failedAt.clear();
+  closedWindows.clear();
 }
 
 const basisOf = (raw: unknown): Basis | null => (raw === undefined || raw === "" || raw === "user" || raw === "billed" ? "user" : raw === "actual" ? "actual" : null);
