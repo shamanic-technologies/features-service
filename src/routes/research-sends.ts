@@ -356,3 +356,41 @@ export async function readGenerationRuns(campaignIds: readonly string[]): Promis
     .map((r) => ({ createdAt: new Date(r.created_at).toISOString(), model: r.model, promptType: r.prompt_type, workflowSlug: r.workflow_slug }))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
+
+/**
+ * The page-wide counts the Research hub prints (the snapshot's `volume` + `maturation.excludedEmails`): every email sent
+ * on the two cold email legs since inception (our copy of the outreach facts), the clients they were sent for, the emails
+ * our own sender sent on the website-visit leg (the ones a visit can come from), per month; and the emails of sequences
+ * first written on or after their leg's cutoff (too young to count yet).
+ */
+export async function readVolume(
+  reply: { campaignIds: readonly string[]; cutoffIso: string | null },
+  visit: { campaignIds: readonly string[]; cutoffIso: string | null },
+): Promise<{ emails: number; orgs: number; linkedEmails: number; byMonth: Array<{ month: string; emails: number }>; excludedEmails: number }> {
+  const all = [...new Set([...reply.campaignIds, ...visit.campaignIds])];
+  if (!all.length) return { emails: 0, orgs: 0, linkedEmails: 0, byMonth: [], excludedEmails: 0 };
+  const far = "9999-12-31T00:00:00Z";
+  const rows = await pg<Array<{ month: string; emails: string; linked: string; excluded: string; orgs: string }>>`
+    WITH s AS (
+      SELECT instantly_campaign_id AS t, lead_email AS e, campaign_id, org_id, occurred_at, transport
+      FROM outreach_fact_copy WHERE type = 'email_sent' AND NOT withdrawn AND campaign_id = ANY(string_to_array(${(all).join(',')}, ','))
+    ), th AS (SELECT t, e, min(occurred_at) AS first_at FROM s GROUP BY 1, 2)
+    SELECT to_char(s.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') AS month, count(*) AS emails,
+           count(*) FILTER (WHERE s.transport = 'smtp' AND s.campaign_id = ANY(string_to_array(${([...visit.campaignIds, ""]).join(',')}, ','))) AS linked,
+           count(*) FILTER (WHERE
+             (s.campaign_id = ANY(string_to_array(${([...reply.campaignIds, ""]).join(',')}, ',')) AND th.first_at >= ${reply.cutoffIso ?? far}::timestamptz)
+             OR (s.campaign_id = ANY(string_to_array(${([...visit.campaignIds, ""]).join(',')}, ',')) AND th.first_at >= ${visit.cutoffIso ?? far}::timestamptz)) AS excluded,
+           count(DISTINCT s.org_id) AS orgs
+    FROM s JOIN th ON th.t = s.t AND th.e = s.e GROUP BY 1 ORDER BY 1
+  `;
+  const orgs = await pg<Array<{ n: string }>>`
+    SELECT count(DISTINCT org_id) AS n FROM outreach_fact_copy WHERE type = 'email_sent' AND NOT withdrawn AND campaign_id = ANY(string_to_array(${(all).join(',')}, ','))
+  `;
+  return {
+    emails: rows.reduce((a, r) => a + Number(r.emails), 0),
+    orgs: Number(orgs[0]?.n ?? 0),
+    linkedEmails: rows.reduce((a, r) => a + Number(r.linked), 0),
+    byMonth: rows.map((r) => ({ month: r.month, emails: Number(r.emails) })),
+    excludedEmails: rows.reduce((a, r) => a + Number(r.excluded), 0),
+  };
+}
