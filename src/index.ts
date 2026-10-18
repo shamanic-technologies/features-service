@@ -35,6 +35,7 @@ import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-
 import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import researchRoutes, { readResearch } from "./routes/research.js";
+import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import salesFunnelCampaignsRoutes from "./routes/sales-funnel-campaigns.js";
@@ -195,6 +196,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startFleetIndexRecorder();
         // The Research studies (routes/research.ts): built off the request path by the refresher (two minutes in, once it
         // is up), the persisted copy served meanwhile.
+        // Our copy of instantly-service's outreach facts (lib/outreach-facts-copy.ts): followed every 2 minutes.
+        startOutreachFactsCopy();
         setTimeout(() => void readResearch("user").catch((err) => console.error("[features-service] research boot warm failed:", err)), 120_000).unref();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
