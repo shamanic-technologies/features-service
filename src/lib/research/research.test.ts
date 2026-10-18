@@ -101,8 +101,8 @@ describe("slug cells", () => {
       flash: { costGroups: [{ dimensions: { workflowSlug: "a-v1" }, totalCostInUsdCents: "10000", runCount: 3 }], emailStats: new Map([["a-v1", { recipientsContacted: 300, recipientsRepliesPositive: 3 }]]) },
       mature: { costGroups: [{ dimensions: { workflowSlug: "a-v1" }, totalCostInUsdCents: "8000", runCount: 2 }], emailStats: new Map([["a-v1", { recipientsContacted: 200, recipientsRepliesPositive: 2 }]]) },
       persons: [
-        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-09-10", contacted: 200, clicked: 0, positiveReplies: 2, screenedContacted: 0, humanClicked: 0 },
-        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0 },
+        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-09-10", contacted: 200, clicked: 0, positiveReplies: 2, screenedContacted: 0, humanClicked: 0, generation: null },
+        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0, generation: null },
       ],
       spend: [
         { workflowSlug: "a-v1", campaignId: "c1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
@@ -181,6 +181,7 @@ describe("assembleResearch", () => {
     beforeAfter,
     meetingOutcomesRequired: 10,
     sends: null,
+    generationStudies: [],
     jev: NO_JEV,
   });
 
@@ -225,6 +226,7 @@ describe("assembleResearch", () => {
       beforeAfter,
       meetingOutcomesRequired: 10,
       sends: null,
+      generationStudies: [],
       jev: NO_JEV,
     });
     expect(actual.unpricedBilledUsd).toBe(12.5);
@@ -339,5 +341,49 @@ describe("outreach facts copy cursor", () => {
     expect(parseCursor("1234")).toEqual({ cursor: "1234", withSequence: false });
     expect(parseCursor(JSON.stringify({ cursor: "99", withSequence: true }))).toEqual({ cursor: "99", withSequence: true });
     expect(parseCursor(null)).toEqual({ cursor: null, withSequence: false });
+  });
+});
+
+import { splitCellsByGroup } from "./slug-cells.js";
+import { generationStudies } from "./generations.js";
+
+describe("what wrote the emails", () => {
+  const gen = (model: string, promptType: string, layout = "double_line_breaks") => ({ model, promptType, layout, opening: "greeting", dash: "none" });
+  const pb = (slug: string, model: string, tpl: string, contacted: number, replies: number, org = "o1") => ({
+    orgId: org, campaignId: "c1", workflowSlug: slug, servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: gen(model, tpl),
+  });
+  const cells: SlugCell[] = [{ slug: "wf-v1", flash: half(300, 300, 6), mature: half(300, 300, 6) }];
+  const persons = [pb("wf-v1", "gemini-3.5-flash", "cold-email-v35", 200, 5), pb("wf-v1", "gemini-3.1-pro-preview", "cold-email-v35", 100, 1)];
+
+  it("shares a version's spend, people and outcomes out on what wrote its people's emails", () => {
+    const { cells: split } = splitCellsByGroup(cells, persons, { screened: false, signal: "positiveReply", cutoffDay: "2026-09-27" }, (b) => b.generation!.model);
+    const flash = split.find((c) => c.slug.endsWith("gemini-3.5-flash"))!;
+    expect(flash.mature!.figures.spentUsd).toBeCloseTo(200, 6);
+    expect(flash.mature!.figures.outcomes).toBeCloseTo(5, 6);
+    const total = split.reduce((a, c) => a + c.mature!.figures.spentUsd, 0);
+    expect(total).toBeCloseTo(300, 6);
+  });
+
+  it("names models the chat-service way and splits shape studies by tier", () => {
+    const studies = generationStudies({
+      terms,
+      legKey: "start_to_conversation",
+      cells,
+      persons,
+      split: { screened: false, signal: "positiveReply", cutoffDay: "2026-09-27" },
+      models: new Map([
+        ["gemini-3.5-flash", { label: "Gemini 3.5 Flash", tier: "Flash" as const }],
+        ["gemini-3.1-pro-preview", { label: "Gemini 3.1 Pro", tier: "Pro" as const }],
+      ]),
+      templateTexts: new Map([["cold-email-v35", "Never name the client."]]),
+      naming: true,
+    });
+    const ids = studies.map((s) => s.id);
+    expect(ids).toEqual(expect.arrayContaining(["cold-email-positive-reply-llm-roi", "cold-email-positive-reply-llm-rate", "cold-email-positive-reply-template-roi", "cold-email-positive-reply-naming-rate", "cold-email-positive-reply-layout-roi", "cold-email-positive-reply-opening-roi", "cold-email-positive-reply-dash-roi"]));
+    const llm = studies.find((s) => s.id === "cold-email-positive-reply-llm-roi")!;
+    expect(llm.charts[0]!.points.map((p) => p.label)).toEqual(["Gemini 3.5 Flash", "Gemini 3.1 Pro"]);
+    expect(llm.charts[0]!.points[0]!.key).toBe("gemini-3.5-flash");
+    const layout = studies.find((s) => s.id === "cold-email-positive-reply-layout-roi")!;
+    expect(layout.charts.map((c) => c.title.split(":")[0])).toEqual(["All tiers", "Flash tier", "Pro tier"]);
   });
 });

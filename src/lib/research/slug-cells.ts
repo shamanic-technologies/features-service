@@ -13,6 +13,7 @@ import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
 import type { BucketFigures } from "./studies.js";
 import type { SlugCell, SlugHalf } from "./buckets.js";
 
+
 /** Spend of one (slug, campaign) over one run-start window. */
 export interface DatedSpendRow {
   workflowSlug: string;
@@ -129,3 +130,97 @@ function figuresOf(legKey: string, ev: Parameters<typeof legFiguresOf>[1]): Buck
   const f = legFiguresOf(legKey, ev);
   return { spentUsd: f.spentUsd, contacted: f.contacted, outcomes: f.outcomes };
 }
+
+/**
+ * PURE. Each slug cell SPLIT by what wrote its people's sequences (LIVE-RESEARCH-1018: the LLM, template, naming and
+ * first-email studies). `groupOf` names a person bucket's group (a model, a template, a layout...), null = not on record.
+ * A slug's people, outcomes and spend are shared out on its people: each group takes the slug's figures in the
+ * proportion its own people (and their outcomes) hold, month by month for the dated parts. So a group's figures add up,
+ * over its slugs, to exactly what the ranking's per-version evidence states, and a slug the groups do not cover keeps
+ * the rest in `leftOut`.
+ */
+export function splitCellsByGroup(
+  cells: readonly SlugCell[],
+  persons: readonly FleetPersonBucket[],
+  input: Pick<SlugCellsInput, "screened" | "signal" | "cutoffDay">,
+  groupOf: (b: FleetPersonBucket) => string | null,
+): { cells: SlugCell[]; leftOut: { contacted: number; outcomes: number } } {
+  const contactedOf = (b: FleetPersonBucket) => (input.screened ? b.screenedContacted : b.contacted);
+  const outcomesOf = (b: FleetPersonBucket) =>
+    input.signal === "positiveReply" ? b.positiveReplies : input.signal === "clicked" ? (input.screened ? b.humanClicked : b.clicked) : 0;
+  type Acc = { contacted: number; outcomes: number; months: Record<string, BucketFigures>; strata: Record<string, BucketFigures> };
+  const by = new Map<string, Map<string, { flash: Acc; mature: Acc }>>(); // slug -> group ("" = not on record)
+  const accOf = () => ({ contacted: 0, outcomes: 0, months: {}, strata: {} }) as Acc;
+  const add = (a: Acc, b: FleetPersonBucket) => {
+    const c = contactedOf(b);
+    const o = outcomesOf(b);
+    a.contacted += c;
+    a.outcomes += o;
+    if (!b.servedDay) return;
+    const m = b.servedDay.slice(0, 7);
+    for (const [rec, k] of [
+      [a.months, m],
+      [a.strata, `${b.orgId}|${m}`],
+    ] as const) {
+      const t = (rec[k] ??= ZERO());
+      t.contacted += c;
+      t.outcomes += o;
+    }
+  };
+  for (const b of persons) {
+    const g = groupOf(b) ?? "";
+    const slugMap = by.get(b.workflowSlug) ?? new Map();
+    by.set(b.workflowSlug, slugMap);
+    const e = slugMap.get(g) ?? { flash: accOf(), mature: accOf() };
+    slugMap.set(g, e);
+    add(e.flash, b);
+    if (input.cutoffDay === null || (b.servedDay !== "" && b.servedDay < input.cutoffDay) || b.servedDay === "") add(e.mature, b);
+  }
+  const out: SlugCell[] = [];
+  const leftOut = { contacted: 0, outcomes: 0 };
+  const share = (part: number, whole: number) => (whole > 0 ? part / whole : 0);
+  for (const cell of cells) {
+    const groups = by.get(cell.slug);
+    if (!groups) {
+      leftOut.contacted += cell.flash.figures.contacted;
+      leftOut.outcomes += cell.flash.figures.outcomes;
+      continue;
+    }
+    const totals = (half: "flash" | "mature") => {
+      const t = { contacted: 0, outcomes: 0, months: {} as Record<string, number> };
+      for (const e of groups.values()) {
+        t.contacted += e[half].contacted;
+        t.outcomes += e[half].outcomes;
+        for (const [m, f] of Object.entries(e[half].months)) t.months[m] = (t.months[m] ?? 0) + f.contacted;
+      }
+      return t;
+    };
+    const tf = totals("flash");
+    const tm = totals("mature");
+    const halfOf = (h: SlugHalf, e: Acc, t: ReturnType<typeof totals>): SlugHalf => {
+      const ks = share(e.contacted, t.contacted);
+      const figures = { spentUsd: h.figures.spentUsd * ks, contacted: h.figures.contacted * ks, outcomes: t.outcomes > 0 ? h.figures.outcomes * share(e.outcomes, t.outcomes) : 0 };
+      const months: Record<string, BucketFigures> = {};
+      for (const [m, f] of Object.entries(e.months)) months[m] = { spentUsd: (h.months[m]?.spentUsd ?? 0) * share(f.contacted, t.months[m] ?? 0), contacted: f.contacted, outcomes: f.outcomes };
+      const strata: Record<string, BucketFigures> = {};
+      for (const [k, f] of Object.entries(e.strata)) {
+        const m = k.slice(k.indexOf("|") + 1);
+        strata[k] = { spentUsd: (h.months[m]?.spentUsd ?? 0) * share(f.contacted, t.months[m] ?? 0), contacted: f.contacted, outcomes: f.outcomes };
+      }
+      return { figures, months, strata };
+    };
+    for (const [g, e] of groups) {
+      const flash = halfOf(cell.flash, e.flash, tf);
+      if (!g) {
+        leftOut.contacted += flash.figures.contacted;
+        leftOut.outcomes += flash.figures.outcomes;
+        continue;
+      }
+      out.push({ slug: `${cell.slug}\t${g}`, flash, mature: cell.mature ? halfOf(cell.mature, e.mature, tm) : null });
+    }
+  }
+  return { cells: out, leftOut };
+}
+
+/** The group a split cell belongs to (`splitCellsByGroup`'s slug is `<version>\t<group>`). */
+export const groupOfSplitSlug = (slug: string): string => slug.slice(slug.indexOf("\t") + 1);

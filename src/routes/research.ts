@@ -30,11 +30,13 @@ import { fetchMeetingBookingBeforeAfter } from "../lib/meeting-booking-before-af
 import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
 import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js";
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
-import { assembleResearch, type ColdEmailPipeInput } from "../lib/research/assemble.js";
+import { assembleResearch, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, type ColdEmailPipeInput } from "../lib/research/assemble.js";
+import { generationStudies, type ModelName } from "../lib/research/generations.js";
+import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
-import type { ResearchFile } from "../lib/research/types.js";
+import type { ResearchFile, ResearchStudy } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
-import { readJevInputs, readLegSpendSplit, readOpensArms, readReplyAuthors, readSendGroups } from "./research-sends.js";
+import { readJevInputs, readLegSpendSplit, readOpensArms, readReplyAuthors, readReportingBrands, readSendGroups } from "./research-sends.js";
 
 const router = Router();
 
@@ -142,7 +144,16 @@ function labelFor(workflows: readonly WorkflowMetadata[]): (dynasty: string) => 
   };
 }
 
-async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{ input: ColdEmailPipeInput; unpricedUsd: number; campaignIds: string[]; cutoffIso: string | null }> {
+interface ColdEmailPipeRead {
+  input: ColdEmailPipeInput;
+  unpricedUsd: number;
+  campaignIds: string[];
+  cutoffIso: string | null;
+  persons: FleetPersonBucket[];
+  split: { screened: boolean; signal: "positiveReply" | "clicked" | "other"; cutoffDay: string | null };
+}
+
+async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<ColdEmailPipeRead> {
   const pricing: Pricing = basis === "actual" ? "vendor" : "gross";
   // The vendor-cost twin is read one aggregation at a time: runs-service's vendor-priced fleet read takes ~16 s on a leg
   // (0.15 s billed) and timed out when asked several at once (2026-10-18).
@@ -193,7 +204,50 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{
     unpricedUsd: [...unpricedBySlug.values()].reduce((a, b) => a + b, 0),
     campaignIds,
     cutoffIso: ev.cutoffIso,
+    persons,
+    split: { screened, signal: rule.outcomeSignal === "positiveReply" ? "positiveReply" : rule.outcomeSignal === "clicked" ? "clicked" : "other", cutoffDay: ev.cutoffIso ? ev.cutoffIso.slice(0, 10) : null },
   };
+}
+
+/** chat-service's names and tiers of every concrete model id we wrote with (cheap = Flash, strong / frontier = Pro). */
+async function readModelNames(): Promise<Map<string, ModelName>> {
+  const res = await fetchWithRetry(`${process.env.CHAT_SERVICE_URL}/internal/model-ids`, { headers: { "x-api-key": process.env.CHAT_SERVICE_API_KEY ?? "" } });
+  if (!res.ok) throw new Error(`chat-service model-ids ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const body = (await res.json()) as { models?: Array<{ modelId: string; displayName: string; capabilityTier: string }> };
+  if (!Array.isArray(body.models)) throw new Error("chat-service model-ids: no models array");
+  return new Map(body.models.map((m) => [m.modelId, { label: m.displayName, tier: m.capabilityTier === "cheap" ? "Flash" : "Pro" } as ModelName]));
+}
+
+/** Each template's prompt text (content-generation-service, no identity), held 6 hours: a versioned template never changes. */
+const templateTextHeld = new Map<string, { at: number; text: string | null }>();
+async function readTemplateTexts(types: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  await mapWithConcurrency([...new Set(types)], 4, async (type) => {
+    const held = templateTextHeld.get(type);
+    if (held && Date.now() - held.at < 6 * 60 * 60_000) {
+      if (held.text) out.set(type, held.text);
+      return;
+    }
+    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/platform-prompts?type=${encodeURIComponent(type)}`, {
+      headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
+    });
+    const text = res.ok ? (((await res.json()) as { prompt?: string }).prompt ?? null) : null;
+    if (!res.ok && res.status !== 404) throw new Error(`content-generation-service platform-prompts ${type} ${res.status}`);
+    templateTextHeld.set(type, { at: Date.now(), text });
+    if (text) out.set(type, text);
+  });
+  return out;
+}
+
+/** The studies of what wrote the emails; none while the fleet person cell carries no generation yet (its ids stay waiting). */
+async function generationInputs(reply: ColdEmailPipeRead, visit: ColdEmailPipeRead, note: string): Promise<ResearchStudy[]> {
+  if (![...reply.persons, ...visit.persons].some((b) => b.generation)) return [];
+  const types = [...reply.persons, ...visit.persons].map((b) => b.generation?.promptType).filter((x): x is string => Boolean(x));
+  const [models, templateTexts] = await Promise.all([readModelNames(), readTemplateTexts(types)]);
+  return [
+    ...generationStudies({ terms: termsOf(POSITIVE_REPLY_PIPE, reply.input, note), legKey: reply.input.legKey, cells: reply.input.cells, persons: reply.persons, split: reply.split, models, templateTexts, naming: true }),
+    ...generationStudies({ terms: termsOf(WEBSITE_VISIT_PIPE, visit.input, note), legKey: visit.input.legKey, cells: visit.input.cells, persons: visit.persons, split: visit.split, models, templateTexts, naming: false }),
+  ];
 }
 
 /** The studies read on each email sent; null while our copy of the outreach facts holds no send of these legs yet. */
@@ -223,13 +277,22 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     basis === "user" ? getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked") : Promise.resolve(null),
     fetchMeetingBookingBeforeAfter(),
   ]);
-  const [sends, jev, replies] = await Promise.all([
+  const [sends, jev, replies, gens, reportingBrands] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
     readReplyAuthors(),
+    // A study family whose producer read fails stays waiting (logged), never fails the whole file.
+    generationInputs(reply, visit, ruleNote(reply.input, visit.input)).catch((err) => {
+      console.error("[features-service] research: the studies of what wrote the emails could not be built this time:", err);
+      return [] as ResearchStudy[];
+    }),
+    basis === "user" ? readReportingBrands() : Promise.resolve(null),
   ]);
   return assembleResearch({
     sends,
+    generationStudies: gens,
+    reportingBrands,
+    meetingOutcomeRequired: legMaturity("start_to_meeting_booked").outcomesRequired,
     jev: { ...jev, replies },
     costBasis: basis,
     now,

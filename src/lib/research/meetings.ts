@@ -11,7 +11,7 @@
  *  - The meeting booking pipe's comparisons (LLM, template, follow-ups, workflow): a comparison needs two workflows
  *    that acted on somebody; until then each states it.
  */
-import { n, usd } from "./format.js";
+import { MONTHS as MONTH_NAMES, n, usd } from "./format.js";
 import { compareVerdict, headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy, type BucketFigures } from "./studies.js";
 import type { ResearchPoint, ResearchStudy } from "./types.js";
@@ -183,4 +183,86 @@ export function meetingBookingComparisonStudies(workflowsActed: number): Researc
       ["meeting-booking-followups", "followups", "rate", "How many follow-ups after a positive reply book the most meetings?"],
     ] as const
   ).map(([id, topic, goal, question]) => notMeasuredStudy({ id, pipe: "meeting-booking", topic, goal, question, headline: "Not enough data yet.", reason }));
+}
+
+/** One brand that reports its meetings: its meetings our outreach led to, by month, and its spend on both legs by month. */
+export interface ReportingBrand {
+  brandId: string;
+  /** `YYYY-MM` → meetings booked after one of the person's positive replies to our outreach. */
+  meetingsByMonth: Record<string, number>;
+  /** `YYYY-MM` → what the brand was charged on cold email and meeting booking (incurred, list price). */
+  spendByMonth: Record<string, number>;
+}
+
+/**
+ * PURE. What a booked meeting costs from the first cold email, every leg (the Meeting booked OUTCOME section). Population
+ * = the brands that REPORT their meetings (any live meeting row in lead-service: CRM import, tracker, a person's
+ * statement): a brand reporting none reads zero meetings by construction, and pricing its spend against nobody's
+ * meetings would invent a price (owner pick, 2026-10-03). A meeting counts for our outreach when the person had replied
+ * positively to it before booking (lead-service's own attribution).
+ */
+export function meetingCostStudy(brands: readonly ReportingBrand[] | null, outcomesRequired: number, readOn: string): ResearchStudy {
+  const base = {
+    id: "meeting-cost",
+    pipe: null,
+    outcome: "meeting" as const,
+    topic: "cost" as const,
+    goal: "roi" as const,
+    question: "What does a booked meeting cost, from the first cold email?",
+  };
+  if (!brands) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "lead-service's meeting attribution or the spend could not be read right now; the study comes back on the next refresh." });
+  const months = [...new Set(brands.flatMap((b) => [...Object.keys(b.meetingsByMonth), ...Object.keys(b.spendByMonth)]))].sort();
+  const byMonth = months.map((m) => ({
+    m,
+    spend: brands.reduce((a, b) => a + (b.spendByMonth[m] ?? 0), 0),
+    got: brands.reduce((a, b) => a + (b.meetingsByMonth[m] ?? 0), 0),
+  }));
+  const spend = byMonth.reduce((a, r) => a + r.spend, 0);
+  const got = byMonth.reduce((a, r) => a + r.got, 0);
+  const withSpend = brands.filter((b) => Object.values(b.spendByMonth).some((v) => v > 0)).length;
+  if (!got || spend <= 0) return notMeasuredStudy({ ...base, headline: "No booked meeting credited to our outreach yet.", reason: `No booked meeting credited to our outreach yet on the ${brandsText(brands.length)} that report their meetings.` });
+  const partial = readOn.slice(8, 10) === "01" ? null : readOn.slice(0, 7);
+  const mlabel = (ym: string) => MONTH_NAMES[Number(ym.slice(5, 7)) - 1] ?? ym;
+  const note = (k: number, s: number, ym: string, toDate: boolean) => `${meetingsText(k)} · ${usd(s)} spent${toDate ? " to date" : ""}${ym === partial ? " · month in progress" : ""}`;
+  let cs = 0;
+  let ck = 0;
+  const cumulative: ResearchPoint[] = [];
+  for (const r of byMonth) {
+    cs += r.spend;
+    ck += r.got;
+    if (!ck) continue;
+    cumulative.push({ label: mlabel(r.m), value: Number((cs / ck).toFixed(2)), display: usd(cs / ck), note: note(ck, cs, r.m, true), thin: ck < outcomesRequired, ...(r.m === partial ? { partial: true } : {}) });
+  }
+  const price = spend / got;
+  const learning = got < outcomesRequired;
+  const verdict: Verdict = learning
+    ? { kind: "noise", reason: `Learning: ${meetingsText(got)} of the ${n(outcomesRequired)} a figure needs.` }
+    : withSpend < 2
+      ? { kind: "signal", reason: `${meetingsText(got)}, all from ${brandsText(withSpend)}: a measurement of that brand, not yet of the fleet.` }
+      : { kind: "conclusion", reason: `A measurement on ${meetingsText(got)} across ${brandsText(withSpend)}.` };
+  return {
+    ...base,
+    status: "measured",
+    headline: headlineFor(`${usd(price)} per meeting booked on average since inception, every leg from the first cold email to the meeting.`, verdict.kind),
+    winner: null,
+    crowned: verdict.kind === "conclusion",
+    verdict: { kind: verdict.kind, reason: verdict.reason },
+    result: { display: usd(price), unit: "per meeting booked, all legs, average since inception", sample: `${meetingsText(got)} · ${usd(spend)} spent · ${brandsText(withSpend)}` },
+    charts: [
+      {
+        kind: "months",
+        title: "Brands reporting meetings: cost per meeting booked by month",
+        lowerIsBetter: true,
+        points: byMonth
+          .filter((r) => r.got > 0 && r.spend > 0)
+          .map((r) => ({ label: mlabel(r.m), value: Number((r.spend / r.got).toFixed(2)), display: usd(r.spend / r.got), note: note(r.got, r.spend, r.m, false), thin: r.got < outcomesRequired, ...(r.m === partial ? { partial: true } : {}) })),
+        cumulative: { title: "Brands reporting meetings: average since inception", points: cumulative },
+        note: `Spend on cold email and meeting booking, against the meetings booked by people who had replied positively to our outreach first. A figure needs ${meetingsText(outcomesRequired)} behind it; below that it reads Learning.`,
+      },
+    ],
+    conclusion: [
+      "The average divides everything those brands were charged, positive reply leg and meeting leg alike, by every meeting booked since; the monthly bars are context, not the answer.",
+      `Measured on the ${brandsText(brands.length)} that report their booked meetings to us (CRM import or tracker). Brands that report no meetings are left out, since zero meetings there means we cannot see them.`,
+    ],
+  };
 }
