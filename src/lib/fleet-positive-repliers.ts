@@ -346,6 +346,40 @@ export async function fetchFleetScreenedVisitCounts(featureSlug: string, campaig
   return out;
 }
 
+/** One bucket of the fleet person cell, with the org that holds it (`fetchFleetPersonBuckets`). */
+export interface FleetPersonBucket {
+  orgId: string;
+  campaignId: string;
+  workflowSlug: string;
+  /** `YYYY-MM-DD` of the serve; `""` = never served. */
+  servedDay: string;
+  contacted: number;
+  clicked: number;
+  positiveReplies: number;
+  screenedContacted: number;
+  humanClicked: number;
+}
+
+/**
+ * THE FLEET PERSON CELL, bucket by bucket, on `campaignIds` (a leg): what the Research studies date by month and split by
+ * client (LIVE-RESEARCH-1018). The byte-same buckets every fleet person count above sums, so a dated study and its total
+ * cannot disagree on who counts. Every org's pairs, no requesting pair.
+ */
+export async function fetchFleetPersonBuckets(featureSlug: string, campaignIds: ReadonlySet<string>): Promise<FleetPersonBucket[]> {
+  if (campaignIds.size === 0) return [];
+  const cell = await getCell(featureSlug);
+  const out: FleetPersonBucket[] = [];
+  for (const [key, pair] of cell.byPair) {
+    const orgId = key.slice(0, key.indexOf(":"));
+    for (const [bucketKey, [c, k, r, sc, hk]] of pair.buckets) {
+      const { campaignId, slug, day } = splitBucketKey(bucketKey);
+      if (!slug || !campaignId || !campaignIds.has(campaignId)) continue;
+      out.push({ orgId, campaignId, workflowSlug: slug, servedDay: day, contacted: c, clicked: k, positiveReplies: r, screenedContacted: sc ?? 0, humanClicked: hk ?? 0 });
+    }
+  }
+  return out;
+}
+
 /** Build the cell ahead of the first read (boot). Fire-and-forget; a failure is logged, never thrown. */
 export async function warmFleetPositiveRepliers(featureSlug: string): Promise<void> {
   try {
