@@ -32,6 +32,7 @@ import { claimFleetCellBuild, loadFleetCell, storeFleetCell } from "./fleet-cell
 import { matureSlugStats, serveDatesStated } from "./mature-evidence.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import { creditedSignal } from "./serving-row-credit.js";
+import { HUMAN_CLICKED_KEY, SCREENED_CONTACTED_KEY, type ScreenedVisitCounts } from "./screened-visits.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -48,8 +49,11 @@ const PAIR_CONCURRENCY = 1;
 interface PairPopulation {
   /** FALSE when this pair's rows state no serve date at all (a producer predating the field). */
   serveDatesStated: boolean;
-  /** `${campaignId}\t${workflowSlug}\t${servedDay}` → [contacted, clicks, positive replies]. */
-  buckets: Map<string, [number, number, number]>;
+  /**
+   * `${campaignId}\t${workflowSlug}\t${servedDay}` → [contacted, clicks, positive replies, contacted through our
+   * own transport, human-judged clicks] (the last two: `lib/screened-visits.ts`).
+   */
+  buckets: Map<string, Bucket>;
 }
 
 interface FleetCell {
@@ -59,22 +63,27 @@ interface FleetCell {
 }
 
 const BUCKET_SEP = "\t";
+type Bucket = [number, number, number, number, number];
 
 /** PURE. Bucket one pair's deduped persons (see {@link PairPopulation}). */
 export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulation {
-  const buckets = new Map<string, [number, number, number]>();
+  const buckets = new Map<string, Bucket>();
   for (const p of persons) {
     // Only what the person's row EARNED lands in its (campaign, workflow) bucket (lib/serving-row-credit.ts).
     const contacted = creditedSignal(p, "contacted");
     const clicked = creditedSignal(p, "clicked");
     const replied = creditedSignal(p, "positiveReply");
-    if (!contacted && !clicked && !replied) continue;
+    const screened = creditedSignal(p, "screenedContacted");
+    const human = creditedSignal(p, "humanClicked");
+    if (!contacted && !clicked && !replied && !screened && !human) continue;
     const day = p.servedAt ? p.servedAt.slice(0, 10) : "";
     const key = [p.campaignId ?? "", p.workflowSlug ?? "", day].join(BUCKET_SEP);
-    const b = buckets.get(key) ?? [0, 0, 0];
+    const b = buckets.get(key) ?? [0, 0, 0, 0, 0];
     if (contacted) b[0] += 1;
     if (clicked) b[1] += 1;
     if (replied) b[2] += 1;
+    if (screened) b[3] += 1;
+    if (human) b[4] += 1;
     buckets.set(key, b);
   }
   return { serveDatesStated: serveDatesStated(persons), buckets };
@@ -108,7 +117,8 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
 /** The stored cell's key: the channel, and the stored FORMAT (bump it when {@link encodeCell} changes). */
 // v2 (OUTCOME-BEFORE-WORKFLOW-1015): buckets hold only what each row EARNED; a v1 cell is never adopted.
 // v3 (EMAIL-SENDS-ATTRIBUTION-1016): buckets key on the SENDING workflow and campaign; a v2 cell is never adopted.
-const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v3`;
+// v4 (SCOUT-VISIT-SCREEN-1018): buckets add contacted-through-our-transport and human-judged clicks; a v3 cell is never adopted.
+const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v4`;
 /** How long one process may hold a rebuild before another takes over (a build walks the fleet: minutes). */
 const BUILD_CLAIM_MS = 10 * 60_000;
 /** How often a process whose cell has gone stale looks for a newer one another process stored. */
@@ -127,7 +137,7 @@ export function encodeCell(cell: FleetCell): string {
 
 /** EXPORTED FOR TESTS. The inverse of {@link encodeCell}. */
 export function decodeCell(text: string): FleetCell {
-  const raw = JSON.parse(text) as { computedAt: number; byPair: [string, boolean, [string, [number, number, number]][]][] };
+  const raw = JSON.parse(text) as { computedAt: number; byPair: [string, boolean, [string, Bucket][]][] };
   return {
     computedAt: raw.computedAt,
     byPair: new Map(raw.byPair.map(([key, serveDatesStated, buckets]) => [key, { serveDatesStated, buckets: new Map(buckets) }])),
@@ -235,25 +245,29 @@ export async function fetchFleetMatureSlugStats(
   const cell = await getCell(featureSlug);
   const ownKey = own ? pairKey(own.orgId, own.brandId) : null;
   const cutoffDay = cutoffIso.slice(0, 10);
-  const counts = new Map<string, [number, number, number]>();
+  const counts = new Map<string, Bucket>();
   for (const [key, pair] of cell.byPair) {
     if (key === ownKey) continue;
     if (!pair.serveDatesStated) return null;
-    for (const [bucketKey, [c, k, r]] of pair.buckets) {
+    for (const [bucketKey, b] of pair.buckets) {
       const { campaignId, slug, day } = splitBucketKey(bucketKey);
       if (!slug || day >= cutoffDay) continue;
       if (campaignIds && (!campaignId || !campaignIds.has(campaignId))) continue;
-      const t = counts.get(slug) ?? [0, 0, 0];
-      t[0] += c;
-      t[1] += k;
-      t[2] += r;
+      const t = counts.get(slug) ?? [0, 0, 0, 0, 0];
+      for (let i = 0; i < 5; i++) t[i] += b[i] ?? 0;
       counts.set(slug, t);
     }
   }
   const total = new Map<string, Record<string, number>>(
-    [...counts].map(([slug, [c, k, r]]) => [
+    [...counts].map(([slug, [c, k, r, sc, hk]]) => [
       slug,
-      { recipientsContacted: c, recipientsClicked: k, recipientsRepliesPositive: r },
+      {
+        recipientsContacted: c,
+        recipientsClicked: k,
+        recipientsRepliesPositive: r,
+        [SCREENED_CONTACTED_KEY]: sc,
+        [HUMAN_CLICKED_KEY]: hk,
+      },
     ]),
   );
   for (const [slug, stats] of own ? matureSlugStats(own.persons, cutoffIso, campaignIds ?? null) : []) {
@@ -305,6 +319,28 @@ export async function fetchFleetContactedBySlug(featureSlug: string, campaignIds
       if (!slug) continue;
       if (campaignIds && (!campaignId || !campaignIds.has(campaignId))) continue;
       out.set(slug, (out.get(slug) ?? 0) + contacted);
+    }
+  }
+  return out;
+}
+
+/**
+ * THE FLEET'S SCREENED WEBSITE-VISIT EVIDENCE per workflow slug (every org's pairs from the cell), on `campaignIds`
+ * (a leg): persons contacted, of them contacted through our own transport, and human-judged clicks on those sends
+ * (`lib/screened-visits.ts`). Every serve day: the flash half.
+ */
+export async function fetchFleetScreenedVisitCounts(featureSlug: string, campaignIds: ReadonlySet<string>): Promise<Map<string, ScreenedVisitCounts>> {
+  const cell = await getCell(featureSlug);
+  const out = new Map<string, ScreenedVisitCounts>();
+  for (const pair of cell.byPair.values()) {
+    for (const [bucketKey, [c, , , sc, hk]] of pair.buckets) {
+      const { campaignId, slug } = splitBucketKey(bucketKey);
+      if (!slug || !campaignId || !campaignIds.has(campaignId)) continue;
+      const t = out.get(slug) ?? { contacted: 0, screenedContacted: 0, humanClicks: 0 };
+      t.contacted += c;
+      t.screenedContacted += sc ?? 0;
+      t.humanClicks += hk ?? 0;
+      out.set(slug, t);
     }
   }
   return out;

@@ -87,8 +87,8 @@ describe("serving-row credit: a positive reply counts for a workflow only after 
   const credit = (id: string) => persons.find((p) => p.leadId === id)!.servingRowCredit;
 
   it("a person who replied positively BEFORE the workflow's first send to them is not counted for it", () => {
-    expect(credit("before")).toEqual({ contacted: false, clicked: false, positiveReply: false });
-    expect(credit("before-emailed")).toEqual({ contacted: true, clicked: false, positiveReply: false });
+    expect(credit("before")).toMatchObject({ contacted: false, clicked: false, positiveReply: false });
+    expect(credit("before-emailed")).toMatchObject({ contacted: true, clicked: false, positiveReply: false });
     expect(credit("crm-before")?.positiveReply).toBe(false);
   });
 
@@ -99,7 +99,7 @@ describe("serving-row credit: a positive reply counts for a workflow only after 
   });
 
   it("a person the timeline holds no act for keeps the row's own attribution", () => {
-    expect(credit("no-acts")).toEqual({ contacted: true, clicked: false, positiveReply: true });
+    expect(credit("no-acts")).toMatchObject({ contacted: true, clicked: false, positiveReply: true });
   });
 
   it("the person's own signals are untouched: the brand still counts every reply", () => {
@@ -110,8 +110,8 @@ describe("serving-row credit: a positive reply counts for a workflow only after 
   it("every per-workflow grain counts the same earned set: replier partition, fleet bucket, mature cohort, contacted", () => {
     expect(crmRepliesBySlug(positiveRepliersOf(persons))).toEqual(new Map([["new-wf", 3], ["wa-wf", 1]]));
     const buckets = bucketPopulation(persons).buckets;
-    expect(buckets.get("C-NEW\tnew-wf\t2026-10-15")).toEqual([5, 0, 3]);
-    expect(matureSlugStats(persons, null).get("new-wf")).toEqual({ recipientsContacted: 5, recipientsClicked: 0, recipientsRepliesPositive: 3 });
+    expect(buckets.get("C-NEW\tnew-wf\t2026-10-15")).toEqual([5, 0, 3, 0, 0]);
+    expect(matureSlugStats(persons, null).get("new-wf")).toMatchObject({ recipientsContacted: 5, recipientsClicked: 0, recipientsRepliesPositive: 3 });
     expect(contactedPersonsBySlug(persons).get("new-wf")).toBe(5);
   });
 
@@ -221,10 +221,10 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
 
   it("every partitioned grain reads the sender; brand totals do not move", () => {
     expect(crmRepliesBySlug(positiveRepliersOf(credited))).toEqual(new Map([["wf-a", 3], ["wf-c", 2], ["wf-b", 1]]));
-    expect(matureSlugStats(credited, null).get("wf-b")).toEqual({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
+    expect(matureSlugStats(credited, null).get("wf-b")).toMatchObject({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
     expect(matureSlugStats(credited, null).get("wf-serve")).toBeUndefined();
     expect(contactedPersonsBySlug(credited).get("wf-c")).toBe(3);
-    expect(bucketPopulation(credited).buckets.get("C-A\twf-a\t2026-05-16")).toEqual([2, 0, 2]);
+    expect(bucketPopulation(credited).buckets.get("C-A\twf-a\t2026-05-16")).toEqual([2, 0, 2, 0, 0]);
     expect(credited.filter((p) => p.signals.positiveReply)).toHaveLength(rows().filter((p) => p.signals.positiveReply).length);
     expect(positiveRepliersOf(credited)).toHaveLength(7);
   });

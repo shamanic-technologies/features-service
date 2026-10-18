@@ -26,6 +26,12 @@ export function fetchServingRowJourneys(
     if (missing > 0) {
       throw new Error(`lead-service timeline-journeys: ${missing} of ${read.length} journeys of brand ${brandId} state no emailSends`);
     }
+    // Website visits count only on sends our tracker can screen (`lib/screened-visits.ts`): a send that states
+    // no transport would read as "never screenable" and silently drop every visit. Fail loud.
+    const unsplit = read.filter((j) => (j.emailSends ?? []).some((e) => e.screenable === undefined)).length;
+    if (unsplit > 0) {
+      throw new Error(`lead-service timeline-journeys: ${unsplit} of ${read.length} journeys of brand ${brandId} state sends with no transport`);
+    }
     return read;
   });
   held.set(key, { at: now, journeys });

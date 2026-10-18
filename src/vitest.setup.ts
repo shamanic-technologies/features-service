@@ -10,9 +10,19 @@ vi.mock("./lib/fleet-positive-repliers.js", () => ({
   fetchFleetPositiveRepliesBySlug: vi.fn(async () => undefined),
   fetchFleetMatureSlugStats: vi.fn(async () => undefined),
   fetchFleetContactedBySlug: vi.fn(async () => undefined),
+  fetchFleetScreenedVisitCounts: vi.fn(async () => new Map()),
   bucketPopulation: vi.fn(),
   warmFleetPositiveRepliers: vi.fn(async () => undefined),
   __resetFleetPositiveRepliers: vi.fn(),
+}));
+
+/**
+ * Suite-wide default: no leg is read on SCREENED website visits (lib/screened-visits.ts), so a route suite keeps
+ * the click counts its fixture states (fixtures carry no transport). `screened-visits.test.ts` unmocks it.
+ */
+vi.mock("./lib/screened-visits.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/screened-visits.js")>()),
+  isScreenedVisitLeg: vi.fn(() => false),
 }));
 
 /**

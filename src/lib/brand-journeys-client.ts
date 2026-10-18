@@ -15,6 +15,7 @@ interface RawFact {
   campaignId?: unknown;
   attributable?: unknown;
   valueCents?: unknown;
+  screened?: unknown;
 }
 interface RawAct {
   campaignId?: unknown;
@@ -26,6 +27,7 @@ interface RawEmailSend {
   workflowSlug?: unknown;
   firstSentAt?: unknown;
   lastSentAt?: unknown;
+  transports?: Array<{ transport?: unknown }>;
 }
 interface RawJourney {
   leadId?: unknown;
@@ -55,6 +57,8 @@ export function toJourney(raw: RawJourney): Journey {
         campaignId: str(f.campaignId),
         attributable: typeof f.attributable === "boolean" ? f.attributable : null,
         valueCents: typeof f.valueCents === "number" && Number.isFinite(f.valueCents) ? f.valueCents : null,
+        // A click: recorded by our tracker (judged human) or reported by the provider (unscreened).
+        ...(typeof f.screened === "boolean" ? { screened: f.screened } : {}),
       };
     }),
     acts: (raw.acts ?? []).map((a) => {
@@ -69,6 +73,9 @@ export function toJourney(raw: RawJourney): Journey {
             workflowSlug: str(e.workflowSlug),
             firstSentAt: str(e.firstSentAt),
             lastSentAt: str(e.lastSentAt),
+            // Through our own transport (`smtp`, lead-service's verbatim outreach transport): a click on it is screened.
+            // Absent split = not stated (the attribution read refuses that).
+            ...(Array.isArray(e.transports) ? { screenable: e.transports.some((t) => t.transport === "smtp") } : {}),
           })),
         }
       : {}),

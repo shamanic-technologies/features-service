@@ -25,4 +25,11 @@ describe("fetchServingRowJourneys: the sender attribution never silently falls b
     fetchBrandJourneys.mockResolvedValue(journeys);
     await expect(fetchServingRowJourneys("b1", { orgId: "o1" })).resolves.toEqual(journeys);
   });
+
+  it("fails loud when a send states no transport (website visits would silently drop to zero)", async () => {
+    fetchBrandJourneys.mockResolvedValue([
+      { leadId: "l1", offerId: null, facts: [], acts: [], emailSends: [{ campaignId: "c", workflowSlug: "w", firstSentAt: null, lastSentAt: null }] },
+    ]);
+    await expect(fetchServingRowJourneys("b1", { orgId: "o1" })).rejects.toThrow(/state sends with no transport/);
+  });
 });

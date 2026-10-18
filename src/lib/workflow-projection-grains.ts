@@ -15,6 +15,7 @@
  * a workflow's evidence includes its predecessor versions', identical to crossOrg.
  */
 
+import { isScreenedVisitLeg, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { buildWorkflowDynasties, aggregateAcrossDynasties } from "../routes/public.js";
@@ -766,6 +767,8 @@ export async function fetchCampaignWorkflowMatureEvidence(
   basis: CostBasis,
   persons: readonly EnginePerson[],
   cutoffIso: string,
+  /** The leg read; a leg whose outcome is the click is read on screened visits only (`lib/screened-visits.ts`). */
+  legKey: string | null = null,
 ): Promise<GrainEvidenceWithRetired> {
   if (campaignIds.length === 0) return { active: new Map(), retired: new Map() };
   const { groups, filteredLocally } = await fetchCampaignCostGroups(
@@ -776,13 +779,10 @@ export async function fetchCampaignWorkflowMatureEvidence(
     pricing,
     startedBeforeParam(cutoffIso),
   );
-  return rollUpGrain(
-    workflows,
-    mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),
-    matureSlugStats(persons, cutoffIso, new Set(campaignIds)),
-    undefined,
-    { exactCents: true },
-  );
+  const merged = mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis);
+  const stats = matureSlugStats(persons, cutoffIso, new Set(campaignIds));
+  const screened = isScreenedVisitLeg(legKey) ? screenVisitEvidence(merged, stats, screenedCountsOfStats(stats)) : null;
+  return rollUpGrain(workflows, screened?.costGroups ?? merged, screened?.emailStats ?? stats, undefined, { exactCents: true });
 }
 
 /**
