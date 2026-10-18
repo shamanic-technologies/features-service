@@ -28350,6 +28350,35 @@
                   "nullable": true,
                   "description": "The CAMPAIGN's name: this channel on this leg (owner 2026-10-04; the offer's Sales path page lists its campaigns, each with a name and a face). One curated English word from the same pool as the sales path names, shared across every client, written once and never changed nor reused, and never equal to any sales path name (`GET /offers/{offerId}/sales-paths` `paths[].name`). Set on every leg of a salesPathEligible channel; null otherwise. The same word rides each sales path leg as `legs[].channel.campaignName`."
                 },
+                "pipe": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "The pipe's id, `<channel slug>|<leg key>` in the served spelling (an outbound channel's entry leg reads `lead_found_to_*`): the id the staff catalogue serves for this pipe."
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The pipe's name (a bird), shared across every client and never reused; the same word the staff catalogue serves."
+                    },
+                    "icon": {
+                      "type": "string",
+                      "description": "The pipe family glyph (Phosphor), `bird`."
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "`#RRGGBB` the glyph is drawn in, derived from the name."
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "icon",
+                    "color"
+                  ],
+                  "description": "The PIPE this leg is (this channel on this leg; owner 2026-10-18): id, name, icon and colour, byte-equal to the staff catalogue's pipe row so a customer page draws the same logo a staff page does. Set on every leg of GET /public/channels (null only on reads that serve the unnamed catalogue). Identity only: no cost, no ROI."
+                },
                 "reactive": {
                   "type": "boolean",
                   "description": "True when the leg works a lead who already ENGAGED (a reply, a visit, a meeting): its work starts when a lead arrives. False on a PROACTIVE leg, one that goes and finds or contacts people: from nothing (sourcing, ads, today's outbound `start_to_*`) or from `lead_found` (the outbound `lead_found_to_*` legs of wave 2)."
@@ -28378,6 +28407,7 @@
                 "to",
                 "crewName",
                 "campaignName",
+                "pipe",
                 "reactive",
                 "mode",
                 "triggerId",

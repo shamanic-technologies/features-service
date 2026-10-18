@@ -36,6 +36,7 @@ import {
   pathLine,
   phosphorIconOf,
   pipeIdOf,
+  pipeIdentityOf,
   pipeLine,
   pipeOrPlayById,
   playsOfPipe,
@@ -653,10 +654,7 @@ const pathRowOf = (m: CatalogueModel, p: CataloguePath, name: string) => {
 };
 
 const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
-  id: p.id,
-  name,
-  icon: FAMILY_GLYPHS.pipe,
-  color: glyphColorOf(name),
+  ...pipeIdentityOf(p.channelSlug, p.legKey, name),
   line: pipeLine(m, p),
   mode: p.mode,
   ...econWire(p.economics, perStep(m, p.toStep)),
