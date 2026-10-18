@@ -63527,6 +63527,940 @@
           }
         }
       }
+    },
+    "/internal/research/catalog": {
+      "get": {
+        "summary": "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
+        "description": "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ]
+            },
+            "required": false,
+            "name": "basis",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalogue per pipe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "workflows": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "model": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "linked": {
+                                  "type": "boolean",
+                                  "description": "The referenced page exists in this pipe."
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "linked"
+                              ]
+                            },
+                            "template": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "key": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "linked": {
+                                  "type": "boolean",
+                                  "description": "The referenced page exists in this pipe."
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "label",
+                                "linked"
+                              ]
+                            },
+                            "rank": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                            },
+                            "emails": {
+                              "type": "string",
+                              "description": "People reached, printed."
+                            },
+                            "emailsNoun": {
+                              "type": "string"
+                            },
+                            "outcomes": {
+                              "type": "string"
+                            },
+                            "spend": {
+                              "type": "string"
+                            },
+                            "cost": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "rate": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "thin": {
+                              "type": "boolean",
+                              "description": "Learning under the maturity rule."
+                            },
+                            "sample": {
+                              "type": "string"
+                            },
+                            "charts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "bars",
+                                      "months"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "lowerIsBetter": {
+                                    "type": "boolean"
+                                  },
+                                  "points": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        },
+                                        "value": {
+                                          "type": "number"
+                                        },
+                                        "display": {
+                                          "type": "string",
+                                          "description": "The value as the page prints it."
+                                        },
+                                        "note": {
+                                          "type": "string",
+                                          "description": "The counts behind the value."
+                                        },
+                                        "thin": {
+                                          "type": "boolean",
+                                          "description": "LEARNING under the maturity rule (historical field name)."
+                                        },
+                                        "partial": {
+                                          "type": "boolean",
+                                          "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                        }
+                                      },
+                                      "required": [
+                                        "label",
+                                        "value",
+                                        "display",
+                                        "note",
+                                        "thin"
+                                      ]
+                                    }
+                                  },
+                                  "cumulative": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "note": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "title",
+                                  "lowerIsBetter",
+                                  "points"
+                                ]
+                              }
+                            },
+                            "runs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "when": {
+                                    "type": "string"
+                                  },
+                                  "version": {
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "type": "string"
+                                  },
+                                  "duration": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "cost": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged."
+                                  }
+                                },
+                                "required": [
+                                  "when",
+                                  "version",
+                                  "status",
+                                  "duration",
+                                  "cost"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "name",
+                            "model",
+                            "template",
+                            "rank",
+                            "emails",
+                            "emailsNoun",
+                            "outcomes",
+                            "spend",
+                            "cost",
+                            "rate",
+                            "thin",
+                            "sample",
+                            "charts",
+                            "runs"
+                          ]
+                        }
+                      },
+                      "templates": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "hasText": {
+                              "type": "boolean"
+                            },
+                            "rank": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                            },
+                            "emails": {
+                              "type": "string",
+                              "description": "People reached, printed."
+                            },
+                            "emailsNoun": {
+                              "type": "string"
+                            },
+                            "outcomes": {
+                              "type": "string"
+                            },
+                            "spend": {
+                              "type": "string"
+                            },
+                            "cost": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "rate": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "thin": {
+                              "type": "boolean",
+                              "description": "Learning under the maturity rule."
+                            },
+                            "sample": {
+                              "type": "string"
+                            },
+                            "charts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "bars",
+                                      "months"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "lowerIsBetter": {
+                                    "type": "boolean"
+                                  },
+                                  "points": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        },
+                                        "value": {
+                                          "type": "number"
+                                        },
+                                        "display": {
+                                          "type": "string",
+                                          "description": "The value as the page prints it."
+                                        },
+                                        "note": {
+                                          "type": "string",
+                                          "description": "The counts behind the value."
+                                        },
+                                        "thin": {
+                                          "type": "boolean",
+                                          "description": "LEARNING under the maturity rule (historical field name)."
+                                        },
+                                        "partial": {
+                                          "type": "boolean",
+                                          "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                        }
+                                      },
+                                      "required": [
+                                        "label",
+                                        "value",
+                                        "display",
+                                        "note",
+                                        "thin"
+                                      ]
+                                    }
+                                  },
+                                  "cumulative": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "note": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "title",
+                                  "lowerIsBetter",
+                                  "points"
+                                ]
+                              }
+                            },
+                            "workflows": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ]
+                              }
+                            },
+                            "runs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "when": {
+                                    "type": "string"
+                                  },
+                                  "model": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      },
+                                      "linked": {
+                                        "type": "boolean",
+                                        "description": "The referenced page exists in this pipe."
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label",
+                                      "linked"
+                                    ]
+                                  },
+                                  "workflow": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ]
+                                  },
+                                  "version": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "tokens": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "when",
+                                  "model",
+                                  "workflow",
+                                  "version",
+                                  "tokens"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "hasText",
+                            "rank",
+                            "emails",
+                            "emailsNoun",
+                            "outcomes",
+                            "spend",
+                            "cost",
+                            "rate",
+                            "thin",
+                            "sample",
+                            "charts",
+                            "workflows",
+                            "runs"
+                          ]
+                        }
+                      },
+                      "models": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "rank": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                            },
+                            "emails": {
+                              "type": "string",
+                              "description": "People reached, printed."
+                            },
+                            "emailsNoun": {
+                              "type": "string"
+                            },
+                            "outcomes": {
+                              "type": "string"
+                            },
+                            "spend": {
+                              "type": "string"
+                            },
+                            "cost": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "rate": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "thin": {
+                              "type": "boolean",
+                              "description": "Learning under the maturity rule."
+                            },
+                            "sample": {
+                              "type": "string"
+                            },
+                            "charts": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "bars",
+                                      "months"
+                                    ]
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "lowerIsBetter": {
+                                    "type": "boolean"
+                                  },
+                                  "points": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "key": {
+                                          "type": "string",
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        },
+                                        "value": {
+                                          "type": "number"
+                                        },
+                                        "display": {
+                                          "type": "string",
+                                          "description": "The value as the page prints it."
+                                        },
+                                        "note": {
+                                          "type": "string",
+                                          "description": "The counts behind the value."
+                                        },
+                                        "thin": {
+                                          "type": "boolean",
+                                          "description": "LEARNING under the maturity rule (historical field name)."
+                                        },
+                                        "partial": {
+                                          "type": "boolean",
+                                          "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                        }
+                                      },
+                                      "required": [
+                                        "label",
+                                        "value",
+                                        "display",
+                                        "note",
+                                        "thin"
+                                      ]
+                                    }
+                                  },
+                                  "cumulative": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "note": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "title",
+                                  "lowerIsBetter",
+                                  "points"
+                                ]
+                              }
+                            },
+                            "workflows": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ]
+                              }
+                            },
+                            "runs": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "when": {
+                                    "type": "string"
+                                  },
+                                  "workflow": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ]
+                                  },
+                                  "template": {
+                                    "type": "object",
+                                    "nullable": true,
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      },
+                                      "linked": {
+                                        "type": "boolean",
+                                        "description": "The referenced page exists in this pipe."
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label",
+                                      "linked"
+                                    ]
+                                  },
+                                  "version": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "tokens": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "when",
+                                  "workflow",
+                                  "template",
+                                  "version",
+                                  "tokens"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "rank",
+                            "emails",
+                            "emailsNoun",
+                            "outcomes",
+                            "spend",
+                            "cost",
+                            "rate",
+                            "thin",
+                            "sample",
+                            "charts",
+                            "workflows",
+                            "runs"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "workflows",
+                      "templates",
+                      "models"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/templates": {
+      "get": {
+        "summary": "The text of every template the Research catalogue lists (staff, api-key)",
+        "description": "Template id -> its prompt text, as content-generation-service stores it (a versioned id never changes).",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Template texts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

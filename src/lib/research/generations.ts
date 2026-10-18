@@ -163,15 +163,21 @@ function shapeStudy(input: GenerationsInput, dim: "layout" | "opening" | "dash")
   return { ...base, headline: w ? headlineFor(headline, v.kind) : headline, crowned: v.kind === "conclusion", verdict: { kind: v.kind, reason: v.reason } };
 }
 
+/** PURE. The model bars (one per model NAME: two ids naming one model are one bar) and the template bars of one pipe. */
+export function generationBuckets(input: GenerationsInput) {
+  const modelLabel = (id: string) => input.models.get(id)?.label ?? id;
+  const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
+  const tpl = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel);
+  return { llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut }, tpl, modelLabel };
+}
+
 /** PURE. Every study of what wrote the emails, for one pipe. */
 export function generationStudies(input: GenerationsInput): ResearchStudy[] {
   const t = input.terms;
   const out: ResearchStudy[] = [];
-  const modelLabel = (id: string) => input.models.get(id)?.label ?? id;
-  // LLM: one bar per model NAME (two ids naming one model, a deprecated alias beside its successor, are one bar)
-  const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
+  const { llm, tpl } = generationBuckets(input);
   out.push(
-    ...dimensionStudies(t, llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), {
+    ...dimensionStudies(t, llm.rows, {
       topic: "llm",
       dimNoun: "LLM",
       keyed: true,
@@ -179,7 +185,6 @@ export function generationStudies(input: GenerationsInput): ResearchStudy[] {
       extraLines: leftOutLine(t, llm.leftOut, "model"),
     }),
   );
-  const tpl = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel);
   out.push(...dimensionStudies(t, tpl.rows, { topic: "template", dimNoun: "template", keyed: true, extraLines: leftOutLine(t, tpl.leftOut, "template") }));
   if (input.naming) {
     const both: string[] = [];
