@@ -644,3 +644,33 @@ export const workflowTacticVerdicts = pgTable(
   },
   (t) => [primaryKey({ columns: [t.workflowSlug, t.tacticId] })],
 );
+
+/**
+ * PUBLIC FLEET INDEX POINTS (`fleet_index_points`, owner 2026-10-18; `lib/fleet-indexes.ts`): one row per (index,
+ * UTC day) = that index's value as recorded that day. TODAY's row is rewritten by every recorder tick (the day is
+ * still open); a past day is never touched again, so the series is what we published, day after day.
+ * `basis` = `recorded` (written live that day); a later backfill would write `recomputed`, never mixed silently.
+ */
+export const fleetIndexPoints = pgTable(
+  "fleet_index_points",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    indexSlug: text("index_slug").notNull(),
+    /** UTC calendar day (`YYYY-MM-DD`). */
+    day: text("day").notNull(),
+    /** null = could not be stated that day (`unavailable_reason`), never a 0 for unknown. */
+    value: doublePrecision("value"),
+    status: text("status").notNull(),
+    outcomes: integer("outcomes").notNull(),
+    contacted: integer("contacted"),
+    workflowDynastySlug: text("workflow_dynasty_slug"),
+    workflowDynastyName: text("workflow_dynasty_name"),
+    unavailableReason: text("unavailable_reason"),
+    inputs: jsonb("inputs").notNull(),
+    basis: text("basis").notNull().default("recorded"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("idx_fleet_index_points_slug_day").on(table.indexSlug, table.day)],
+);
+
+export type FleetIndexPointRow = typeof fleetIndexPoints.$inferSelect;
