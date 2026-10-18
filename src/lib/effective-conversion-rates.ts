@@ -75,6 +75,7 @@ import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
 import { fetchQualifications } from "./qualifications-client.js";
 import { fetchConversionEmails } from "./conversion-emails-client.js";
+import { getMeetingReporting } from "./meeting-reporting-client.js";
 import { applySignalOverlays } from "./signal-overlays.js";
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import {
@@ -139,7 +140,16 @@ export type MeasuredRateGap =
   /** More leads reached TO than FROM — the FROM step is under-counted, so the ratio is no probability. */
   | "to_exceeds_from"
   /** Zero leads reached TO, on too few at FROM to rule out the next source's rate (see `zeroIsConclusive`). */
-  | "zero_not_conclusive";
+  | "zero_not_conclusive"
+  /** TO is a meeting step and the brand never reported a meeting to us: its zero is not a measure (MEETING-POPULATION-1018). */
+  | "brand_reports_no_meetings"
+  /** TO is a meeting step and whether the brand reports meetings could not be read: no zero is trusted. */
+  | "meeting_reporting_unreadable";
+
+/** Whether the brand reports its meetings to us (`lib/meeting-population.ts`); `unknown` = could not be read. */
+export type BrandMeetingReporting = "reports" | "reports_none" | "unknown";
+
+const MEETING_LEAD_FIELDS: ReadonlySet<LeadStepField> = new Set(["meetingBooked", "meetingAttended"]);
 
 /** WHERE a measured rate was read: this brand's leads, or the client's whole CRM. */
 export type MeasurementBasis = "our_leads" | "crm";
@@ -230,7 +240,15 @@ export interface RateCandidate {
    * probability), `zero_not_conclusive` (0 at TO on too few at FROM to rule out the next source, `zeroIsConclusive`),
    * `crm_measures_this_leg` (our leads, when the client's CRM is where this leg is measured).
    */
-  notKeptReason: "outranked" | "below_learning_bar" | "to_exceeds_from" | "zero_not_conclusive" | "crm_measures_this_leg" | null;
+  notKeptReason:
+    | "outranked"
+    | "below_learning_bar"
+    | "to_exceeds_from"
+    | "zero_not_conclusive"
+    | "brand_reports_no_meetings"
+    | "meeting_reporting_unreadable"
+    | "crm_measures_this_leg"
+    | null;
 }
 
 /** PURE: the candidates of a resolved leg (see `RateCandidate`). `ourLeads` = the our-leads measurement beside a CRM one. */
@@ -247,7 +265,13 @@ export function rateCandidatesOf(
     out.push({ basis, ratePct, ...none, ...extra, kept, notKeptReason: kept ? null : (blocked ?? "outranked") });
   };
   const measuredBlock = (m: MeasuredArrowRate): RateCandidate["notKeptReason"] =>
-    m.gap === "below_learning_bar" || m.gap === "to_exceeds_from" || m.gap === "zero_not_conclusive" ? m.gap : null;
+    m.gap === "below_learning_bar" ||
+    m.gap === "to_exceeds_from" ||
+    m.gap === "zero_not_conclusive" ||
+    m.gap === "brand_reports_no_meetings" ||
+    m.gap === "meeting_reporting_unreadable"
+      ? m.gap
+      : null;
   for (const m of [leg.measured, ourLeads]) {
     if (!m || m.ratePct === null) continue;
     const counts = { fromReached: m.fromReached, toReached: m.toReached, outcomesCounted: m.outcomesCounted };
@@ -686,6 +710,16 @@ export async function getFleetLifetimeRevenueMedian(): Promise<{ usd: number | n
 /** The retired fleet-median block, served as-is so a reader parsing it keeps parsing (owner 2026-10-14). */
 const RETIRED_MEDIAN = { ratePct: null, brandCount: 0 } as const;
 
+/**
+ * PURE: an our-leads measurement of a leg landing on a MEETING step counts only for a brand that reports meetings
+ * (MEETING-POPULATION-1018): its meetings are a fact only the client's report shows us, so a brand that never reported
+ * one reads zero whatever happened. Shown with its counts, never kept; the next source prices the leg.
+ */
+export function meetingPopulationGate(measured: MeasuredArrowRate, toField: LeadStepField | null, reporting: BrandMeetingReporting): MeasuredArrowRate {
+  if (toField === null || !MEETING_LEAD_FIELDS.has(toField) || reporting === "reports" || measured.ratePct === null) return measured;
+  return { ...measured, sufficient: false, gap: reporting === "unknown" ? "meeting_reporting_unreadable" : "brand_reports_no_meetings" };
+}
+
 /** PURE: resolve one arrow from its sources, in order: measured > manual > default (no fleet median, owner 2026-10-14). */
 export function resolveArrow(
   fromStep: string,
@@ -739,6 +773,12 @@ export function buildBrandEffectiveRates(input: {
   funnelKeys: readonly SalesFunnelKey[];
   measurement: BrandStepMeasurement | BrandStepCounts;
   manual: readonly BrandLegRate[];
+  /**
+   * Whether the brand reports meetings (`lib/meeting-population.ts`). A leg landing on a meeting step is measured on
+   * OUR leads only when it does: else the measurement is shown, never kept (`brand_reports_no_meetings`), and the next
+   * source prices the leg. The CRM basis IS the brand's report, so it is untouched.
+   */
+  meetingReporting: BrandMeetingReporting;
 }): BrandEffectiveRates {
   const measurement = summariseMeasurement(input.measurement);
   const manualByLeg = new Map<string, number>();
@@ -764,7 +804,7 @@ export function buildBrandEffectiveRates(input: {
       : null;
     if (crmRate) return { measured: crmRate, ourLeads: ours };
     if (!ours) throw new Error("measuredArrowRate: an outreach-caused rate needs ourReachedCounts and ourReachedPatterns, and this measurement carries none");
-    return { measured: ours, ourLeads: null };
+    return { measured: meetingPopulationGate(ours, leadFieldOfStep(toStep), input.meetingReporting), ourLeads: null };
   };
   const resolveLeg = (fromStep: string, toStep: string): EffectiveArrowRate => {
     const key = legPairKey(fromStep, toStep);
@@ -842,9 +882,16 @@ export async function getBrandEffectiveRates(
   orgId: string,
   legEconomics?: BrandLegEconomics,
 ): Promise<BrandEffectiveRates> {
-  const [measurement, statements] = await Promise.all([
+  const [measurement, statements, meetingReporting] = await Promise.all([
     getBrandStepCounts(brandId, orgId),
     legEconomics ? Promise.resolve(legEconomics) : fetchBrandLegEconomics(brandId, orgId),
+    getMeetingReporting().then(
+      (r): BrandMeetingReporting => (r.reports(brandId) ? "reports" : "reports_none"),
+      (err): BrandMeetingReporting => {
+        console.error(`[features-service] effective rates: meeting reporting unreadable (brand ${brandId}), no measured meeting rate kept:`, err);
+        return "unknown";
+      },
+    ),
   ]);
-  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual: statements.legRates });
+  return buildBrandEffectiveRates({ brandId, funnelKeys: SALES_FUNNEL_KEYS, measurement, manual: statements.legRates, meetingReporting });
 }

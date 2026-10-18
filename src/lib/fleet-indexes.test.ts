@@ -61,18 +61,18 @@ describe("fleet indexes", () => {
   it("meeting indexes chain the reply index through the fleet's measured reply -> meeting rate", () => {
     const replyRows = [row({ workflowDynastySlug: "azalea", costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5, contacted: 3423 })];
     const p = byslug(
-      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingFromReply: { positiveReplyPeople: 48, bookedPeople: 8, brandCount: 5 } }),
+      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingFromReply: { positiveReplyPeople: 48, bookedPeople: 8, brandsCounted: 5, brandsLeftOut: 0 } }),
     );
     expect(p.get("sceo-cost-per-meeting")!.value).toBeCloseTo(128.8 / (8 / 48), 6);
     expect(p.get("sceo-meeting-rate")!.value).toBeCloseTo(0.15 * (8 / 48), 6);
     expect(p.get("sceo-cost-per-meeting")).toMatchObject({ status: "noise", outcomes: 5, contacted: null, workflowDynastySlug: "azalea" });
-    expect(p.get("sceo-cost-per-meeting")!.inputs).toMatchObject({ positiveReplyPeople: 48, meetingsBookedPeople: 8, brandCount: 5 });
+    expect(p.get("sceo-cost-per-meeting")!.inputs).toMatchObject({ positiveReplyPeople: 48, meetingsBookedPeople: 8, brandsCounted: 5, brandsLeftOut: 0 });
   });
 
   it("a chain is as trustworthy as its weakest link", () => {
     const replyRows = [row({ outcomes: 40 })];
     const p = byslug(
-      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingFromReply: { positiveReplyPeople: 100, bookedPeople: 12, brandCount: 3 } }),
+      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingFromReply: { positiveReplyPeople: 100, bookedPeople: 12, brandsCounted: 3, brandsLeftOut: 0 } }),
     );
     expect(p.get("sceo-cost-per-interest")!.status).toBe("robust");
     expect(p.get("sceo-cost-per-meeting")!.status).toBe("signal");
@@ -80,9 +80,17 @@ describe("fleet indexes", () => {
 
   it("no meeting ever booked = null meeting index, never infinite", () => {
     const p = byslug(
-      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: [row({})], meetingFromReply: { positiveReplyPeople: 20, bookedPeople: 0, brandCount: 2 } }),
+      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: [row({})], meetingFromReply: { positiveReplyPeople: 20, bookedPeople: 0, brandsCounted: 2, brandsLeftOut: 0 } }),
     );
     expect(p.get("sceo-cost-per-meeting")).toMatchObject({ value: null, unavailableReason: "no_meeting_measured", status: "noise" });
+  });
+
+  it("MEETING-POPULATION-1018: no brand reports meetings = null with its reason, never a default rate", () => {
+    const p = byslug(
+      computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: [row({})], meetingFromReply: { positiveReplyPeople: 0, bookedPeople: 0, brandsCounted: 0, brandsLeftOut: 5 } }),
+    );
+    expect(p.get("sceo-cost-per-meeting")).toMatchObject({ value: null, unavailableReason: "no_brand_reports_meetings" });
+    expect(p.get("sceo-cost-per-meeting")!.inputs).toMatchObject({ brandsCounted: 0, brandsLeftOut: 5, population: "brands_reporting_meetings" });
   });
 
   it("every index has a unique slug and states its unit", () => {

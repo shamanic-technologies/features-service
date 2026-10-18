@@ -82,7 +82,7 @@ describe("recording", () => {
       rows: [leg === "start_to_website_visit" ? rankingRow({}) : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 })],
     }));
     const win = (people: number, booked: number) => ({ positiveReplyPeople: people, bookedPeople: booked });
-    meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: { brandCount: 5, before: win(36, 6), after: win(12, 2) } });
+    meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: { brandCount: 2, population: { rule: "brands_reporting_meetings", brandsCounted: 2, brandsLeftOut: 3 }, before: win(36, 6), after: win(12, 2) } });
     const n = await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
     expect(n).toBe(6);
     // Asked on the legs' computation spelling: the served outbound one reads as an unknown leg (no maturity).

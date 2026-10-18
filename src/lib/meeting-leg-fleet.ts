@@ -18,6 +18,11 @@
  * flash figures; the verdict still reads the count.
  *
  * FAIL-LOUD: an unreadable pair fails the whole read (the caller keeps its previous value).
+ *
+ * A pipe landing on a MEETING step (`lib/meeting-population.ts`, MEETING-POPULATION-1018) is measured, fleet-wide, on
+ * the brands that REPORT meetings only: a campaign of a brand that never reported one is kept in `perCampaign` (its
+ * own brand / campaign / offer grains are its own figures) with `inFleetPopulation: false`, and left out of
+ * `byDynasty` and of every fleet count (spend and people alike). `population` names the brands counted and left out.
  */
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "./fleet-leg-campaigns.js";
 import { fetchFollowupActedLeads } from "./followup-actions-client.js";
@@ -32,6 +37,8 @@ import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./m
 import { mapWithConcurrency } from "./concurrency.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import type { ChannelStepKey } from "./acquisition-channels.js";
+import { MEETING_STEPS, meetingPopulationOf, type MeetingPopulation, type MeetingReporting } from "./meeting-population.js";
+import { getMeetingReporting } from "./meeting-reporting-client.js";
 
 export const MEETING_BOOKING_FEATURE_SLUG = "ai-meeting-booking";
 export const MEETING_BOOKING_LEG_KEY = "conversation_to_meeting_booked";
@@ -77,8 +84,11 @@ export interface MeetingLegFleet {
   byDynasty: Array<[string, LegMaturityFigures]>;
   unattributableCampaignIds: string[];
   /** Per attributed campaign: its dynasty and the people (`brandId:leadId`) it acted on / that reached the
-   *  pipe's `to` step. What a finer grain (brand, campaign, offer) of the workflow ladder sums. */
-  perCampaign: Array<{ campaignId: string; orgId: string; brandId: string | null; dynasty: string; acted: string[]; reached: string[] }>;
+   *  pipe's `to` step. What a finer grain (brand, campaign, offer) of the workflow ladder sums.
+   *  `inFleetPopulation` = counted in fleet figures (false: its brand reports no meeting on a meeting pipe). */
+  perCampaign: Array<{ campaignId: string; orgId: string; brandId: string | null; dynasty: string; acted: string[]; reached: string[]; inFleetPopulation: boolean }>;
+  /** Who the fleet figures were measured on; null on a pipe not landing on a meeting step (every brand counts). */
+  population: MeetingPopulation | null;
 }
 
 /** One (org, brand)'s answered leads per acting campaign, and which of them reached a booked meeting. */
@@ -98,7 +108,10 @@ export function buildMeetingLegFleet(input: {
   pairs: ReadonlyMap<string, PairActed>;
   /** The internal pipe's leg (default: Positive reply -> Meeting booked). */
   legKey?: string;
+  /** The brands that report meetings, on a pipe landing on a meeting step; null = every brand counts. */
+  reporting: MeetingReporting | null;
 }): MeetingLegFleet {
+  const inFleet = (brandId: string | null): boolean => input.reporting === null || input.reporting.reports(brandId);
   const legKey = input.legKey ?? MEETING_BOOKING_LEG_KEY;
   const toDynasty = dynastyOfSlug(input.workflows as WorkflowMetadata[]);
   const spendByCampaign = new Map<string, Map<string, number>>();
@@ -123,21 +136,22 @@ export function buildMeetingLegFleet(input: {
       continue;
     }
     const [dynasty, cents] = [...byDyn][0]!;
+    const counted = inFleet(c.brandId);
     const entry = agg.get(dynasty) ?? { cents: 0, acted: new Set<string>(), meetings: new Set<string>() };
-    entry.cents += cents;
+    if (counted) entry.cents += cents;
     const pair = c.brandId ? input.pairs.get(c.brandId) : undefined;
-    const mine = { campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, dynasty, acted: [] as string[], reached: [] as string[] };
+    const mine = { campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, dynasty, acted: [] as string[], reached: [] as string[], inFleetPopulation: counted };
     for (const leadId of pair?.actedByCampaign.get(c.campaignId) ?? []) {
       const key = `${c.brandId}:${leadId}`;
-      entry.acted.add(key);
+      if (counted) entry.acted.add(key);
       mine.acted.push(key);
       if (pair!.meetingLeadIds.has(leadId)) {
-        entry.meetings.add(key);
+        if (counted) entry.meetings.add(key);
         mine.reached.push(key);
       }
     }
     perCampaign.push(mine);
-    agg.set(dynasty, entry);
+    if (counted) agg.set(dynasty, entry);
   }
 
   const byDynasty: Array<[string, LegMaturityFigures]> = [...agg]
@@ -152,6 +166,7 @@ export function buildMeetingLegFleet(input: {
     byDynasty,
     unattributableCampaignIds: unattributable.sort(),
     perCampaign,
+    population: input.reporting ? meetingPopulationOf(input.campaigns.map((c) => c.brandId), input.reporting) : null,
   };
 }
 
@@ -189,7 +204,10 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
   if (!stepReading(toStep)) throw new StepNotReadableError(toStep);
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
-  if (ids.length === 0) return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [], perCampaign: [] };
+  const reporting = MEETING_STEPS.has(toStep) ? await getMeetingReporting() : null;
+  if (ids.length === 0) {
+    return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [], perCampaign: [], population: reporting ? meetingPopulationOf([], reporting) : null };
+  }
 
   const byPair = new Map<string, { orgId: string; brandId: string; campaignIds: string[] }>();
   for (const c of campaigns) {
@@ -210,7 +228,7 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
     ),
     mapWithConcurrency([...byPair.values()], 2, async (p) => [p.brandId, await readPairActed(p.orgId, p.brandId, p.campaignIds, toStep)] as const),
   ]);
-  return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults), legKey });
+  return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults), legKey, reporting });
 }
 
 const INTERNAL_FLEET_FRESH_MS = 15 * 60_000;
