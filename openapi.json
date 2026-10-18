@@ -30612,6 +30612,53 @@
           "readOn": {
             "type": "string"
           },
+          "volume": {
+            "type": "object",
+            "properties": {
+              "emails": {
+                "type": "integer",
+                "description": "Every email sent on the two cold email legs since inception (our copy of instantly-service's outreach facts)."
+              },
+              "orgs": {
+                "type": "integer",
+                "description": "Clients those emails were sent for."
+              },
+              "workflows": {
+                "type": "integer",
+                "description": "Workflows with people on either leg."
+              },
+              "linkedEmails": {
+                "type": "integer",
+                "description": "Emails our own sender sent on the website-visit leg (the only ones a visit can come from)."
+              },
+              "byMonth": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "emails": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "emails"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "emails",
+              "orgs",
+              "workflows",
+              "linkedEmails",
+              "byMonth"
+            ],
+            "description": "The page-wide counts. Absent when they could not be read this build, never 0."
+          },
           "maturation": {
             "type": "object",
             "properties": {
@@ -30676,6 +30723,14 @@
                   "reply",
                   "visit"
                 ]
+              },
+              "excludedEmails": {
+                "type": "integer",
+                "description": "Emails of sequences first written on or after their leg's cutoff: too young to count yet."
+              },
+              "noRunStart": {
+                "type": "integer",
+                "description": "People no serve record dates: counted in the mature cohort, in no month."
               },
               "note": {
                 "type": "string"

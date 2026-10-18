@@ -7745,6 +7745,16 @@ const researchFileSchema = registry.register(
     unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
     window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
     readOn: z.string(),
+    volume: z
+      .object({
+        emails: z.number().int().describe("Every email sent on the two cold email legs since inception (our copy of instantly-service's outreach facts)."),
+        orgs: z.number().int().describe("Clients those emails were sent for."),
+        workflows: z.number().int().describe("Workflows with people on either leg."),
+        linkedEmails: z.number().int().describe("Emails our own sender sent on the website-visit leg (the only ones a visit can come from)."),
+        byMonth: z.array(z.object({ label: z.string(), emails: z.number().int() })),
+      })
+      .optional()
+      .describe("The page-wide counts. Absent when they could not be read this build, never 0."),
     maturation: z.object({
       rule: z.literal("run_start"),
       days: z.number(),
@@ -7754,6 +7764,8 @@ const researchFileSchema = registry.register(
         reply: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
         visit: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
       }),
+      excludedEmails: z.number().int().optional().describe("Emails of sequences first written on or after their leg's cutoff: too young to count yet."),
+      noRunStart: z.number().int().optional().describe("People no serve record dates: counted in the mature cohort, in no month."),
       note: z.string(),
     }),
     pipes: z.array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() })),
