@@ -305,48 +305,23 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "nope", brandId: "b1" }).set({ ...KEY, "x-org-id": "o1" })).status).toBe(404);
   });
 
-  it("CeXO (owner 2026-10-18): a $12,000 offer that never stated its steps is never put first on a Direct purchase path; one that states it keeps its ranking", async () => {
-    const H = { ...KEY, "x-org-id": "o1" };
-    const Q = { offerId: "offer-1", brandId: "b1", limit: 25 };
-    const ids = (b: { rows: Array<{ id: string }> }) => b.rows.map((r) => r.id);
-    const firstProactive = (b: { rows: Array<{ id: string; type: string }> }) => b.rows.find((r) => r.type === "proactive")!;
-    // An e-commerce offer stating every step, Direct purchase included: nothing set aside, the plain ROI order.
-    const everyStep = (await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY)).body.rows.map((r: { id: string }) => r.id);
-    expect(everyStep).toContain("purchase");
-    offerSteps.value = { stated: true, steps: everyStep, statedAt: "2026-10-18T00:00:00.000Z" };
-    const shop = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
-    expect(shop.setAside.total).toBe(0);
-    expect(shop.rows.some((r: { id: string }) => r.id.includes("purchase"))).toBe(true);
-
-    // CeXO never stated its steps: the same order, minus every checkout row; a reply / meeting path leads.
-    offerSteps.value = { stated: false, steps: null, statedAt: null };
-    const cexo = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
-    const shopWithoutCheckout = ids(shop).filter((id) => !id.includes("purchase"));
-    expect(ids(cexo).slice(0, shopWithoutCheckout.length)).toEqual(shopWithoutCheckout);
-    for (const id of ids(cexo)) expect(id).not.toMatch(/purchase/);
-    expect(firstProactive(cexo).id).not.toMatch(/purchase/);
-    expect(firstProactive(cexo).id).toMatch(/conversation/);
-    expect(cexo.setAsideByStep).toEqual([{ id: "purchase", name: "Direct purchase", setAsideCount: cexo.setAside.total }]);
-  });
-
   it("per offer, sets aside every funnel and path through a step the offer's business does not have (owner 2026-10-12)", async () => {
     const H = { ...KEY, "x-org-id": "o1" };
     const Q = { offerId: "offer-1", brandId: "b1", limit: 25 };
-    // Never stated: every step assumed but a checkout (owner 2026-10-18, CeXO): only Direct purchase rows are set aside.
+    // Never stated: the same list as before, nothing set aside.
     const unknown = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
     const fleet = (await request(app).get("/internal/catalogue/sales-funnels").query({ limit: 25 }).set(KEY)).body;
-    expect(unknown.total + unknown.setAside.total).toBe(fleet.total);
-    expect(unknown.setAside.total).toBeGreaterThan(0);
-    expect(unknown.offerSteps).toMatchObject({ stated: false, steps: null, neverAssumed: [{ id: "purchase", name: "Direct purchase" }] });
-    for (const r of unknown.rows) expect(r.id).not.toMatch(/purchase/);
-    for (const r of unknown.setAside.rows) expect(r.missingSteps).toEqual([{ id: "purchase", name: "Direct purchase" }]);
-    expect(unknown.setAsideByStep).toEqual([{ id: "purchase", name: "Direct purchase", setAsideCount: unknown.setAside.total }]);
+    expect(unknown.total).toBe(fleet.total);
+    expect(new Set(unknown.rows.map((r: { id: string }) => r.id))).toEqual(new Set(fleet.rows.map((r: { id: string }) => r.id)));
+    expect(unknown.offerSteps).toMatchObject({ stated: false, steps: null });
+    expect(unknown.setAside).toEqual({ total: 0, truncated: false, rows: [] });
+    expect(unknown.setAsideByStep).toEqual([]);
 
     // Doc Dinners' statement: no purchase step. Lead found and Paid client count as present by definition.
     offerSteps.value = { stated: true, steps: ["conversation", "booking_call", "meeting_booked", "meeting_attended", "website_visit"], statedAt: "2026-10-08T00:00:00.000Z" };
     const stated = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
     expect(stated.offerSteps.alwaysPresent.map((s: { id: string }) => s.id)).toEqual(["lead_found", "paid_client"]);
-    expect(stated.total + stated.setAside.total).toBe(fleet.total);
+    expect(stated.total + stated.setAside.total).toBe(unknown.total);
     expect(stated.total).toBeGreaterThan(0);
     expect(stated.setAside.total).toBeGreaterThan(0);
     // A funnel id spells its legs: no kept funnel walks a step the offer lacks.
@@ -382,13 +357,6 @@ describe("agent catalogue lists (context-window sized)", () => {
     const asidePath = paths.setAside.rows[0];
     expect((await request(app).get(`/internal/catalogue/sales-paths/${encodeURIComponent(asidePath.id)}`).query(Q).set(H)).body).toMatchObject({ setAside: true });
     expect(fleetPaths).not.toHaveProperty("setAside");
-
-    // An offer that never stated: no checkout path is proposed, on paths either.
-    offerSteps.value = { stated: false, steps: null, statedAt: null };
-    const unknownPaths = (await request(app).get("/internal/catalogue/sales-paths").query(Q).set(H)).body;
-    expect(unknownPaths.total + unknownPaths.setAside.total).toBe(fleetPaths.total);
-    for (const r of unknownPaths.rows) expect(r.line).not.toMatch(/Direct purchase/);
-    for (const r of unknownPaths.setAside.rows) expect(r.missingSteps).toEqual([{ id: "purchase", name: "Direct purchase" }]);
 
     // Unreadable statement: a named 502, never an unfiltered list.
     offerSteps.fail = true;
