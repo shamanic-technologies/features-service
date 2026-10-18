@@ -39,6 +39,14 @@
  * The person's `campaignId` / `workflowSlug` become the send's, and, when moved, `servedAt` its first send
  * (the mature cohort's clock for that workflow). One person, one attribution: partitions still add up to
  * the brand, whose totals never move.
+ *
+ * SCREENED VISITS (owner doctrine, SCOUT-VISIT-SCREEN-1018). A website visit is a click judged HUMAN. Only a
+ * click on an email we sent through our own transport is screened (instantly-service keeps a hit only once
+ * it judged it human); a click the provider reports carries no request data and is mostly link scanners.
+ * Two more credited signals carry that: `screenedContacted` (the credited send went through our transport)
+ * and `humanClicked` (a click it earned was recorded by our tracker). A website-visit figure counts
+ * `humanClicked` over `screenedContacted`, never a provider click (`lib/screened-visits.ts`). Known only
+ * where the timeline states the send: on the serve-row rule both are false.
  */
 
 import type { CampaignFilter } from "./campaign-scope.js";
@@ -63,12 +71,14 @@ export const POSITIVE_REPLY_LABELS: ReadonlySet<string> = new Set([
 /** The timeline words of a click on our email. */
 export const CLICK_LABELS: ReadonlySet<string> = new Set(["website_visit", "link_click"]);
 
-export type CreditedSignal = "contacted" | "clicked" | "positiveReply";
+export type CreditedSignal = "contacted" | "clicked" | "positiveReply" | "screenedContacted" | "humanClicked";
 export type ServingRowCredit = Record<CreditedSignal, boolean>;
 
 interface DatedEvidence {
   campaignId: string | null;
   at: number | null;
+  /** A click our own tracker recorded (judged human); false for a reply or a provider-reported click. */
+  screened?: boolean;
 }
 
 interface Send {
@@ -77,6 +87,8 @@ interface Send {
   first: number | null;
   last: number | null;
   firstIso: string | null;
+  /** Sent through our own transport: a click on it is screened (see SCREENED VISITS above). */
+  screenable: boolean;
 }
 
 interface PersonTimeline {
@@ -102,7 +114,14 @@ export function indexTimelines(journeys: readonly Journey[]): Map<string, Person
     if (j.emailSends !== undefined) {
       t.sends = t.sends ?? [];
       for (const e of j.emailSends) {
-        t.sends.push({ campaignId: e.campaignId, workflowSlug: e.workflowSlug, first: ms(e.firstSentAt), last: ms(e.lastSentAt), firstIso: e.firstSentAt });
+        t.sends.push({
+          campaignId: e.campaignId,
+          workflowSlug: e.workflowSlug,
+          first: ms(e.firstSentAt),
+          last: ms(e.lastSentAt),
+          firstIso: e.firstSentAt,
+          screenable: e.screenable === true,
+        });
       }
     }
     for (const a of j.acts) {
@@ -114,7 +133,7 @@ export function indexTimelines(journeys: readonly Journey[]): Map<string, Person
     for (const f of j.facts) {
       const evidence = { campaignId: f.campaignId, at: ms(f.occurredAt) };
       if (f.source === "reply" && POSITIVE_REPLY_LABELS.has(f.label)) t.replies.push(evidence);
-      else if (f.source === "outreach" && CLICK_LABELS.has(f.label)) t.clicks.push(evidence);
+      else if (f.source === "outreach" && CLICK_LABELS.has(f.label)) t.clicks.push({ ...evidence, screened: f.screened === true });
     }
     out.set(j.leadId, t);
   }
@@ -131,15 +150,20 @@ function earnedBy(evidence: readonly DatedEvidence[], campaignId: string, firstA
 
 /** PURE. What the person's attributed row earned, given the person's timeline (see the module rule). */
 export function servingRowCredit(person: EnginePerson, timeline: PersonTimeline | undefined): ServingRowCredit {
+  // No send of the person is stated here, so none is known to be screenable: no screened figure.
   const own: ServingRowCredit = {
     contacted: Boolean(person.signals.contacted),
     clicked: Boolean(person.signals.clicked),
     positiveReply: Boolean(person.signals.positiveReply),
+    screenedContacted: false,
+    humanClicked: false,
   };
   // No act anywhere: nothing disputes the row's own attribution.
   if (!timeline || timeline.firstActBy.size === 0) return own;
   const campaignId = person.campaignId ?? null;
-  if (!campaignId || !timeline.firstActBy.has(campaignId)) return { contacted: false, clicked: false, positiveReply: false };
+  if (!campaignId || !timeline.firstActBy.has(campaignId)) {
+    return { contacted: false, clicked: false, positiveReply: false, screenedContacted: false, humanClicked: false };
+  }
   const firstAct = timeline.firstActBy.get(campaignId) ?? null;
   // The CRM witness names no campaign: it counts when dated at or after this campaign's first act.
   const crmAt = ms(person.crmPositiveReplyAt ?? person.signalDates?.positiveReply ?? null);
@@ -148,6 +172,8 @@ export function servingRowCredit(person: EnginePerson, timeline: PersonTimeline 
     contacted: own.contacted,
     clicked: own.clicked && earnedBy(timeline.clicks, campaignId, firstAct),
     positiveReply: own.positiveReply && earnedBy(replies, campaignId, firstAct),
+    screenedContacted: false,
+    humanClicked: false,
   };
 }
 
@@ -198,10 +224,15 @@ export function creditPerson<T extends EnginePerson>(person: T, timeline: Person
   const replyTo = own.positiveReply ? lastSendFollowed(replies, sends) : null;
   const clickTo = own.clicked ? lastSendFollowed(timeline.clicks, sends) : null;
   const to = replyTo ?? clickTo ?? latest(sends, (s) => s.last ?? s.first ?? -Infinity);
+  const clicksOnTo = Boolean(own.clicked) ? timeline.clicks.filter((c) => sendFollowed(c, sends) === to) : [];
   const credit: ServingRowCredit = {
     contacted: Boolean(own.contacted),
-    clicked: Boolean(own.clicked) && timeline.clicks.some((c) => sendFollowed(c, sends) === to),
+    clicked: clicksOnTo.length > 0,
     positiveReply: replyTo !== null,
+    // SCREENED VISITS: the send the person is credited to went through our own transport, and (for the click)
+    // one of the clicks it earned is one our tracker judged human.
+    screenedContacted: Boolean(own.contacted) && to.screenable,
+    humanClicked: to.screenable && clicksOnTo.some((c) => c.screened === true),
   };
   const moved = to.campaignId !== (person.campaignId ?? null) || to.workflowSlug !== (person.workflowSlug ?? null);
   return {

@@ -50,6 +50,11 @@ export interface JourneyFact {
   attributable: boolean | null;
   /** Stated amount on a sale, cents; null when none. */
   valueCents: number | null;
+  /**
+   * On a click on our email: TRUE when our own tracker recorded it (a self-sent email: only a hit judged human
+   * is kept), FALSE when the provider reported it (no request data, cannot be screened). Absent elsewhere.
+   */
+  screened?: boolean;
 }
 
 export interface JourneyAct {
@@ -70,6 +75,11 @@ export interface JourneyEmailSend {
   workflowSlug: string | null;
   firstSentAt: string | null;
   lastSentAt: string | null;
+  /**
+   * TRUE when these sends went through our own transport (a click on them is screened), FALSE when through the
+   * provider (a click on them cannot be screened). Absent = the producer did not state it.
+   */
+  screenable?: boolean;
 }
 
 /** One person x offer as the timeline holds it (offer null = facts with no offer). */

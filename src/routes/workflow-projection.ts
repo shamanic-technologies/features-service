@@ -2134,12 +2134,12 @@ export async function fetchWorkflowProjectionEvidence(input: {
       const emptyGrain = (): GrainEvidenceWithRetired => ({ active: new Map(), retired: new Map() });
       const [brandMature, campaignMature, offerMatureRead, audienceMature] = fleetMature
         ? await Promise.all([
-            fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", allBrandPersons, cutoffIso),
+            fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", allBrandPersons, cutoffIso, legKey),
             campaignIds && campaignIds.length > 0 && campaignPersons
-              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignPersons, cutoffIso)
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignPersons, cutoffIso, legKey)
               : Promise.resolve(null),
             readOffer && offerPersons
-              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerPersons, cutoffIso)
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerPersons, cutoffIso, legKey)
               : Promise.resolve(null),
             fetchAudienceMatureEvidence(
               brandId,

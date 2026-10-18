@@ -31,7 +31,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { sumDecimalStrings } from "./decimal.js";
 import { startedBeforeParam } from "./maturity.js";
-import { fetchFleetMatureSlugStats } from "./fleet-positive-repliers.js";
+import { fetchFleetMatureSlugStats, fetchFleetScreenedVisitCounts } from "./fleet-positive-repliers.js";
+import { isScreenedVisitLeg, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import { effectiveSpendSlugs, runsSpendSlugsParam, type SpendSlugs } from "./feature-scope.js";
 
@@ -147,6 +148,13 @@ export async function fetchLegFleetEvidence(featureSlug: string, legKey: string,
     );
     value = cell.value;
   } else value = (await refresh(key, featureSlug, legKey, pricing, slugs)).value;
+  // A leg whose outcome is the click is read on SCREENED visits only (`lib/screened-visits.ts`): the person
+  // cell states who was emailed through our transport and whose click our tracker judged human.
+  if (isScreenedVisitLeg(legKey)) {
+    const counts = await fetchFleetScreenedVisitCounts(featureSlug, new Set(value.campaigns.map((c) => c.campaignId)));
+    const screened = screenVisitEvidence(value.costGroups, value.emailStats, counts);
+    return { campaigns: value.campaigns, costGroups: screened.costGroups, emailStats: screened.emailStats };
+  }
   // Callers overwrite reply counts in place (setReplyCountsOnSlugStats): never hand out the cached maps.
   return {
     campaigns: value.campaigns,
@@ -312,6 +320,11 @@ export async function fetchLegFleetMatureEvidence(
   const emailStats = await fetchFleetMatureSlugStats(featureSlug, own, cutoffIso, legCampaignIds);
   if (!emailStats) return null;
   const costGroups = await fetchLegFleetMatureCostGroups(featureSlug, legKey, pricing, cutoffIso, effectiveSpendSlugs(featureSlug, requested));
+  if (isScreenedVisitLeg(legKey)) {
+    // Screened visits only, both halves on the mature cohort's own persons (`lib/screened-visits.ts`).
+    const screened = screenVisitEvidence(costGroups, emailStats, screenedCountsOfStats(emailStats));
+    return { cutoffIso, costGroups: screened.costGroups, emailStats: screened.emailStats };
+  }
   return { cutoffIso, costGroups, emailStats };
 }
 

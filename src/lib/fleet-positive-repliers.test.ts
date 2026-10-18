@@ -123,8 +123,8 @@ describe("fetchFleetMatureSlugStats — the fleet's mature cohort, on the SAME c
       CUTOFF,
     );
     // wf-a: brand-x x1 (x2 is young) + x4 (a click) + own o1 (o2 young; stale-1 replaced).
-    expect(stats!.get("wf-a")).toEqual({ recipientsContacted: 3, recipientsClicked: 1, recipientsRepliesPositive: 2 });
-    expect(stats!.get("wf-b")).toEqual({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
+    expect(stats!.get("wf-a")).toMatchObject({ recipientsContacted: 3, recipientsClicked: 1, recipientsRepliesPositive: 2 });
+    expect(stats!.get("wf-b")).toMatchObject({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
     // THE DIVERGENCE: the flash reply count for wf-a counts the young x2 and o2 as well.
     const flash = await fetchFleetPositiveRepliesBySlug("sales-cold-email-outreach", {
       orgId: "org-1",
@@ -142,7 +142,7 @@ describe("fetchFleetMatureSlugStats — the fleet's mature cohort, on the SAME c
       new Set(["c-leg"]),
     );
     // x4 sat on another leg's campaign: its click is gone.
-    expect(stats!.get("wf-a")).toEqual({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
+    expect(stats!.get("wf-a")).toMatchObject({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
   });
 
   it("is NULL when a pair's rows state no serve date — never the flash figure under the mature name", async () => {
@@ -160,8 +160,8 @@ describe("fetchFleetMatureSlugStats — the fleet's mature cohort, on the SAME c
   it("with NO requesting pair (a fleet read), every pair comes from the cell", async () => {
     const stats = await fetchFleetMatureSlugStats("sales-cold-email-outreach", null, CUTOFF);
     // wf-a: the cached own row stale-1 (served 08-01, a reply) + brand-x x1 + x4 (a click); x2 is young.
-    expect(stats!.get("wf-a")).toEqual({ recipientsContacted: 3, recipientsClicked: 1, recipientsRepliesPositive: 2 });
-    expect(stats!.get("wf-b")).toEqual({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
+    expect(stats!.get("wf-a")).toMatchObject({ recipientsContacted: 3, recipientsClicked: 1, recipientsRepliesPositive: 2 });
+    expect(stats!.get("wf-b")).toMatchObject({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
   });
 
   it("is NULL when the requesting pair's own live rows state no serve date", async () => {
@@ -181,8 +181,8 @@ describe("the stored fleet cell (one build shared by every process and every boo
     const cell = {
       computedAt: 1_760_000_000_000,
       byPair: new Map([
-        ["org-2:brand-x", { serveDatesStated: true, buckets: new Map<string, [number, number, number]>([["c\twf-a\t2026-08-01", [3, 1, 2]], ["\t\t", [1, 0, 0]]]) }],
-        ["org-3:brand-y", { serveDatesStated: false, buckets: new Map<string, [number, number, number]>() }],
+        ["org-2:brand-x", { serveDatesStated: true, buckets: new Map<string, [number, number, number, number, number]>([["c\twf-a\t2026-08-01", [3, 1, 2, 1, 0]], ["\t\t", [1, 0, 0, 0, 0]]]) }],
+        ["org-3:brand-y", { serveDatesStated: false, buckets: new Map<string, [number, number, number, number, number]>() }],
       ]),
     };
     expect(decodeCell(encodeCell(cell))).toEqual(cell);
