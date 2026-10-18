@@ -23,7 +23,7 @@
  *
  * Pure: the route reads the evidence; this orders it.
  */
-import { bestMatureSlug, orderLegWorkflows, type LegWorkflowOrderEntry } from "./leg-workflow-order.js";
+import { bestMatureSlug, explorePriceUsd, legWorkflowPlaces, orderLegWorkflows, type LegWorkflowOrderEntry, type LegWorkflowPlace } from "./leg-workflow-order.js";
 import { legMaturityFigures, type LegMaturityFigures, type OutcomeFigures } from "./maturity.js";
 
 export type LegWorkflowAssignment = "active" | "deprecated" | "unassigned";
@@ -53,6 +53,10 @@ export interface LegWorkflowRankingRow {
   goesFirst: boolean;
   /** The best mature workflow (rule 1). Exactly one row, or none when nothing selectable is mature. */
   moneyGoesHere: boolean;
+  /** The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1) ($0 never run). Null on a mature row. */
+  explorePriceUsd: number | null;
+  /** Why the row stands where it does (`LegWorkflowPlace`). */
+  place: LegWorkflowPlace;
 }
 
 export interface RankLegWorkflowsInput {
@@ -72,7 +76,7 @@ const EMPTY: OutcomeFigures = { spentUsd: 0, contacted: 0, outcomes: 0, costPerO
 
 /** PURE. The ordered list (see the owner rule above). */
 export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRankingRow[] {
-  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere">[] = [];
+  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place">[] = [];
   const byDynasty = new Map(input.byDynasty);
   for (const slug of input.assignments.keys()) {
     if (!byDynasty.has(slug)) byDynasty.set(slug, legMaturityFigures(null, EMPTY, null));
@@ -111,8 +115,18 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
   }));
   const bySlug = new Map(rows.map((r) => [r.workflowDynastySlug, r]));
   const best = bestMatureSlug(entries);
+  const places = legWorkflowPlaces(entries);
+  const entryOf = new Map(entries.map((e) => [e.slug, e]));
   return orderLegWorkflows(entries).map((slug, i) => {
     const r = bySlug.get(slug)!;
-    return { ...r, rank: i + 1, goesFirst: i === 0 && r.selectable, moneyGoesHere: slug === best };
+    const e = entryOf.get(slug)!;
+    return {
+      ...r,
+      rank: i + 1,
+      goesFirst: i === 0 && r.selectable,
+      moneyGoesHere: slug === best,
+      explorePriceUsd: e.mature ? null : explorePriceUsd(e.fleet),
+      place: places.get(slug)!,
+    };
   });
 }

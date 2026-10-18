@@ -5197,6 +5197,8 @@ const legWorkflowRankingRowSchema = z.object({
   roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
   goesFirst: z.boolean().describe("Rank 1, when selectable."),
   moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
+  explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
+  place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
 });
 
 registry.registerPath({
