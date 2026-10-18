@@ -291,7 +291,7 @@ const g = (step: number, emails: number, replies: number, extra: Partial<SendGro
 });
 
 describe("follow-ups (marginal ROI)", () => {
-  const pipe: SendsPipe = { terms, visit: false, groups: [g(1, 1000, 10), g(2, 900, 6), g(3, 800, 1)], spend: { perEmailUsd: 27, perPersonUsd: 1000 } };
+  const pipe: SendsPipe = { terms, visit: false, groups: [g(1, 1000, 10), g(2, 900, 6), g(3, 800, 1)], spend: { totalUsd: 1027, perEmailUsdByMonth: { "2026-09": 0.01 } } };
   const [roi, rate] = followupStudies(pipe);
   it("a follow-up costs only its own sending; the first email carries every per-person dollar", () => {
     const bars = roi!.charts[0]!.points;
@@ -318,7 +318,7 @@ describe("timing", () => {
       terms,
       visit: false,
       groups: [g(1, 1000, 12, { weekday: "Monday" }), g(1, 1000, 3, { weekday: "Sunday" }), g(1, 500, 0, { weekday: null, hour: null })],
-      spend: { perEmailUsd: 0, perPersonUsd: 100 },
+      spend: { totalUsd: 100, perEmailUsdByMonth: {} },
     };
     const st = timingStudy(pipe, "weekday")!;
     expect(st.winner).toBe("Monday");
@@ -326,7 +326,7 @@ describe("timing", () => {
     expect(st.conclusion.some((l) => /500 emails whose prospect has no timezone/.test(l))).toBe(true);
   });
   it("states nothing when every bucket is Learning", () => {
-    expect(timingStudy({ terms: { ...terms, outcomesRequired: 10 }, visit: false, groups: [g(1, 100, 6)], spend: { perEmailUsd: 0, perPersonUsd: 1 } }, "hour")).toBeNull();
+    expect(timingStudy({ terms: { ...terms, outcomesRequired: 10 }, visit: false, groups: [g(1, 100, 6)], spend: { totalUsd: 1, perEmailUsdByMonth: {} } }, "hour")).toBeNull();
   });
 });
 
