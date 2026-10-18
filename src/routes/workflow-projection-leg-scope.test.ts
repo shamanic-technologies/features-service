@@ -210,8 +210,11 @@ describe("a leg-keyed ladder counts only the campaigns performing that leg", () 
     expect(cer.measured).toBe(false);
     expect(cer.estimatesByGrain).toEqual({});
     expect(cer.resolved.grain).toBeNull();
-    // Never recommended on evidence it does not have.
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-lyo");
+    // No borrowed price: it is put first only as an EXPLORE pick (it spent $0 on the leg, so it is not
+    // proven worse), named so, with no budget (WF-ORDER-EXPLORE-1018).
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-cer");
+    expect(res.body.recommendationBasis).toBe("explore");
+    expect(res.body.recommendedBudgetUsd).toBeNull();
   });
 
   it("on the VISIT leg, a visit workflow is priced from visit campaigns only — every org's, no legacy row", async () => {
