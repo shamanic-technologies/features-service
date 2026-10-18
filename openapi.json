@@ -27922,6 +27922,122 @@
         ],
         "description": "THE BENCHMARK ON ONE LEG, over MATURE workflows only (features-service#1196)."
       },
+      "FleetIndexSummary": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Stable index id, e.g. `sceo-cost-per-click` (SCEO = Sales Cold Email Outreach)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name, e.g. `SCEO Cost Per Click Index`."
+          },
+          "channelSlug": {
+            "type": "string"
+          },
+          "channelName": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "website_visit",
+              "positive_reply",
+              "meeting_booked"
+            ]
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "cost_per_outcome",
+              "conversion_rate"
+            ]
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "usd",
+              "percent"
+            ],
+            "description": "`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."
+          },
+          "valuePer": {
+            "type": "string",
+            "description": "What one unit of the value is, in words (`per website visit`, `of people emailed`)."
+          },
+          "method": {
+            "type": "string",
+            "description": "How the value is computed, one plain sentence."
+          },
+          "day": {
+            "type": "string",
+            "nullable": true,
+            "description": "UTC day of the latest recorded point; null before the first recording."
+          },
+          "value": {
+            "type": "number",
+            "nullable": true,
+            "description": "The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "robust",
+              "signal",
+              "noise"
+            ],
+            "description": "How far to trust the value, from the outcomes behind it (a chained index: its weakest link). `noise`: fewer than `statusRule.signalMinOutcomes` outcomes, or no mature workflow. `signal`: fewer than `statusRule.robustMinOutcomes`. `robust`: at least `statusRule.robustMinOutcomes`."
+          },
+          "outcomes": {
+            "type": "integer",
+            "description": "Outcomes behind the value (website visits, positive replies, or meetings booked)."
+          },
+          "contacted": {
+            "type": "integer",
+            "nullable": true,
+            "description": "People emailed behind the value; null on a chained index."
+          },
+          "workflowDynastySlug": {
+            "type": "string",
+            "nullable": true,
+            "description": "The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."
+          },
+          "workflowDynastyName": {
+            "type": "string",
+            "nullable": true
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`."
+          },
+          "recordedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "channelSlug",
+          "channelName",
+          "outcome",
+          "metric",
+          "unit",
+          "valuePer",
+          "method",
+          "day",
+          "value",
+          "status",
+          "outcomes",
+          "contacted",
+          "workflowDynastySlug",
+          "workflowDynastyName",
+          "unavailableReason",
+          "recordedAt"
+        ]
+      },
       "FunnelLeg": {
         "type": "object",
         "properties": {
@@ -42861,6 +42977,246 @@
           },
           "404": {
             "description": "Feature not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/indexes": {
+      "get": {
+        "summary": "Every public fleet index, latest value (public, no auth)",
+        "description": "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution). A read is one small table read.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "Every index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusRule": {
+                      "type": "object",
+                      "properties": {
+                        "signalMinOutcomes": {
+                          "type": "integer"
+                        },
+                        "robustMinOutcomes": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "signalMinOutcomes",
+                        "robustMinOutcomes"
+                      ]
+                    },
+                    "indexes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FleetIndexSummary"
+                      }
+                    }
+                  },
+                  "required": [
+                    "statusRule",
+                    "indexes"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public/indexes/{slug}": {
+      "get": {
+        "summary": "One public fleet index and every recorded day (public, no auth)",
+        "description": "The index summary (latest day) + one point per recorded UTC day, oldest first. `basis` is `recorded` (written live that day).",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "slug",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The index and its series",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "statusRule": {
+                      "type": "object",
+                      "properties": {
+                        "signalMinOutcomes": {
+                          "type": "integer"
+                        },
+                        "robustMinOutcomes": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "signalMinOutcomes",
+                        "robustMinOutcomes"
+                      ]
+                    },
+                    "index": {
+                      "$ref": "#/components/schemas/FleetIndexSummary"
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "day": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "robust",
+                              "signal",
+                              "noise"
+                            ],
+                            "description": "How far to trust the value, from the outcomes behind it (a chained index: its weakest link). `noise`: fewer than `statusRule.signalMinOutcomes` outcomes, or no mature workflow. `signal`: fewer than `statusRule.robustMinOutcomes`. `robust`: at least `statusRule.robustMinOutcomes`."
+                          },
+                          "outcomes": {
+                            "type": "integer"
+                          },
+                          "contacted": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "workflowDynastyName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "unavailableReason": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "recorded",
+                              "recomputed"
+                            ]
+                          },
+                          "inputs": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "nullable": true
+                                },
+                                {
+                                  "nullable": true
+                                }
+                              ]
+                            },
+                            "description": "The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."
+                          }
+                        },
+                        "required": [
+                          "day",
+                          "value",
+                          "status",
+                          "outcomes",
+                          "contacted",
+                          "workflowDynastySlug",
+                          "workflowDynastyName",
+                          "unavailableReason",
+                          "basis",
+                          "inputs"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "statusRule",
+                    "index",
+                    "points"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown index (`index_not_found`, with `slugs`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
             "content": {
               "application/json": {
                 "schema": {

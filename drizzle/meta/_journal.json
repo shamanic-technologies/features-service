@@ -260,6 +260,13 @@
       "when": 1792720800000,
       "tag": "0036_step_lifecycle_rung",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792807200000,
+      "tag": "0037_fleet_index_points",
+      "breakpoints": true
     }
   ]
 }

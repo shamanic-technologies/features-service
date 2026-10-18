@@ -33,6 +33,7 @@ import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import channelDeclarationsRoutes from "./routes/channel-declarations.js";
 import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-catalogue.js";
 import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
+import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
 import orgPeriodRecapRoutes from "./routes/org-period-recap.js";
 import salesFunnelCampaignsRoutes from "./routes/sales-funnel-campaigns.js";
@@ -110,6 +111,7 @@ app.use(orgPeriodRecapRoutes);
 app.use(salesFunnelCampaignsRoutes);
 app.use(salesFunnelCampaignActivityRoutes);
 app.use(livedSalesPathsRoutes);
+app.use(fleetIndexesRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -187,6 +189,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Jev judges every workflow version against every tactic once (lib/tactic-judgments.ts): first sweep a minute
         // after listen, then every 15 min, single-flight.
         startTacticJudgmentLoop();
+        // The public fleet indexes (lib/fleet-indexes.ts): today's point a minute after listen, then hourly.
+        startFleetIndexRecorder();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()
