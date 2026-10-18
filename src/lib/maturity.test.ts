@@ -151,8 +151,8 @@ describe("the mature cohort's person counts (lib/mature-evidence.ts)", () => {
   it("counts per slug the leads served before the cutoff, whenever their outcome landed", () => {
     const stats = matureSlugStats(persons, cutoff);
     // a, b, d on wf-a; c is young; e has no workflow.
-    expect(stats.get("wf-a")).toEqual({ recipientsContacted: 3, recipientsClicked: 2, recipientsRepliesPositive: 1 });
-    expect(matureSlugStats(persons, cutoff, new Set(["c1"])).get("wf-a")).toEqual({
+    expect(stats.get("wf-a")).toMatchObject({ recipientsContacted: 3, recipientsClicked: 2, recipientsRepliesPositive: 1 });
+    expect(matureSlugStats(persons, cutoff, new Set(["c1"])).get("wf-a")).toMatchObject({
       recipientsContacted: 2,
       recipientsClicked: 1,
       recipientsRepliesPositive: 1,

@@ -13,12 +13,16 @@
 import type { EnginePerson } from "./revenue-engine.js";
 import { servedInMatureCohort } from "./maturity.js";
 import { creditedSignal } from "./serving-row-credit.js";
+import { HUMAN_CLICKED_KEY, SCREENED_CONTACTED_KEY } from "./screened-visits.js";
 
 /** The three counted signals a grain observes, for one group of persons. */
 export interface PersonCounts {
   contacted: number;
   clicks: number;
   replies: number;
+  /** Contacted through our own transport, and human-judged clicks on those sends (`lib/screened-visits.ts`). */
+  screenedContacted?: number;
+  humanClicks?: number;
 }
 
 /**
@@ -37,6 +41,8 @@ function countInto(counts: PersonCounts, p: EnginePerson): void {
   if (creditedSignal(p, "contacted")) counts.contacted += 1;
   if (creditedSignal(p, "clicked")) counts.clicks += 1;
   if (creditedSignal(p, "positiveReply")) counts.replies += 1;
+  if (creditedSignal(p, "screenedContacted")) counts.screenedContacted = (counts.screenedContacted ?? 0) + 1;
+  if (creditedSignal(p, "humanClicked")) counts.humanClicks = (counts.humanClicks ?? 0) + 1;
 }
 
 /**
@@ -61,7 +67,13 @@ export function matureSlugStats(
   return new Map(
     [...bySlug].map(([slug, c]) => [
       slug,
-      { recipientsContacted: c.contacted, recipientsClicked: c.clicks, recipientsRepliesPositive: c.replies },
+      {
+        recipientsContacted: c.contacted,
+        recipientsClicked: c.clicks,
+        recipientsRepliesPositive: c.replies,
+        [SCREENED_CONTACTED_KEY]: c.screenedContacted ?? 0,
+        [HUMAN_CLICKED_KEY]: c.humanClicks ?? 0,
+      },
     ]),
   );
 }
