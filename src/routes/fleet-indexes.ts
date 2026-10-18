@@ -12,13 +12,15 @@ import {
   SCEO_POSITIVE_REPLY_LEG,
   SCEO_WEBSITE_VISIT_LEG,
   SIGNAL_MIN_OUTCOMES,
+  bestMeetingPipePick,
   computeFleetIndexPoints,
   fleetIndexBySlug,
   type FleetIndexDefinition,
-  type MeetingFromReplyFleet,
+  type MeetingPipeEvidence,
 } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
-import { fetchMeetingBookingBeforeAfter } from "../lib/meeting-booking-before-after.js";
+import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
+import { meetingResearchPoints } from "../lib/research/pipe-series.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
 import { readLegWorkflowRanking } from "./public.js";
@@ -90,21 +92,6 @@ router.get("/public/indexes/:slug", async (req, res) => {
   }
 });
 
-/**
- * The fleet's Positive reply -> Meeting booked, both windows added up, on the brands that report meetings (the served
- * before/after fleet, `lib/meeting-population.ts`). Null = unreadable.
- */
-async function readMeetingFromReplyFleet(): Promise<MeetingFromReplyFleet | null> {
-  const read = await fetchMeetingBookingBeforeAfter();
-  if (!read.fleet) return null;
-  return {
-    positiveReplyPeople: read.fleet.before.positiveReplyPeople + read.fleet.after.positiveReplyPeople,
-    bookedPeople: read.fleet.before.bookedPeople + read.fleet.after.bookedPeople,
-    brandsCounted: read.fleet.population.brandsCounted,
-    brandsLeftOut: read.fleet.population.brandsLeftOut,
-  };
-}
-
 const RANKING_WAIT_MS = 10 * 60_000;
 
 function computationLegKey(servedLeg: string): string {
@@ -119,19 +106,27 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   // outbound spelling, maturity read the leg as unknown (0 days, no cutoff) and no workflow was mature (2026-10-18).
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
   const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
-  const [visit, reply, meeting] = await Promise.all([
+  const [visit, reply, mbRanking, mbFleet] = await Promise.all([
     readLegWorkflowRanking(SCEO_FEATURE_SLUG, visitLeg, RANKING_WAIT_MS),
     readLegWorkflowRanking(SCEO_FEATURE_SLUG, replyLeg, RANKING_WAIT_MS),
-    readMeetingFromReplyFleet(),
+    // The meeting chain's second pipe: Positive reply -> Meeting booked (AI Meeting Booking), its own workflows.
+    readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS),
+    getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked").catch((error): MeetingLegFleet | null => {
+      console.error("[features-service] fleet indexes: meeting pipe fleet unreadable:", error);
+      return null;
+    }),
   ]);
   if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
   if (!reply) console.warn("[features-service] fleet indexes: positive-reply ranking unreadable, its indexes not recorded this tick");
-  if (!meeting) console.warn("[features-service] fleet indexes: meeting attribution unreadable, meeting indexes not recorded this tick");
+  const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
+  if (!meetingPipe) console.warn("[features-service] fleet indexes: meeting pipe unreadable, meeting indexes not recorded this tick");
   const points = computeFleetIndexPoints({
     websiteVisitRows: visit?.computedAt ? visit.rows : null,
     positiveReplyRows: reply?.computedAt ? reply.rows : null,
-    meetingFromReply: meeting,
+    meetingPipe,
   });
+  // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
+  if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));
   await recordFleetIndexPoints(points, now);
   console.log(`[features-service] fleet indexes: recorded ${points.length} point(s) for ${now.toISOString().slice(0, 10)}`);
   return points.length;

@@ -6,10 +6,15 @@
  * - the cost / rate of a pipe's outcome = the BEST MATURE workflow of the pipe that can still run
  *   (`/public/stats/leg-workflow-ranking`, the row `moneyGoesHere`): what a client buys today. A workflow
  *   that no longer runs is out, so the curve never freezes on a retired one;
- * - a later step is CHAINED: Meeting booked = Positive reply ÷ the fleet's measured Positive reply -> Meeting
- *   booked rate (lead-service meeting attribution, `lib/meeting-booking-before-after.ts`, positive facts only),
- *   measured on the brands that REPORT meetings only (`lib/meeting-population.ts`, MEETING-POPULATION-1018): a brand
- *   that never reported a meeting is left out, never counted as zero; none reporting = null, never a default rate.
+ * - every figure is a PIPE figure (owner 2026-10-18, MB-INDEX-PIPES-1018: « On ne compte pour l'index que des cost de
+ *   pipe »), never a rate pooled over the fleet's people. The meeting index is the only CHAIN, the owner's formula:
+ *   cost per meeting = (cost per positive reply of the best workflow on Lead found -> Positive reply)
+ *                      ÷ (Positive reply -> Meeting booked rate of the best workflow on the AI Meeting Booking pipe)
+ *                      + (that same workflow's cost per meeting booked: what turning a reply into a meeting costs).
+ *   The meeting pipe is measured on the brands that REPORT meetings only (`lib/meeting-population.ts`). While no
+ *   workflow there is mature, the best one AVAILABLE today stands in (owner: « Affiche l'index dès maintenant »):
+ *   the cheapest runnable workflow with a meeting, else the pipe as a whole (every workflow pooled: a campaign run by
+ *   several workflows cannot say which booked), always `noise` with the meetings it rests on.
  *
  * Each value carries a `status` saying how far to trust it, from the outcomes behind it (the weakest link of a
  * chain): `noise` under `SIGNAL_MIN_OUTCOMES` (the maturity bar, `lib/maturity.ts`) or with no mature workflow,
@@ -18,7 +23,6 @@
  * PURE: the recorder (`fleet-index-recorder.ts`) reads the inputs, this turns them into points.
  */
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
-import { NO_BRAND_REPORTS_MEETINGS } from "./meeting-population.js";
 
 export type FleetIndexStatus = "robust" | "signal" | "noise";
 export type FleetIndexUnit = "usd" | "percent";
@@ -98,7 +102,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per meeting booked",
-    method: "The Cost Per Interest Index divided by the share of positive replies that book a meeting, measured on the clients who report their booked meetings to us.",
+    method: "What our best cold email workflow spends for one positive reply, divided by the share of positive replies our best AI meeting booking workflow turns into a meeting, plus what that workflow spends per meeting. Measured on the clients who report their booked meetings to us.",
   },
   {
     slug: "sceo-meeting-rate",
@@ -108,7 +112,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "conversion_rate",
     unit: "percent",
     valuePer: "of people emailed",
-    method: "The Interest Rate Index times the share of positive replies that book a meeting, measured on the clients who report their booked meetings to us.",
+    method: "The Interest Rate Index times the share of positive replies our best AI meeting booking workflow turns into a meeting. Measured on the clients who report their booked meetings to us.",
   },
 ];
 
@@ -143,14 +147,68 @@ export function weakestStatus(a: FleetIndexStatus, b: FleetIndexStatus): FleetIn
   return STATUS_ORDER[a] <= STATUS_ORDER[b] ? a : b;
 }
 
-/** The fleet's measured Positive reply -> Meeting booked, on the brands that report meetings: people who replied with interest, and of them booked. */
-export interface MeetingFromReplyFleet {
-  positiveReplyPeople: number;
-  bookedPeople: number;
-  /** Brands counted (they report meetings). */
-  brandsCounted: number;
-  /** Brands with positive repliers left out because they report no meeting. */
-  brandsLeftOut: number;
+/** The AI Meeting Booking pipe (Positive reply -> Meeting booked), on the brands that report meetings. */
+export interface MeetingPipeEvidence {
+  /** The pipe's leg workflow ranking rows. */
+  rows: readonly LegWorkflowRankingRow[];
+  /** The whole pipe, every workflow pooled (`MeetingLegFleet.pooled`). */
+  pooled: { spentUsd: number; contacted: number; outcomes: number; spentByDynasty: Record<string, number> };
+}
+
+/** What the meeting pipe is read on today: the best workflow, or the pipe as a whole while no workflow owns a meeting. */
+export interface MeetingPipePick {
+  source: "mature_workflow" | "best_workflow_learning" | "pipe_all_workflows";
+  workflowDynastySlug: string | null;
+  workflowDynastyName: string | null;
+  mature: boolean;
+  spentUsd: number;
+  /** Positive repliers its campaigns acted on. */
+  contacted: number;
+  /** Of them, booked a meeting. */
+  outcomes: number;
+  costPerMeetingUsd: number;
+  /** Positive reply -> Meeting booked, % of the people acted on. */
+  ratePct: number;
+  /** `pipe_all_workflows` only: spend per workflow on the pipe. */
+  spentByDynasty: Record<string, number> | null;
+}
+
+/**
+ * PURE. The meeting pipe's best workflow (MB-INDEX-PIPES-1018): the best MATURE runnable one (`moneyGoesHere`), else the
+ * cheapest runnable workflow with a meeting, else the whole pipe pooled. Null = no meeting on the pipe at all.
+ */
+export function bestMeetingPipePick(e: MeetingPipeEvidence): MeetingPipePick | null {
+  const asPick = (r: LegWorkflowRankingRow, source: MeetingPipePick["source"]): MeetingPipePick => ({
+    source,
+    workflowDynastySlug: r.workflowDynastySlug,
+    workflowDynastyName: r.workflowDynastyName,
+    mature: source === "mature_workflow",
+    spentUsd: r.spentUsd,
+    contacted: r.contacted,
+    outcomes: r.outcomes,
+    costPerMeetingUsd: r.spentUsd / r.outcomes,
+    ratePct: (r.outcomes / r.contacted) * 100,
+    spentByDynasty: null,
+  });
+  const measured = (r: LegWorkflowRankingRow) => r.selectable && r.outcomes > 0 && r.contacted > 0;
+  const mature = bestMature([...e.rows]);
+  if (mature && measured(mature)) return asPick(mature, "mature_workflow");
+  const learning = e.rows.filter(measured).sort((a, b) => a.spentUsd / a.outcomes - b.spentUsd / b.outcomes || b.outcomes - a.outcomes || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
+  if (learning) return asPick(learning, "best_workflow_learning");
+  const p = e.pooled;
+  if (p.outcomes <= 0 || p.contacted <= 0) return null;
+  return {
+    source: "pipe_all_workflows",
+    workflowDynastySlug: null,
+    workflowDynastyName: null,
+    mature: false,
+    spentUsd: p.spentUsd,
+    contacted: p.contacted,
+    outcomes: p.outcomes,
+    costPerMeetingUsd: p.spentUsd / p.outcomes,
+    ratePct: (p.outcomes / p.contacted) * 100,
+    spentByDynasty: p.spentByDynasty,
+  };
 }
 
 export interface FleetIndexInputs {
@@ -158,7 +216,7 @@ export interface FleetIndexInputs {
   websiteVisitRows: LegWorkflowRankingRow[] | null;
   positiveReplyRows: LegWorkflowRankingRow[] | null;
   /** null = unreadable: no point is recorded for the meeting indexes. */
-  meetingFromReply: MeetingFromReplyFleet | null;
+  meetingPipe: MeetingPipeEvidence | null;
 }
 
 /** The row a client's money goes to today: best mature workflow that can still run. */
@@ -195,31 +253,42 @@ function legPoint(def: FleetIndexDefinition, rows: LegWorkflowRankingRow[]): Fle
   };
 }
 
-function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRow[], fleet: MeetingFromReplyFleet): FleetIndexPoint {
-  const reply = legPoint(def.metric === "cost_per_outcome" ? COST_PER_INTEREST : INTEREST_RATE, replyRows);
-  const base = { indexSlug: def.slug, workflowDynastySlug: reply.workflowDynastySlug, workflowDynastyName: reply.workflowDynastyName, contacted: null };
-  const rateFraction = fleet.positiveReplyPeople > 0 ? fleet.bookedPeople / fleet.positiveReplyPeople : null;
-  const inputs = {
-    replyIndexValue: reply.value,
-    replyIndexOutcomes: reply.outcomes,
-    positiveReplyPeople: fleet.positiveReplyPeople,
-    meetingsBookedPeople: fleet.bookedPeople,
-    positiveReplyToMeetingPct: rateFraction == null ? null : rateFraction * 100,
-    brandCount: fleet.brandsCounted,
-    brandsCounted: fleet.brandsCounted,
-    brandsLeftOut: fleet.brandsLeftOut,
+function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRow[], pipe: MeetingPipeEvidence): FleetIndexPoint {
+  const cost = def.metric === "cost_per_outcome";
+  const reply = legPoint(cost ? COST_PER_INTEREST : INTEREST_RATE, replyRows);
+  const mb = bestMeetingPipePick(pipe);
+  const inputs: Record<string, number | string | null> = {
+    formula: cost ? "interest_cost / meeting_rate + meeting_pipe_cost_per_meeting" : "interest_rate * meeting_rate",
+    interestWorkflowDynastySlug: reply.workflowDynastySlug,
+    interestWorkflowDynastyName: reply.workflowDynastyName,
+    interestIndexValue: reply.value,
+    interestOutcomes: reply.outcomes,
+    interestStatus: reply.status,
+    meetingPipe: "ai-meeting-booking|conversation_to_meeting_booked",
+    meetingPipeSource: mb?.source ?? null,
+    meetingWorkflowDynastySlug: mb?.workflowDynastySlug ?? null,
+    meetingWorkflowDynastyName: mb?.workflowDynastyName ?? null,
+    meetingPipeSpentUsd: mb?.spentUsd ?? null,
+    positiveRepliesActedOn: mb?.contacted ?? null,
+    meetingsBooked: mb?.outcomes ?? null,
+    interestToMeetingPct: mb?.ratePct ?? null,
+    meetingPipeCostPerMeetingUsd: mb?.costPerMeetingUsd ?? null,
+    meetingPipeSpentByDynasty: mb?.spentByDynasty ? JSON.stringify(mb.spentByDynasty) : null,
     population: "brands_reporting_meetings",
   };
-  const outcomes = Math.min(reply.outcomes, fleet.bookedPeople);
-  const status = weakestStatus(reply.status, indexStatus(fleet.bookedPeople, true));
-  let value: number | null = null;
-  let unavailableReason: string | null = reply.unavailableReason;
-  if (reply.value != null) {
-    if (fleet.brandsCounted === 0) unavailableReason = NO_BRAND_REPORTS_MEETINGS;
-    else if (rateFraction == null || rateFraction === 0) unavailableReason = "no_meeting_measured";
-    else value = def.metric === "cost_per_outcome" ? reply.value / rateFraction : reply.value * rateFraction;
+  const base = { indexSlug: def.slug, workflowDynastySlug: reply.workflowDynastySlug, workflowDynastyName: reply.workflowDynastyName, contacted: null, inputs };
+  if (reply.value == null || !mb) {
+    return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: reply.value == null ? reply.unavailableReason : "no_meeting_on_pipe" };
   }
-  return { ...base, value, status: value == null ? "noise" : status, outcomes, unavailableReason: value == null ? unavailableReason : null, inputs };
+  const rate = mb.ratePct / 100;
+  const value = cost ? reply.value / rate + mb.costPerMeetingUsd : reply.value * rate;
+  return {
+    ...base,
+    value,
+    status: weakestStatus(reply.status, indexStatus(mb.outcomes, mb.mature)),
+    outcomes: Math.min(reply.outcomes, mb.outcomes),
+    unavailableReason: null,
+  };
 }
 
 const COST_PER_INTEREST = fleetIndexBySlug("sceo-cost-per-interest")!;
@@ -231,8 +300,8 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
   for (const def of FLEET_INDEXES) {
     if (def.outcome === "website_visit" && inputs.websiteVisitRows) points.push(legPoint(def, inputs.websiteVisitRows));
     if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows));
-    if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingFromReply) {
-      points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingFromReply));
+    if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
+      points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
     }
   }
   return points;

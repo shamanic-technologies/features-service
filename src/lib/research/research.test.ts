@@ -11,6 +11,10 @@ import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 
 /** Today's 45 study ids on the staff Research page (snapshot of 2026-10-18 14:18). */
+const OVER_TIME_IDS = ["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]
+  .flatMap((p) => [`${p}-best-workflow-over-time`, `${p}-client-median-over-time`])
+  .sort();
+
 const PAGE_IDS = [
   ...["llm-roi", "llm-rate", "cost-over-time", "followups-roi", "followups-rate", "opens-roi", "opens-rate", "template-roi", "template-rate", "naming-rate", "naming-roi", "layout-roi", "opening-roi", "dash-roi", "weekday-rate", "hour-rate", "workflow-roi", "workflow-rate"].map((s) => `cold-email-positive-reply-${s}`),
   ...["llm-roi", "llm-rate", "cost-over-time", "followups-roi", "followups-rate", "opens-roi", "opens-rate", "template-roi", "template-rate", "layout-roi", "opening-roi", "dash-roi", "hour-rate", "workflow-roi", "workflow-rate"].map((s) => `cold-email-website-visit-${s}`),
@@ -179,7 +183,15 @@ describe("assembleResearch", () => {
     unpricedBilledUsd: 0,
     reply: pipe("start_to_conversation", [row("azalea", { spentUsd: 910.9, contacted: 3423, outcomes: 5 }, true), row("belel", { spentUsd: 36.4, contacted: 202, outcomes: 1 }, false)]),
     visit: pipe("start_to_website_visit", [rampart, acamar]),
-    meeting: { outcomesRequired: 10, rankingRows: [row("rhodium", { spentUsd: 0.9, contacted: 2, outcomes: 0 }, false)], unattributableCampaigns: 1 },
+    meeting: {
+      outcomesRequired: 10,
+      rankingRows: [row("rhodium", { spentUsd: 0.9, contacted: 2, outcomes: 0 }, false)],
+      unattributableCampaigns: 1,
+      series: {
+        best: [{ period: "2026-10-18", key: null, label: "Every workflow of the pipe", costPerOutcomeUsd: 1.27, figures: { spentUsd: 3.8, contacted: 10, outcomes: 3 }, mature: false }],
+        median: [{ period: "2026-10-18", clients: 2, clientsWithoutOutcome: 1, medianUsd: null, medianHasNoOutcome: true }],
+      },
+    },
     beforeAfter,
     meetingOutcomesRequired: 10,
     sends: null,
@@ -192,8 +204,23 @@ describe("assembleResearch", () => {
     const served = new Set(file.studies.map((s) => s.id));
     const waiting = new Set(file.unavailable.map((u) => u.id));
     for (const id of PAGE_IDS) expect(served.has(id) !== waiting.has(id), id).toBe(true);
-    expect(served.size + waiting.size).toBe(PAGE_IDS.length);
+    // Beyond the page's ids, only the two articles over time per pipe (MB-INDEX-PIPES-1018), served live.
+    const extra = [...served].filter((id) => !PAGE_IDS.includes(id)).sort();
+    expect(extra).toEqual(OVER_TIME_IDS);
+    expect(served.size - extra.length + waiting.size).toBe(PAGE_IDS.length);
     expect(UNAVAILABLE.length).toBeGreaterThanOrEqual(waiting.size);
+  });
+
+  it("MB-INDEX-PIPES-1018: each pipe serves its best workflow and its median client over time; the meeting pipe states a missing median plainly", () => {
+    const best = file.studies.find((s) => s.id === "cold-email-website-visit-best-workflow-over-time")!;
+    expect(best.winner).toBe("rampart");
+    expect(best.charts[0]!.kind).toBe("months");
+    const mb = file.studies.find((s) => s.id === "meeting-booking-best-workflow-over-time")!;
+    expect(mb.result!.display).toBe("$1.27");
+    expect(mb.verdict.kind).toBe("noise");
+    const med = file.studies.find((s) => s.id === "meeting-booking-client-median-over-time")!;
+    expect(med.status).toBe("not_enough_data");
+    expect(med.headline).toMatch(/median client has no meeting booked yet/);
   });
 
   it("the website-visit workflow ROI study states the ranking's cost for the same workflow (Rampart)", () => {
@@ -231,7 +258,7 @@ describe("assembleResearch", () => {
       unpricedBilledUsd: 12.5,
       reply: { ...pipe("start_to_conversation", [row("azalea", { spentUsd: 100, contacted: 3423, outcomes: 5 }, true)]), rankingRows: null },
       visit: { ...pipe("start_to_website_visit", [rampart]), rankingRows: null },
-      meeting: { outcomesRequired: 10, rankingRows: null, unattributableCampaigns: 0 },
+      meeting: { outcomesRequired: 10, rankingRows: null, unattributableCampaigns: 0, series: null },
       beforeAfter,
       meetingOutcomesRequired: 10,
       sends: null,

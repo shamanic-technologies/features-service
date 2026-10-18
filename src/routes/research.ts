@@ -38,6 +38,9 @@ import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
 import type { ResearchFile, ResearchStudy } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
+import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
+import { readFleetIndexSeries } from "../lib/fleet-index-store.js";
+import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResearchPoints, meetingSeriesOf } from "../lib/research/pipe-series.js";
 import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 
 const router = Router();
@@ -341,12 +344,24 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
           return [r, await coldEmailPipe(VISIT_LEG, basis, now)] as const;
         })()
       : Promise.all([coldEmailPipe(REPLY_LEG, basis, now), coldEmailPipe(VISIT_LEG, basis, now)]);
-  const [[reply, visit], meetingRanking, meetingFleet, beforeAfter] = await Promise.all([
+  const [[reply, visit], meetingRanking, meetingFleet, beforeAfter, recordedBest, recordedMedian] = await Promise.all([
     legs,
     basis === "user" ? readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS) : Promise.resolve(null),
     basis === "user" ? getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked") : Promise.resolve(null),
     fetchMeetingBookingBeforeAfter(),
+    basis === "user" ? readFleetIndexSeries(MEETING_RESEARCH_BEST_SLUG) : Promise.resolve([]),
+    basis === "user" ? readFleetIndexSeries(MEETING_RESEARCH_MEDIAN_SLUG) : Promise.resolve([]),
   ]);
+  // The meeting pipe's two articles over time: the days recorded so far, today's computed live (MB-INDEX-PIPES-1018).
+  const meetingSeries =
+    meetingRanking && meetingFleet
+      ? meetingSeriesOf(
+          recordedBest,
+          recordedMedian,
+          { day: now.toISOString().slice(0, 10), points: meetingResearchPoints(bestMeetingPipePick({ rows: meetingRanking.rows, pooled: meetingFleet.pooled }), meetingFleet.byOrg) },
+          (d) => meetingRanking.rows.find((r) => r.workflowDynastySlug === d)?.workflowDynastyName ?? d,
+        )
+      : null;
   const [sends, jev, replies, gens, reportingBrands, volume] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
@@ -384,6 +399,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       outcomesRequired: meetingRule.outcomesRequired,
       rankingRows: meetingRanking ? meetingRanking.rows : null,
       unattributableCampaigns: meetingFleet ? meetingFleet.unattributableCampaignIds.length : 0,
+      series: meetingSeries,
     },
     beforeAfter,
     meetingOutcomesRequired: meetingRule.outcomesRequired,

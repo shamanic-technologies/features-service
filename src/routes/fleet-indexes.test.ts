@@ -11,8 +11,8 @@ const store = vi.hoisted(() => ({
 vi.mock("../lib/fleet-index-store.js", () => store);
 const ranking = vi.hoisted(() => ({ readLegWorkflowRanking: vi.fn() }));
 vi.mock("./public.js", () => ranking);
-const meeting = vi.hoisted(() => ({ fetchMeetingBookingBeforeAfter: vi.fn() }));
-vi.mock("../lib/meeting-booking-before-after.js", () => meeting);
+const meeting = vi.hoisted(() => ({ getInternalPipeFleet: vi.fn() }));
+vi.mock("../lib/meeting-leg-fleet.js", () => ({ ...meeting, MEETING_BOOKING_FEATURE_SLUG: "ai-meeting-booking", MEETING_BOOKING_LEG_KEY: "conversation_to_meeting_booked" }));
 
 const { default: router, recordFleetIndexesNow } = await import("./fleet-indexes.js");
 const app = express().use(router);
@@ -76,27 +76,41 @@ describe("GET /public/indexes/:slug", () => {
 });
 
 describe("recording", () => {
-  it("records every index from the two rankings + the meeting attribution", async () => {
+  it("records every index from the three pipes' rankings, and the meeting pipe's Research points", async () => {
     ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) => ({
       computedAt: "2026-10-18T12:00:00Z",
-      rows: [leg === "start_to_website_visit" ? rankingRow({}) : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 })],
+      rows: [
+        leg === "start_to_website_visit"
+          ? rankingRow({})
+          : leg === "conversation_to_meeting_booked"
+            ? rankingRow({ workflowDynastySlug: "rhodium", basis: "flash", isMature: false, moneyGoesHere: false, spentUsd: 51, contacted: 12, outcomes: 3 })
+            : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 }),
+      ],
     }));
-    const win = (people: number, booked: number) => ({ positiveReplyPeople: people, bookedPeople: booked });
-    meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: { brandCount: 2, population: { rule: "brands_reporting_meetings", brandsCounted: 2, brandsLeftOut: 3 }, before: win(36, 6), after: win(12, 2) } });
+    meeting.getInternalPipeFleet.mockResolvedValue({
+      pooled: { spentUsd: 60, contacted: 20, outcomes: 3, spentByDynasty: {} },
+      byOrg: [
+        { orgId: "a", spentUsd: 40, contacted: 12, outcomes: 3 },
+        { orgId: "b", spentUsd: 20, contacted: 8, outcomes: 0 },
+      ],
+    });
     const n = await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
-    expect(n).toBe(6);
+    expect(n).toBe(8);
     // Asked on the legs' computation spelling: the served outbound one reads as an unknown leg (no maturity).
-    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["start_to_conversation", "start_to_website_visit"]);
+    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
-    const meetingCost = points.find((p: { indexSlug: string }) => p.indexSlug === "sceo-cost-per-meeting");
-    expect(meetingCost.value).toBeCloseTo(128.8 * 6, 6);
+    const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
+    expect((bySlug.get("sceo-cost-per-meeting") as { value: number }).value).toBeCloseTo(128.8 / 0.25 + 17, 6);
+    expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
+    // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting
+    expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
   });
 
   it("an unreadable ranking records none of its indexes (no fake point)", async () => {
     ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) =>
       leg === "start_to_website_visit" ? null : { computedAt: "2026-10-18T12:00:00Z", rows: [rankingRow({})] },
     );
-    meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: null });
+    meeting.getInternalPipeFleet.mockRejectedValue(new Error("lead-service down"));
     await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["sceo-cost-per-interest", "sceo-interest-rate"]);
