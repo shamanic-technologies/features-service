@@ -79,12 +79,14 @@ describe("recording", () => {
   it("records every index from the two rankings + the meeting attribution", async () => {
     ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) => ({
       computedAt: "2026-10-18T12:00:00Z",
-      rows: [leg === "lead_found_to_website_visit" ? rankingRow({}) : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 })],
+      rows: [leg === "start_to_website_visit" ? rankingRow({}) : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 })],
     }));
     const win = (people: number, booked: number) => ({ positiveReplyPeople: people, bookedPeople: booked });
     meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: { brandCount: 5, before: win(36, 6), after: win(12, 2) } });
     const n = await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
     expect(n).toBe(6);
+    // Asked on the legs' computation spelling: the served outbound one reads as an unknown leg (no maturity).
+    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const meetingCost = points.find((p: { indexSlug: string }) => p.indexSlug === "sceo-cost-per-meeting");
     expect(meetingCost.value).toBeCloseTo(128.8 * 6, 6);
@@ -92,7 +94,7 @@ describe("recording", () => {
 
   it("an unreadable ranking records none of its indexes (no fake point)", async () => {
     ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) =>
-      leg === "lead_found_to_website_visit" ? null : { computedAt: "2026-10-18T12:00:00Z", rows: [rankingRow({})] },
+      leg === "start_to_website_visit" ? null : { computedAt: "2026-10-18T12:00:00Z", rows: [rankingRow({})] },
     );
     meeting.fetchMeetingBookingBeforeAfter.mockResolvedValue({ fleet: null });
     await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
