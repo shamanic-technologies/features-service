@@ -151,6 +151,30 @@ describe("buildMeetingLegFleet", () => {
     expect(fleet.population).toBeNull();
   });
 
+  it("MB-INDEX-PIPES-1018: a version that spent nothing does not make a campaign mixed; clients and the whole pipe count every campaign", () => {
+    const fleet = buildMeetingLegFleet({
+      campaigns: [
+        { campaignId: "c1", orgId: "o1", brandId: "b1" },
+        { campaignId: "c2", orgId: "o2", brandId: "b2" },
+      ],
+      workflows,
+      // c1: osmium has a $0 row only -> rhodium's alone; c2: two dynasties spent -> mixed
+      costGroups: [cost("c1", "rhodium", 300), cost("c1", "osmium", 0), cost("c2", "rhodium", 50), cost("c2", "osmium", 150)],
+      pairs: new Map([
+        ["b1", { actedByCampaign: new Map([["c1", new Set(["l1", "l2"])]]), meetingLeadIds: new Set(["l1"]) }],
+        ["b2", { actedByCampaign: new Map([["c2", new Set(["x", "y"])]]), meetingLeadIds: new Set(["x", "y"]) }],
+      ]),
+      reporting: null,
+    });
+    expect(fleet.unattributableCampaignIds).toEqual(["c2"]);
+    expect(new Map(fleet.byDynasty).get("rhodium")!.flash).toMatchObject({ spentUsd: 3, contacted: 2, outcomes: 1 });
+    expect(fleet.byOrg).toEqual([
+      { orgId: "o1", spentUsd: 3, contacted: 2, outcomes: 1 },
+      { orgId: "o2", spentUsd: 2, contacted: 2, outcomes: 2 },
+    ]);
+    expect(fleet.pooled).toEqual({ spentUsd: 5, contacted: 4, outcomes: 3, spentByDynasty: { osmium: 1.5, rhodium: 3.5 } });
+  });
+
   it("MEETING-POPULATION-1018: a brand that reports no meeting is left out of the fleet figures (spend and people), kept on its own campaigns", () => {
     const fleet = buildMeetingLegFleet({
       campaigns: [

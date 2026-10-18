@@ -89,6 +89,15 @@ export interface MeetingLegFleet {
   perCampaign: Array<{ campaignId: string; orgId: string; brandId: string | null; dynasty: string; acted: string[]; reached: string[]; inFleetPopulation: boolean }>;
   /** Who the fleet figures were measured on; null on a pipe not landing on a meeting step (every brand counts). */
   population: MeetingPopulation | null;
+  /**
+   * Per CLIENT (org), on the fleet population only, every campaign of the pipe that ran, attributable to one workflow or
+   * not: what the client spent on the pipe and the people its campaigns acted on / that reached the `to` step. A
+   * client's own figure needs no workflow attribution, so a campaign whose runs span several workflows counts here
+   * (MB-INDEX-PIPES-1018).
+   */
+  byOrg: Array<{ orgId: string; spentUsd: number; contacted: number; outcomes: number }>;
+  /** The whole pipe on the fleet population (every workflow pooled, mixed campaigns included), spend per dynasty named. */
+  pooled: { spentUsd: number; contacted: number; outcomes: number; spentByDynasty: Record<string, number> };
 }
 
 /** One (org, brand)'s answered leads per acting campaign, and which of them reached a booked meeting. */
@@ -128,18 +137,43 @@ export function buildMeetingLegFleet(input: {
   const agg = new Map<string, { cents: number; acted: Set<string>; meetings: Set<string> }>();
   const unattributable: string[] = [];
   const perCampaign: MeetingLegFleet["perCampaign"] = [];
+  const orgs = new Map<string, { cents: number; acted: Set<string>; reached: Set<string> }>();
+  const pooled = { cents: 0, acted: new Set<string>(), reached: new Set<string>(), centsByDynasty: new Map<string, number>() };
   for (const c of input.campaigns) {
-    const byDyn = spendByCampaign.get(c.campaignId);
-    if (!byDyn || byDyn.size === 0) continue; // never ran: nothing spent, nothing answered
+    const ran = spendByCampaign.get(c.campaignId);
+    if (!ran || ran.size === 0) continue; // never ran: nothing spent, nothing answered
+    const counted = inFleet(c.brandId);
+    const pair = c.brandId ? input.pairs.get(c.brandId) : undefined;
+    // The client's own figure and the whole pipe: every campaign that ran, whatever workflow ran it.
+    if (counted) {
+      const org = orgs.get(c.orgId) ?? { cents: 0, acted: new Set<string>(), reached: new Set<string>() };
+      for (const [d, cents] of ran) {
+        org.cents += cents;
+        pooled.cents += cents;
+        if (cents > 0) pooled.centsByDynasty.set(d, (pooled.centsByDynasty.get(d) ?? 0) + cents);
+      }
+      for (const leadId of pair?.actedByCampaign.get(c.campaignId) ?? []) {
+        const key = `${c.brandId}:${leadId}`;
+        org.acted.add(key);
+        pooled.acted.add(key);
+        if (pair!.meetingLeadIds.has(leadId)) {
+          org.reached.add(key);
+          pooled.reached.add(key);
+        }
+      }
+      orgs.set(c.orgId, org);
+    }
+    // A workflow version that spent nothing on the campaign did not act for it: only spending dynasties attribute
+    // (2026-10-18: $0 rows of retired versions made 10 of 20 meeting campaigns read as mixed).
+    const spending = new Map([...ran].filter(([, cents]) => cents > 0));
+    const byDyn = spending.size > 0 ? spending : ran;
     if (byDyn.size > 1) {
       unattributable.push(c.campaignId);
       continue;
     }
     const [dynasty, cents] = [...byDyn][0]!;
-    const counted = inFleet(c.brandId);
     const entry = agg.get(dynasty) ?? { cents: 0, acted: new Set<string>(), meetings: new Set<string>() };
     if (counted) entry.cents += cents;
-    const pair = c.brandId ? input.pairs.get(c.brandId) : undefined;
     const mine = { campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, dynasty, acted: [] as string[], reached: [] as string[], inFleetPopulation: counted };
     for (const leadId of pair?.actedByCampaign.get(c.campaignId) ?? []) {
       const key = `${c.brandId}:${leadId}`;
@@ -167,6 +201,15 @@ export function buildMeetingLegFleet(input: {
     unattributableCampaignIds: unattributable.sort(),
     perCampaign,
     population: input.reporting ? meetingPopulationOf(input.campaigns.map((c) => c.brandId), input.reporting) : null,
+    byOrg: [...orgs]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([orgId, o]) => ({ orgId, spentUsd: o.cents / 100, contacted: o.acted.size, outcomes: o.reached.size })),
+    pooled: {
+      spentUsd: pooled.cents / 100,
+      contacted: pooled.acted.size,
+      outcomes: pooled.reached.size,
+      spentByDynasty: Object.fromEntries([...pooled.centsByDynasty].sort(([a], [b]) => (a < b ? -1 : 1)).map(([d, c]) => [d, c / 100])),
+    },
   };
 }
 
@@ -206,7 +249,16 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
   const reporting = MEETING_STEPS.has(toStep) ? await getMeetingReporting() : null;
   if (ids.length === 0) {
-    return { legKey, campaignCount: 0, byDynasty: [], unattributableCampaignIds: [], perCampaign: [], population: reporting ? meetingPopulationOf([], reporting) : null };
+    return {
+      legKey,
+      campaignCount: 0,
+      byDynasty: [],
+      unattributableCampaignIds: [],
+      perCampaign: [],
+      population: reporting ? meetingPopulationOf([], reporting) : null,
+      byOrg: [],
+      pooled: { spentUsd: 0, contacted: 0, outcomes: 0, spentByDynasty: {} },
+    };
   }
 
   const byPair = new Map<string, { orgId: string; brandId: string; campaignIds: string[] }>();
