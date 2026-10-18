@@ -106,8 +106,8 @@ describe("slug cells", () => {
         { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0, generation: null },
       ],
       spend: [
-        { workflowSlug: "a-v1", campaignId: "c1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
-        { workflowSlug: "a-v1", campaignId: "c1", month: "2026-10", beforeCutoff: false, spentUsd: 20 },
+        { workflowSlug: "a-v1", orgId: "o1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
+        { workflowSlug: "a-v1", orgId: "o1", month: "2026-10", beforeCutoff: false, spentUsd: 20 },
       ],
       orgOfCampaign: new Map([["c1", "o1"]]),
     });
