@@ -12,6 +12,8 @@ import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
 import { followupStudies, opensStudies, timingStudy, type LegSpendSplit, type OpensArm, type SendGroup } from "./sends.js";
 import { JUDGMENT_OUTCOME, jevStudies, type JevInput } from "./jev.js";
+import { bestWorkflowByMonth, clientMedianByMonth, overTimeStudies, type BestPoint, type MedianPoint } from "./pipe-series.js";
+import { dayText, monthLabel } from "./format.js";
 
 export const POSITIVE_REPLY_PIPE = "cold-email-positive-reply" as const;
 export const WEBSITE_VISIT_PIPE = "cold-email-website-visit" as const;
@@ -42,6 +44,8 @@ export interface MeetingPipeInput {
   /** The leg workflow ranking's rows of the meeting booking pipe (its own measure: people acted on → booked). */
   rankingRows: readonly LegWorkflowRankingRow[] | null;
   unattributableCampaigns: number;
+  /** The two articles over time (best workflow, client median), day by day; null = unreadable (the studies stay out). */
+  series: { best: BestPoint[]; median: MedianPoint[] } | null;
 }
 
 export interface ResearchInput {
@@ -179,7 +183,15 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     studies.push(
       costOverTimeStudy(t, all.months, sumFigures([all.figures]), pipe === WEBSITE_VISIT_PIPE ? " whose clicks are screened for bots" : ""),
     );
-    studies.push(...dimensionStudies(t, workflowBuckets(p), { topic: "workflow", dimNoun: "workflow", keyed: true }));
+    const wfBuckets = workflowBuckets(p);
+    studies.push(...dimensionStudies(t, wfBuckets, { topic: "workflow", dimNoun: "workflow", keyed: true }));
+    // The two articles over time (MB-INDEX-PIPES-1018): read on the ranking (billed), the index's own figures.
+    if (p.rankingRows) {
+      const runnable = new Set(p.rankingRows.filter((r) => r.selectable).map((r) => r.workflowDynastySlug));
+      studies.push(
+        ...overTimeStudies(t, bestWorkflowByMonth(wfBuckets, runnable, p.outcomesRequired), clientMedianByMonth(all.strata ?? {}), monthLabel, "by month", t.note),
+      );
+    }
     if (pipe === WEBSITE_VISIT_PIPE) {
       const reason =
         "The open pixel only ran on emails sent through the provider, whose clicks cannot be told apart from link scanners. A website visit is a human click, so this cannot be measured.";
@@ -225,6 +237,18 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
         })),
       );
       studies.push(meetingBookingCostStudy(sumFigures(buckets.map((b) => b.figures)), input.meeting.outcomesRequired, { workflows: acted, unattributableCampaigns: input.meeting.unattributableCampaigns }));
+      if (input.meeting.series) {
+        studies.push(
+          ...overTimeStudies(
+            t,
+            input.meeting.series.best,
+            input.meeting.series.median,
+            dayText,
+            "day by day",
+            `${t.note} Recorded day by day from Oct 18, 2026; on the clients who report their booked meetings to us. While no workflow has ${input.meeting.outcomesRequired} meetings, the best one available stands in, marked Learning; while no workflow alone can claim a meeting (a campaign run by several), the pipe as a whole does.`,
+          ),
+        );
+      }
       studies.push(...meetingBookingComparisonStudies(acted));
     }
   }

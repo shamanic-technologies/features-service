@@ -206,7 +206,7 @@ function likeForLikeLines(t: PipeTerms, rows: readonly ResearchBucket[], winner:
 
 const nouns = (t: PipeTerms) => ({ noun: t.noun, nouns: t.nounPlural });
 
-function judge(study: Omit<ResearchStudy, "verdict"> & { verdict?: Verdict }, v: Verdict): ResearchStudy {
+export function judge(study: Omit<ResearchStudy, "verdict"> & { verdict?: Verdict }, v: Verdict): ResearchStudy {
   const out = { ...study, verdict: { kind: v.kind, reason: v.reason }, crowned: v.kind === "conclusion" } as ResearchStudy;
   if (out.status === "measured") out.headline = headlineFor(out.headline, v.kind);
   return out;
