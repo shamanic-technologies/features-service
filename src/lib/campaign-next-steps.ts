@@ -160,3 +160,84 @@ export function parseEmailSendQueue(raw: unknown): EmailSendQueue {
     })),
   };
 }
+
+/**
+ * What the campaign's writers SCHEDULED, on every channel, as lead-service serves it (`GET /orgs/followup-dates/scheduled`,
+ * NEXT-STEPS-ALL-CHANNELS-1019): a follow-up writer (email reply in the person's last thread, WhatsApp...) states each
+ * person's next follow-up date there instead of queueing a message in a sender, so the send queue alone reads "0 queued"
+ * beside 47 people scheduled for Monday.
+ */
+export interface ScheduledFollowups {
+  asOf: string;
+  leads: number;
+  due: number;
+  upcoming: number;
+  nextAt: string | null;
+  oldestDueAt: string | null;
+  byDay: { date: string; leads: number; firstAt: string }[];
+  laterThanHorizon: number;
+}
+
+/** PURE: parse lead-service's schedule, throwing on a shape it does not recognise (never a silent 0). */
+export function parseScheduledFollowups(raw: unknown): ScheduledFollowups {
+  const o = raw as Record<string, unknown> | null;
+  if (!o || typeof o !== "object") throw new Error("scheduled-followups: body is not an object");
+  const int = (k: string): number => {
+    const v = o[k];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0) throw new Error(`scheduled-followups: ${k} is not a count`);
+    return v;
+  };
+  const isoOrNull = (k: string): string | null => {
+    const v = o[k];
+    if (v !== null && typeof v !== "string") throw new Error(`scheduled-followups: ${k} is neither a date nor null`);
+    return v as string | null;
+  };
+  if (typeof o.asOf !== "string") throw new Error("scheduled-followups: asOf missing");
+  if (!Array.isArray(o.byDay)) throw new Error("scheduled-followups: byDay missing");
+  return {
+    asOf: o.asOf,
+    leads: int("leads"),
+    due: int("due"),
+    upcoming: int("upcoming"),
+    nextAt: isoOrNull("nextAt"),
+    oldestDueAt: isoOrNull("oldestDueAt"),
+    byDay: (o.byDay as Record<string, unknown>[]).map((d) => ({ date: String(d.date), leads: Number(d.leads), firstAt: String(d.firstAt) })),
+    laterThanHorizon: int("laterThanHorizon"),
+  };
+}
+
+export type NextSendsUnavailableReason = "follow_up_schedule_unreadable" | "sender_unreadable";
+
+/** What waits to go out and when, every channel together: the one figure our assistant states as "queued". */
+export interface NextSends {
+  /** Leads with something of ours waiting to go out: follow-ups scheduled on any channel + the email sender's queue. */
+  leadsQueued: number | null;
+  /** Of them, follow-ups whose time already came: they go out on the follow-up pipe's next pass. */
+  dueNow: number | null;
+  /** The earliest planned send still ahead (ISO), any channel, in each lead's own working hours; null = none ahead. */
+  nextSendAt: string | null;
+  /** Why `leadsQueued` is null (a part could not be read: never a partial sum); null when served. */
+  unavailableReason: NextSendsUnavailableReason | null;
+}
+
+/**
+ * PURE: compose the two owners' facts. The email sender's queue counts leads awaiting a first email + leads with a
+ * follow-up queued there; lead-service's schedule counts the people a writer scheduled (a follow-up writer does not
+ * queue in the sender). `nextSendAt` = the earliest of the schedule's `nextAt` and the sender's `firstEmailsFrom` when
+ * the sender holds something. Either part unreadable = null with its reason, never a figure missing a channel.
+ */
+export function composeNextSends(input: {
+  scheduled: ScheduledFollowups | null;
+  scheduledAsked: boolean;
+  queue: EmailSendQueue | null;
+  queueAsked: boolean;
+}): NextSends {
+  if (input.scheduledAsked && input.scheduled === null) return { leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "follow_up_schedule_unreadable" };
+  if (input.queueAsked && input.queue === null) return { leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "sender_unreadable" };
+  const s = input.scheduled;
+  const q = input.queue;
+  const queued = q ? q.leadsAwaitingFirstEmail + q.leadsWithFollowUpQueued : 0;
+  const times = [s?.nextAt ?? null, q && q.queuedEmails > 0 ? q.firstEmailsFrom : null].filter((t): t is string => t !== null);
+  const nextSendAt = times.length === 0 ? null : times.reduce((a, b) => (new Date(a).getTime() <= new Date(b).getTime() ? a : b));
+  return { leadsQueued: (s?.leads ?? 0) + queued, dueNow: s?.due ?? 0, nextSendAt, unavailableReason: null };
+}

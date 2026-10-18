@@ -22385,6 +22385,118 @@
               "sender_unreadable"
             ]
           },
+          "scheduledFollowups": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "asOf": {
+                "type": "string",
+                "description": "When the schedule was read (a snapshot)."
+              },
+              "leads": {
+                "type": "integer",
+                "description": "People this campaign's writers scheduled a follow-up for, on any channel (email reply in their last thread, WhatsApp...), each once: due + upcoming."
+              },
+              "due": {
+                "type": "integer",
+                "description": "Their time already came: they go out on the follow-up pipe's next pass."
+              },
+              "upcoming": {
+                "type": "integer",
+                "description": "Their time is still ahead."
+              },
+              "nextAt": {
+                "type": "string",
+                "nullable": true,
+                "description": "The earliest scheduled time still ahead (ISO), picked by the writer in the person's own working hours. Null when nothing is ahead."
+              },
+              "oldestDueAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "byDay": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC date YYYY-MM-DD"
+                    },
+                    "leads": {
+                      "type": "integer"
+                    },
+                    "firstAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "leads",
+                    "firstAt"
+                  ]
+                },
+                "description": "Upcoming people per UTC day over the next 31 days, earliest first."
+              },
+              "laterThanHorizon": {
+                "type": "integer",
+                "description": "Upcoming people scheduled beyond those 31 days."
+              }
+            },
+            "required": [
+              "asOf",
+              "leads",
+              "due",
+              "upcoming",
+              "nextAt",
+              "oldestDueAt",
+              "byDay",
+              "laterThanHorizon"
+            ],
+            "description": "What the campaign's writers scheduled on every channel, read from lead-service (each person's next follow-up date, as last stated by one of this campaign's pipes, plus its reactive follow-up queue). Null with scheduledFollowupsUnavailableReason."
+          },
+          "scheduledFollowupsUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "follow_up_schedule_unreadable"
+            ]
+          },
+          "nextSends": {
+            "type": "object",
+            "properties": {
+              "leadsQueued": {
+                "type": "integer",
+                "nullable": true,
+                "description": "THE figure to state as queued: leads with something of ours waiting to go out, every channel (scheduledFollowups.leads + emailSendQueue leadsAwaitingFirstEmail + leadsWithFollowUpQueued). Null when a part is unreadable (never a sum missing a channel)."
+              },
+              "dueNow": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Of them, follow-ups whose time already came: they go out on the next pass."
+              },
+              "nextSendAt": {
+                "type": "string",
+                "nullable": true,
+                "description": "The earliest planned send still ahead (ISO), any channel, in each lead's own working hours: the earliest, never a promise. Null when none is ahead."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "follow_up_schedule_unreadable",
+                  "sender_unreadable"
+                ]
+              }
+            },
+            "required": [
+              "leadsQueued",
+              "dueNow",
+              "nextSendAt",
+              "unavailableReason"
+            ],
+            "description": "What waits to go out and when, every channel composed: read this to say how many leads are queued and when the next sends happen."
+          },
           "timeToFirstPositiveReply": {
             "type": "object",
             "properties": {
@@ -22560,6 +22672,9 @@
           "requestedPipeCampaignId",
           "emailSendQueue",
           "emailSendQueueUnavailableReason",
+          "scheduledFollowups",
+          "scheduledFollowupsUnavailableReason",
+          "nextSends",
           "timeToFirstPositiveReply",
           "pipes"
         ]
@@ -39775,8 +39890,8 @@
     },
     "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps": {
       "get": {
-        "summary": "What comes next in one campaign: leads queued, when they go out, and the measured time to a positive reply",
-        "description": "For our assistant (owner 2026-10-18): per sales funnel campaign, the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+        "summary": "What comes next in one campaign: leads queued on every channel, when the next sends happen, and the measured time to a positive reply",
+        "description": "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
         "tags": [
           "Stats"
         ],

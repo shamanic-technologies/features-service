@@ -15,7 +15,9 @@ vi.mock("../lib/brand-ownership.js", () => ({
 }));
 const fetchEmailSendQueue = vi.fn();
 const fetchReplyLatencyByCampaignGroups = vi.fn();
+const fetchScheduledFollowups = vi.fn();
 vi.mock("../lib/campaign-next-steps-io.js", () => ({
+  fetchScheduledFollowups: (...a: unknown[]) => fetchScheduledFollowups(...a),
   fetchEmailSendQueue: (...a: unknown[]) => fetchEmailSendQueue(...a),
   fetchReplyLatencyByCampaignGroups: (...a: unknown[]) => fetchReplyLatencyByCampaignGroups(...a),
 }));
@@ -58,6 +60,17 @@ const QUEUE = {
   timezones: [],
 };
 
+const SCHEDULED = {
+  asOf: "2026-10-18T20:00:00.000Z",
+  leads: 50,
+  due: 2,
+  upcoming: 48,
+  nextAt: "2026-10-19T01:00:00.000Z",
+  oldestDueAt: "2026-10-18T09:00:00.000Z",
+  byDay: [{ date: "2026-10-19", leads: 44, firstAt: "2026-10-19T01:00:00.000Z" }],
+  laterThanHorizon: 0,
+};
+
 function app() {
   const a = express();
   a.use(router);
@@ -68,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fetchSalesFunnelCampaigns.mockResolvedValue([ROW]);
   fetchEmailSendQueue.mockResolvedValue(QUEUE);
+  fetchScheduledFollowups.mockResolvedValue(SCHEDULED);
   fetchReplyLatencyByCampaignGroups.mockResolvedValue({ campaign: { sampleSize: 1, medianMs: 2 * DAY, averageMs: 2 * DAY } });
   readPipeFleetReplyLatency.mockResolvedValue({ sampleSize: 59, medianMs: 5.3 * DAY, averageMs: 19.5 * DAY });
 });
@@ -83,6 +97,30 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
     expect(res.body.timeToFirstPositiveReply).toMatchObject({ basis: "pipe_fleet", medianDays: 5.3, learning: false });
     expect(res.body.pipes.map((p: { endsOnPositiveReply: boolean }) => p.endsOnPositiveReply)).toEqual([false, true, false]);
     expect(res.body.requestedPipeCampaignId).toBeNull();
+  });
+
+  it("queued covers every channel: the writers' scheduled follow-ups plus the sender's queue (NEXT-STEPS-ALL-CHANNELS-1019)", async () => {
+    const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(fetchScheduledFollowups).toHaveBeenCalledWith("org-1", ["u-src", "u-mail", "u-close"]);
+    expect(res.body.scheduledFollowups).toMatchObject({ leads: 50, due: 2, nextAt: "2026-10-19T01:00:00.000Z" });
+    expect(res.body.nextSends).toEqual({ leadsQueued: 62, dueNow: 2, nextSendAt: "2026-10-19T01:00:00.000Z", unavailableReason: null });
+  });
+
+  it("the Cold Follow-up Replies case: nothing in the sender, 47 scheduled = 47 queued, never 0", async () => {
+    fetchEmailSendQueue.mockResolvedValue({ ...QUEUE, leadsAwaitingFirstEmail: 0, queuedEmails: 0, firstEmailsFrom: null });
+    fetchScheduledFollowups.mockResolvedValue({ ...SCHEDULED, leads: 47, due: 0, upcoming: 47 });
+    const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(res.body.nextSends).toMatchObject({ leadsQueued: 47, dueNow: 0, nextSendAt: "2026-10-19T01:00:00.000Z" });
+  });
+
+  it("an unreadable schedule nulls queued, named, never a sum missing a channel", async () => {
+    fetchScheduledFollowups.mockRejectedValue(new Error("down"));
+    const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(res.status).toBe(200);
+    expect(res.body.scheduledFollowups).toBeNull();
+    expect(res.body.scheduledFollowupsUnavailableReason).toBe("follow_up_schedule_unreadable");
+    expect(res.body.nextSends).toEqual({ leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "follow_up_schedule_unreadable" });
+    expect(res.body.emailSendQueue.leadsAwaitingFirstEmail).toBe(12);
   });
 
   it("a pipe id answers for its campaign", async () => {

@@ -4,7 +4,7 @@
  * the route turns a failure into a named null, never a zero.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { parseEmailSendQueue, type EmailSendQueue, type LatencyMetric } from "./campaign-next-steps.js";
+import { parseEmailSendQueue, parseScheduledFollowups, type EmailSendQueue, type LatencyMetric, type ScheduledFollowups } from "./campaign-next-steps.js";
 
 function instantlyBase(): { url: string; key: string } {
   const url = process.env.INSTANTLY_SERVICE_URL;
@@ -47,4 +47,16 @@ export async function fetchReplyLatencyByCampaignGroups(groups: Record<string, s
   const out: Record<string, LatencyMetric> = {};
   for (const g of data.groups as Record<string, unknown>[]) out[String(g.key)] = readMetric(g.timeToFirstPositiveReply);
   return out;
+}
+
+/** What these campaigns scheduled on every channel (lead-service, org-scoped; ≤500 ids, its cap). */
+export async function fetchScheduledFollowups(orgId: string, campaignIds: string[]): Promise<ScheduledFollowups> {
+  if (campaignIds.length > 500) throw new Error(`scheduled-followups: ${campaignIds.length} campaign ids exceed lead-service's 500`);
+  const url = process.env.LEAD_SERVICE_URL;
+  const key = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !key) throw new Error("LEAD_SERVICE_URL / LEAD_SERVICE_API_KEY not configured");
+  const params = new URLSearchParams({ campaignIds: campaignIds.join(",") });
+  const res = await fetchWithRetry(`${url}/orgs/followup-dates/scheduled?${params}`, { headers: { "x-api-key": key, "x-org-id": orgId } });
+  if (!res.ok) throw new Error(`lead-service /orgs/followup-dates/scheduled failed (${res.status}): ${await res.text()}`);
+  return parseScheduledFollowups(await res.json());
 }

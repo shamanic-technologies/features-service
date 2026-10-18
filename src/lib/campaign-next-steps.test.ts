@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { chooseTimeToReply, isReplyPipe, parseEmailSendQueue, TIME_TO_REPLY_MIN_SAMPLE } from "./campaign-next-steps.js";
+import { chooseTimeToReply, composeNextSends, isReplyPipe, parseEmailSendQueue, parseScheduledFollowups, TIME_TO_REPLY_MIN_SAMPLE } from "./campaign-next-steps.js";
 
 const DAY = 86_400_000;
 const metric = (sampleSize: number, medianDays: number | null, averageDays: number | null = medianDays) => ({
@@ -65,5 +65,31 @@ describe("parseEmailSendQueue", () => {
   });
   it("throws on a missing count, never a silent zero", () => {
     expect(() => parseEmailSendQueue({ ...body, leadsAwaitingFirstEmail: undefined })).toThrow();
+  });
+});
+
+describe("composeNextSends (NEXT-STEPS-ALL-CHANNELS-1019)", () => {
+  const sched = (over: Record<string, unknown> = {}) =>
+    parseScheduledFollowups({ asOf: "2026-10-18T20:00:00Z", leads: 3, due: 1, upcoming: 2, nextAt: "2026-10-20T08:00:00Z", oldestDueAt: "2026-10-18T08:00:00Z", byDay: [], laterThanHorizon: 0, ...over });
+  const queue = (awaiting: number, firstEmailsFrom: string | null) =>
+    parseEmailSendQueue({ asOf: "x", leadsAwaitingFirstEmail: awaiting, leadsWithFollowUpQueued: 1, queuedEmails: awaiting + 1, firstEmailsFrom, sendWindow: { weekdays: [], startHour: 7, endHour: 19, timezoneRule: "lead_local" }, timezones: [] });
+
+  it("sums every channel and takes the earliest next send", () => {
+    expect(composeNextSends({ scheduled: sched(), scheduledAsked: true, queue: queue(4, "2026-10-19T07:00:00Z"), queueAsked: true })).toEqual({
+      leadsQueued: 8,
+      dueNow: 1,
+      nextSendAt: "2026-10-19T07:00:00Z",
+      unavailableReason: null,
+    });
+  });
+  it("nothing anywhere = 0 and no next send", () => {
+    expect(composeNextSends({ scheduled: sched({ leads: 0, due: 0, upcoming: 0, nextAt: null }), scheduledAsked: true, queue: queue(0, null), queueAsked: true })).toMatchObject({ leadsQueued: 1, nextSendAt: null });
+  });
+  it("a part unreadable = null with its reason", () => {
+    expect(composeNextSends({ scheduled: sched(), scheduledAsked: true, queue: null, queueAsked: true }).unavailableReason).toBe("sender_unreadable");
+    expect(composeNextSends({ scheduled: null, scheduledAsked: true, queue: queue(1, null), queueAsked: true }).leadsQueued).toBeNull();
+  });
+  it("parseScheduledFollowups refuses a shape it does not know", () => {
+    expect(() => parseScheduledFollowups({ asOf: "x", leads: -1 })).toThrow();
   });
 });

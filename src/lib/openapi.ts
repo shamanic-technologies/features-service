@@ -3310,6 +3310,28 @@ const campaignNextStepsResponseRef = registry.register(
       .nullable()
       .describe("What waits in our email sender for this campaign's pipes, read from the sender (instantly-service) over every pipe of the campaign. Emails only: a pipe that writes by another channel queues nothing here. Null with emailSendQueueUnavailableReason."),
     emailSendQueueUnavailableReason: z.enum(["sender_unreadable"]).nullable(),
+    scheduledFollowups: z
+      .object({
+        asOf: z.string().describe("When the schedule was read (a snapshot)."),
+        leads: z.number().int().describe("People this campaign's writers scheduled a follow-up for, on any channel (email reply in their last thread, WhatsApp...), each once: due + upcoming."),
+        due: z.number().int().describe("Their time already came: they go out on the follow-up pipe's next pass."),
+        upcoming: z.number().int().describe("Their time is still ahead."),
+        nextAt: z.string().nullable().describe("The earliest scheduled time still ahead (ISO), picked by the writer in the person's own working hours. Null when nothing is ahead."),
+        oldestDueAt: z.string().nullable(),
+        byDay: z.array(z.object({ date: z.string().describe("UTC date YYYY-MM-DD"), leads: z.number().int(), firstAt: z.string() })).describe("Upcoming people per UTC day over the next 31 days, earliest first."),
+        laterThanHorizon: z.number().int().describe("Upcoming people scheduled beyond those 31 days."),
+      })
+      .nullable()
+      .describe("What the campaign's writers scheduled on every channel, read from lead-service (each person's next follow-up date, as last stated by one of this campaign's pipes, plus its reactive follow-up queue). Null with scheduledFollowupsUnavailableReason."),
+    scheduledFollowupsUnavailableReason: z.enum(["follow_up_schedule_unreadable"]).nullable(),
+    nextSends: z
+      .object({
+        leadsQueued: z.number().int().nullable().describe("THE figure to state as queued: leads with something of ours waiting to go out, every channel (scheduledFollowups.leads + emailSendQueue leadsAwaitingFirstEmail + leadsWithFollowUpQueued). Null when a part is unreadable (never a sum missing a channel)."),
+        dueNow: z.number().int().nullable().describe("Of them, follow-ups whose time already came: they go out on the next pass."),
+        nextSendAt: z.string().nullable().describe("The earliest planned send still ahead (ISO), any channel, in each lead's own working hours: the earliest, never a promise. Null when none is ahead."),
+        unavailableReason: z.enum(["follow_up_schedule_unreadable", "sender_unreadable"]).nullable(),
+      })
+      .describe("What waits to go out and when, every channel composed: read this to say how many leads are queued and when the next sends happen."),
     timeToFirstPositiveReply: z
       .object({
         medianDays: z.number().nullable().describe("The delay to state: median days from a lead's first email to its first positive reply, on `basis`. Null while learning."),
@@ -3339,9 +3361,9 @@ const campaignNextStepsResponseRef = registry.register(
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps",
-  summary: "What comes next in one campaign: leads queued, when they go out, and the measured time to a positive reply",
+  summary: "What comes next in one campaign: leads queued on every channel, when the next sends happen, and the measured time to a positive reply",
   description:
-    "For our assistant (owner 2026-10-18): per sales funnel campaign, the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+    "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
