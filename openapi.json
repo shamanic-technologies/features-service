@@ -11166,6 +11166,8 @@
                                     "below_learning_bar",
                                     "to_exceeds_from",
                                     "zero_not_conclusive",
+                                    "brand_reports_no_meetings",
+                                    "meeting_reporting_unreadable",
                                     "too_few_brands",
                                     "crm_measures_this_leg"
                                   ],
@@ -11658,6 +11660,8 @@
                                         "below_learning_bar",
                                         "to_exceeds_from",
                                         "zero_not_conclusive",
+                                        "brand_reports_no_meetings",
+                                        "meeting_reporting_unreadable",
                                         "too_few_brands",
                                         "crm_measures_this_leg"
                                       ],
@@ -22422,9 +22426,11 @@
                               "evidence_unreadable",
                               "below_learning_bar",
                               "to_exceeds_from",
-                              "zero_not_conclusive"
+                              "zero_not_conclusive",
+                              "brand_reports_no_meetings",
+                              "meeting_reporting_unreadable"
                             ],
-                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
+                            "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads). brand_reports_no_meetings: TO is a meeting step and the brand never reported a meeting to us (MEETING-POPULATION-1018), so its count there is not a measure; meeting_reporting_unreadable: whether it reports could not be read, no zero is trusted."
                           }
                         },
                         "required": [
@@ -22522,6 +22528,8 @@
                                 "below_learning_bar",
                                 "to_exceeds_from",
                                 "zero_not_conclusive",
+                                "brand_reports_no_meetings",
+                                "meeting_reporting_unreadable",
                                 "too_few_brands",
                                 "crm_measures_this_leg"
                               ],
@@ -22675,9 +22683,11 @@
                         "evidence_unreadable",
                         "below_learning_bar",
                         "to_exceeds_from",
-                        "zero_not_conclusive"
+                        "zero_not_conclusive",
+                        "brand_reports_no_meetings",
+                        "meeting_reporting_unreadable"
                       ],
-                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."
+                      "description": "Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads). brand_reports_no_meetings: TO is a meeting step and the brand never reported a meeting to us (MEETING-POPULATION-1018), so its count there is not a measure; meeting_reporting_unreadable: whether it reports could not be read, no zero is trusted."
                     }
                   },
                   "required": [
@@ -22775,6 +22785,8 @@
                           "below_learning_bar",
                           "to_exceeds_from",
                           "zero_not_conclusive",
+                          "brand_reports_no_meetings",
+                          "meeting_reporting_unreadable",
                           "too_few_brands",
                           "crm_measures_this_leg"
                         ],
@@ -29252,11 +29264,39 @@
                 "type": "integer",
                 "description": "The leg's maturity bar: meetings each side must have booked before the gain is served."
               },
+              "population": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "rule": {
+                    "type": "string",
+                    "enum": [
+                      "brands_reporting_meetings"
+                    ],
+                    "description": "A brand counts only when it REPORTS meetings to us: lead-service holds at least one live meeting fact for it (booked or attended, any source). A brand that never reported one reads zero meetings whatever happened, so it is left out, never counted as zero (MEETING-POPULATION-1018)."
+                  },
+                  "brandsCounted": {
+                    "type": "integer",
+                    "description": "Brands in the figure (they report meetings)."
+                  },
+                  "brandsLeftOut": {
+                    "type": "integer",
+                    "description": "Brands with people in scope left out because they report no meeting."
+                  }
+                },
+                "required": [
+                  "rule",
+                  "brandsCounted",
+                  "brandsLeftOut"
+                ],
+                "description": "Who both arms were measured on: the brands that report meetings only. Null when lead-service is unreadable."
+              },
               "unavailableReason": {
                 "type": "string",
                 "nullable": true,
                 "enum": [
                   "not_enough_meetings",
+                  "no_brand_reports_meetings",
                   "lead_service_unavailable"
                 ]
               }
@@ -29268,9 +29308,10 @@
               "yourTeamMeetingBooking",
               "gainPctPoints",
               "bookedRequiredPerSide",
+              "population",
               "unavailableReason"
             ],
-            "description": "AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured."
+            "description": "AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured. Measured on the brands that report meetings to us (`population`)."
           },
           "meetingBookingBeforeAfter": {
             "type": "object",
@@ -29300,6 +29341,10 @@
                     "goLiveAt": {
                       "type": "string",
                       "description": "When AI Meeting Booking first acted for the brand."
+                    },
+                    "reportsMeetings": {
+                      "type": "boolean",
+                      "description": "The brand reports its meetings to us. False = left out of `fleet`, no change served (`brand_reports_no_meetings`)."
                     },
                     "before": {
                       "type": "object",
@@ -29468,14 +29513,17 @@
                       "nullable": true,
                       "enum": [
                         "not_enough_meetings",
-                        "no_before_history"
+                        "no_before_history",
+                        "brand_reports_no_meetings",
+                        "no_brand_reports_meetings"
                       ],
-                      "description": "`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply."
+                      "description": "`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply. `brand_reports_no_meetings`: the brand never reported a meeting to us, its zero booked is not a measure. `no_brand_reports_meetings` (fleet): no go-live brand reports meetings."
                     }
                   },
                   "required": [
                     "brandId",
                     "goLiveAt",
+                    "reportsMeetings",
                     "before",
                     "after",
                     "changePctPoints",
@@ -29491,7 +29539,33 @@
                 "nullable": true,
                 "properties": {
                   "brandCount": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Brands summed = `population.brandsCounted`."
+                  },
+                  "population": {
+                    "type": "object",
+                    "properties": {
+                      "rule": {
+                        "type": "string",
+                        "enum": [
+                          "brands_reporting_meetings"
+                        ],
+                        "description": "A brand counts only when it REPORTS meetings to us: lead-service holds at least one live meeting fact for it (booked or attended, any source). A brand that never reported one reads zero meetings whatever happened, so it is left out, never counted as zero (MEETING-POPULATION-1018)."
+                      },
+                      "brandsCounted": {
+                        "type": "integer",
+                        "description": "Brands in the figure (they report meetings)."
+                      },
+                      "brandsLeftOut": {
+                        "type": "integer",
+                        "description": "Brands with people in scope left out because they report no meeting."
+                      }
+                    },
+                    "required": [
+                      "rule",
+                      "brandsCounted",
+                      "brandsLeftOut"
+                    ]
                   },
                   "before": {
                     "type": "object",
@@ -29660,13 +29734,16 @@
                     "nullable": true,
                     "enum": [
                       "not_enough_meetings",
-                      "no_before_history"
+                      "no_before_history",
+                      "brand_reports_no_meetings",
+                      "no_brand_reports_meetings"
                     ],
-                    "description": "`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply."
+                    "description": "`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply. `brand_reports_no_meetings`: the brand never reported a meeting to us, its zero booked is not a measure. `no_brand_reports_meetings` (fleet): no go-live brand reports meetings."
                   }
                 },
                 "required": [
                   "brandCount",
+                  "population",
                   "before",
                   "after",
                   "changePctPoints",
@@ -29674,7 +29751,7 @@
                   "bookedRequiredPerWindow",
                   "unavailableReason"
                 ],
-                "description": "Sum over those brands. Null when lead-service is unreadable."
+                "description": "Sum over the go-live brands that REPORT meetings (`population`). Null when lead-service is unreadable."
               },
               "unavailableReason": {
                 "type": "string",
@@ -43323,6 +43400,33 @@
                         "measured"
                       ]
                     },
+                    "meetingPopulation": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "rule": {
+                          "type": "string",
+                          "enum": [
+                            "brands_reporting_meetings"
+                          ],
+                          "description": "A brand counts only when it REPORTS meetings to us: lead-service holds at least one live meeting fact for it (booked or attended, any source). A brand that never reported one reads zero meetings whatever happened, so it is left out, never counted as zero (MEETING-POPULATION-1018)."
+                        },
+                        "brandsCounted": {
+                          "type": "integer",
+                          "description": "Brands in the figure (they report meetings)."
+                        },
+                        "brandsLeftOut": {
+                          "type": "integer",
+                          "description": "Brands with people in scope left out because they report no meeting."
+                        }
+                      },
+                      "required": [
+                        "rule",
+                        "brandsCounted",
+                        "brandsLeftOut"
+                      ],
+                      "description": "On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped."
+                    },
                     "rows": {
                       "type": "array",
                       "items": {
@@ -43496,7 +43600,7 @@
     "/public/indexes": {
       "get": {
         "summary": "Every public fleet index, latest value (public, no auth)",
-        "description": "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution). A read is one small table read.",
+        "description": "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
         "tags": [
           "Public"
         ],

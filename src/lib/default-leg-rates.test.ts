@@ -38,7 +38,7 @@ describe("every leg always has a conversion rate", () => {
   });
 
   it("a brand that stated nothing and measured nothing reads a default on EVERY leg, labelled as one", () => {
-    const rates = buildBrandEffectiveRates({
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: SALES_FUNNEL_KEYS,
       measurement: NOTHING_MEASURED,
@@ -62,7 +62,7 @@ describe("every leg always has a conversion rate", () => {
   });
 
   it("a stated rate beats the default; an unstated leg reads the default, never another brand's rate", () => {
-    const rates = buildBrandEffectiveRates({
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: SALES_FUNNEL_KEYS,
       measurement: NOTHING_MEASURED,

@@ -81,7 +81,10 @@ export function meetingBeforeAfterStudy(read: MeetingBookingBeforeAfter, outcome
     verdict.kind === "conclusion"
       ? `${lead.label === A ? "More" : "Fewer"} meetings booked within ${days} days of a positive reply since the AI went live: ${horizonLine}`
       : `Within ${days} days of a positive reply. ${horizonLine} ${verdict.kind === "signal" ? "A signal to confirm, not yet a conclusion." : "Noise so far."}`;
-  const population = `${brandsText(fleet.brandCount)} with the AI live, each split at its own go-live (the day the AI first answered one of its prospects). A person counts on the side of their first positive reply.`;
+  const leftOut = fleet.population.brandsLeftOut;
+  const population =
+    `${brandsText(fleet.brandCount)} with the AI live that ${fleet.brandCount === 1 ? "reports its" : "report their"} booked meetings to us, each split at its own go-live (the day the AI first answered one of its prospects). A person counts on the side of their first positive reply.` +
+    (leftOut > 0 ? ` ${brandsText(leftOut)} with the AI live ${leftOut === 1 ? "reports" : "report"} no meetings and ${leftOut === 1 ? "is" : "are"} left out, since zero meetings there means we cannot see them.` : "");
   const learning = `A figure needs ${meetingsText(outcomesRequired)} behind it; below that it reads Learning.`;
   return {
     ...base,

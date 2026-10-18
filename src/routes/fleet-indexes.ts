@@ -90,14 +90,18 @@ router.get("/public/indexes/:slug", async (req, res) => {
   }
 });
 
-/** The fleet's Positive reply -> Meeting booked, both windows of lead-service's attribution added up. Null = unreadable. */
+/**
+ * The fleet's Positive reply -> Meeting booked, both windows added up, on the brands that report meetings (the served
+ * before/after fleet, `lib/meeting-population.ts`). Null = unreadable.
+ */
 async function readMeetingFromReplyFleet(): Promise<MeetingFromReplyFleet | null> {
   const read = await fetchMeetingBookingBeforeAfter();
   if (!read.fleet) return null;
   return {
     positiveReplyPeople: read.fleet.before.positiveReplyPeople + read.fleet.after.positiveReplyPeople,
     bookedPeople: read.fleet.before.bookedPeople + read.fleet.after.bookedPeople,
-    brandCount: read.fleet.brandCount,
+    brandsCounted: read.fleet.population.brandsCounted,
+    brandsLeftOut: read.fleet.population.brandsLeftOut,
   };
 }
 

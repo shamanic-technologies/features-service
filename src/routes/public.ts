@@ -115,6 +115,8 @@ import { FUNNEL_LEG_KEYS, funnelLeg, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESP
 import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
+import { fleetPopulationCampaigns } from "../lib/fleet-meeting-population.js";
+import type { MeetingPopulation } from "../lib/meeting-population.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
 import { buildActualCostHistory, type ActualCostHistory, type VendorSpendDay } from "../lib/actual-cost-history.js";
@@ -4289,14 +4291,25 @@ const fleetWorkflowSpendCache: PublicCache = new Map();
 /** The campaigns performing one leg of a feature, fleet-wide, keyed `${featureSlug}:${legKey}`. */
 const fleetLegCampaignsCache: PublicCache = new Map();
 
-function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
+/**
+ * The campaigns a FLEET figure of one leg is read on, and on a meeting leg who they are (`lib/meeting-population.ts`):
+ * every campaign of the leg, or on a leg landing on a meeting step those of brands that report meetings.
+ */
+function getFleetLegPopulation(featureSlug: string, legKey: string): Promise<{ campaigns: FleetLegCampaign[]; population: MeetingPopulation | null }> {
   return servedPublicCached({
     cache: fleetLegCampaignsCache,
     key: `${featureSlug}:${legKey}`,
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "fleet leg campaigns",
-    compute: () => fetchFleetLegCampaigns(featureSlug, legKey),
+    compute: async () => {
+      const { counted, population } = await fleetPopulationCampaigns(featureSlug, legKey, await fetchFleetLegCampaigns(featureSlug, legKey));
+      return { campaigns: counted, population };
+    },
   });
+}
+
+async function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
+  return (await getFleetLegPopulation(featureSlug, legKey)).campaigns;
 }
 
 interface FleetWorkflowPipelines {
@@ -4878,6 +4891,8 @@ export interface LegWorkflowRankingPayload {
   roiBasis: "billed";
   computedAt: string | null;
   maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null; measured: boolean };
+  /** On a pipe landing on a meeting step: the brands counted / left out (`lib/meeting-population.ts`); else null. */
+  meetingPopulation?: MeetingPopulation | null;
   rows: LegWorkflowRankingRow[];
 }
 
@@ -4896,13 +4911,19 @@ const legRankingWarm = new Map<string, Promise<void>>();
 export async function fleetPipeFigures(
   featureSlug: string,
   legKey: string,
-): Promise<{ byDynasty: Array<[string, LegMaturityFigures]>; cutoffIso: string | null; measured: boolean; campaignCount: number }> {
+): Promise<{
+  byDynasty: Array<[string, LegMaturityFigures]>;
+  cutoffIso: string | null;
+  measured: boolean;
+  campaignCount: number;
+  meetingPopulation: MeetingPopulation | null;
+}> {
   // An ON-DEMAND pipe (owner 2026-10-11: the sourcing channels, run only when the cold email pipe asks, each ask its own
   // unit run) is measured on its own runs' spend and the leads its trigger's events say it found (`lib/on-demand-pipe-fleet.ts`).
   const onDemandTrigger = await onDemandPipeTrigger(featureSlug, legKey);
   if (onDemandTrigger) {
     const fleet = await getOnDemandPipeFleet(featureSlug, legKey);
-    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount };
+    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount, meetingPopulation: null };
   }
   const internalToStep = await internalPipeToStep(featureSlug, legKey);
   if (internalToStep) {
@@ -4912,14 +4933,14 @@ export async function fleetPipeFigures(
         `[features-service] pipe ${featureSlug}|${legKey}: ${fleet.unattributableCampaignIds.length} campaign(s) ran several workflows and are left out of every workflow: ${fleet.unattributableCampaignIds.join(",")}`,
       );
     }
-    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount };
+    return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount, meetingPopulation: fleet.population };
   }
-  const campaigns = await getFleetLegCampaigns(featureSlug, legKey);
-  if (campaigns.length === 0) return { byDynasty: [], cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: 0 };
+  const { campaigns, population } = await getFleetLegPopulation(featureSlug, legKey);
+  if (campaigns.length === 0) return { byDynasty: [], cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: 0, meetingPopulation: population };
   // The pipe's OWN cost (owner 2026-10-11): an outreach pipe fed by sources reads its own slug only, its sources being
   // pipes measured on theirs (`lib/feature-scope.ts` `SpendSlugs`).
   const maturity = await fetchFleetLegWorkflowMaturity(featureSlug, legKey, "own");
-  return { ...maturity, campaignCount: campaigns.length };
+  return { ...maturity, campaignCount: campaigns.length, meetingPopulation: population };
 }
 
 export async function computeLegWorkflowRanking(featureSlug: string, legKey: string): Promise<LegWorkflowRankingPayload> {
@@ -4959,6 +4980,7 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
     roiBasis: "billed",
     computedAt: new Date().toISOString(),
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
+    meetingPopulation: maturity.meetingPopulation,
     rows: rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynasties(workflows), pipelineUsd, billedSpendUsd }),
   };
 }

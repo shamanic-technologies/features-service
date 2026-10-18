@@ -10,10 +10,10 @@ import type { WorkflowMetadata } from "./public-stats-clients.js";
 
 const fleet = {
   perCampaign: [
-    { campaignId: "c1", orgId: "o1", brandId: "b1", dynasty: "rhodium", acted: ["b1:l1", "b1:l2", "b1:l3"], reached: ["b1:l2"] },
-    { campaignId: "c2", orgId: "o1", brandId: "b1", dynasty: "rhodium", acted: ["b1:l3", "b1:l4"], reached: [] },
-    { campaignId: "c3", orgId: "o2", brandId: "b2", dynasty: "rhodium", acted: ["b2:x"], reached: ["b2:x"] },
-    { campaignId: "c4", orgId: "o2", brandId: "b2", dynasty: "avior", acted: ["b2:y"], reached: [] },
+    { campaignId: "c1", orgId: "o1", brandId: "b1", dynasty: "rhodium", acted: ["b1:l1", "b1:l2", "b1:l3"], reached: ["b1:l2"], inFleetPopulation: true },
+    { campaignId: "c2", orgId: "o1", brandId: "b1", dynasty: "rhodium", acted: ["b1:l3", "b1:l4"], reached: [], inFleetPopulation: true },
+    { campaignId: "c3", orgId: "o2", brandId: "b2", dynasty: "rhodium", acted: ["b2:x"], reached: ["b2:x"], inFleetPopulation: true },
+    { campaignId: "c4", orgId: "o2", brandId: "b2", dynasty: "avior", acted: ["b2:y"], reached: [], inFleetPopulation: true },
   ],
 };
 
@@ -59,6 +59,24 @@ describe("an internal pipe is measured on the people its campaigns acted on, at 
     expect(stats.get("avior")).toMatchObject({ recipientsContacted: 1, recipientsRepliesPositive: 0 });
     expect(out.brandGrain[0][1]).toEqual({ ...zeroSends, contacted: 4, replies: 1, clicks: 0 });
     expect(out.campaignGrain![0][1]).toEqual({ ...zeroSends, contacted: 3, replies: 1, clicks: 0 });
+  });
+
+  it("MEETING-POPULATION-1018: the crossOrg grain counts the fleet population only; a brand's own grain stays its own", () => {
+    const workflows = [{ workflowSlug: "rhodium-v16", workflowDynastySlug: "rhodium", status: "active" }] as WorkflowMetadata[];
+    const zeroSends = { totalCostInUsdCents: 411, completedRuns: 40, contacted: 0, clicks: 0, replies: 0 };
+    const ev = {
+      workflows,
+      crossOrgCostGroups: [],
+      crossOrgEmailStats: [["rhodium-v16", { recipientsContacted: 0 }]],
+      brandGrain: [["rhodium-v16", zeroSends]],
+      retiredBrandGrain: [],
+      audienceEvidence: [],
+    } as unknown as WorkflowProjectionEvidence;
+    // b1 reports no meeting: out of the fleet, still its own brand grain.
+    const split = { perCampaign: fleet.perCampaign.map((c) => ({ ...c, inFleetPopulation: c.brandId !== "b1" })) };
+    const out = withInternalPipeCounts(ev, split, { brand: (c) => c.brandId === "b1", campaign: null, offer: null });
+    expect(new Map(out.crossOrgEmailStats).get("rhodium-v16")).toMatchObject({ recipientsContacted: 1, recipientsRepliesPositive: 1 });
+    expect(out.brandGrain[0][1]).toMatchObject({ contacted: 4, replies: 1 });
   });
 });
 
