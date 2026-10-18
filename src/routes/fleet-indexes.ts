@@ -20,6 +20,7 @@ import {
 import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { fetchMeetingBookingBeforeAfter } from "../lib/meeting-booking-before-after.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
+import { matchChannelLegKey } from "../lib/funnel-legs.js";
 import { readLegWorkflowRanking } from "./public.js";
 
 const router = Router();
@@ -102,11 +103,21 @@ async function readMeetingFromReplyFleet(): Promise<MeetingFromReplyFleet | null
 
 const RANKING_WAIT_MS = 10 * 60_000;
 
+function computationLegKey(servedLeg: string): string {
+  const leg = matchChannelLegKey(SCEO_FEATURE_SLUG, servedLeg);
+  if (!leg) throw new Error(`[features-service] fleet indexes: leg ${servedLeg} is not a leg of ${SCEO_FEATURE_SLUG}`);
+  return leg;
+}
+
 /** One recording: read every input, write today's point of each index whose inputs were readable. */
 export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
+  // The ranking is keyed on the leg's COMPUTATION spelling (the route resolves it the same way): asked with the served
+  // outbound spelling, maturity read the leg as unknown (0 days, no cutoff) and no workflow was mature (2026-10-18).
+  const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
+  const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
   const [visit, reply, meeting] = await Promise.all([
-    readLegWorkflowRanking(SCEO_FEATURE_SLUG, SCEO_WEBSITE_VISIT_LEG, RANKING_WAIT_MS),
-    readLegWorkflowRanking(SCEO_FEATURE_SLUG, SCEO_POSITIVE_REPLY_LEG, RANKING_WAIT_MS),
+    readLegWorkflowRanking(SCEO_FEATURE_SLUG, visitLeg, RANKING_WAIT_MS),
+    readLegWorkflowRanking(SCEO_FEATURE_SLUG, replyLeg, RANKING_WAIT_MS),
     readMeetingFromReplyFleet(),
   ]);
   if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
