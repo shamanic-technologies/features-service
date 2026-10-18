@@ -20,6 +20,10 @@
  * answer is held per (feature, leg, pricing) with stale-while-revalidate (15 min fresh / 6 h stale,
  * single-flight) — the freshness every other cross-org fleet benchmark here has. FAIL-LOUD: a cold cell
  * whose build fails throws (the caller 502s); a failed background refresh keeps the previous cell.
+ *
+ * A leg landing on a MEETING step (`lib/meeting-population.ts`, MEETING-POPULATION-1018) reads its fleet spend and sends
+ * on the campaigns of brands that REPORT meetings only (flash and mature alike); `campaigns` stays the whole leg (the
+ * finer grains of a brand are its own figures) and `population` names the brands counted and left out.
  */
 
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "./brand-spend-by-day-client.js";
@@ -35,6 +39,8 @@ import { fetchFleetMatureSlugStats, fetchFleetScreenedVisitCounts } from "./flee
 import { isScreenedVisitLeg, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import { effectiveSpendSlugs, runsSpendSlugsParam, type SpendSlugs } from "./feature-scope.js";
+import type { MeetingPopulation } from "./meeting-population.js";
+import { fleetPopulationCampaigns } from "./fleet-meeting-population.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -46,6 +52,8 @@ export interface LegFleetEvidence {
   costGroups: CostGroup[];
   /** Fleet send stats `groupBy=workflowSlug`, those campaigns only. */
   emailStats: Map<string, Record<string, number>>;
+  /** On a meeting leg, who the spend and sends were read on (reporting brands); null on any other leg. */
+  population?: MeetingPopulation | null;
 }
 
 interface Cell {
@@ -98,9 +106,10 @@ export function mergeEmailStats(maps: readonly Map<string, Record<string, number
 
 async function build(featureSlug: string, legKey: string, pricing: Pricing, slugs: SpendSlugs): Promise<Cell> {
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
-  const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
+  const { counted, population } = await fleetPopulationCampaigns(featureSlug, legKey, campaigns);
+  const ids = [...new Set(counted.map((c) => c.campaignId))].sort();
   if (ids.length === 0) {
-    return { value: { campaigns, costGroups: [], emailStats: new Map() }, computedAt: Date.now() };
+    return { value: { campaigns, costGroups: [], emailStats: new Map(), population }, computedAt: Date.now() };
   }
   const [costChunks, emailChunks] = await Promise.all([
     Promise.all(
@@ -113,7 +122,7 @@ async function build(featureSlug: string, legKey: string, pricing: Pricing, slug
     ),
   ]);
   return {
-    value: { campaigns, costGroups: mergeCostGroupsBySlug(costChunks.flat()), emailStats: mergeEmailStats(emailChunks) },
+    value: { campaigns, costGroups: mergeCostGroupsBySlug(costChunks.flat()), emailStats: mergeEmailStats(emailChunks), population },
     computedAt: Date.now(),
   };
 }
@@ -153,11 +162,12 @@ export async function fetchLegFleetEvidence(featureSlug: string, legKey: string,
   if (isScreenedVisitLeg(legKey)) {
     const counts = await fetchFleetScreenedVisitCounts(featureSlug, new Set(value.campaigns.map((c) => c.campaignId)));
     const screened = screenVisitEvidence(value.costGroups, value.emailStats, counts);
-    return { campaigns: value.campaigns, costGroups: screened.costGroups, emailStats: screened.emailStats };
+    return { campaigns: value.campaigns, costGroups: screened.costGroups, emailStats: screened.emailStats, population: value.population ?? null };
   }
   // Callers overwrite reply counts in place (setReplyCountsOnSlugStats): never hand out the cached maps.
   return {
     campaigns: value.campaigns,
+    population: value.population ?? null,
     costGroups: value.costGroups,
     emailStats: new Map([...value.emailStats].map(([k, v]) => [k, { ...v }])),
   };
@@ -238,7 +248,7 @@ export function mergeMatureCostGroups(groups: readonly CostGroup[], pricing: Pri
 }
 
 async function buildMatureCosts(featureSlug: string, legKey: string, pricing: Pricing, cutoffIso: string, slugs: SpendSlugs): Promise<MatureCostCell> {
-  const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
+  const { counted: campaigns } = await fleetPopulationCampaigns(featureSlug, legKey, await fetchFleetLegCampaigns(featureSlug, legKey));
   const byOrg = new Map<string, string[]>();
   for (const c of campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
   const startedBefore = startedBeforeParam(cutoffIso);

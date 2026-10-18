@@ -11,9 +11,13 @@
  * once EACH side has booked the leg's maturity bar of meetings (`lib/maturity.ts`, `outcomesRequired`), else null +
  * `not_enough_meetings`: a gain over a handful of meetings is noise, never a claim we make to a client.
  * Unreadable producer = every figure null + `lead_service_unavailable`, logged loud, never a 502 of the catalogue.
+ *
+ * Measured on the brands that REPORT meetings only (`lib/meeting-population.ts`, MEETING-POPULATION-1018): both arms
+ * are summed over those brands' rows of `byBrand`, and `population` says how many brands were counted and left out.
  */
-import { fetchWithRetry } from "./fetch-retry.js";
 import { legMaturity } from "./maturity.js";
+import { meetingPopulationOf, meetingReportingOf, NO_BRAND_REPORTS_MEETINGS, type MeetingPopulation } from "./meeting-population.js";
+import { fetchMeetingAttributionBody, rememberMeetingReporting } from "./meeting-reporting-client.js";
 
 export const MEETING_BOOKING_LEG = "conversation_to_meeting_booked";
 
@@ -35,7 +39,9 @@ export interface MeetingBookingGain {
   gainPctPoints: number | null;
   /** Meetings EACH side must have booked before the gain is served (the leg's maturity bar). */
   bookedRequiredPerSide: number;
-  unavailableReason: "not_enough_meetings" | "lead_service_unavailable" | null;
+  /** Who the rates were measured on (brands that report meetings). Null when lead-service was unreadable. */
+  population: MeetingPopulation | null;
+  unavailableReason: "not_enough_meetings" | typeof NO_BRAND_REPORTS_MEETINGS | "lead_service_unavailable" | null;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -50,12 +56,24 @@ function armOf(raw: unknown, name: string): MeetingBookingArm {
   return { handledPeople: handled, bookedPeople: booked, ratePct: handled === 0 ? null : round2((booked / handled) * 100) };
 }
 
-/** PURE: the served figure from lead-service's meeting-attribution body. */
+/** PURE: the served figure from lead-service's meeting-attribution body, over the brands that report meetings. */
 export function meetingBookingGainOf(body: unknown): MeetingBookingGain {
-  const arms = (body as { summary?: { arms?: Record<string, unknown> } } | null)?.summary?.arms;
-  if (!arms) throw new Error("[features-service] lead-service meeting-attribution has no summary.arms");
-  const ai = armOf(arms.aiMeetingBooking, "aiMeetingBooking");
-  const team = armOf(arms.yourTeamMeetingBooking, "yourTeamMeetingBooking");
+  const byBrand = (body as { byBrand?: Array<{ brandId?: unknown; arms?: Record<string, unknown> }> } | null)?.byBrand;
+  const reporting = meetingReportingOf(body);
+  const sum = { ai: { handled: 0, booked: 0 }, team: { handled: 0, booked: 0 } };
+  for (const row of byBrand!) {
+    const brandId = row.brandId as string;
+    const ai = armOf(row.arms?.aiMeetingBooking, `${brandId}.aiMeetingBooking`);
+    const team = armOf(row.arms?.yourTeamMeetingBooking, `${brandId}.yourTeamMeetingBooking`);
+    if (!reporting.reports(brandId)) continue;
+    sum.ai.handled += ai.handledPeople;
+    sum.ai.booked += ai.bookedPeople;
+    sum.team.handled += team.handledPeople;
+    sum.team.booked += team.bookedPeople;
+  }
+  const ai = armOf(sum.ai, "aiMeetingBooking");
+  const team = armOf(sum.team, "yourTeamMeetingBooking");
+  const population = meetingPopulationOf(byBrand!.map((r) => r.brandId as string), reporting);
   const required = legMaturity(MEETING_BOOKING_LEG).outcomesRequired;
   const enough = ai.bookedPeople >= required && team.bookedPeople >= required && ai.ratePct !== null && team.ratePct !== null;
   return {
@@ -65,17 +83,16 @@ export function meetingBookingGainOf(body: unknown): MeetingBookingGain {
     yourTeamMeetingBooking: team,
     gainPctPoints: enough ? round2(ai.ratePct! - team.ratePct!) : null,
     bookedRequiredPerSide: required,
-    unavailableReason: enough ? null : "not_enough_meetings",
+    population,
+    unavailableReason: enough ? null : population.brandsCounted === 0 ? NO_BRAND_REPORTS_MEETINGS : "not_enough_meetings",
   };
 }
 
 export async function fetchMeetingBookingGain(): Promise<MeetingBookingGain> {
   try {
-    const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, {
-      headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY! },
-    });
-    if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${await res.text()}`);
-    return meetingBookingGainOf(await res.json());
+    const body = await fetchMeetingAttributionBody();
+    rememberMeetingReporting(meetingReportingOf(body));
+    return meetingBookingGainOf(body);
   } catch (err) {
     console.error("[features-service] meeting booking gain unreadable, served null:", err);
     return {
@@ -85,6 +102,7 @@ export async function fetchMeetingBookingGain(): Promise<MeetingBookingGain> {
       yourTeamMeetingBooking: null,
       gainPctPoints: null,
       bookedRequiredPerSide: legMaturity(MEETING_BOOKING_LEG).outcomesRequired,
+      population: null,
       unavailableReason: "lead_service_unavailable",
     };
   }

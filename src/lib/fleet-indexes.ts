@@ -7,7 +7,9 @@
  *   (`/public/stats/leg-workflow-ranking`, the row `moneyGoesHere`): what a client buys today. A workflow
  *   that no longer runs is out, so the curve never freezes on a retired one;
  * - a later step is CHAINED: Meeting booked = Positive reply ÷ the fleet's measured Positive reply -> Meeting
- *   booked rate (lead-service meeting attribution, `lib/meeting-booking-before-after.ts`, positive facts only).
+ *   booked rate (lead-service meeting attribution, `lib/meeting-booking-before-after.ts`, positive facts only),
+ *   measured on the brands that REPORT meetings only (`lib/meeting-population.ts`, MEETING-POPULATION-1018): a brand
+ *   that never reported a meeting is left out, never counted as zero; none reporting = null, never a default rate.
  *
  * Each value carries a `status` saying how far to trust it, from the outcomes behind it (the weakest link of a
  * chain): `noise` under `SIGNAL_MIN_OUTCOMES` (the maturity bar, `lib/maturity.ts`) or with no mature workflow,
@@ -16,6 +18,7 @@
  * PURE: the recorder (`fleet-index-recorder.ts`) reads the inputs, this turns them into points.
  */
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
+import { NO_BRAND_REPORTS_MEETINGS } from "./meeting-population.js";
 
 export type FleetIndexStatus = "robust" | "signal" | "noise";
 export type FleetIndexUnit = "usd" | "percent";
@@ -95,7 +98,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per meeting booked",
-    method: "The Cost Per Interest Index divided by the share of positive replies that book a meeting, measured on our clients.",
+    method: "The Cost Per Interest Index divided by the share of positive replies that book a meeting, measured on the clients who report their booked meetings to us.",
   },
   {
     slug: "sceo-meeting-rate",
@@ -105,7 +108,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "conversion_rate",
     unit: "percent",
     valuePer: "of people emailed",
-    method: "The Interest Rate Index times the share of positive replies that book a meeting, measured on our clients.",
+    method: "The Interest Rate Index times the share of positive replies that book a meeting, measured on the clients who report their booked meetings to us.",
   },
 ];
 
@@ -140,11 +143,14 @@ export function weakestStatus(a: FleetIndexStatus, b: FleetIndexStatus): FleetIn
   return STATUS_ORDER[a] <= STATUS_ORDER[b] ? a : b;
 }
 
-/** The fleet's measured Positive reply -> Meeting booked: people who replied with interest, and of them booked. */
+/** The fleet's measured Positive reply -> Meeting booked, on the brands that report meetings: people who replied with interest, and of them booked. */
 export interface MeetingFromReplyFleet {
   positiveReplyPeople: number;
   bookedPeople: number;
-  brandCount: number;
+  /** Brands counted (they report meetings). */
+  brandsCounted: number;
+  /** Brands with positive repliers left out because they report no meeting. */
+  brandsLeftOut: number;
 }
 
 export interface FleetIndexInputs {
@@ -199,14 +205,18 @@ function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRo
     positiveReplyPeople: fleet.positiveReplyPeople,
     meetingsBookedPeople: fleet.bookedPeople,
     positiveReplyToMeetingPct: rateFraction == null ? null : rateFraction * 100,
-    brandCount: fleet.brandCount,
+    brandCount: fleet.brandsCounted,
+    brandsCounted: fleet.brandsCounted,
+    brandsLeftOut: fleet.brandsLeftOut,
+    population: "brands_reporting_meetings",
   };
   const outcomes = Math.min(reply.outcomes, fleet.bookedPeople);
   const status = weakestStatus(reply.status, indexStatus(fleet.bookedPeople, true));
   let value: number | null = null;
   let unavailableReason: string | null = reply.unavailableReason;
   if (reply.value != null) {
-    if (rateFraction == null || rateFraction === 0) unavailableReason = "no_meeting_measured";
+    if (fleet.brandsCounted === 0) unavailableReason = NO_BRAND_REPORTS_MEETINGS;
+    else if (rateFraction == null || rateFraction === 0) unavailableReason = "no_meeting_measured";
     else value = def.metric === "cost_per_outcome" ? reply.value / rateFraction : reply.value * rateFraction;
   }
   return { ...base, value, status: value == null ? "noise" : status, outcomes, unavailableReason: value == null ? unavailableReason : null, inputs };
