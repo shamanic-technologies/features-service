@@ -7,7 +7,7 @@
  * Aldhanab, Amansinaya, Chertan, Hamal assigned 2026-10-13 with $0 spent read rank 8+ and never ran.
  */
 import { describe, it, expect } from "vitest";
-import { bestMatureSlug, explorePriceUsd, orderLegWorkflows, type LegWorkflowOrderEntry } from "./leg-workflow-order.js";
+import { bestMatureSlug, explorePriceUsd, legWorkflowPlaces, orderLegWorkflows, type LegWorkflowOrderEntry } from "./leg-workflow-order.js";
 
 const m = (slug: string, cost: number, tier = 0, extra: Partial<LegWorkflowOrderEntry> = {}): LegWorkflowOrderEntry => ({
   slug,
@@ -91,4 +91,11 @@ describe("orderLegWorkflows", () => {
     expect(bestMatureSlug([m("deprecated", 0.1, 0, { selectable: false }), m("b", 3), l("x", 0, 0)])).toBe("b");
     expect(bestMatureSlug([l("x", 0, 0)])).toBeNull();
   });
+
+  it("legWorkflowPlaces says why each row stands where it does", () => {
+    const places = legWorkflowPlaces([m("best", 1), m("other", 5), l("fresh", 0, 0), l("barren", 3, 0), m("retired", 0.5, 0, { selectable: false })]);
+    expect(Object.fromEntries(places)).toEqual({ best: "money", other: "mature", fresh: "explore", barren: "proven_worse", retired: "cannot_run" });
+    expect(legWorkflowPlaces([l("a", 9, 1)]).get("a")).toBe("explore");
+  });
 });
+
