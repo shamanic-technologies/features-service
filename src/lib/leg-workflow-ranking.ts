@@ -6,20 +6,12 @@
  * the byte-same per-workflow fleet leg figures `/public/stats/outcome-prices` picks its winner from
  * (`fetchFleetLegWorkflowMaturity`): flash + mature + the workflow's verdict on the leg.
  *
- * OWNER RULE (2026-09-30), the ORDER:
- *
- *   1. The BEST MATURE workflow is where the money goes: the cheapest MATURE cost per outcome among the
- *      selectable workflows mature on the leg.
- *   2. ABOVE it, the LEARNING workflows whose early (flash) cost per outcome is already CHEAPER than it,
- *      cheapest first. They are what is worth exploring: they beat the proven price on early evidence.
- *   3. BELOW it, the other mature workflows, cheapest first.
- *   4. Then the learning workflows that do not beat it, cheapest first; one with no outcome (no price) last.
- *   5. Then every workflow deprecated on the leg, or with no version workflow-service can run (every version
- *      retired: a run asked of it is refused), in the same order among themselves. It keeps its history on
- *      screen but can never be put forward.
- *
- * With no mature workflow at all, every selectable one is ordered by its flash price. Ties break on the
- * dynasty slug, so the order is total and the same evidence always gives the same list.
+ * The ORDER is `orderLegWorkflows` (`lib/leg-workflow-order.ts`, owner rule 2026-09-30 / 2026-10-01): the ONE
+ * computation the leg-keyed `workflow-projection` answers campaign-service with, here on the fleet evidence
+ * alone. Learning workflows whose explore price (fleet spend ÷ max(outcomes, 1); $0 for one never run) is
+ * below the best MATURE price go first, then the mature ones cheapest first (the first is where the money
+ * goes), then the other learning ones; every workflow a run may not pick (deprecated, unassigned, or with no
+ * version workflow-service can run) after, in the same order among themselves.
  *
  * A workflow never put on the leg (`unassigned`) that has never spent on it is not listed: it is not a
  * workflow of this leg. One that has spent on it is listed, and cannot be put forward. A workflow ASSIGNED to
@@ -31,6 +23,7 @@
  *
  * Pure: the route reads the evidence; this orders it.
  */
+import { bestMatureSlug, orderLegWorkflows, type LegWorkflowOrderEntry } from "./leg-workflow-order.js";
 import { legMaturityFigures, type LegMaturityFigures, type OutcomeFigures } from "./maturity.js";
 
 export type LegWorkflowAssignment = "active" | "deprecated" | "unassigned";
@@ -108,34 +101,18 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
     });
   }
 
-  type Row = (typeof rows)[number];
-  const byCost = (a: Row, b: Row) => {
-    const ca = a.costPerOutcomeUsd;
-    const cb = b.costPerOutcomeUsd;
-    if (ca != null && cb != null && ca !== cb) return ca - cb;
-    if (ca == null && cb != null) return 1;
-    if (ca != null && cb == null) return -1;
-    return a.workflowDynastySlug < b.workflowDynastySlug ? -1 : a.workflowDynastySlug > b.workflowDynastySlug ? 1 : 0;
-  };
-  const isMature = (r: Row) => r.basis === "mature" && r.costPerOutcomeUsd != null;
-
-  const orderGroup = (group: Row[]): { ordered: Row[]; best: Row | null } => {
-    const matures = group.filter(isMature).sort(byCost);
-    const best = matures[0] ?? null;
-    const learning = group.filter((r) => !isMature(r)).sort(byCost);
-    if (!best) return { ordered: [...matures, ...learning], best: null };
-    const bar = best.costPerOutcomeUsd!;
-    const beating = learning.filter((r) => r.costPerOutcomeUsd != null && r.costPerOutcomeUsd < bar);
-    const rest = learning.filter((r) => !beating.includes(r));
-    return { ordered: [...beating, best, ...matures.slice(1), ...rest], best };
-  };
-
-  const selectable = orderGroup(rows.filter((r) => r.selectable));
-  const excluded = orderGroup(rows.filter((r) => !r.selectable));
-  return [...selectable.ordered, ...excluded.ordered].map((r, i) => ({
-    ...r,
-    rank: i + 1,
-    goesFirst: i === 0 && r.selectable,
-    moneyGoesHere: r === selectable.best,
+  // The ORDER is the shared leg order (`lib/leg-workflow-order.ts`), the byte-same computation the
+  // leg-keyed `workflow-projection` answers campaign-service with: this read only hands it the fleet evidence.
+  const entries: LegWorkflowOrderEntry[] = rows.map((r) => ({
+    slug: r.workflowDynastySlug,
+    selectable: r.selectable,
+    mature: r.basis === "mature" && r.costPerOutcomeUsd != null && r.costPerOutcomeUsd > 0 ? { tier: 0, costPerOutcomeUsd: r.costPerOutcomeUsd } : null,
+    fleet: { spentUsd: r.spentUsd, outcomes: r.outcomes },
   }));
+  const bySlug = new Map(rows.map((r) => [r.workflowDynastySlug, r]));
+  const best = bestMatureSlug(entries);
+  return orderLegWorkflows(entries).map((slug, i) => {
+    const r = bySlug.get(slug)!;
+    return { ...r, rank: i + 1, goesFirst: i === 0 && r.selectable, moneyGoesHere: slug === best };
+  });
 }

@@ -73,7 +73,7 @@ import {
   type CostGroup,
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
-import { aggregateAcrossDynasties } from "./public.js";
+import { aggregateAcrossDynasties, readLegWorkflowRanking } from "./public.js";
 import { fetchPositiveRepliers, fetchScopePersons, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
@@ -103,7 +103,8 @@ import { serveDatesStated } from "../lib/mature-evidence.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { playIdOf, resolvePlay, strategyOfFunnelLeg, strategyVerdict, tacticNameOf } from "../lib/plays.js";
 import { pipeIdOf } from "../lib/agent-catalogue.js";
-import { missionPriceOf, orderMissionWorkflows } from "../lib/mission-workflow-order.js";
+import { MISSION_PRICE_GRAINS, missionPriceOf } from "../lib/mission-workflow-order.js";
+import { orderLegWorkflows } from "../lib/leg-workflow-order.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 
 const router = Router();
@@ -641,7 +642,7 @@ export interface WorkflowProjectionResponse {
    * recommendation is then the rank-1 selectable workflow, named so the leg can start, and its cost
    * fields stay null (never an invented price). Absent on every priced recommendation.
    */
-  recommendationBasis?: "cold_start";
+  recommendationBasis?: "cold_start" | "explore";
   /** Present ⟺ the caller named a `?leg=`: the leg's maturity rule and whether it was applied. */
   maturity?: ProjectionMaturity;
 }
@@ -1242,11 +1243,17 @@ type ProjectionCostBasis = "billed" | "actual";
  * The answer for a pipe no sales funnel prices (lib/unpriced-pipes.ts: sourcing, AI Instant Call). Like
  * every pipe it runs the workflows ASSIGNED to it (owner 2026-10-11: "every pipe has a workflow"), read
  * live and fail-loud from the same table as every leg read. Nothing prices them here (no funnel, no
- * ladder evidence), so each row is `measured: false` with an all-null `resolved`, ordered selectable
- * first then by slug, and rank 1 is named as the workflow to start on (`recommendationBasis:
+ * ladder evidence), so each row is `measured: false` with an all-null `resolved`, ordered by the ONE leg
+ * order (`lib/leg-workflow-order.ts`) on the pipe's fleet ranking evidence, and rank 1 is named as the workflow to start on (`recommendationBasis:
  * "cold_start"`, no budget), exactly the cold start of any leg. No assignment at all → `rows: []`,
  * `no_active_workflows`; only deprecated ones → `recommendationWithheldReason: "no_eligible_workflow"`.
  */
+/**
+ * An unpriced pipe's read never waits on a never-built fleet ranking (boot warms every assigned pipe's): it
+ * kicks the build and orders on $0 evidence meanwhile, loudly.
+ */
+const UNPRICED_PIPE_RANKING_WAIT_MS = 0;
+
 export async function unpricedPipeProjection(
   featureSlug: string,
   legKey: string,
@@ -1261,9 +1268,25 @@ export async function unpricedPipeProjection(
     const reason = played?.excludedReason(slug) ?? null;
     return v.selectable && reason ? { ...v, selectable: false, reason } : v;
   };
-  const verdicts = [...assignments.keys()]
-    .map((slug) => ({ slug, verdict: playVerdict(slug, legAssignmentVerdict(assignments.get(slug), legKey, executable.has(slug))) }))
-    .sort((a, b) => Number(b.verdict.selectable) - Number(a.verdict.selectable) || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  const unordered = [...assignments.keys()].map((slug) => ({ slug, verdict: playVerdict(slug, legAssignmentVerdict(assignments.get(slug), legKey, executable.has(slug))) }));
+  // The ONE leg order (WF-ORDER-EXPLORE-1018), on the fleet evidence the pipe's ranking measures (the same
+  // cell the Research page reads); a workflow the ranking has no figures for has spent $0 on the pipe.
+  const ranking = await readLegWorkflowRanking(featureSlug, legKey, UNPRICED_PIPE_RANKING_WAIT_MS);
+  if (!ranking) console.error(`[features-service] unpriced pipe ${featureSlug}|${legKey}: fleet ranking not built, ordering on $0 evidence (selectable first, slug)`);
+  const figures = new Map((ranking?.rows ?? []).map((r) => [r.workflowDynastySlug, r]));
+  const order = orderLegWorkflows(
+    unordered.map(({ slug, verdict }) => {
+      const r = figures.get(slug);
+      return {
+        slug,
+        selectable: verdict.selectable,
+        mature: r && r.basis === "mature" && r.costPerOutcomeUsd != null && r.costPerOutcomeUsd > 0 ? { tier: 0, costPerOutcomeUsd: r.costPerOutcomeUsd } : null,
+        fleet: { spentUsd: r?.spentUsd ?? 0, outcomes: r?.outcomes ?? 0 },
+      };
+    }),
+  );
+  const position = new Map(order.map((slug, i) => [slug, i]));
+  const verdicts = unordered.sort((a, b) => position.get(a.slug)! - position.get(b.slug)!);
   const rows: ProjectionRow[] = verdicts.map(({ slug, verdict }, i) => ({
     audienceId: null,
     workflow: { workflowDynastySlug: slug, workflowDynastyName: null },
@@ -2996,28 +3019,18 @@ export function projectFromEvidence(input: {
       return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
 
-    // ── ON A MISSION READ: CHEAPER LEARNING WORKFLOWS, THEN THE CHEAPEST MATURE FOR THE OFFER ─────
+    // ── ON A LEG READ: THE SHARED LEG ORDER (`lib/leg-workflow-order.ts`, WF-ORDER-EXPLORE-1018) ──────
     //
-    // A mission (a `?campaignId=` beside the `?leg=`, whose campaign states an offer — i.e. the offer
-    // grain was read) is ordered on MATURE cost per outcome, finest grain first: the offer's own price
-    // (owner rule 2026-09-30), and for a workflow not mature on the offer yet its brand, then its fleet
-    // mature price (owner rule 2026-10-01; `lib/mission-workflow-order.ts`). Workflows no mature price
-    // places keep the general order below; the slug breaks a tie only after every price.
-    //
-    //   selectable before non-selectable (leg assignment) → learning workflows cheaper than the best
-    //   mature one → mature on the offer → mature on the brand → mature on the fleet (each ascending) →
-    //   the rest in the general order → retired.
-    //
-    // A LEARNING workflow (no mature price anywhere) whose general-order figure (its best rankable
-    // resolved cost per outcome, flash with its cascade floor) is already cheaper than the best mature
-    // one's mature price sits ABOVE it, cheapest first: the general order's rule and figure (owner
-    // 2026-10-01; withdraws "learning below every mature on a mission" from #1233).
-    //
-    // ONE answer: rank 1 IS `recommendedWorkflowDynastySlug` (below), mature or learning, so
-    // the row a page marks "money goes here" and the recommendation cannot disagree (prod 2026-10-01:
-    // the page said dawn while the recommendation and the money were osprey). `scopeRank` is untouched.
+    // The byte-same computation the staff Research page reads (`/public/stats/leg-workflow-ranking`), here
+    // handed this campaign's evidence: a workflow's MATURE price is read finest grain first (the offer's
+    // when the campaign states one, then the brand's, then the fleet's: owner rules 2026-09-30 / 2026-10-01),
+    // a LEARNING workflow is priced on its EXPLORE price (its fleet spend on the leg ÷ max(outcomes, 1), $0
+    // for one never run). Selectable before non-selectable (leg assignment, retired lineages with them) →
+    // learning workflows whose explore price is below the best mature price → mature (offer, brand, fleet,
+    // each ascending) → the other learning workflows → slug ties. Rank 1 is what runs; it IS
+    // `recommendedWorkflowDynastySlug` (below). Under `?maximize=conversionRate` the general order stands.
     const missionOrder: string[] | null =
-      legTerms && evidence.offerGrain
+      legTerms && maximize !== "conversionRate"
         ? (() => {
             const brandRowBySlug = new Map<string, ProjectionRow>();
             for (const row of rows) {
@@ -3025,20 +3038,17 @@ export function projectFromEvidence(input: {
                 brandRowBySlug.set(row.workflow.workflowDynastySlug, row);
               }
             }
-            const generalPosition = new Map(orderedDynasties.map(([slug], i) => [slug, i]));
-            return orderMissionWorkflows(
+            return orderLegWorkflows(
               [...bestByDynasty.keys()].map((slug) => {
                 const row = brandRowBySlug.get(slug);
                 const g = row?.estimatesByGrain;
+                const price = missionPriceOf({ grains: { offer: g?.offer ?? null, brand: g?.brand ?? null, crossOrg: g?.crossOrg ?? null } });
+                const fleet = g?.crossOrg?.flash;
                 return {
                   slug,
-                  excluded: excludedTier(slug) === 1,
-                  retired: row?.retired === true,
-                  grains: { offer: g?.offer ?? null, brand: g?.brand ?? null, crossOrg: g?.crossOrg ?? null },
-                  fallbackPosition: generalPosition.get(slug)!,
-                  // The general order's own figure: a learning workflow cheaper on it than the best
-                  // mature one goes above it, exactly as in the general order (owner 2026-10-01).
-                  learningCostPerOutcomeUsd: maximize === "conversionRate" ? null : bestByDynasty.get(slug)!.metric,
+                  selectable: excludedTier(slug) === 0 && row?.retired !== true,
+                  mature: price ? { tier: MISSION_PRICE_GRAINS.indexOf(price.grain), costPerOutcomeUsd: price.costPerOutcomeUsd } : null,
+                  fleet: { spentUsd: fleet?.spentUsd ?? 0, outcomes: fleet?.outcomes ?? 0 },
                 };
               }),
             );
@@ -3114,45 +3124,57 @@ export function projectFromEvidence(input: {
     // An excluded head means NO workflow is assigned active on the leg (the assignment is the outermost
     // key), and the answer is then no recommendation, stated with its reason — never a fall back.
     const head = orderedDynasties[0];
-    const headExcluded = head != null && excludedTier(head[0]) === 1;
-    // On a mission read the recommendation IS rank 1: its brand-level row when it holds a mature price,
-    // else its best rankable row (a learning workflow cheaper than the best mature).
-    const missionHeadRow: ProjectionRow | null = (() => {
+    const headExcluded = missionOrder
+      ? missionOrder[0] != null && excludedTier(missionOrder[0]) === 1
+      : head != null && excludedTier(head[0]) === 1;
+    // On a leg read the recommendation IS rank 1 (the shared order's head, selectable and not retired):
+    // its brand-level row when it holds a mature price, else its best rankable row (a learning workflow
+    // with a measured figure), else its brand-level row unpriced (an EXPLORE pick: a workflow not yet
+    // proven worse than the best mature one, `recommendationBasis: "explore"`, no budget).
+    const legHead: { row: ProjectionRow; priced: boolean } | null = (() => {
       const slug = missionOrder?.[0];
       if (!slug || excludedTier(slug) === 1) return null;
-      const row = rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug);
+      const row = rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug) ?? bestByDynasty.get(slug)?.row;
       if (!row || row.retired) return null;
       const g = row.estimatesByGrain;
-      if (missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } })) return row;
-      // A learning workflow placed first (cheaper than the best mature): its best rankable row, as the
-      // general order recommends it.
+      if (missionPriceOf({ grains: { offer: g.offer ?? null, brand: g.brand ?? null, crossOrg: g.crossOrg ?? null } })) return { row, priced: true };
       const best = bestByDynasty.get(slug);
-      return best && best.metric != null ? best.row : null;
+      return best && best.metric != null ? { row: best.row, priced: true } : { row, priced: false };
     })();
-    const pricedRecommendation: ProjectionRow | null =
-      missionHeadRow ?? (head && !headExcluded && head[1].metric != null ? head[1].row : null);
-    // ── COLD START: a leg whose selectable workflows have no price yet still names one to run ──────
+    const pricedRecommendation: ProjectionRow | null = missionOrder
+      ? legHead?.priced
+        ? legHead.row
+        : null
+      : head && !headExcluded && head[1].metric != null
+        ? head[1].row
+        : null;
+    // ── AN UNPRICED HEAD STILL NAMES THE WORKFLOW TO RUN ─────────────────────────────────────────────
     //
-    // Without it a consumer that launches "the recommended workflow" cannot start the leg at all, and
-    // the leg never gets the evidence that would price it (prod 2026-10-03: conversation_to_meeting_booked
-    // had rhodium assigned active, no evidence, no recommendation, so every onboarding launch failed).
-    // Only on a leg read, only when no priced workflow exists: the rank-1 selectable, non-retired
-    // dynasty (rank already puts measured-unrankable before never-run, slug ties). Its cost fields stay
-    // null and `recommendationBasis: "cold_start"` says so; `recommendedBudgetUsd` stays null.
+    // `explore`: the order put a workflow with no price yet first because some other workflow on the leg is
+    // priced and it has not been proven worse (owner rule; prod 2026-10-18: four cold email workflows
+    // assigned 2026-10-13 never ran). `cold_start`: nothing on the leg is priced (prod 2026-10-03:
+    // conversation_to_meeting_booked had rhodium assigned active, no evidence, no recommendation, so every
+    // onboarding launch failed). Either way its cost fields stay null and `recommendedBudgetUsd` stays null.
+    const anyPriced = [...bestByDynasty.entries()].some(([slug, b]) => excludedTier(slug) === 0 && b.metric != null);
     const coldStartRow: ProjectionRow | null =
       legTerms && !pricedRecommendation
-        ? (() => {
-            for (const slug of missionOrder ?? orderedDynasties.map(([s]) => s)) {
-              if (excludedTier(slug) === 1) continue;
-              const row =
-                rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug) ??
-                bestByDynasty.get(slug)!.row;
-              if (row.retired) continue;
-              return row;
-            }
-            return null;
-          })()
+        ? legHead
+          ? legHead.row
+          : !missionOrder
+            ? (() => {
+                for (const [slug] of orderedDynasties) {
+                  if (excludedTier(slug) === 1) continue;
+                  const row =
+                    rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === slug) ??
+                    bestByDynasty.get(slug)!.row;
+                  if (row.retired) continue;
+                  return row;
+                }
+                return null;
+              })()
+            : null
         : null;
+    const recommendationBasis: "cold_start" | "explore" | null = coldStartRow ? (missionOrder && anyPriced ? "explore" : "cold_start") : null;
     const recommended: ProjectionRow | null = pricedRecommendation ?? coldStartRow;
     // The budget still answers "what does a month of this cost", whichever way the pick was made — it is
     // priced off the RECOMMENDED row's own cost per outcome, so it describes the workflow that was
@@ -3173,7 +3195,7 @@ export function projectFromEvidence(input: {
       measured: unmeasuredReason === null,
       ...(unmeasuredReason ? { unmeasuredReason } : {}),
       ...(headExcluded ? { recommendationWithheldReason: "no_eligible_workflow" as const } : {}),
-      ...(coldStartRow ? { recommendationBasis: "cold_start" as const } : {}),
+      ...(recommendationBasis ? { recommendationBasis } : {}),
       ...(legKey && rule
         ? {
             maturity: {

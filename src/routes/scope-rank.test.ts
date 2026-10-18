@@ -191,9 +191,9 @@ describe("a row states its position among the rows it is COMPARABLE with", () =>
   it("orders the CAMPAIGN column on its own figures — which is NOT the workflow order", async () => {
     const res = await get("leg=start_to_conversation");
 
-    // The workflow order is unchanged: lithium is picked on its $10 audience cell.
-    expect(res.body.recommendedWorkflowDynastySlug).toBe("lithium");
-    expect(scope(res.body, null).find((r: any) => r.workflow.workflowDynastySlug === "lithium").rank).toBe(1);
+    // The workflow order is the leg order: argon never ran, so it is explored first (WF-ORDER-EXPLORE-1018).
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("argon");
+    expect(scope(res.body, null).find((r: any) => r.workflow.workflowDynastySlug === "argon").rank).toBe(1);
 
     // The column a reader is LOOKING at says the opposite: $60 a conversation against $200.
     expect(orderOf(res.body, null)).toEqual(["sodium", "lithium", "argon"]);

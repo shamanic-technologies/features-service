@@ -6710,7 +6710,7 @@
                 },
                 "rank": {
                   "type": "number",
-                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead MATURE cost per outcome, finest grain first: workflows mature on the OFFER (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature`), ascending; then those mature only on the BRAND, then only on the FLEET (`crossOrg`), each ascending; then every other workflow in the general order; retired lineages last. The slug breaks a tie only after every price. When rank 1 holds a mature price it IS `recommendedWorkflowDynastySlug` (the money goes to the cheapest mature workflow for the offer, else on the next coarser grain that has one)."
+                  "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Rank 1 is what a run takes and IS `recommendedWorkflowDynastySlug`; every row of one dynasty carries the same number; no consumer re-derives it. THE LEG ORDER (one computation, also served fleet-wide by `/public/stats/leg-workflow-ranking`; owner rule 2026-09-30 / 2026-10-01): selectable workflows (`legAssignment.selectable`, not retired) first, then every other in the same order among themselves. Within each: (1) LEARNING workflows (no mature price) whose EXPLORE PRICE (fleet spend on the leg ÷ max(fleet outcomes, 1): $0 for a workflow never run) is below the best mature price, cheapest first (not yet proven worse: worth exploring); (2) MATURE workflows, finest grain first (mature on the OFFER when the campaign states one, then the BRAND, then the FLEET `crossOrg`; `<grain>.mature.costPerOutcomeUsd` where `<grain>.isMature`), ascending inside a grain: the first is the best mature one; (3) the other learning workflows, cheapest explore price first. The slug breaks ties. Under `?maximize=conversionRate` the general order stands (measured rate desc, never-run last)."
                 },
                 "scopeRank": {
                   "type": "number",
@@ -7538,9 +7538,10 @@
           "recommendationBasis": {
             "type": "string",
             "enum": [
-              "cold_start"
+              "cold_start",
+              "explore"
             ],
-            "description": "Present ⟺ a `?leg=` read has NO priced workflow but at least one assigned active and selectable: `recommendedWorkflowDynastySlug` is then the rank-1 selectable workflow so a consumer can START the leg (the only way it ever gets evidence). Its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
+            "description": "Present ⟺ a `?leg=` read recommends a workflow that has NO price yet. `explore`: the leg order (see `rank`) put it first because another workflow on the leg is priced and this one is not yet proven worse than the best mature one (its explore price, fleet spend on the leg ÷ max(outcomes, 1), $0 if it never ran, is below the best mature price). `cold_start`: no workflow on the leg is priced; `recommendedWorkflowDynastySlug` is the rank-1 selectable workflow so a consumer can START the leg. Either way its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
           },
           "maturity": {
             "allOf": [
@@ -33484,7 +33485,7 @@
                           },
                           "rank": {
                             "type": "number",
-                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). It exists so NO consumer re-derives one: a page ranking the subset it displays produces a second order that disagrees with the pick. The rank is a property of the WORKFLOW, so every row of one dynasty carries the same number and `recommendedWorkflowDynastySlug` is rank 1 BY CONSTRUCTION. A TOTAL order — no ties, no gaps — broken deterministically on the dynasty slug, with never-run workflows (the explore allowance) always after every workflow with measured evidence. A workflow not assigned active on the leg (`legAssignment.selectable` false) ranks after EVERY selectable workflow, whatever its evidence, and is never the recommendation. ON A MISSION READ (`?leg=&campaignId=` whose campaign states an offer) the order is instead MATURE cost per outcome, finest grain first: workflows mature on the OFFER (`estimatesByGrain.offer.mature.costPerOutcomeUsd` where `offer.isMature`), ascending; then those mature only on the BRAND, then only on the FLEET (`crossOrg`), each ascending; then every other workflow in the general order; retired lineages last. The slug breaks a tie only after every price. When rank 1 holds a mature price it IS `recommendedWorkflowDynastySlug` (the money goes to the cheapest mature workflow for the offer, else on the next coarser grain that has one)."
+                            "description": "THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Rank 1 is what a run takes and IS `recommendedWorkflowDynastySlug`; every row of one dynasty carries the same number; no consumer re-derives it. THE LEG ORDER (one computation, also served fleet-wide by `/public/stats/leg-workflow-ranking`; owner rule 2026-09-30 / 2026-10-01): selectable workflows (`legAssignment.selectable`, not retired) first, then every other in the same order among themselves. Within each: (1) LEARNING workflows (no mature price) whose EXPLORE PRICE (fleet spend on the leg ÷ max(fleet outcomes, 1): $0 for a workflow never run) is below the best mature price, cheapest first (not yet proven worse: worth exploring); (2) MATURE workflows, finest grain first (mature on the OFFER when the campaign states one, then the BRAND, then the FLEET `crossOrg`; `<grain>.mature.costPerOutcomeUsd` where `<grain>.isMature`), ascending inside a grain: the first is the best mature one; (3) the other learning workflows, cheapest explore price first. The slug breaks ties. Under `?maximize=conversionRate` the general order stands (measured rate desc, never-run last)."
                           },
                           "scopeRank": {
                             "type": "number",
@@ -34312,9 +34313,10 @@
                     "recommendationBasis": {
                       "type": "string",
                       "enum": [
-                        "cold_start"
+                        "cold_start",
+                        "explore"
                       ],
-                      "description": "Present ⟺ a `?leg=` read has NO priced workflow but at least one assigned active and selectable: `recommendedWorkflowDynastySlug` is then the rank-1 selectable workflow so a consumer can START the leg (the only way it ever gets evidence). Its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
+                      "description": "Present ⟺ a `?leg=` read recommends a workflow that has NO price yet. `explore`: the leg order (see `rank`) put it first because another workflow on the leg is priced and this one is not yet proven worse than the best mature one (its explore price, fleet spend on the leg ÷ max(outcomes, 1), $0 if it never ran, is below the best mature price). `cold_start`: no workflow on the leg is priced; `recommendedWorkflowDynastySlug` is the rank-1 selectable workflow so a consumer can START the leg. Either way its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."
                     },
                     "maturity": {
                       "allOf": [
@@ -42715,7 +42717,7 @@
                         "properties": {
                           "rank": {
                             "type": "integer",
-                            "description": "1-based, total, no gaps. The owner's order: the best MATURE workflow holds the money; the LEARNING workflows already cheaper than it sit above it; the other mature ones below it; then the learning ones that do not beat it (no price last); then every non-selectable one in the same order."
+                            "description": "1-based, total, no gaps. The leg order campaign-service receives on the leg-keyed `workflow-projection` (ONE computation), here on the fleet evidence: selectable rows first, then the rest in the same order. Within each: LEARNING workflows whose explore price (fleet spend on the leg ÷ max(outcomes, 1): $0 for one never run) is below the best MATURE price, cheapest first; the mature ones cheapest first (the first holds the money); then the other learning ones, cheapest explore price first. Slug ties."
                           },
                           "workflowDynastySlug": {
                             "type": "string"

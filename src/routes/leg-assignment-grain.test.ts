@@ -424,14 +424,16 @@ describe("COLD START: a leg with no priced workflow still names a selectable one
     expect(res.body.recommendationWithheldReason).toBe("no_eligible_workflow");
   });
 
-  it("a PRICED selectable workflow still wins over a never-run one, with no cold_start flag", async () => {
+  // WF-ORDER-EXPLORE-1018: a never-run workflow has spent $0, so it is not proven worse than the priced ones
+  // and the leg order explores it first; it is named with `explore`, no price, no budget.
+  it("a never-run selectable workflow is explored before the priced ones, flagged explore, no budget", async () => {
     assign("start_to_conversation", { neon: "active", lithium: "active", sodium: "active", argon: "deprecated" });
     mockFetch({ unrun: ["neon"] });
     const res = await get("leg=start_to_conversation");
-    expect(res.body.recommendationBasis).toBeUndefined();
-    expect(["lithium", "sodium"]).toContain(res.body.recommendedWorkflowDynastySlug);
-    expect(rowOf(res.body, res.body.recommendedWorkflowDynastySlug).resolved.costPerOutcomeUsd).toBeGreaterThan(0);
-    expect(res.body.recommendedBudgetUsd).toBeGreaterThan(0);
+    expect(res.body.recommendedWorkflowDynastySlug).toBe("neon");
+    expect(res.body.recommendationBasis).toBe("explore");
+    expect(res.body.recommendedBudgetUsd).toBeNull();
+    expect(rowOf(res.body, "neon").rank).toBe(1);
   });
 
   it("a goal-keyed read is unchanged: no cold-start flag", async () => {
