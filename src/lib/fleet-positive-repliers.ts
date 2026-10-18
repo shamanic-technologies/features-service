@@ -33,6 +33,7 @@ import { matureSlugStats, serveDatesStated } from "./mature-evidence.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import { creditedSignal } from "./serving-row-credit.js";
 import { HUMAN_CLICKED_KEY, SCREENED_CONTACTED_KEY, type ScreenedVisitCounts } from "./screened-visits.js";
+import type { GenerationClass } from "./generation-sequences-copy.js";
 
 const FRESH_MS = 15 * 60_000;
 const STALE_MS = 6 * 60 * 60_000;
@@ -65,8 +66,23 @@ interface FleetCell {
 const BUCKET_SEP = "\t";
 type Bucket = [number, number, number, number, number];
 
-/** PURE. Bucket one pair's deduped persons (see {@link PairPopulation}). */
-export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulation {
+/** What wrote a person's sequence, as one bucket-key part (`""` = not on record). */
+const GEN_SEP = "\u001f";
+export function generationKeyPart(g: GenerationClass | undefined): string {
+  return g ? [g.model, g.promptType ?? "", g.layout ?? "", g.opening ?? "", g.dash ?? ""].join(GEN_SEP) : "";
+}
+function generationOfKeyPart(part: string): GenerationClass | null {
+  if (!part) return null;
+  const [model = "", promptType = "", layout = "", opening = "", dash = ""] = part.split(GEN_SEP);
+  return { model, promptType: promptType || null, layout: layout || null, opening: opening || null, dash: dash || null };
+}
+
+/**
+ * PURE. Bucket one pair's deduped persons (see {@link PairPopulation}). `generationOf` (LIVE-RESEARCH-1018) files each
+ * person under what wrote their sequence on the campaign that earned their signals (content-generation-service's record,
+ * `lib/generation-sequences-copy.ts`), as a fourth key part every other reader ignores.
+ */
+export function bucketPopulation(persons: readonly EnginePerson[], generationOf?: ReadonlyMap<string, GenerationClass>): PairPopulation {
   const buckets = new Map<string, Bucket>();
   for (const p of persons) {
     // Only what the person's row EARNED lands in its (campaign, workflow) bucket (lib/serving-row-credit.ts).
@@ -77,7 +93,9 @@ export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulati
     const human = creditedSignal(p, "humanClicked");
     if (!contacted && !clicked && !replied && !screened && !human) continue;
     const day = p.servedAt ? p.servedAt.slice(0, 10) : "";
-    const key = [p.campaignId ?? "", p.workflowSlug ?? "", day].join(BUCKET_SEP);
+    const gen = generationOf && p.campaignId ? generationKeyPart(generationOf.get(`${p.campaignId}|${p.leadId}`)) : "";
+    // A person no generation names keeps the three-part key (the v4 spelling), so a bucket without one reads the same.
+    const key = [p.campaignId ?? "", p.workflowSlug ?? "", day, ...(gen ? [gen] : [])].join(BUCKET_SEP);
     const b = buckets.get(key) ?? [0, 0, 0, 0, 0];
     if (contacted) b[0] += 1;
     if (clicked) b[1] += 1;
@@ -89,9 +107,9 @@ export function bucketPopulation(persons: readonly EnginePerson[]): PairPopulati
   return { serveDatesStated: serveDatesStated(persons), buckets };
 }
 
-function splitBucketKey(key: string): { campaignId: string; slug: string; day: string } {
-  const [campaignId = "", slug = "", day = ""] = key.split(BUCKET_SEP);
-  return { campaignId, slug, day };
+function splitBucketKey(key: string): { campaignId: string; slug: string; day: string; gen: string } {
+  const [campaignId = "", slug = "", day = "", gen = ""] = key.split(BUCKET_SEP);
+  return { campaignId, slug, day, gen };
 }
 
 const cells = new Map<string, FleetCell>();
@@ -106,9 +124,15 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
     for (const m of memberships) {
       if (m.orgId && m.brandId) pairs.set(pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId });
     }
+    // What wrote each person's sequence (content-generation-service's record, our copy): fail-soft, a build without it
+    // files every person under "not on record" and every count above is unchanged.
+    const generationOf = await import("./generation-sequences-copy.js").then((m) => m.loadGenerationClasses()).catch((err) => {
+      console.error("[features-service] fleet person cell: generation classes unreadable, persons filed under not-on-record:", err);
+      return new Map<string, GenerationClass>();
+    });
     const entries = await mapWithConcurrency([...pairs.entries()], PAIR_CONCURRENCY, async ([key, p]) => {
       const persons = await fetchScopePersons(p.brandId, undefined, { orgId: p.orgId });
-      return [key, bucketPopulation(persons)] as const;
+      return [key, bucketPopulation(persons, generationOf)] as const;
     });
     return { byPair: new Map(entries), computedAt: Date.now() };
   });
@@ -118,7 +142,8 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
 // v2 (OUTCOME-BEFORE-WORKFLOW-1015): buckets hold only what each row EARNED; a v1 cell is never adopted.
 // v3 (EMAIL-SENDS-ATTRIBUTION-1016): buckets key on the SENDING workflow and campaign; a v2 cell is never adopted.
 // v4 (SCOUT-VISIT-SCREEN-1018): buckets add contacted-through-our-transport and human-judged clicks; a v3 cell is never adopted.
-const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v4`;
+// v5 (LIVE-RESEARCH-1018): bucket keys add what wrote the person's sequence (model, template, first-email classes).
+const storeKeyOf = (featureSlug: string) => `${featureSlug}|cell=v5`;
 /** How long one process may hold a rebuild before another takes over (a build walks the fleet: minutes). */
 const BUILD_CLAIM_MS = 10 * 60_000;
 /** How often a process whose cell has gone stale looks for a newer one another process stored. */
@@ -358,6 +383,8 @@ export interface FleetPersonBucket {
   positiveReplies: number;
   screenedContacted: number;
   humanClicked: number;
+  /** What wrote the person's sequence; null = not on record (or a cell built before v5). */
+  generation: GenerationClass | null;
 }
 
 /**
@@ -372,9 +399,9 @@ export async function fetchFleetPersonBuckets(featureSlug: string, campaignIds: 
   for (const [key, pair] of cell.byPair) {
     const orgId = key.slice(0, key.indexOf(":"));
     for (const [bucketKey, [c, k, r, sc, hk]] of pair.buckets) {
-      const { campaignId, slug, day } = splitBucketKey(bucketKey);
+      const { campaignId, slug, day, gen } = splitBucketKey(bucketKey);
       if (!slug || !campaignId || !campaignIds.has(campaignId)) continue;
-      out.push({ orgId, campaignId, workflowSlug: slug, servedDay: day, contacted: c, clicked: k, positiveReplies: r, screenedContacted: sc ?? 0, humanClicked: hk ?? 0 });
+      out.push({ orgId, campaignId, workflowSlug: slug, servedDay: day, contacted: c, clicked: k, positiveReplies: r, screenedContacted: sc ?? 0, humanClicked: hk ?? 0, generation: generationOfKeyPart(gen) });
     }
   }
   return out;

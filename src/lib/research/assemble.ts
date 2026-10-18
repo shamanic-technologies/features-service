@@ -6,7 +6,7 @@
 import { bucketOf, groupCells, type SlugCell } from "./buckets.js";
 import { cutoffText } from "./studies.js";
 import { costOverTimeStudy, dimensionStudies, notMeasuredStudy, sumFigures, type PipeTerms, type ResearchBucket } from "./studies.js";
-import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookingCostStudy } from "./meetings.js";
+import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookingCostStudy, meetingCostStudy, type ReportingBrand } from "./meetings.js";
 import type { ResearchFile, ResearchStudy, ResearchUnavailable } from "./types.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
@@ -62,13 +62,19 @@ export interface ResearchInput {
     visit: { groups: SendGroup[]; spend: LegSpendSplit };
     opens: { on: OpensArm; off: OpensArm; unplaced: number } | null;
   } | null;
+  /** The brands reporting their meetings (null = unreadable); undefined = not asked (the study stays waiting). */
+  reportingBrands?: ReportingBrand[] | null;
+  /** Leg `start_to_meeting_booked`'s outcome count (the Meeting booked outcome section's maturity bar). */
+  meetingOutcomeRequired?: number;
+  /** The studies of what wrote the emails (LLM, template, naming, first-email shape), written by `lib/research/generations.ts`. */
+  generationStudies: ResearchStudy[];
   /** The typed judgment section's inputs (each part null when its producer could not be read). */
   jev: Omit<JevInput, "costBasis" | "readOn">;
 }
 
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
 
-function ruleNote(reply: ColdEmailPipeInput, visit: ColdEmailPipeInput): string {
+export function ruleNote(reply: ColdEmailPipeInput, visit: ColdEmailPipeInput): string {
   const same = reply.durationDays === visit.durationDays && reply.cutoffDay === visit.cutoffDay;
   const when = same && reply.cutoffDay
     ? `at least ${reply.durationDays} days before the read (before ${cutoffText(reply.cutoffDay)})`
@@ -81,7 +87,7 @@ function ruleNote(reply: ColdEmailPipeInput, visit: ColdEmailPipeInput): string 
   );
 }
 
-function termsOf(pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, input: ColdEmailPipeInput, note: string): PipeTerms {
+export function termsOf(pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, input: ColdEmailPipeInput, note: string): PipeTerms {
   const reply = pipe === POSITIVE_REPLY_PIPE;
   return {
     pipe,
@@ -135,8 +141,8 @@ function meetingWorkflowBuckets(rows: readonly LegWorkflowRankingRow[], labelOf:
 
 /** Every study id the page shows that this service does not answer yet, with what it waits for. */
 export const UNAVAILABLE: readonly ResearchUnavailable[] = (() => {
-  const gen = "Waits for content-generation-service to state which model and which template wrote each sequence (spawned 2026-10-18).";
-  const shape = "Waits for content-generation-service to state how each first email is laid out, opens and uses dashes (spawned 2026-10-18).";
+  const gen = "Waits for features-service's copy of content-generation-service's sequence feed (which model and template wrote each sequence) and the next build of the fleet person cell.";
+  const shape = "Waits for features-service's copy of content-generation-service's sequence feed (how each first email reads) and the next build of the fleet person cell.";
   const sends = "Waits for features-service's copy of instantly-service's outreach facts (every send with its step) to fill.";
   const tz = "Waits for features-service's copy of instantly-service's outreach facts (each send's prospect-local time) to fill.";
   const pixel = "Waits for features-service's copy of instantly-service's outreach facts (each thread's open-pixel arm) to fill.";
@@ -223,6 +229,13 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     }
   }
   studies.push(meetingBeforeAfterStudy(input.beforeAfter, input.meetingOutcomesRequired));
+  if (input.reportingBrands !== undefined) {
+    studies.push(
+      input.costBasis === "actual"
+        ? notMeasuredStudy({ id: "meeting-cost", pipe: null, outcome: "meeting", topic: "cost", goal: "roi", question: "What does a booked meeting cost, from the first cold email?", headline: "Not measured on vendor cost yet.", reason: "The meeting figures are on what clients were charged only. Switch to the billed basis to read them." })
+        : meetingCostStudy(input.reportingBrands, input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, input.now.toISOString().slice(0, 10)),
+    );
+  }
 
   // the studies read on each email sent
   if (input.sends) {
@@ -242,6 +255,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     }
     if (input.sends.opens && input.reply.cutoffDay) studies.push(...opensStudies(termsOf(POSITIVE_REPLY_PIPE, input.reply, note), input.sends.opens, input.reply.cutoffDay));
   }
+  studies.push(...input.generationStudies);
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
 
   const iso = input.now.toISOString();

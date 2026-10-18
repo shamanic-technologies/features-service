@@ -705,3 +705,28 @@ export const outreachFactCopy = pgTable(
   },
   (t) => [index("idx_outreach_fact_copy_campaign_type").on(t.campaignId, t.type), index("idx_outreach_fact_copy_thread").on(t.instantlyCampaignId, t.leadEmail)],
 );
+
+/**
+ * OUR COPY OF CONTENT-GENERATION-SERVICE'S SEQUENCE FEED (`generation_sequence_copy`, LIVE-RESEARCH-1018;
+ * `lib/generation-sequences-copy.ts`): one row per generated sequence (campaign x lead): the concrete model and the
+ * template that wrote it, and three classes of its first email's text. Followed incrementally; read by the fleet person
+ * cell to file each person under what wrote their emails.
+ */
+export const generationSequenceCopy = pgTable(
+  "generation_sequence_copy",
+  {
+    generationId: text("generation_id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    leadId: text("lead_id").notNull(),
+    model: text("model").notNull(),
+    promptType: text("prompt_type"),
+    workflowSlug: text("workflow_slug"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    layout: text("layout"),
+    opening: text("opening"),
+    dash: text("dash"),
+    copiedAt: timestamp("copied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_generation_sequence_copy_campaign_lead").on(t.campaignId, t.leadId)],
+);

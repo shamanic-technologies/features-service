@@ -17,6 +17,10 @@ import { RUNS_CAMPAIGN_IDS_PER_REQUEST } from "../lib/brand-spend-by-day-client.
 import type { CostGroup } from "../lib/public-stats-clients.js";
 import type { LegSpendSplit, OpensArm, SendGroup } from "../lib/research/sends.js";
 import type { JevInput, JudgmentGroup, ScreenMonth } from "../lib/research/jev.js";
+import type { ReportingBrand } from "../lib/research/meetings.js";
+import { meetingReportingOf } from "../lib/meeting-population.js";
+import { rememberMeetingReporting } from "../lib/meeting-reporting-client.js";
+import { mapWithConcurrency } from "../lib/concurrency.js";
 
 /**
  * The cost names charged PER EMAIL SENT (the sending mailbox and domain): the only spend a follow-up adds. Everything
@@ -238,4 +242,45 @@ export async function readJevInputs(): Promise<Omit<JevInput, "costBasis" | "rea
     screenAudiences: Math.max(lead?.distinct.audiences ?? 0, human?.totals.distinctAudiences ?? 0),
     reveal: reveal ? { credits: Number(reveal.total.quantity), billedCents: Number(reveal.total.billedCostInUsdCents) } : null,
   };
+}
+
+/**
+ * The brands that REPORT their meetings (any live meeting row lead-service attributes), each with the meetings booked
+ * after a positive reply to our outreach, by month, and what it was charged on cold email and meeting booking, by month.
+ * Null when either read fails (logged): the study says so.
+ */
+export async function readReportingBrands(): Promise<ReportingBrand[] | null> {
+  try {
+    const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, { headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY ?? "" } }, { timeoutMs: 120_000 });
+    if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const body = (await res.json()) as { attributedMeetings?: Array<{ conversionEventId: string; brandId: string; event: string; occurredAt: string | null; positiveReply: unknown }> };
+    if (!Array.isArray(body.attributedMeetings)) throw new Error("lead-service meeting-attribution: no attributedMeetings");
+    // WHO a meeting figure is measured on is ONE rule (`lib/meeting-population.ts`, MEETING-POPULATION-1018).
+    const reporting = meetingReportingOf(body);
+    rememberMeetingReporting(reporting);
+    const brands = new Map<string, ReportingBrand>(reporting.reportingBrandIds.map((id) => [id, { brandId: id, meetingsByMonth: {}, spendByMonth: {} }]));
+    const seen = new Set<string>();
+    for (const m of body.attributedMeetings) {
+      const b = brands.get(m.brandId);
+      if (!b) continue;
+      if (m.event !== "meeting_booked" || !m.positiveReply || !m.occurredAt || seen.has(m.conversionEventId)) continue;
+      seen.add(m.conversionEventId);
+      const ym = m.occurredAt.slice(0, 7);
+      b.meetingsByMonth[ym] = (b.meetingsByMonth[ym] ?? 0) + 1;
+    }
+    await mapWithConcurrency([...brands.values()], 2, async (b) => {
+      const q = new URLSearchParams({ interval: "month", brandId: b.brandId, featureSlugs: "sales-cold-email-outreach,ai-meeting-booking" });
+      const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${q}`, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" } });
+      if (!r.ok) throw new Error(`runs-service brand spend timeseries ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const t = (await r.json()) as { buckets?: Array<{ period: string } & Record<string, unknown>> };
+      for (const k of t.buckets ?? []) {
+        const usd = Number(selectCostCentsString(k, "totalCostInUsdCents", "gross", "incurred")) / 100;
+        b.spendByMonth[k.period.slice(0, 7)] = (b.spendByMonth[k.period.slice(0, 7)] ?? 0) + usd;
+      }
+    });
+    return [...brands.values()];
+  } catch (err) {
+    console.error("[features-service] research meeting-cost inputs unreadable, its study states it:", err);
+    return null;
+  }
 }
