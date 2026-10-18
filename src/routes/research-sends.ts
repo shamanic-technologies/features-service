@@ -18,6 +18,7 @@ import type { CostGroup } from "../lib/public-stats-clients.js";
 import type { LegSpendSplit, OpensArm, SendGroup } from "../lib/research/sends.js";
 import type { JevInput, JudgmentGroup, ScreenMonth } from "../lib/research/jev.js";
 import type { ReportingBrand } from "../lib/research/meetings.js";
+import type { GenerationRun, WorkflowRun } from "../lib/research/catalog.js";
 import { meetingReportingOf } from "../lib/meeting-population.js";
 import { rememberMeetingReporting } from "../lib/meeting-reporting-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -283,4 +284,44 @@ export async function readReportingBrands(): Promise<ReportingBrand[] | null> {
     console.error("[features-service] research meeting-cost inputs unreadable, its study states it:", err);
     return null;
   }
+}
+
+/**
+ * The last execute-workflow runs of every workflow on a leg (the catalogue's "last runs"), newest first, with what each
+ * run's whole subtree cost as billed (null on the vendor basis: the run list states no vendor cost). One read per org
+ * (runs-service lists runs per org), 200 newest runs of the org's leg campaigns; an org that cannot be read lists none.
+ */
+export async function readWorkflowRuns(campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>, dynastyOf: (slug: string) => string, basis: "user" | "actual"): Promise<WorkflowRun[]> {
+  const byOrg = new Map<string, string[]>();
+  for (const c of campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
+  const out: WorkflowRun[] = [];
+  await mapWithConcurrency([...byOrg], 3, async ([orgId, ids]) => {
+    try {
+      const q = new URLSearchParams({ campaignIds: [...new Set(ids)].slice(0, 500).join(","), taskName: "execute-workflow", limit: "200", include: "subtreeCost" });
+      const res = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/v1/runs?${q}`, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "", "x-org-id": orgId } });
+      if (!res.ok) throw new Error(`runs-service /v1/runs ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const body = (await res.json()) as { runs?: Array<{ workflowSlug: string | null; status: string; startedAt: string; completedAt: string | null; totalCostInUsdCents?: string }> };
+      for (const r of body.runs ?? []) {
+        if (!r.workflowSlug) continue;
+        out.push({ workflowSlug: r.workflowSlug, dynasty: dynastyOf(r.workflowSlug), status: r.status, startedAt: r.startedAt, completedAt: r.completedAt, costUsd: basis === "user" && r.totalCostInUsdCents ? Number(r.totalCostInUsdCents) / 100 : null });
+      }
+    } catch (err) {
+      console.error(`[features-service] research catalogue: last runs of org ${orgId} unreadable, listed none:`, err);
+    }
+  });
+  return out.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
+}
+
+/** The 10 newest sequences of every template and of every model on a leg's campaigns (our copy of content-generation's feed). */
+export async function readGenerationRuns(campaignIds: readonly string[]): Promise<GenerationRun[]> {
+  if (!campaignIds.length) return [];
+  const rows = await pg<Array<{ created_at: Date; model: string; prompt_type: string | null; workflow_slug: string | null }>>`
+    SELECT DISTINCT generation_id, created_at, model, prompt_type, workflow_slug FROM (
+      SELECT g.*, row_number() OVER (PARTITION BY prompt_type ORDER BY created_at DESC) AS rt, row_number() OVER (PARTITION BY model ORDER BY created_at DESC) AS rm
+      FROM generation_sequence_copy g WHERE campaign_id = ANY(${pg.array([...campaignIds])})
+    ) x WHERE rt <= 10 OR rm <= 10
+  `;
+  return rows
+    .map((r) => ({ createdAt: new Date(r.created_at).toISOString(), model: r.model, promptType: r.prompt_type, workflowSlug: r.workflow_slug }))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }

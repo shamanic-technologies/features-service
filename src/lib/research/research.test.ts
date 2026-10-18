@@ -6,6 +6,7 @@ import { buildSlugCells } from "./slug-cells.js";
 import { assembleResearch, UNAVAILABLE, workflowBuckets, type ColdEmailPipeInput } from "./assemble.js";
 import { researchConclusions, researchMeasuredStudies } from "./conclusions.js";
 import { modelLabel, templateLabel } from "./format.js";
+import type { ResearchBucket } from "./studies.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 
@@ -105,8 +106,8 @@ describe("slug cells", () => {
         { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0, generation: null },
       ],
       spend: [
-        { workflowSlug: "a-v1", campaignId: "c1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
-        { workflowSlug: "a-v1", campaignId: "c1", month: "2026-10", beforeCutoff: false, spentUsd: 20 },
+        { workflowSlug: "a-v1", orgId: "o1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
+        { workflowSlug: "a-v1", orgId: "o1", month: "2026-10", beforeCutoff: false, spentUsd: 20 },
       ],
       orgOfCampaign: new Map([["c1", "o1"]]),
     });
@@ -386,5 +387,32 @@ describe("what wrote the emails", () => {
     expect(llm.charts[0]!.points[0]!.key).toBe("gemini-3.5-flash");
     const layout = studies.find((s) => s.id === "cold-email-positive-reply-layout-roi")!;
     expect(layout.charts.map((c) => c.title.split(":")[0])).toEqual(["All tiers", "Flash tier", "Pro tier"]);
+  });
+});
+
+import { pipeCatalog } from "./catalog.js";
+describe("research catalogue", () => {
+  it("lists every workflow with its study bar's figures, its main model and template, and its last runs", () => {
+    const wf: ResearchBucket[] = [
+      { key: "rampart", label: "Rampart", basis: "mature", figures: { spentUsd: 127.1, contacted: 720, outcomes: 15 }, learning: false, months: [{ month: "2026-09", spentUsd: 127.1, contacted: 720, outcomes: 15 }], strata: null },
+      { key: "pelican", label: "Pelican", basis: "flash", figures: { spentUsd: 10, contacted: 354, outcomes: 0 }, learning: true, months: null, strata: null },
+    ];
+    const c = pipeCatalog({
+      terms,
+      workflows: wf,
+      templates: [],
+      models: [],
+      nameOf: (d) => `Sales Cold Email Outreach ${d}`,
+      mainOf: () => ({ model: "gemini-3.5-flash-lite", template: "cold-email-v35" }),
+      modelLabel: () => "Gemini 3.5 Flash-Lite",
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [{ workflowSlug: "rampart-v3", dynasty: "rampart", status: "completed", startedAt: "2026-10-18T10:00:00Z", completedAt: "2026-10-18T10:00:30Z", costUsd: 0.21 }],
+      generationRuns: [],
+      templateTexts: new Set(),
+    });
+    expect(c.workflows.map((w) => [w.key, w.rank, w.cost])).toEqual([["rampart", 1, "$8.47"], ["pelican", null, null]]);
+    expect(c.workflows[0]!.model).toEqual({ key: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", linked: false });
+    expect(c.workflows[0]!.runs).toEqual([{ when: "Oct 18, 10:00 UTC", version: "v3", status: "completed", duration: "30s", cost: "$0.21" }]);
+    expect(c.workflows[0]!.charts).toHaveLength(2);
   });
 });

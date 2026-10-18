@@ -17,7 +17,8 @@ import type { SlugCell, SlugHalf } from "./buckets.js";
 /** Spend of one (slug, campaign) over one run-start window. */
 export interface DatedSpendRow {
   workflowSlug: string;
-  campaignId: string;
+  /** The org whose campaigns the spend is on (a stratum is a client x month). */
+  orgId: string;
   /** `YYYY-MM` the window sits in. */
   month: string;
   /** The window ends before the leg's cutoff (its runs are in the mature cohort). */
@@ -106,7 +107,7 @@ export function buildSlugCells(input: SlugCellsInput): SlugCell[] {
     return t && t[0] > 0 ? Math.min(1, t[1] / t[0]) : 0;
   };
   for (const r of input.spend) {
-    const org = input.orgOfCampaign.get(r.campaignId);
+    const org = r.orgId;
     const f = { spentUsd: r.spentUsd * screenShare(r.workflowSlug, r.month), contacted: 0, outcomes: 0 };
     const d = datedOf(r.workflowSlug);
     add(d.flash.months, r.month, f);

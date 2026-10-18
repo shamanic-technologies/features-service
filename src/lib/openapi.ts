@@ -7830,6 +7830,51 @@ registry.registerPath({
   },
 });
 
+const researchRefSchema = z.object({ key: z.string(), label: z.string(), linked: z.boolean().describe("The referenced page exists in this pipe.") });
+const researchCatalogFigures = {
+  rank: z.number().int().nullable().describe("Its place in the study's ROI order; null with no priced outcome yet."),
+  emails: z.string().describe("People reached, printed."),
+  emailsNoun: z.string(),
+  outcomes: z.string(),
+  spend: z.string(),
+  cost: z.string().nullable(),
+  rate: z.string().nullable(),
+  thin: z.boolean().describe("Learning under the maturity rule."),
+  sample: z.string(),
+  charts: z.array(researchChartSchema),
+};
+const researchCatalogPipeSchema = z.object({
+  workflows: z.array(z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), model: researchRefSchema.nullable(), template: researchRefSchema.nullable(), ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
+  templates: z.array(z.object({ key: z.string(), label: z.string(), hasText: z.boolean(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
+  models: z.array(z.object({ key: z.string(), label: z.string(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/catalog",
+  summary: "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
+  description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
+  tags: ["Internal"],
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  responses: {
+    200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(researchCatalogPipeSchema) } } },
+    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/templates",
+  summary: "The text of every template the Research catalogue lists (staff, api-key)",
+  description: "Template id -> its prompt text, as content-generation-service stores it (a versioned id never changes).",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "Template texts", content: { "application/json": { schema: z.record(z.string()) } } },
+    503: researchNotYet,
+  },
+});
+
 // ── Security scheme ──────────────────────────────────────────────────────
 
 registry.registerComponent("securitySchemes", "ApiKeyAuth", {
