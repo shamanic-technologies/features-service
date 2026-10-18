@@ -5252,7 +5252,7 @@ const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
     slug: z.string().describe("Stable index id, e.g. `sceo-cost-per-click` (SCEO = Sales Cold Email Outreach)."),
-    name: z.string().describe("Display name, e.g. `SCEO Cost Per Click Index`."),
+    name: z.string().describe("Display name, e.g. `Distribute.you Cost Per Click Index`."),
     channelSlug: z.string(),
     channelName: z.string(),
     outcome: z.enum(["website_visit", "positive_reply", "meeting_booked"]),
