@@ -39,6 +39,9 @@ describe("rankLegWorkflows", () => {
     expect(rows[0]).toMatchObject({ goesFirst: true, basis: "flash", costPerOutcomeUsd: 14 });
     expect(rows.find((r) => r.workflowDynastySlug === "torrent")).toMatchObject({ costPerOutcomeUsd: null, outcomes: 0 });
     expect(rows.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(rows.map((r) => r.place)).toEqual(["explore", "explore", "money", "mature", "proven_worse", "proven_worse"]);
+    expect(rows.find((r) => r.workflowDynastySlug === "torrent")!.explorePriceUsd).toBe(14);
+    expect(rows.find((r) => r.workflowDynastySlug === "nobelium")!.explorePriceUsd).toBeNull();
   });
 
   it("reads a mature workflow on its MATURE half and a learning one on its flash half", () => {

@@ -107,7 +107,8 @@ describe("fetchPublicEmailStats (the fleet's per-workflow grain every ranking re
   });
 });
 
-describe("brand / campaign grain (workflow-projection, per workflow of the channel)", () => {
+// The first test pays the cold import of the projection module graph (~5 s on a loaded machine).
+describe("brand / campaign grain (workflow-projection, per workflow of the channel)", { timeout: 30_000 }, () => {
   const wf = {
     id: "w1", workflowSlug: "cold-whatsapp-outreach-zaurak", workflowName: "Z", workflowDynastyName: "Z",
     workflowDynastySlug: "cold-whatsapp-outreach-zaurak", version: 1, status: "active", workflowDynastyStatus: "active" as const,

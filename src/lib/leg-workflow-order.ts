@@ -64,3 +64,30 @@ export function bestMatureSlug(entries: LegWorkflowOrderEntry[]): string | null 
   const ordered = orderGroup(entries.filter((e) => e.selectable));
   return ordered.find((e) => e.mature != null)?.slug ?? null;
 }
+
+/** Why a workflow stands where it does in the leg order (one word per rule above). */
+export type LegWorkflowPlace = "explore" | "money" | "mature" | "proven_worse" | "cannot_run";
+
+/**
+ * PURE. Each workflow's place: `explore` (learning, explore price below the best mature price, or nothing is
+ * mature yet), `money` (the best mature one), `mature` (the other mature ones), `proven_worse` (learning, its
+ * spend already reached the best mature price), `cannot_run` (not selectable: a run may never pick it).
+ */
+export function legWorkflowPlaces(entries: LegWorkflowOrderEntry[]): Map<string, LegWorkflowPlace> {
+  const best = bestMatureSlug(entries);
+  const bar = best ? entries.find((e) => e.slug === best)!.mature!.costPerOutcomeUsd : null;
+  return new Map(
+    entries.map((e): [string, LegWorkflowPlace] => [
+      e.slug,
+      !e.selectable
+        ? "cannot_run"
+        : e.mature
+          ? e.slug === best
+            ? "money"
+            : "mature"
+          : bar == null || explorePriceUsd(e.fleet) < bar
+            ? "explore"
+            : "proven_worse",
+    ]),
+  );
+}
