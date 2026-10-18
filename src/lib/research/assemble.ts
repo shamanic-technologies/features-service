@@ -8,6 +8,7 @@ import { cutoffText } from "./studies.js";
 import { costOverTimeStudy, dimensionStudies, notMeasuredStudy, sumFigures, type PipeTerms, type ResearchBucket } from "./studies.js";
 import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookingCostStudy, meetingCostStudy, type ReportingBrand } from "./meetings.js";
 import type { ResearchFile, ResearchStudy, ResearchUnavailable } from "./types.js";
+import { MONTHS as MONTH_LABELS } from "./format.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
 import { followupStudies, opensStudies, timingStudy, type LegSpendSplit, type OpensArm, type SendGroup } from "./sends.js";
@@ -68,6 +69,8 @@ export interface ResearchInput {
   meetingOutcomeRequired?: number;
   /** The studies of what wrote the emails (LLM, template, naming, first-email shape), written by `lib/research/generations.ts`. */
   generationStudies: ResearchStudy[];
+  /** The page-wide counts (`routes/research-sends.ts` `readVolume` + the person cell's undated people); null = unreadable. */
+  volume: { emails: number; orgs: number; workflows: number; linkedEmails: number; byMonth: Array<{ month: string; emails: number }>; excludedEmails: number; noRunStart: number } | null;
   /** The typed judgment section's inputs (each part null when its producer could not be read). */
   jev: Omit<JevInput, "costBasis" | "readOn">;
 }
@@ -271,6 +274,18 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     unpricedBilledUsd: input.costBasis === "actual" ? input.unpricedBilledUsd : 0,
     window: { from: firstMonth ?? iso.slice(0, 7), to: iso.slice(0, 7) },
     readOn: iso.slice(0, 10),
+    // Absent, never a 0, when the counts could not be read this build.
+    ...(input.volume
+      ? {
+          volume: {
+            emails: input.volume.emails,
+            orgs: input.volume.orgs,
+            workflows: input.volume.workflows,
+            linkedEmails: input.volume.linkedEmails,
+            byMonth: input.volume.byMonth.map((m) => ({ label: MONTH_LABELS[Number(m.month.slice(5, 7)) - 1] ?? m.month, emails: m.emails })),
+          },
+        }
+      : {}),
     maturation: {
       rule: "run_start",
       days: Math.max(input.reply.durationDays, input.visit.durationDays),
@@ -280,6 +295,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
         reply: { durationDays: input.reply.durationDays, outcomesRequired: input.reply.outcomesRequired, cutoff: input.reply.cutoffDay ?? iso.slice(0, 10) },
         visit: { durationDays: input.visit.durationDays, outcomesRequired: input.visit.outcomesRequired, cutoff: input.visit.cutoffDay ?? iso.slice(0, 10) },
       },
+      ...(input.volume ? { excludedEmails: input.volume.excludedEmails, noRunStart: input.volume.noRunStart } : {}),
       note,
     },
     pipes: [

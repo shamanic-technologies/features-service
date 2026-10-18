@@ -184,6 +184,7 @@ describe("assembleResearch", () => {
     meetingOutcomesRequired: 10,
     sends: null,
     generationStudies: [],
+    volume: { emails: 145000, orgs: 31, workflows: 71, linkedEmails: 4185, byMonth: [{ month: "2026-09", emails: 43197 }], excludedEmails: 10590, noRunStart: 2248 },
     jev: NO_JEV,
   });
 
@@ -209,6 +210,12 @@ describe("assembleResearch", () => {
     }
   });
 
+  it("states the page-wide counts under the snapshot's names", () => {
+    expect(file.volume).toEqual({ emails: 145000, orgs: 31, workflows: 71, linkedEmails: 4185, byMonth: [{ label: "Sep", emails: 43197 }] });
+    expect(file.maturation.excludedEmails).toBe(10590);
+    expect(file.maturation.noRunStart).toBe(2248);
+  });
+
   it("conclusions quote only conclusion studies on the billed basis", () => {
     const c = researchConclusions(file);
     expect(c.conclusions.every((x) => file.studies.find((s) => s.id === x.id)!.verdict.kind === "conclusion")).toBe(true);
@@ -229,6 +236,7 @@ describe("assembleResearch", () => {
       meetingOutcomesRequired: 10,
       sends: null,
       generationStudies: [],
+      volume: null,
       jev: NO_JEV,
     });
     expect(actual.unpricedBilledUsd).toBe(12.5);

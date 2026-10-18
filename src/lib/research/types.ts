@@ -97,12 +97,22 @@ export interface ResearchFile {
   unpricedBilledUsd: number;
   window: { from: string; to: string };
   readOn: string;
+  /**
+   * The page-wide counts the hub prints: every email sent on the two cold email legs since inception, the clients they
+   * were sent for, the workflows with people on them, the emails our own sender sent on the website-visit leg (the only
+   * ones a visit can come from), per month. Emails, not people (the hub's "Emails studied"). Absent when unreadable, never 0.
+   */
+  volume?: { emails: number; orgs: number; workflows: number; linkedEmails: number; byMonth: Array<{ label: string; emails: number }> };
   maturation: {
     rule: "run_start";
     days: number;
     cutoff: string;
     windowEnd: string;
     legs: Record<"reply" | "visit", { durationDays: number; outcomesRequired: number; cutoff: string }>;
+    /** Emails of sequences first written on or after their leg's cutoff: too young to count yet. */
+    excludedEmails?: number;
+    /** People in the fleet person cell no serve record dates (counted in the mature cohort, in no month). */
+    noRunStart?: number;
     note: string;
   };
   pipes: ResearchPipeEntry[];

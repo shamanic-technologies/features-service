@@ -38,7 +38,7 @@ import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
 import type { ResearchFile, ResearchStudy } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
-import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readWorkflowRuns } from "./research-sends.js";
+import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 
 const router = Router();
 
@@ -347,7 +347,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     basis === "user" ? getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked") : Promise.resolve(null),
     fetchMeetingBookingBeforeAfter(),
   ]);
-  const [sends, jev, replies, gens, reportingBrands] = await Promise.all([
+  const [sends, jev, replies, gens, reportingBrands, volume] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
     readReplyAuthors(),
@@ -357,10 +357,21 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       return { studies: [], reply: NO_GEN, visit: NO_GEN, templateTexts: new Map() };
     }),
     basis === "user" ? readReportingBrands() : Promise.resolve(null),
+    readVolume(reply, visit).catch((err) => {
+      console.error("[features-service] research: page-wide counts unreadable this time:", err);
+      return null;
+    }),
   ]);
+  const workflowsWithPeople = new Set(
+    [reply, visit].flatMap((r) => workflowBuckets(r.input).filter((b) => b.figures.contacted > 0).map((b) => b.key)),
+  ).size;
+  const noRunStart = Math.round(
+    [reply, visit].reduce((a, r) => a + r.persons.filter((b) => !b.servedDay).reduce((x, b) => x + (r.split.screened ? b.screenedContacted : b.contacted), 0), 0),
+  );
   const file = assembleResearch({
     sends,
     generationStudies: gens.studies,
+    volume: volume ? { ...volume, workflows: workflowsWithPeople, noRunStart } : null,
     reportingBrands,
     meetingOutcomeRequired: legMaturity("start_to_meeting_booked").outcomesRequired,
     jev: { ...jev, replies },
