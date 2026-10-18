@@ -111,7 +111,8 @@ async function applyFacts(facts: readonly RawFact[]): Promise<void> {
           withdrawn: sql`false`,
           copiedAt: sql`now()`,
         },
-        setWhere: sql`${outreachFactCopy.seq} < excluded.seq`,
+        // `<=`: a re-read (same seq) refreshes the fields the feed derives at read time (thread timezone, pixel arm).
+        setWhere: sql`${outreachFactCopy.seq} <= excluded.seq`,
       });
   }
   for (const w of withdrawals) {
@@ -127,6 +128,13 @@ export async function copyOutreachFacts(): Promise<number> {
   const stored = parseCursor((await loadFleetCell(cursorKey))?.text ?? null);
   let cursor = stored.cursor;
   let withSequence = stored.withSequence;
+  if (!withSequence && cursor) {
+    // Caught up, a page past the cursor is empty: ask the feed's first fact whether it states the thread fields yet.
+    const res = await fetchWithRetry(`${base}/internal/outreach-facts?limit=1`, { headers: { "x-api-key": key } }, { timeoutMs: 60_000 });
+    if (!res.ok) throw new Error(`instantly-service outreach-facts ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const first = (await res.json()) as { facts?: RawFact[] };
+    if (first.facts?.[0] && first.facts[0].sequence !== undefined) cursor = null;
+  }
   let read = 0;
   for (let page = 0; page < 1000; page++) {
     const q = new URLSearchParams({ limit: String(PAGE) });
