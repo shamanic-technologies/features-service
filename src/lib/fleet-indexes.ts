@@ -1,6 +1,6 @@
 /**
  * THE PUBLIC FLEET INDEXES (owner 2026-10-18): one number per index, recorded every day, so a reader can see
- * where the market price of an outcome stands today and how it moved. "SCEO" = Sales Cold Email Outreach.
+ * where the market price of an outcome stands today and how it moved. "SCEO" (Sales Cold Email Outreach) is an internal prefix only: public names read "Distribute.you <metric> Index" (owner 2026-10-18).
  *
  * Every index is read off figures this service already serves, never a second computation:
  * - the cost / rate of a pipe's outcome = the BEST MATURE workflow of the pipe that can still run
@@ -49,7 +49,7 @@ const CHANNEL = { channelSlug: SCEO_FEATURE_SLUG, channelName: "Sales Cold Email
 export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   {
     slug: "sceo-cost-per-click",
-    name: "SCEO Cost Per Click Index",
+    name: "Distribute.you Cost Per Click Index",
     ...CHANNEL,
     outcome: "website_visit",
     metric: "cost_per_outcome",
@@ -59,7 +59,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   },
   {
     slug: "sceo-click-rate",
-    name: "SCEO Click Rate Index",
+    name: "Distribute.you Click Rate Index",
     ...CHANNEL,
     outcome: "website_visit",
     metric: "conversion_rate",
@@ -69,7 +69,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   },
   {
     slug: "sceo-cost-per-interest",
-    name: "SCEO Cost Per Interest Index",
+    name: "Distribute.you Cost Per Interest Index",
     ...CHANNEL,
     outcome: "positive_reply",
     metric: "cost_per_outcome",
@@ -79,7 +79,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   },
   {
     slug: "sceo-interest-rate",
-    name: "SCEO Interest Rate Index",
+    name: "Distribute.you Interest Rate Index",
     ...CHANNEL,
     outcome: "positive_reply",
     metric: "conversion_rate",
@@ -89,7 +89,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   },
   {
     slug: "sceo-cost-per-meeting",
-    name: "SCEO Cost Per Meeting Index",
+    name: "Distribute.you Cost Per Meeting Index",
     ...CHANNEL,
     outcome: "meeting_booked",
     metric: "cost_per_outcome",
@@ -99,7 +99,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   },
   {
     slug: "sceo-meeting-rate",
-    name: "SCEO Meeting Rate Index",
+    name: "Distribute.you Meeting Rate Index",
     ...CHANNEL,
     outcome: "meeting_booked",
     metric: "conversion_rate",
