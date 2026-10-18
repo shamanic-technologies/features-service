@@ -178,6 +178,7 @@ import {
 } from "../lib/fleet-funnel-return-store.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 import { withCampaignNames } from "../lib/sales-path-names.js";
+import { withPipeIdentities } from "../lib/pipe-identities.js";
 
 const router = Router();
 
@@ -3417,7 +3418,7 @@ export async function handlePublicChannels(res: import("express").Response, incl
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "acquisition-channel catalogue",
     compute: async () => {
-      const channels = await withCampaignNames(await loadPublishedChannels());
+      const channels = await withPipeIdentities(await withCampaignNames(await loadPublishedChannels()));
       return {
       channels,
       funnels: salesFunnelCatalogue(),

@@ -45,6 +45,7 @@ import { SALES_PATH_CATALOGUE_CHANNEL_SLUGS } from "./sales-path-cost-benchmarks
 import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-leg-minimums.js";
 import { legMaturity, type LegMaturity } from "./maturity.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
+import type { PipeIdentity } from "./agent-catalogue.js";
 import { SALES_FUNNELS, SALES_FUNNEL_KEYS, type SalesFunnelKey } from "./sales-funnels.js";
 import { composeMinimumCommitment, minimumCommitmentDaysFor, type ComposedMinimumCommitment } from "./funnel-commercial-terms.js";
 
@@ -87,6 +88,10 @@ export interface ChannelStepTransitionWire {
    *  the same pool as the sales path names and never equal to one (`lib/sales-path-names.ts`). Set on every
    *  leg of a `salesPathEligible` channel; null otherwise, and on the PURE build's output. */
   campaignName: string | null;
+  /** The PIPE this leg is (this channel × this leg; owner 2026-10-18): its id (`<channel slug>|<leg key>`, served
+   *  spelling), name, glyph and colour, byte-equal to the staff catalogue's pipe row (`pipeIdentityOf`). Set on
+   *  every leg of `/public/channels`; null on the PURE build's output. No economics. */
+  pipe: PipeIdentity | null;
   /** True on a REACTIVE leg (runs on demand, see `triggerId`); false on a PROACTIVE one. */
   reactive: boolean;
   /** `proactive` (its own budget, checked every tick, no trigger) or `reactive` (runs on demand). */
@@ -325,6 +330,7 @@ export function buildChannelCatalogue(
         to: stepWire(t.to),
         crewName: null,
         campaignName: null,
+        pipe: null,
         reactive: t.mode === "reactive",
         mode: t.mode!,
         triggerId: t.triggerId ?? null,

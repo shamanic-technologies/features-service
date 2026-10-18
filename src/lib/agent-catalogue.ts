@@ -472,6 +472,17 @@ export interface CatalogueModel {
 }
 
 export const pipeIdOf = (channelSlug: string, servedLegKey: string): string => `${channelSlug}|${servedLegKey}`;
+
+/** A pipe's identity as every surface draws it (owner 2026-10-18: « les pipes ont maintenant leur nom et leur logo »):
+ *  id, name, family glyph and its colour. The staff catalogue rows and `/public/channels` `stepTransitions[].pipe`
+ *  both build it HERE, so a customer page and a staff page show the same bird. No economics. */
+export interface PipeIdentity { id: string; name: string; icon: string; color: string }
+export const pipeIdentityOf = (channelSlug: string, servedLegKey: string, name: string): PipeIdentity => ({
+  id: pipeIdOf(channelSlug, servedLegKey),
+  name,
+  icon: FAMILY_GLYPHS.pipe,
+  color: glyphColorOf(name),
+});
 export const pathIdOf = (legKeys: readonly string[]): string => legKeys.join("+");
 /** The stored name key of a sales path (`lib/catalogue-names.ts` family `sales_path`). */
 export const salesPathNameKeyOf = (pathId: string): string => `path:${pathId}`;
