@@ -30242,6 +30242,473 @@
           "channel",
           "legs"
         ]
+      },
+      "ResearchStudy": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable study id, e.g. `cold-email-website-visit-workflow-roi`."
+          },
+          "pipe": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "cold-email-positive-reply",
+              "cold-email-website-visit",
+              "meeting-booking"
+            ],
+            "description": "The pipe (leg x channel) the study belongs to; null on an outcome study."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "meeting",
+              "judgment"
+            ],
+            "description": "Set exactly when `pipe` is null."
+          },
+          "topic": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "enum": [
+              "roi",
+              "rate"
+            ]
+          },
+          "question": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "measured",
+              "not_enough_data"
+            ]
+          },
+          "headline": {
+            "type": "string"
+          },
+          "winner": {
+            "type": "string",
+            "nullable": true,
+            "description": "The label of the top bar (Learning or not)."
+          },
+          "crowned": {
+            "type": "boolean",
+            "description": "True only when the verdict is a conclusion."
+          },
+          "verdict": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "conclusion",
+                  "signal",
+                  "noise"
+                ],
+                "description": "conclusion = the leader beats the runner-up after Bonferroni AND on the same clients in the same months; signal = crude only; noise = the rest or under 5 outcomes."
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ]
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "display": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "sample": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "display",
+              "unit",
+              "sample"
+            ]
+          },
+          "charts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "bars",
+                    "months"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                },
+                "lowerIsBetter": {
+                  "type": "boolean"
+                },
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": "number"
+                      },
+                      "display": {
+                        "type": "string",
+                        "description": "The value as the page prints it."
+                      },
+                      "note": {
+                        "type": "string",
+                        "description": "The counts behind the value."
+                      },
+                      "thin": {
+                        "type": "boolean",
+                        "description": "LEARNING under the maturity rule (historical field name)."
+                      },
+                      "partial": {
+                        "type": "boolean",
+                        "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "value",
+                      "display",
+                      "note",
+                      "thin"
+                    ]
+                  }
+                },
+                "cumulative": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "display": {
+                            "type": "string",
+                            "description": "The value as the page prints it."
+                          },
+                          "note": {
+                            "type": "string",
+                            "description": "The counts behind the value."
+                          },
+                          "thin": {
+                            "type": "boolean",
+                            "description": "LEARNING under the maturity rule (historical field name)."
+                          },
+                          "partial": {
+                            "type": "boolean",
+                            "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value",
+                          "display",
+                          "note",
+                          "thin"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "points"
+                  ],
+                  "description": "On a months chart: the average since inception at the end of each month."
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "title",
+                "lowerIsBetter",
+                "points"
+              ]
+            }
+          },
+          "conclusion": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "pipe",
+          "topic",
+          "goal",
+          "question",
+          "status",
+          "headline",
+          "winner",
+          "crowned",
+          "verdict",
+          "result",
+          "charts",
+          "conclusion"
+        ]
+      },
+      "ResearchFile": {
+        "type": "object",
+        "properties": {
+          "generatedAt": {
+            "type": "string"
+          },
+          "computedAt": {
+            "type": "string"
+          },
+          "allOrgs": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "user",
+              "actual"
+            ],
+            "description": "`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."
+          },
+          "unpricedBilledUsd": {
+            "type": "number",
+            "description": "Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "description": "First and last month with evidence (`YYYY-MM`)."
+          },
+          "readOn": {
+            "type": "string"
+          },
+          "maturation": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "run_start"
+                ]
+              },
+              "days": {
+                "type": "number"
+              },
+              "cutoff": {
+                "type": "string"
+              },
+              "windowEnd": {
+                "type": "string"
+              },
+              "legs": {
+                "type": "object",
+                "properties": {
+                  "reply": {
+                    "type": "object",
+                    "properties": {
+                      "durationDays": {
+                        "type": "number"
+                      },
+                      "outcomesRequired": {
+                        "type": "number"
+                      },
+                      "cutoff": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "durationDays",
+                      "outcomesRequired",
+                      "cutoff"
+                    ]
+                  },
+                  "visit": {
+                    "type": "object",
+                    "properties": {
+                      "durationDays": {
+                        "type": "number"
+                      },
+                      "outcomesRequired": {
+                        "type": "number"
+                      },
+                      "cutoff": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "durationDays",
+                      "outcomesRequired",
+                      "cutoff"
+                    ]
+                  }
+                },
+                "required": [
+                  "reply",
+                  "visit"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule",
+              "days",
+              "cutoff",
+              "windowEnd",
+              "legs",
+              "note"
+            ]
+          },
+          "pipes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "channel": {
+                  "type": "string"
+                },
+                "leg": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "channel",
+                "leg",
+                "outcome",
+                "description"
+              ]
+            }
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "outcome",
+                "description",
+                "population"
+              ]
+            }
+          },
+          "studies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResearchStudy"
+            }
+          },
+          "unavailable": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "reason"
+              ]
+            },
+            "description": "Every study id the page shows that this service does not answer yet, with what it waits for."
+          }
+        },
+        "required": [
+          "generatedAt",
+          "computedAt",
+          "allOrgs",
+          "costBasis",
+          "unpricedBilledUsd",
+          "window",
+          "readOn",
+          "maturation",
+          "pipes",
+          "outcomes",
+          "studies",
+          "unavailable"
+        ]
       }
     },
     "parameters": {}
@@ -62550,6 +63017,409 @@
           },
           "400": {
             "description": "`face_path_invalid`."
+          }
+        }
+      }
+    },
+    "/internal/research": {
+      "get": {
+        "summary": "The staff Research studies, live (staff, api-key)",
+        "description": "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ],
+              "description": "Default `user` (billed)."
+            },
+            "required": false,
+            "description": "Default `user` (billed).",
+            "name": "basis",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The research file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchFile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/conclusions": {
+      "get": {
+        "summary": "The quotable Research conclusions (api-key; social-service)",
+        "description": "Only measured studies whose verdict is `conclusion`, with their quotable facts (Learning points and value-less points left out). Billed basis only.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The conclusions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string"
+                    },
+                    "readOn": {
+                      "type": "string"
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user"
+                      ]
+                    },
+                    "conclusions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "question": {
+                            "type": "string"
+                          },
+                          "headline": {
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "conclusion"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "reason"
+                            ]
+                          },
+                          "result": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "display": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string"
+                              },
+                              "sample": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "display",
+                              "unit",
+                              "sample"
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "statement": {
+                                  "type": "string"
+                                },
+                                "sample": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "statement",
+                                "sample"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "outcome",
+                          "question",
+                          "headline",
+                          "verdict",
+                          "result",
+                          "facts"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "readOn",
+                    "window",
+                    "costBasis",
+                    "conclusions"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/studies": {
+      "get": {
+        "summary": "Every measured Research study, quotable only on a conclusion (api-key; social-service)",
+        "description": "Same strings and facts as the conclusions, every measured study; `quotable` is true only for a conclusion. Billed basis only.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The measured studies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string"
+                    },
+                    "readOn": {
+                      "type": "string"
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user"
+                      ]
+                    },
+                    "studies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "question": {
+                            "type": "string"
+                          },
+                          "headline": {
+                            "type": "string"
+                          },
+                          "verdict": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "conclusion",
+                                  "signal",
+                                  "noise"
+                                ],
+                                "description": "conclusion = the leader beats the runner-up after Bonferroni AND on the same clients in the same months; signal = crude only; noise = the rest or under 5 outcomes."
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "reason"
+                            ]
+                          },
+                          "quotable": {
+                            "type": "boolean"
+                          },
+                          "result": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "display": {
+                                "type": "string"
+                              },
+                              "unit": {
+                                "type": "string"
+                              },
+                              "sample": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "display",
+                              "unit",
+                              "sample"
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "statement": {
+                                  "type": "string"
+                                },
+                                "sample": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "statement",
+                                "sample"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "outcome",
+                          "question",
+                          "headline",
+                          "verdict",
+                          "quotable",
+                          "result",
+                          "facts"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "readOn",
+                    "window",
+                    "costBasis",
+                    "studies"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
           }
         }
       }

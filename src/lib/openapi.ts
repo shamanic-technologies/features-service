@@ -7664,6 +7664,144 @@ registry.registerPath({
   responses: { 200: { description: "The SVG.", content: { "image/svg+xml": { schema: z.string() } } }, 400: { description: "`face_path_invalid`." } },
 });
 
+// ── GET /internal/research[/conclusions|/studies] (LIVE-RESEARCH-1018) ───────────────────
+
+const researchPointSchema = z.object({
+  key: z.string().optional().describe("On a bar that opens a catalogue page: the workflow dynasty slug."),
+  label: z.string(),
+  value: z.number(),
+  display: z.string().describe("The value as the page prints it."),
+  note: z.string().describe("The counts behind the value."),
+  thin: z.boolean().describe("LEARNING under the maturity rule (historical field name)."),
+  partial: z.boolean().optional().describe("On a month chart: the month the maturity cutoff falls inside (drawn dotted)."),
+});
+const researchChartSchema = z.object({
+  kind: z.enum(["bars", "months"]),
+  title: z.string(),
+  lowerIsBetter: z.boolean(),
+  points: z.array(researchPointSchema),
+  cumulative: z.object({ title: z.string(), points: z.array(researchPointSchema) }).optional().describe("On a months chart: the average since inception at the end of each month."),
+  note: z.string().optional(),
+});
+const researchVerdictSchema = z.object({
+  kind: z.enum(["conclusion", "signal", "noise"]).describe("conclusion = the leader beats the runner-up after Bonferroni AND on the same clients in the same months; signal = crude only; noise = the rest or under 5 outcomes."),
+  reason: z.string(),
+});
+const researchResultSchema = z.object({ display: z.string(), unit: z.string(), sample: z.string() });
+const researchStudySchema = registry.register(
+  "ResearchStudy",
+  z.object({
+    id: z.string().describe("Stable study id, e.g. `cold-email-website-visit-workflow-roi`."),
+    pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]).nullable().describe("The pipe (leg x channel) the study belongs to; null on an outcome study."),
+    outcome: z.enum(["meeting", "judgment"]).optional().describe("Set exactly when `pipe` is null."),
+    topic: z.string(),
+    goal: z.enum(["roi", "rate"]),
+    question: z.string(),
+    status: z.enum(["measured", "not_enough_data"]),
+    headline: z.string(),
+    winner: z.string().nullable().describe("The label of the top bar (Learning or not)."),
+    crowned: z.boolean().describe("True only when the verdict is a conclusion."),
+    verdict: researchVerdictSchema,
+    result: researchResultSchema.nullable(),
+    charts: z.array(researchChartSchema),
+    conclusion: z.array(z.string()),
+  }),
+);
+const researchFileSchema = registry.register(
+  "ResearchFile",
+  z.object({
+    generatedAt: z.string(),
+    computedAt: z.string(),
+    allOrgs: z.literal(true),
+    costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
+    unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
+    window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
+    readOn: z.string(),
+    maturation: z.object({
+      rule: z.literal("run_start"),
+      days: z.number(),
+      cutoff: z.string(),
+      windowEnd: z.string(),
+      legs: z.object({
+        reply: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
+        visit: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
+      }),
+      note: z.string(),
+    }),
+    pipes: z.array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() })),
+    outcomes: z.array(z.object({ id: z.string(), outcome: z.string(), description: z.string(), population: z.string() })),
+    studies: z.array(researchStudySchema),
+    unavailable: z.array(z.object({ id: z.string(), reason: z.string() })).describe("Every study id the page shows that this service does not answer yet, with what it waits for."),
+  }),
+);
+const researchFactSchema = z.object({ statement: z.string(), sample: z.string().nullable() });
+const researchNotYet = { description: "`research_not_computed_yet`: the first build after this deploy is running.", content: { "application/json": { schema: errorResponse } } };
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research",
+  summary: "The staff Research studies, live (staff, api-key)",
+  description:
+    "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
+  tags: ["Internal"],
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed).") }) },
+  responses: {
+    200: { description: "The research file", content: { "application/json": { schema: researchFileSchema } } },
+    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/conclusions",
+  summary: "The quotable Research conclusions (api-key; social-service)",
+  description: "Only measured studies whose verdict is `conclusion`, with their quotable facts (Learning points and value-less points left out). Billed basis only.",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "The conclusions",
+      content: {
+        "application/json": {
+          schema: z.object({
+            generatedAt: z.string(),
+            readOn: z.string(),
+            window: z.object({ from: z.string(), to: z.string() }),
+            costBasis: z.literal("user"),
+            conclusions: z.array(z.object({ id: z.string(), outcome: z.string(), question: z.string(), headline: z.string(), verdict: z.object({ kind: z.literal("conclusion"), reason: z.string() }), result: researchResultSchema.nullable(), facts: z.array(researchFactSchema) })),
+          }),
+        },
+      },
+    },
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/studies",
+  summary: "Every measured Research study, quotable only on a conclusion (api-key; social-service)",
+  description: "Same strings and facts as the conclusions, every measured study; `quotable` is true only for a conclusion. Billed basis only.",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "The measured studies",
+      content: {
+        "application/json": {
+          schema: z.object({
+            generatedAt: z.string(),
+            readOn: z.string(),
+            window: z.object({ from: z.string(), to: z.string() }),
+            costBasis: z.literal("user"),
+            studies: z.array(z.object({ id: z.string(), outcome: z.string(), question: z.string(), headline: z.string(), verdict: researchVerdictSchema.nullable(), quotable: z.boolean(), result: researchResultSchema.nullable(), facts: z.array(researchFactSchema) })),
+          }),
+        },
+      },
+    },
+    503: researchNotYet,
+  },
+});
+
 // ── Security scheme ──────────────────────────────────────────────────────
 
 registry.registerComponent("securitySchemes", "ApiKeyAuth", {

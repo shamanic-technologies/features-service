@@ -28,6 +28,7 @@ import {
   type CostGroup,
 } from "../lib/public-stats-clients.js";
 import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
+import type { Pricing } from "../lib/pricing.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { legCutoffIso, legMaturity, type LegMaturityFigures } from "../lib/maturity.js";
@@ -110,7 +111,7 @@ import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, funnelLeg, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, funnelLeg, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf } from "../lib/funnel-legs.js";
 import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
@@ -2250,11 +2251,26 @@ function legEvidenceByDynasty(
   return byDynasty;
 }
 
-/** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
-export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed"): Promise<FleetLegWorkflowMaturity> {
+/**
+ * ONE LEG'S FLEET EVIDENCE PER WORKFLOW VERSION (slug), flash and mature, before any roll-up: what the fleet leg maturity
+ * (and so the leg workflow ranking) rolls up to dynasties, and what the Research studies regroup by template or model
+ * (LIVE-RESEARCH-1018), so a study and the ranking read ONE evidence. `pricing` = the spend basis (`gross` = the
+ * ranking's; `vendor` / `vendorUnpriced` = the staff actual-cost twins).
+ */
+export interface FleetLegSlugEvidence {
+  legKey: string;
+  cutoffIso: string | null;
+  workflows: WorkflowMetadata[];
+  campaigns: FleetLegCampaign[];
+  flash: { costGroups: CostGroup[]; emailStats: Map<string, Record<string, number>> };
+  /** Null when the mature cut could not be made. */
+  mature: { costGroups: CostGroup[]; emailStats: Map<string, Record<string, number>> } | null;
+}
+
+export async function fetchFleetLegSlugEvidence(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed", pricing: Pricing = "gross"): Promise<FleetLegSlugEvidence> {
   const [workflows, flash] = await Promise.all([
     fetchPublicWorkflows(featureSlug, "all"),
-    fetchLegFleetEvidence(featureSlug, legKey, "gross", slugs),
+    fetchLegFleetEvidence(featureSlug, legKey, pricing, slugs),
   ]);
   const legSet = new Set(flash.campaigns.map((c) => c.campaignId));
   // Positive replies counted on PEOPLE, the leg's campaigns only — the crossOrg grain's own basis. A fleet
@@ -2265,8 +2281,22 @@ export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKe
   );
   const cutoffIso = legCutoffIso(legKey);
   const mature = cutoffIso
-    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, "gross", cutoffIso, null, legSet, slugs)
+    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, null, legSet, slugs)
     : { costGroups: flash.costGroups, emailStats: flash.emailStats };
+  return {
+    legKey,
+    cutoffIso,
+    workflows,
+    campaigns: flash.campaigns,
+    flash: { costGroups: flash.costGroups, emailStats: flash.emailStats },
+    mature: mature ? { costGroups: mature.costGroups, emailStats: mature.emailStats } : null,
+  };
+}
+
+/** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
+export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed"): Promise<FleetLegWorkflowMaturity> {
+  const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, slugs, "gross");
+  const { workflows, flash, mature, cutoffIso } = ev;
   const matureBy = mature ? legEvidenceByDynasty(featureSlug, legKey, workflows, mature.costGroups, mature.emailStats) : null;
   const dynastySlugs = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
   return {
@@ -4937,7 +4967,11 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
 const legRankingCellKey = (key: string): string => `leg-workflow-ranking:${key}`;
 
 /** Rebuild one leg's ranking in the background when absent or past its fresh window (single-flight). */
-export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Promise<void> {
+export function warmLegWorkflowRanking(featureSlug: string, rawLegKey: string): Promise<void> {
+  // One leg, one cell: an outbound channel's new spelling (`lead_found_to_*`) is computed on its funnel leg. Keyed raw,
+  // the new spelling built a ranking of zeros (no evidence and no maturity rule under that key) and the fleet indexes,
+  // which ask with it, recorded null on 2026-10-18 (LIVE-RESEARCH-1018).
+  const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
   const key = `${featureSlug}|${legKey}`;
   const entry = legRankingStore.get(key);
   if (entry && Date.now() - entry.computedAt < LEG_RANKING_FRESH_MS) return Promise.resolve();
@@ -4964,7 +4998,8 @@ export function warmLegWorkflowRanking(featureSlug: string, legKey: string): Pro
  * One pipe's workflow ranking from the last build (kicks a warm when stale). A pipe never built yet awaits
  * its first build, bounded by `waitMs`; still nothing after that = null (the caller says "not computed yet").
  */
-export async function readLegWorkflowRanking(featureSlug: string, legKey: string, waitMs = 60_000): Promise<LegWorkflowRankingPayload | null> {
+export async function readLegWorkflowRanking(featureSlug: string, rawLegKey: string, waitMs = 60_000): Promise<LegWorkflowRankingPayload | null> {
+  const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
   const key = `${featureSlug}|${legKey}`;
   // A fresh process (every deploy) serves the LAST build persisted by any process, and rebuilds behind it:
   // a read never waits on the fleet walk while a copy exists (the agent catalogue's 30 s callers timed out).
@@ -5015,8 +5050,9 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
     return;
   }
-  void warmLegWorkflowRanking(featureSlug, legKey);
-  const stored = legRankingStore.get(`${featureSlug}|${legKey}`)?.value;
+  // The last build, the persisted copy included (a fresh process served an empty ranking for minutes after every
+  // deploy while the stored copy sat in the cell store); kicks a rebuild when stale, never waits on it.
+  const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
   if (stored) {
     res.json(stored);
     return;
