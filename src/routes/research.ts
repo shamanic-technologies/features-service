@@ -34,6 +34,7 @@ import { assembleResearch, type ColdEmailPipeInput } from "../lib/research/assem
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
 import type { ResearchFile } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
+import { readJevInputs, readLegSpendSplit, readOpensArms, readReplyAuthors, readSendGroups } from "./research-sends.js";
 
 const router = Router();
 
@@ -141,7 +142,7 @@ function labelFor(workflows: readonly WorkflowMetadata[]): (dynasty: string) => 
   };
 }
 
-async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{ input: ColdEmailPipeInput; unpricedUsd: number }> {
+async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{ input: ColdEmailPipeInput; unpricedUsd: number; campaignIds: string[]; cutoffIso: string | null }> {
   const pricing: Pricing = basis === "actual" ? "vendor" : "gross";
   // The vendor-cost twin is read one aggregation at a time: runs-service's vendor-priced fleet read takes ~16 s on a leg
   // (0.15 s billed) and timed out when asked several at once (2026-10-18).
@@ -190,7 +191,19 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<{
       rankingRows: ranking ? ranking.rows : null,
     },
     unpricedUsd: [...unpricedBySlug.values()].reduce((a, b) => a + b, 0),
+    campaignIds,
+    cutoffIso: ev.cutoffIso,
   };
+}
+
+/** The studies read on each email sent; null while our copy of the outreach facts holds no send of these legs yet. */
+async function sendsInputs(reply: { campaignIds: string[]; cutoffIso: string | null }, visit: { campaignIds: string[]; cutoffIso: string | null }, pricing: Pricing) {
+  const [rg, vg] = await Promise.all([readSendGroups(reply.campaignIds, reply.cutoffIso), readSendGroups(visit.campaignIds, visit.cutoffIso)]);
+  if (!rg.length && !vg.length) return null;
+  const rs = await readLegSpendSplit(COLD_EMAIL, reply.campaignIds, pricing, reply.cutoffIso);
+  const vs = await readLegSpendSplit(COLD_EMAIL, visit.campaignIds, pricing, visit.cutoffIso);
+  const opens = reply.cutoffIso ? await readOpensArms(reply.cutoffIso) : null;
+  return { reply: { groups: rg, spend: rs }, visit: { groups: vg, spend: vs }, opens };
 }
 
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
@@ -210,7 +223,14 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     basis === "user" ? getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked") : Promise.resolve(null),
     fetchMeetingBookingBeforeAfter(),
   ]);
+  const [sends, jev, replies] = await Promise.all([
+    sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
+    readJevInputs(),
+    readReplyAuthors(),
+  ]);
   return assembleResearch({
+    sends,
+    jev: { ...jev, replies },
     costBasis: basis,
     now,
     unpricedBilledUsd: reply.unpricedUsd + visit.unpricedUsd,

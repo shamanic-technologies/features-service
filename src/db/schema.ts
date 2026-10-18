@@ -1,4 +1,4 @@
-import { pgTable, doublePrecision, uuid, text, boolean, integer, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
 
 export const features = pgTable(
   "features",
@@ -674,3 +674,34 @@ export const fleetIndexPoints = pgTable(
 );
 
 export type FleetIndexPointRow = typeof fleetIndexPoints.$inferSelect;
+
+/**
+ * OUR COPY OF INSTANTLY-SERVICE'S OUTREACH FACTS (`outreach_fact_copy`, LIVE-RESEARCH-1018; `lib/outreach-facts-copy.ts`):
+ * one row per SUBJECT (`subjectKey`: a send, a click, a reply...), holding its LATEST statement (a correction replaces it,
+ * a withdrawal marks it). Followed incrementally from the feed's cursor; read by the Research studies only.
+ */
+export const outreachFactCopy = pgTable(
+  "outreach_fact_copy",
+  {
+    subjectKey: text("subject_key").primaryKey(),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    type: text("type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    orgId: text("org_id"),
+    campaignId: text("campaign_id"),
+    instantlyCampaignId: text("instantly_campaign_id").notNull(),
+    leadEmail: text("lead_email").notNull(),
+    transport: text("transport"),
+    step: integer("step"),
+    localSentAt: text("local_sent_at"),
+    localWeekday: text("local_weekday"),
+    timezone: text("timezone"),
+    openTracking: text("open_tracking"),
+    replyKind: text("reply_kind"),
+    replyClassification: text("reply_classification"),
+    replyAutomated: boolean("reply_automated"),
+    withdrawn: boolean("withdrawn").notNull().default(false),
+    copiedAt: timestamp("copied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_outreach_fact_copy_campaign_type").on(t.campaignId, t.type), index("idx_outreach_fact_copy_thread").on(t.instantlyCampaignId, t.leadEmail)],
+);
