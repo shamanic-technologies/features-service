@@ -10,6 +10,8 @@ import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookin
 import type { ResearchFile, ResearchStudy, ResearchUnavailable } from "./types.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
+import { followupStudies, opensStudies, timingStudy, type LegSpendSplit, type OpensArm, type SendGroup } from "./sends.js";
+import { JUDGMENT_OUTCOME, jevStudies, type JevInput } from "./jev.js";
 
 export const POSITIVE_REPLY_PIPE = "cold-email-positive-reply" as const;
 export const WEBSITE_VISIT_PIPE = "cold-email-website-visit" as const;
@@ -51,6 +53,17 @@ export interface ResearchInput {
   meeting: MeetingPipeInput;
   beforeAfter: MeetingBookingBeforeAfter;
   meetingOutcomesRequired: number;
+  /**
+   * The studies read on each email sent (our copy of instantly-service's outreach facts); null while the copy is empty
+   * (first deploy) or unreadable: their ids stay in `unavailable`.
+   */
+  sends: {
+    reply: { groups: SendGroup[]; spend: LegSpendSplit };
+    visit: { groups: SendGroup[]; spend: LegSpendSplit };
+    opens: { on: OpensArm; off: OpensArm; unplaced: number } | null;
+  } | null;
+  /** The typed judgment section's inputs (each part null when its producer could not be read). */
+  jev: Omit<JevInput, "costBasis" | "readOn">;
 }
 
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
@@ -124,11 +137,11 @@ function meetingWorkflowBuckets(rows: readonly LegWorkflowRankingRow[], labelOf:
 export const UNAVAILABLE: readonly ResearchUnavailable[] = (() => {
   const gen = "Waits for content-generation-service to state which model and which template wrote each sequence (spawned 2026-10-18).";
   const shape = "Waits for content-generation-service to state how each first email is laid out, opens and uses dashes (spawned 2026-10-18).";
-  const sends = "Waits for features-service to copy instantly-service's outreach facts (every send with its step), next ship of this work.";
-  const tz = "Waits for instantly-service to state the prospect's timezone on each send (spawned 2026-10-18).";
-  const pixel = "Waits for instantly-service to state whether each sequence carried the open pixel (spawned 2026-10-18).";
-  const jevRuns = "Waits for runs-service to state judgment runs, clients and tokens per month (spawned 2026-10-18).";
-  const jevScreen = "Waits for lead-service and human-service to state their screen decisions per month (spawned 2026-10-18).";
+  const sends = "Waits for features-service's copy of instantly-service's outreach facts (every send with its step) to fill.";
+  const tz = "Waits for features-service's copy of instantly-service's outreach facts (each send's prospect-local time) to fill.";
+  const pixel = "Waits for features-service's copy of instantly-service's outreach facts (each thread's open-pixel arm) to fill.";
+  const jevRuns = "runs-service's judgment volume could not be read.";
+  const jevScreen = "lead-service's or human-service's screen decisions could not be read.";
   const out: ResearchUnavailable[] = [];
   for (const p of [POSITIVE_REPLY_PIPE, WEBSITE_VISIT_PIPE]) {
     out.push({ id: `${p}-llm-roi`, reason: gen }, { id: `${p}-llm-rate`, reason: gen });
@@ -211,6 +224,26 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   }
   studies.push(meetingBeforeAfterStudy(input.beforeAfter, input.meetingOutcomesRequired));
 
+  // the studies read on each email sent
+  if (input.sends) {
+    for (const [pipe, p, part] of [
+      [POSITIVE_REPLY_PIPE, input.reply, input.sends.reply],
+      [WEBSITE_VISIT_PIPE, input.visit, input.sends.visit],
+    ] as const) {
+      if (!part.groups.length) continue;
+      const sp = { terms: termsOf(pipe, p, note), visit: pipe === WEBSITE_VISIT_PIPE, groups: part.groups, spend: part.spend };
+      studies.push(...followupStudies(sp));
+      if (pipe === POSITIVE_REPLY_PIPE) {
+        const wd = timingStudy(sp, "weekday");
+        if (wd) studies.push(wd);
+      }
+      const hr = timingStudy(sp, "hour");
+      if (hr) studies.push(hr);
+    }
+    if (input.sends.opens && input.reply.cutoffDay) studies.push(...opensStudies(termsOf(POSITIVE_REPLY_PIPE, input.reply, note), input.sends.opens, input.reply.cutoffDay));
+  }
+  studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
+
   const iso = input.now.toISOString();
   const cutoffs = [input.reply.cutoffDay, input.visit.cutoffDay].filter((c): c is string => c !== null).sort();
   const firstMonth = [...input.reply.cells, ...input.visit.cells]
@@ -241,6 +274,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
     ],
     outcomes: [
+      JUDGMENT_OUTCOME,
       {
         id: "meeting",
         outcome: "Meeting booked",
@@ -249,6 +283,11 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       },
     ],
     studies,
-    unavailable: [...UNAVAILABLE],
+    // A study served is never listed as waiting; a timing study a leg cannot rank yet (every hour Learning) stays listed.
+    unavailable: UNAVAILABLE.filter((u) => !studies.some((st) => st.id === u.id)).map((u) =>
+      ["cold-email-positive-reply-weekday-rate", "cold-email-positive-reply-hour-rate", "cold-email-website-visit-hour-rate"].includes(u.id) && input.sends
+        ? { id: u.id, reason: "Too few outcomes on emails whose prospect's timezone is known to rank a day or an hour yet (every bucket is still Learning)." }
+        : u,
+    ),
   };
 }

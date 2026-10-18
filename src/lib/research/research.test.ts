@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import { compareVerdict, exactP, headlineFor, likeForLike, poissonInterval } from "./verdict.js";
 import { bucketOf, type SlugCell } from "./buckets.js";
 import { buildSlugCells } from "./slug-cells.js";
@@ -166,6 +167,8 @@ const beforeAfter: MeetingBookingBeforeAfter = {
   unavailableReason: null,
 };
 
+const NO_JEV = { judgments: null, judgmentOrgs: 0, screens: null, screenOrgs: 0, screenAudiences: 0, reveal: null, replies: null };
+
 describe("assembleResearch", () => {
   const rampart = row("rampart", { spentUsd: 127.1, contacted: 720, outcomes: 15 }, true);
   const acamar = row("acamar", { spentUsd: 18.26, contacted: 108, outcomes: 1 }, false);
@@ -178,6 +181,8 @@ describe("assembleResearch", () => {
     meeting: { outcomesRequired: 10, rankingRows: [row("rhodium", { spentUsd: 0.9, contacted: 2, outcomes: 0 }, false)], unattributableCampaigns: 1 },
     beforeAfter,
     meetingOutcomesRequired: 10,
+    sends: null,
+    jev: NO_JEV,
   });
 
   it("every one of today's 45 study ids is served or listed unavailable, never both, never neither", () => {
@@ -185,7 +190,7 @@ describe("assembleResearch", () => {
     const waiting = new Set(file.unavailable.map((u) => u.id));
     for (const id of PAGE_IDS) expect(served.has(id) !== waiting.has(id), id).toBe(true);
     expect(served.size + waiting.size).toBe(PAGE_IDS.length);
-    expect(UNAVAILABLE.length).toBe(waiting.size);
+    expect(UNAVAILABLE.length).toBeGreaterThanOrEqual(waiting.size);
   });
 
   it("the website-visit workflow ROI study states the ranking's cost for the same workflow (Rampart)", () => {
@@ -220,9 +225,120 @@ describe("assembleResearch", () => {
       meeting: { outcomesRequired: 10, rankingRows: null, unattributableCampaigns: 0 },
       beforeAfter,
       meetingOutcomesRequired: 10,
+      sends: null,
+      jev: NO_JEV,
     });
     expect(actual.unpricedBilledUsd).toBe(12.5);
     expect(actual.studies.find((s) => s.id === "meeting-booking-cost")!.headline).toMatch(/vendor cost/);
     expect(workflowBuckets({ ...pipe("start_to_website_visit", [rampart]), rankingRows: null })[0]!.figures.outcomes).toBe(15);
+  });
+});
+
+import { followupStudies, opensStudies, timingStudy, type SendGroup, type SendsPipe } from "./sends.js";
+import { jevStudies } from "./jev.js";
+
+const terms = {
+  pipe: "cold-email-positive-reply" as const,
+  noun: "positive reply",
+  nounPlural: "positive replies",
+  exposureNoun: "people emailed",
+  exposureNounOne: "person emailed",
+  outcomesRequired: 1,
+  partialMonth: null,
+  note: "rule",
+};
+const g = (step: number, emails: number, replies: number, extra: Partial<SendGroup> = {}): SendGroup => ({
+  orgId: "o1",
+  month: "2026-09",
+  step,
+  weekday: "Tuesday",
+  hour: 10,
+  screenable: false,
+  emails,
+  replies,
+  clicks: 0,
+  ...extra,
+});
+
+describe("follow-ups (marginal ROI)", () => {
+  const pipe: SendsPipe = { terms, visit: false, groups: [g(1, 1000, 10), g(2, 900, 6), g(3, 800, 1)], spend: { perEmailUsd: 27, perPersonUsd: 1000 } };
+  const [roi, rate] = followupStudies(pipe);
+  it("a follow-up costs only its own sending; the first email carries every per-person dollar", () => {
+    const bars = roi!.charts[0]!.points;
+    expect(bars[0]!.label).toBe("First email");
+    // first email: 1000 x $0.01 sending + $1000 per person = $1010 / 10 replies
+    expect(bars[0]!.value).toBeCloseTo(101, 2);
+    // follow-up 1: 900 x $0.01 = $9 / 6 replies
+    expect(bars[1]!.value).toBeCloseTo(1.5, 2);
+  });
+  it("an email from our own sender adds no per-email charge", () => {
+    const own = followupStudies({ ...pipe, groups: pipe.groups.map((x) => ({ ...x, screenable: true })) })[0]!;
+    expect(own.charts[0]!.points.find((p) => p.label === "Follow-up 1")).toBeUndefined(); // $0 extra: no price bar
+    expect(own.headline).toMatch(/no extra cost/);
+  });
+  it("sends through the deepest follow-up whose extra reply costs no more than a first email's", () => {
+    expect(roi!.winner).toBe("Follow-up 2");
+    expect(rate!.result!.display).toBe("1.70%");
+  });
+});
+
+describe("timing", () => {
+  it("ranks days ordinally in the prospect's timezone, with strata per client and month", () => {
+    const pipe: SendsPipe = {
+      terms,
+      visit: false,
+      groups: [g(1, 1000, 12, { weekday: "Monday" }), g(1, 1000, 3, { weekday: "Sunday" }), g(1, 500, 0, { weekday: null, hour: null })],
+      spend: { perEmailUsd: 0, perPersonUsd: 100 },
+    };
+    const st = timingStudy(pipe, "weekday")!;
+    expect(st.winner).toBe("Monday");
+    expect(st.charts[0]!.points.map((p) => p.label)).toEqual(["Monday", "Sunday"]);
+    expect(st.conclusion.some((l) => /500 emails whose prospect has no timezone/.test(l))).toBe(true);
+  });
+  it("states nothing when every bucket is Learning", () => {
+    expect(timingStudy({ terms: { ...terms, outcomesRequired: 10 }, visit: false, groups: [g(1, 100, 6)], spend: { perEmailUsd: 0, perPersonUsd: 1 } }, "hour")).toBeNull();
+  });
+});
+
+describe("open tracking", () => {
+  it("is at best a signal: two periods, never a split test", () => {
+    const [roi, rate] = opensStudies(terms, { on: { people: 26000, positive: 28, replied: 86, bounced: 400, firstDay: "2026-02-10", lastDay: "2026-06-28" }, off: { people: 30000, positive: 37, replied: 153, bounced: 2700, firstDay: "2026-02-10", lastDay: "2026-09-26" }, unplaced: 20 }, "2026-09-27");
+    expect(["signal", "noise"]).toContain(roi!.verdict.kind);
+    expect(rate!.verdict.kind).toBe("signal");
+    expect(rate!.headline).toMatch(/^Tracking off leads/);
+  });
+});
+
+describe("typed judgments", () => {
+  it("states each measurement, and the vendor basis never relabels a billed price", () => {
+    const input = {
+      readOn: "2026-10-18",
+      judgments: [
+        { month: "2026-09", taskName: "judgments", parentServiceName: "lead-service", runCount: 100000, quantity: 5e7, billedCents: 1300 },
+        { month: "2026-10", taskName: "platform-judgments", parentServiceName: null, runCount: 87000, quantity: 4e7, billedCents: 1100 },
+      ],
+      judgmentOrgs: 12,
+      screens: [{ month: "2026-10", buckets: { lt20: { passed: 0, declined: 700 }, lt50: { passed: 0, declined: 80 }, lt80: { passed: 100, declined: 0 }, ge80: { passed: 120, declined: 0 } } }],
+      screenOrgs: 10,
+      screenAudiences: 96,
+      reveal: { credits: 1000, billedCents: 18400 },
+      replies: { person: 470, outOfOffice: 400, otherAuto: 130, orgs: 20 },
+    };
+    const billed = jevStudies({ ...input, costBasis: "user" });
+    expect(billed.map((s) => s.id)).toEqual(["jev-volume", "jev-screen-decline", "jev-screen-price", "jev-machine-replies"]);
+    expect(billed[1]!.headline).toBe("78% of the people Apollo returns are turned away before the paid reveal.");
+    expect(billed[3]!.result!.display).toBe("53%");
+    const actual = jevStudies({ ...input, costBasis: "actual" });
+    expect(actual[0]!.headline).toMatch(/vendor cost/);
+    expect(actual[2]!.headline).toMatch(/vendor cost/);
+  });
+});
+
+import { parseCursor } from "../outreach-facts-copy.js";
+describe("outreach facts copy cursor", () => {
+  it("reads a bare cursor as copied before the thread fields existed", () => {
+    expect(parseCursor("1234")).toEqual({ cursor: "1234", withSequence: false });
+    expect(parseCursor(JSON.stringify({ cursor: "99", withSequence: true }))).toEqual({ cursor: "99", withSequence: true });
+    expect(parseCursor(null)).toEqual({ cursor: null, withSequence: false });
   });
 });
