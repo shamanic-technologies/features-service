@@ -1,4 +1,7 @@
 import { Router } from "express";
+import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
+import { fetchReplyLatencyByCampaignGroups } from "../lib/campaign-next-steps-io.js";
+import type { LatencyMetric } from "../lib/campaign-next-steps.js";
 import { fetchFleetEmailDelivery, type FleetEmailDelivery } from "../lib/fleet-email-delivery.js";
 import { fetchEmailDeliveryByVerdict, type EmailDeliveryByVerdict } from "../lib/email-delivery-by-verdict.js";
 import { fetchMeetingBookingGain, type MeetingBookingGain } from "../lib/meeting-booking-gain.js";
@@ -346,6 +349,7 @@ function allPublicCaches(): PublicCache[] {
     publicRankedCache,
     publicBestCache,
     publicWorkflowLatencyCache,
+    pipeFleetReplyLatencyCache,
     goalBucketDatasetCache,
     revenueCache,
     costProjectionCache,
@@ -367,6 +371,30 @@ function allPublicCaches(): PublicCache[] {
   ];
 }
 
+/**
+ * First email -> first positive reply over EVERY org's campaigns of these pipes (channel x canonical leg, campaign-
+ * service's stated `legKey`), since inception (CAMPAIGN-NEXT-STEPS-1018, `lib/campaign-next-steps.ts`). Cross-org and
+ * lifetime: served through the lifetime windows (15 min fresh / 6 h stale), keyed on the sorted pipes. A pipe nobody
+ * runs reads a zero sample, never a borrowed figure. FAIL-LOUD on a cold key.
+ */
+export async function readPipeFleetReplyLatency(pipes: ReadonlyArray<{ featureSlug: string; legKey: string }>): Promise<LatencyMetric> {
+  const sorted = [...new Map(pipes.map((p) => [`${p.featureSlug}|${p.legKey}`, p])).values()].sort((a, b) => `${a.featureSlug}|${a.legKey}`.localeCompare(`${b.featureSlug}|${b.legKey}`));
+  const key = sorted.map((p) => `${p.featureSlug}|${p.legKey}`).join(",");
+  return servedPublicCached<LatencyMetric>({
+    cache: pipeFleetReplyLatencyCache,
+    key,
+    windows: LIFETIME_AGGREGATE_WINDOWS,
+    label: "pipe fleet reply latency",
+    compute: async () => {
+      const [campaigns] = await fetchFleetLegCampaignsFor([sorted.map((p) => ({ channelSlug: p.featureSlug, computedLegKey: p.legKey }))]);
+      const ids = campaigns.map((c) => c.campaignId);
+      if (ids.length === 0) return { averageMs: null, medianMs: null, sampleSize: 0 };
+      const groups = await fetchReplyLatencyByCampaignGroups({ fleet: ids });
+      return groups.fleet ?? { averageMs: null, medianMs: null, sampleSize: 0 };
+    },
+  });
+}
+
 /** Test seam — expire ONLY the FRESH window on EVERY cross-org cache (payloads + stale windows kept), so a
  * test can drive the stale-while-revalidate path without waiting out a real fresh window. */
 export function __expirePublicCacheFreshWindowsForTest(): void {
@@ -381,6 +409,7 @@ export async function __awaitPublicCacheRefreshForTest(): Promise<void> {
 const publicRankedCache: PublicCache = new Map();
 const publicBestCache: PublicCache = new Map();
 const publicWorkflowLatencyCache: PublicCache = new Map();
+const pipeFleetReplyLatencyCache: PublicCache = new Map();
 
 /** Test seam — reset the in-memory public stats caches. */
 export function __resetPublicStatsCache(): void {
