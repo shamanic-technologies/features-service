@@ -5242,6 +5242,90 @@ registry.registerPath({
   },
 });
 
+
+// ── GET /public/indexes, /public/indexes/{slug} ──────────────────────────────
+
+const fleetIndexStatusSchema = z.enum(["robust", "signal", "noise"]).describe("How far to trust the value, from the outcomes behind it (a chained index: its weakest link). `noise`: fewer than `statusRule.signalMinOutcomes` outcomes, or no mature workflow. `signal`: fewer than `statusRule.robustMinOutcomes`. `robust`: at least `statusRule.robustMinOutcomes`.");
+const fleetIndexStatusRuleSchema = z.object({ signalMinOutcomes: z.number().int(), robustMinOutcomes: z.number().int() });
+
+const fleetIndexSummarySchema = registry.register(
+  "FleetIndexSummary",
+  z.object({
+    slug: z.string().describe("Stable index id, e.g. `sceo-cost-per-click` (SCEO = Sales Cold Email Outreach)."),
+    name: z.string().describe("Display name, e.g. `SCEO Cost Per Click Index`."),
+    channelSlug: z.string(),
+    channelName: z.string(),
+    outcome: z.enum(["website_visit", "positive_reply", "meeting_booked"]),
+    metric: z.enum(["cost_per_outcome", "conversion_rate"]),
+    unit: z.enum(["usd", "percent"]).describe("`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."),
+    valuePer: z.string().describe("What one unit of the value is, in words (`per website visit`, `of people emailed`)."),
+    method: z.string().describe("How the value is computed, one plain sentence."),
+    day: z.string().nullable().describe("UTC day of the latest recorded point; null before the first recording."),
+    value: z.number().nullable().describe("The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
+    status: fleetIndexStatusSchema,
+    outcomes: z.number().int().describe("Outcomes behind the value (website visits, positive replies, or meetings booked)."),
+    contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
+    workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
+    workflowDynastyName: z.string().nullable(),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`."),
+    recordedAt: z.string().nullable(),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/public/indexes",
+  summary: "Every public fleet index, latest value (public, no auth)",
+  description:
+    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution). A read is one small table read.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "Every index",
+      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
+    },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/indexes/{slug}",
+  summary: "One public fleet index and every recorded day (public, no auth)",
+  description: "The index summary (latest day) + one point per recorded UTC day, oldest first. `basis` is `recorded` (written live that day).",
+  tags: ["Public"],
+  request: { params: z.object({ slug: z.string() }) },
+  responses: {
+    200: {
+      description: "The index and its series",
+      content: {
+        "application/json": {
+          schema: z.object({
+            statusRule: fleetIndexStatusRuleSchema,
+            index: fleetIndexSummarySchema,
+            points: z.array(
+              z.object({
+                day: z.string(),
+                value: z.number().nullable(),
+                status: fleetIndexStatusSchema,
+                outcomes: z.number().int(),
+                contacted: z.number().int().nullable(),
+                workflowDynastySlug: z.string().nullable(),
+                workflowDynastyName: z.string().nullable(),
+                unavailableReason: z.string().nullable(),
+                basis: z.enum(["recorded", "recomputed"]),
+                inputs: z.record(z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    404: { description: "Unknown index (`index_not_found`, with `slugs`)", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /public/stats/outcome-prices ─────────────────────────────────────────
 
 const outcomePriceLegSchema = z.object({
