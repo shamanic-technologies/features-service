@@ -1797,7 +1797,7 @@ const rateCandidateSchema = z.object({
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("our_leads only: which outcomes the counts include. Null otherwise."),
   brandCount: z.number().int().nullable().describe("Always null since the fleet median was retired (2026-10-14); kept for readers that parse it."),
   kept: z.boolean().describe("True on exactly ONE candidate when the leg has a rate: the one the leg's rate uses (its ratePct equals the leg's)."),
-  notKeptReason: z.enum(["outranked", "below_learning_bar", "to_exceeds_from", "zero_not_conclusive", "too_few_brands", "crm_measures_this_leg"]).nullable().describe("Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."),
+  notKeptReason: z.enum(["outranked", "below_learning_bar", "to_exceeds_from", "zero_not_conclusive", "brand_reports_no_meetings", "meeting_reporting_unreadable", "too_few_brands", "crm_measures_this_leg"]).nullable().describe("Null when kept. outranked: usable, but a source earlier in the precedence won. below_learning_bar: fewer than 10 people at FROM. to_exceeds_from: more at TO than FROM, no probability. zero_not_conclusive: 0 at TO, on too few at FROM to rule out the next source's rate p (kept only once (1 - p)^FROM <= 5%, about 3 / p people: 598 at 0.5%). too_few_brands: retired with the fleet median (2026-10-14), never served. crm_measures_this_leg: our leads' rate, shown beside the CRM, which is where this leg is measured."),
 }).describe("One rate the precedence weighed for the leg (measured on the CRM > measured on our leads when the CRM does not measure the leg > the client's value > industry default; no fleet median since 2026-10-14). This only shows what the precedence weighed.");
 const rateCandidatesSchema = z.array(rateCandidateSchema).describe("EVERY RATE CANDIDATE of the leg, in precedence order; a source with no number is absent. Exactly one is kept when the leg has a rate, and its ratePct is the leg's rate.");
 const explainedLegSchema = z.object({
@@ -3281,7 +3281,7 @@ const measuredArrowRateSchema = z.object({
   toReachedThroughOtherLegs: z.number().int().nullable().describe("Leads at the TO step NOT counted in toReached because they were never at the FROM step (they came through another leg, or their earlier step was not recorded). Null on the crm basis and whenever toReached is null."),
   ratePct: z.number().nullable().describe("toReached / fromReached × 100 — the share of leads at FROM that went through this leg, byte-equal to funnelSteps.conversionFromPreviousPct for the rung on the same population. A measured 0 (nobody at FROM went on to TO) is a real rate and, once sufficient, the effective one. Null when either count is null or fromReached is 0."),
   sufficient: z.boolean().describe("True exactly when fromReached ≥ minMeasuredFromReached, i.e. this measured rate is the effective one. The bar is on the DENOMINATOR, so an arrow truly at 0% still becomes measured."),
-  gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar", "to_exceeds_from", "zero_not_conclusive"]).nullable().describe("Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads)."),
+  gap: z.enum(["step_not_counted", "evidence_unreadable", "below_learning_bar", "to_exceeds_from", "zero_not_conclusive", "brand_reports_no_meetings", "meeting_reporting_unreadable"]).nullable().describe("Why the measured rate is not the effective one; null when it is. to_exceeds_from: more leads at TO than FROM, so the ratio is no probability (never clamped). zero_not_conclusive: 0 leads at TO, on too few at FROM to rule out the next source's rate p (a measured 0% counts only once (1 - p)^FROM <= 5%, about 3 / p leads). brand_reports_no_meetings: TO is a meeting step and the brand never reported a meeting to us (MEETING-POPULATION-1018), so its count there is not a measure; meeting_reporting_unreadable: whether it reports could not be read, no zero is trusted."),
 });
 const effectiveArrowRateSchema = z.object({
   fromStep: z.string().describe("The FROM step in brand-service's own wording, so the arrow joins the brand-service leg-rate write. May differ from the public catalogue's label (brand-service 'Form filled' vs catalogue 'Form submitted'): join the catalogue on legKey or catalogueFromStep instead."),
@@ -5178,6 +5178,14 @@ registry.registerPath({
   },
 });
 
+/** Who a meeting figure was measured on (`lib/meeting-population.ts`). */
+const meetingPopulationSchema = z
+  .object({
+    rule: z.literal("brands_reporting_meetings").describe("A brand counts only when it REPORTS meetings to us: lead-service holds at least one live meeting fact for it (booked or attended, any source). A brand that never reported one reads zero meetings whatever happened, so it is left out, never counted as zero (MEETING-POPULATION-1018)."),
+    brandsCounted: z.number().int().describe("Brands in the figure (they report meetings)."),
+    brandsLeftOut: z.number().int().describe("Brands with people in scope left out because they report no meeting."),
+  });
+
 // ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
 
 const legWorkflowRankingRowSchema = z.object({
@@ -5232,6 +5240,10 @@ registry.registerPath({
               cutoffIso: z.string().nullable(),
               measured: z.boolean(),
             }),
+            meetingPopulation: meetingPopulationSchema
+              .nullable()
+              .optional()
+              .describe("On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped."),
             rows: z.array(legWorkflowRankingRowSchema),
           }),
         },
@@ -5277,7 +5289,7 @@ registry.registerPath({
   path: "/public/indexes",
   summary: "Every public fleet index, latest value (public, no auth)",
   description:
-    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution). A read is one small table read.",
+    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
   tags: ["Public"],
   responses: {
     200: {
@@ -5691,9 +5703,10 @@ const channelCatalogueResponseSchema = registry.register(
           .nullable().describe("The side where the client's own team held it (Your Team Meeting Booking). Null when lead-service is unreadable."),
         gainPctPoints: z.number().nullable().describe("AI rate minus team rate, in percentage points. Null with `unavailableReason` until EACH side booked `bookedRequiredPerSide` meetings."),
         bookedRequiredPerSide: z.number().int().describe("The leg's maturity bar: meetings each side must have booked before the gain is served."),
-        unavailableReason: z.enum(["not_enough_meetings", "lead_service_unavailable"]).nullable(),
+        population: meetingPopulationSchema.nullable().describe("Who both arms were measured on: the brands that report meetings only. Null when lead-service is unreadable."),
+        unavailableReason: z.enum(["not_enough_meetings", "no_brand_reports_meetings", "lead_service_unavailable"]).nullable(),
       })
-      .describe("AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured."),
+      .describe("AI MEETING BOOKING GAIN (owner 2026-10-13): Positive reply -> Meeting booked rate with AI Meeting Booking vs with the client's own team, both populations served; the gain only once both sides are measured. Measured on the brands that report meetings to us (`population`)."),
     meetingBookingBeforeAfter: (() => {
       const window = z
         .object({
@@ -5711,20 +5724,35 @@ const channelCatalogueResponseSchema = registry.register(
         changePctPoints: z.number().nullable().describe("After rate minus before rate on the same horizon, in percentage points. Null with `unavailableReason`."),
         relativeChangePct: z.number().nullable().describe("(after rate / before rate - 1) x 100 on the same horizon (the '+50%' kind of figure). Null with `unavailableReason`, or when the before rate is 0."),
         bookedRequiredPerWindow: z.number().int().describe("The leg's maturity bar: meetings EACH window must have booked (same horizon) before the change is served."),
-        unavailableReason: z.enum(["not_enough_meetings", "no_before_history"]).nullable().describe("`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply."),
+        unavailableReason: z.enum(["not_enough_meetings", "no_before_history", "brand_reports_no_meetings", "no_brand_reports_meetings"]).nullable().describe("`not_enough_meetings`: a window booked under the bar, the change would be noise, read the populations. `no_before_history`: AI was on from the brand's first positive reply. `brand_reports_no_meetings`: the brand never reported a meeting to us, its zero booked is not a measure. `no_brand_reports_meetings` (fleet): no go-live brand reports meetings."),
       };
       return z
         .object({
           legKey: z.literal("conversation_to_meeting_booked"),
           basis: z.literal("positive_repliers_by_first_reply_vs_ai_go_live").describe("Each person sits in the window of their FIRST positive reply: before = strictly before the brand's AI Meeting Booking go-live (its first AI Meeting Booking act, never a creation date), after = at or after. Attribution and go-live are lead-service's."),
           brands: z
-            .array(z.object({ brandId: z.string(), goLiveAt: z.string().describe("When AI Meeting Booking first acted for the brand."), before: window, after: window, ...change }))
+            .array(
+              z.object({
+                brandId: z.string(),
+                goLiveAt: z.string().describe("When AI Meeting Booking first acted for the brand."),
+                reportsMeetings: z.boolean().describe("The brand reports its meetings to us. False = left out of `fleet`, no change served (`brand_reports_no_meetings`)."),
+                before: window,
+                after: window,
+                ...change,
+              }),
+            )
             .nullable()
             .describe("One row per brand whose AI Meeting Booking went live, most positive repliers first. Null when lead-service is unreadable."),
           fleet: z
-            .object({ brandCount: z.number().int(), before: window, after: window, ...change })
+            .object({
+              brandCount: z.number().int().describe("Brands summed = `population.brandsCounted`."),
+              population: meetingPopulationSchema,
+              before: window,
+              after: window,
+              ...change,
+            })
             .nullable()
-            .describe("Sum over those brands. Null when lead-service is unreadable."),
+            .describe("Sum over the go-live brands that REPORT meetings (`population`). Null when lead-service is unreadable."),
           unavailableReason: z.enum(["lead_service_unavailable"]).nullable(),
         })
         .describe("AI MEETING BOOKING BEFORE vs AFTER (2026-10-14): per brand that turned AI Meeting Booking on, the Positive reply -> Meeting booked rate before it went live vs after, both populations, plus the fleet; the change only once each window booked the bar, else the populations and `not_enough_meetings`.");

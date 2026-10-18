@@ -2265,7 +2265,9 @@ export function withInternalPipeCounts(
       return [key, { ...e, contacted: n.contacted, replies: n.reached, clicks: 0 }];
     });
   };
-  const fleetStats = internalPipeCountsByDynasty(fleet, () => true);
+  // crossOrg = the fleet population: on a meeting pipe, the campaigns of brands that report meetings only
+  // (`lib/meeting-population.ts`); the finer grains are the brand's own campaigns, whatever it reports.
+  const fleetStats = internalPipeCountsByDynasty(fleet, (c) => c.inFleetPopulation);
   // Per slug: every version's recipient counts reset, the dynasty's put on its active slug (else any of its
   // slugs) so the per-dynasty sum the ladder takes is the ledger's count exactly.
   const zero = { recipientsContacted: 0, recipientsRepliesPositive: 0, recipientsClicked: 0 };

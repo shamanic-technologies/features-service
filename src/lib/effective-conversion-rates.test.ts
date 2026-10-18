@@ -201,7 +201,7 @@ describe("no leg resolves from what OTHER brands stated (owner 2026-10-14, Defin
   const legOf = (l: { fromStep: string; toStep: string }) => legPairKey(l.fromStep, l.toStep);
 
   it("a brand that stated nothing and measured nothing reads 0.2% on every leg leaving Website visit, source default", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "new", funnelKeys: [], measurement: EMPTY, manual: [] });
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports", brandId: "new", funnelKeys: [], measurement: EMPTY, manual: [] });
     for (const to of ["meeting_booked", "signup", "form_submitted", "purchase"]) {
       const leg = rates.legs.find((l) => legOf(l) === `website_visit>${to}`);
       expect(leg, to).toBeDefined();
@@ -214,7 +214,7 @@ describe("no leg resolves from what OTHER brands stated (owner 2026-10-14, Defin
     }
   });
   it("a brand that STATED a visit rate keeps it", () => {
-    const rates = buildBrandEffectiveRates({
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "stated",
       funnelKeys: [],
       measurement: EMPTY,
@@ -281,7 +281,7 @@ describe("a measured 0% must have seen enough attempts to rule out the next sour
   });
 
   it("every reader of the brand's legs sees the same rule (buildBrandEffectiveRates)", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b", measurement: DOC_DINNERS, manual: [], funnelKeys: [] } as never);
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports", brandId: "b", measurement: DOC_DINNERS, manual: [], funnelKeys: [] } as never);
     const visit = rates.legs.find((l) => l.fromStep === "Website visit" && l.toStep === "Meeting booked")!;
     expect(visit.source).not.toBe("measured");
     expect(visit.effectiveRatePct).toBeGreaterThan(0);
@@ -290,7 +290,7 @@ describe("a measured 0% must have seen enough attempts to rule out the next sour
 });
 
 describe("pricing rests on the EFFECTIVE rate", () => {
-  const effective = buildBrandEffectiveRates({
+  const effective = buildBrandEffectiveRates({ meetingReporting: "reports",
     brandId: "b1",
     funnelKeys: ["sales_meetings_from_conversation"],
     measurement: MEASUREMENT,
@@ -324,7 +324,7 @@ describe("pricing rests on the EFFECTIVE rate", () => {
   });
 
   it("a leg shared by several funnels carries ONE rate in all of them", () => {
-    const both = buildBrandEffectiveRates({
+    const both = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: ["sales_meetings_from_conversation", "sales_meetings_from_website"],
       measurement: MEASUREMENT,
@@ -336,9 +336,44 @@ describe("pricing rests on the EFFECTIVE rate", () => {
   });
 });
 
+describe("MEETING-POPULATION-1018: a meeting leg is measured on our leads only for a brand that reports meetings", () => {
+  const ZERO_MEETINGS: BrandStepMeasurement = {
+    contactedRecipients: 900,
+    evidence: ALL_STEP_EVIDENCE,
+    // 300 positive replies, no meeting seen: enough to make a 0% "conclusive" against the default.
+    reached: times(300, lead({ repliedPositive: true })),
+  };
+  const replyToMeeting = (reporting: "reports" | "reports_none" | "unknown") =>
+    buildBrandEffectiveRates({ meetingReporting: reporting, brandId: "b", funnelKeys: [], measurement: ZERO_MEETINGS, manual: [] }).legs.find(
+      (l) => l.fromStep === "Positive reply" && l.toStep === "Meeting booked",
+    )!;
+
+  it("a brand that reports meetings keeps its measured 0% (it is a fact there)", () => {
+    expect(replyToMeeting("reports")).toMatchObject({ source: "measured", effectiveRatePct: 0 });
+  });
+
+  it("a brand that never reported a meeting: its zero is shown, never kept; the next source prices the leg", () => {
+    const leg = replyToMeeting("reports_none");
+    expect(leg.source).toBe("default");
+    expect(leg.effectiveRatePct).toBeGreaterThan(0);
+    expect(leg.measured).toMatchObject({ fromReached: 300, toReached: 0, sufficient: false, gap: "brand_reports_no_meetings" });
+    expect(leg.candidates.find((c) => c.basis === "our_leads")).toMatchObject({ kept: false, notKeptReason: "brand_reports_no_meetings" });
+  });
+
+  it("an unreadable answer trusts no zero either", () => {
+    expect(replyToMeeting("unknown").measured.gap).toBe("meeting_reporting_unreadable");
+  });
+
+  it("a leg landing elsewhere is untouched", () => {
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports_none", brandId: "b", funnelKeys: [], measurement: MEASUREMENT, manual: [] });
+    const attended = rates.legs.find((l) => l.fromStep === "Meeting attended" && l.toStep === "Paid client")!;
+    expect(attended.measured.gap).not.toBe("brand_reports_no_meetings");
+  });
+});
+
 describe("each arrow is named in brand-service's own step wording", () => {
   it("the form rung reads brand-service's 'Form filled', and still joins to its statement", () => {
-    const rates = buildBrandEffectiveRates({
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: ["form_magnet"],
       measurement: MEASUREMENT,
@@ -363,7 +398,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
   const EMPTY: BrandStepMeasurement = { contactedRecipients: 0, evidence: ALL_STEP_EVIDENCE, reached: [] };
 
   it("a brand with no statement and no measurement still gets a non-null rate on every catalogue leg, joinable by legKey AND by catalogue labels", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports", brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
     expect(catalogue.length).toBeGreaterThan(0);
     for (const leg of catalogue) {
       const byKey = rates.legs.filter((l) => l.legKey === leg.legKey);
@@ -376,7 +411,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
   });
 
   it("a rate stated under brand-service's OLD spelling ('Form filled', 'Purchase') still counts on the catalogue leg", () => {
-    const rates = buildBrandEffectiveRates({
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: [],
       measurement: EMPTY,
@@ -396,7 +431,7 @@ describe("every leg between two steps of the PUBLIC catalogue joins the served l
   });
 
   it("the legs stay unique: one entry per leg however many spellings resolve to it", () => {
-    const rates = buildBrandEffectiveRates({ brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
+    const rates = buildBrandEffectiveRates({ meetingReporting: "reports", brandId: "b0", funnelKeys: [], measurement: EMPTY, manual: [] });
     const keys = rates.legs.map((l) => l.legKey);
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -440,7 +475,7 @@ describe("a leg is measured WHERE ITS DATA LIVES — the client's CRM, or our le
     ],
   });
   const build = (crm: ReturnType<typeof crmMeasurementOf> | undefined) =>
-    buildBrandEffectiveRates({
+    buildBrandEffectiveRates({ meetingReporting: "reports",
       brandId: "b1",
       funnelKeys: ["sales_meetings_from_conversation"],
       measurement: { ...DOC_DINNERS, ...(crm ? { crm } : {}) },

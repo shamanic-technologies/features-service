@@ -155,6 +155,7 @@ const beforeAfter: MeetingBookingBeforeAfter = {
   brands: [],
   fleet: {
     brandCount: 2,
+    population: { rule: "brands_reporting_meetings", brandsCounted: 2, brandsLeftOut: 3 },
     before: { positiveReplyPeople: 40, bookedPeople: 6, ratePct: 15, bookedBy: { aiMeetingBooking: 0, yourTeamMeetingBooking: 6, other: 0, unknown: 0 }, sameHorizon: { days: 30, positiveReplyPeople: 28, bookedPeople: 4, ratePct: 14.29 } },
     after: { positiveReplyPeople: 20, bookedPeople: 3, ratePct: 15, bookedBy: { aiMeetingBooking: 3, yourTeamMeetingBooking: 0, other: 0, unknown: 0 }, sameHorizon: { days: 30, positiveReplyPeople: 10, bookedPeople: 2, ratePct: 20 } },
     changePctPoints: null,

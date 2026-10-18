@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { meetingBookedPrice, pickLegPrice, websiteVisitPrice } from "./outcome-prices.js";
 import { buildMeetingLegFleet, isInternalPipe, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
+import { meetingReportingFrom } from "./meeting-population.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 
 const REPLY = "start_to_conversation";
@@ -138,6 +139,7 @@ describe("buildMeetingLegFleet", () => {
         ["b1", { actedByCampaign: new Map([["c1", new Set(["l1", "l2"])], ["c2", new Set(["l2", "l3"])]]), meetingLeadIds: new Set(["l2"]) }],
         ["b2", { actedByCampaign: new Map([["c3", new Set(["x"])]]), meetingLeadIds: new Set(["x"]) }],
       ]),
+      reporting: null,
     });
     expect(fleet.unattributableCampaignIds).toEqual(["c3"]);
     const rhodium = new Map(fleet.byDynasty).get("rhodium")!;
@@ -146,6 +148,30 @@ describe("buildMeetingLegFleet", () => {
     expect(rhodium.mature).toEqual(rhodium.flash);
     expect(rhodium.isMature).toBe(false);
     expect(new Map(fleet.byDynasty).has("osmium")).toBe(false);
+    expect(fleet.population).toBeNull();
+  });
+
+  it("MEETING-POPULATION-1018: a brand that reports no meeting is left out of the fleet figures (spend and people), kept on its own campaigns", () => {
+    const fleet = buildMeetingLegFleet({
+      campaigns: [
+        { campaignId: "c1", orgId: "o1", brandId: "reports" },
+        { campaignId: "c2", orgId: "o2", brandId: "silent" },
+      ],
+      workflows,
+      costGroups: [cost("c1", "rhodium", 400), cost("c2", "rhodium", 600)],
+      pairs: new Map([
+        ["reports", { actedByCampaign: new Map([["c1", new Set(["l1", "l2", "l3", "l4"])]]), meetingLeadIds: new Set(["l1"]) }],
+        ["silent", { actedByCampaign: new Map([["c2", new Set(["s1", "s2", "s3", "s4", "s5", "s6"])]]), meetingLeadIds: new Set() }],
+      ]),
+      reporting: meetingReportingFrom(["reports"]),
+    });
+    // Before: $10 over 10 people, 1 meeting = $10 a meeting at 10%. Measured on the reporting brand: $4, 4 people, 25%.
+    expect(new Map(fleet.byDynasty).get("rhodium")!.flash).toEqual({ spentUsd: 4, contacted: 4, outcomes: 1, costPerOutcomeUsd: 4, conversionRatePct: 25 });
+    expect(fleet.population).toEqual({ rule: "brands_reporting_meetings", brandsCounted: 1, brandsLeftOut: 1 });
+    expect(fleet.perCampaign.map((c) => [c.campaignId, c.inFleetPopulation, c.acted.length])).toEqual([
+      ["c1", true, 4],
+      ["c2", false, 6],
+    ]);
   });
 });
 
@@ -164,6 +190,7 @@ describe("one measure rule for every pipe (owner 2026-10-10: no special case)", 
       costGroups: [{ dimensions: { campaignId: "c1", workflowSlug: "orbit" }, totalCostInUsdCents: "200", runCount: 1, minStartedAt: null, maxStartedAt: null }],
       pairs: new Map([["b1", { actedByCampaign: new Map([["c1", new Set(["a", "b"])]]), meetingLeadIds: new Set(["a", "b"]) }]]),
       legKey: "conversation_to_booking_call",
+      reporting: null,
     });
     expect(fleet.legKey).toBe("conversation_to_booking_call");
     const orbit = new Map(fleet.byDynasty).get("orbit")!;

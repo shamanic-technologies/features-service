@@ -166,3 +166,13 @@ vi.mock("./lib/relationship-intent.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/relationship-intent.js")>()),
   fetchBrandIntent: vi.fn(async () => []),
 }));
+
+/**
+ * Suite-wide default: EVERY brand reports its meetings (lib/meeting-population.ts, MEETING-POPULATION-1018), so a suite
+ * keeps the meeting figures its fixture states. Suites about the population rule pass their own reporting set.
+ */
+vi.mock("./lib/meeting-reporting-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/meeting-reporting-client.js")>()),
+  getMeetingReporting: vi.fn(async () => ({ reports: () => true, reportingBrandIds: [] })),
+  rememberMeetingReporting: vi.fn(),
+}));
