@@ -66384,6 +66384,100 @@
                                 "no_writing_step"
                               ]
                             },
+                            "wroteWith": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "model": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ],
+                                  "description": "The real model behind its figures: what most of its people's sequences were written with, else the model its newest writing version's DAG names (resolved by chat-service)."
+                                },
+                                "modelSource": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "sequences",
+                                    "workflow_definition"
+                                  ]
+                                },
+                                "template": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "linked": {
+                                      "type": "boolean",
+                                      "description": "The referenced page exists in this pipe."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "linked"
+                                  ],
+                                  "description": "The template behind its figures: what most of its people's sequences were written with, else its newest writing version's DAG template."
+                                },
+                                "templateSource": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "sequences",
+                                    "workflow_definition"
+                                  ]
+                                },
+                                "version": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The DAG version a part was read off (`v5`); null when every part comes from the sequences."
+                                },
+                                "modelAlias": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The alias that DAG names (`pro`), when the model part was read off it."
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "modelSource",
+                                "template",
+                                "templateSource",
+                                "version",
+                                "modelAlias"
+                              ],
+                              "description": "What wrote its figures, on EVERY row, deprecated workflows included (a deprecated workflow has no `writesWithNow`). Each part links to its own page."
+                            },
+                            "wroteWithUnavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "workflow_definitions_unreadable",
+                                "no_writing_step",
+                                "no_workflow_definition"
+                              ]
+                            },
                             "rank": {
                               "type": "integer",
                               "nullable": true,
@@ -66586,6 +66680,8 @@
                             "wroteWithMost",
                             "writesWithNow",
                             "writesWithNowUnavailableReason",
+                            "wroteWith",
+                            "wroteWithUnavailableReason",
                             "rank",
                             "emails",
                             "emailsNoun",

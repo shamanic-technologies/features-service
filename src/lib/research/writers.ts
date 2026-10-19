@@ -42,6 +42,36 @@ export function resolveModelAlias(alias: string, models: readonly ModelIdRow[]):
   return hit ? { id: hit.modelId, label: hit.displayName } : null;
 }
 
+/**
+ * PURE. Per dynasty, what its NEWEST version that writes (any status, deprecated included) writes with
+ * (RESEARCH-DEPRECATED-LLM-TEMPLATE-1019): the stand-in for "what wrote its figures" when no generated sequence of it
+ * was recorded. Never what it writes with now (a deprecated dynasty writes nothing now).
+ */
+export function dynastyLastWriters(definitions: readonly WorkflowDefinition[], models: readonly ModelIdRow[]): Map<string, DynastyWriter> {
+  const byDynasty = new Map<string, WorkflowDefinition[]>();
+  for (const d of definitions) byDynasty.set(d.workflowDynastySlug, [...(byDynasty.get(d.workflowDynastySlug) ?? []), d]);
+  const out = new Map<string, DynastyWriter>();
+  for (const [dynasty, defs] of byDynasty) {
+    const writing = defs
+      .map((d) => ({ d, w: writerOfDag(d.dag) }))
+      .filter((x): x is { d: WorkflowDefinition; w: { template: string; modelAlias: string | null } } => x.w !== null)
+      .sort((a, b) => b.d.version - a.d.version)[0];
+    if (!writing) {
+      out.set(dynasty, { ok: false, reason: "no_writing_step" });
+      continue;
+    }
+    out.set(dynasty, {
+      ok: true,
+      workflowSlug: writing.d.workflowSlug,
+      version: writing.d.version,
+      template: writing.w.template,
+      modelAlias: writing.w.modelAlias,
+      model: writing.w.modelAlias ? resolveModelAlias(writing.w.modelAlias, models) : null,
+    });
+  }
+  return out;
+}
+
 /** PURE. Per dynasty, what its runnable version (the highest active version) writes with. */
 export function dynastyWriters(definitions: readonly WorkflowDefinition[], models: readonly ModelIdRow[]): Map<string, DynastyWriter> {
   const byDynasty = new Map<string, WorkflowDefinition[]>();
