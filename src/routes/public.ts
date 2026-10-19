@@ -3924,7 +3924,14 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
       SHOWCASE_BRAND_CONCURRENCY,
       async (brandId): Promise<WalkedShowcaseBrand> => {
         try {
-          return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          try {
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          } catch (first) {
+            // One retry: runs-service statement timeouts are transient under load (prod 2026-10-19,
+            // Doc Dinners' 162 meetings left the hero row on one 500 per refresh).
+            console.warn(`[features-service] showcase funnel read failed for brand ${brandId}, retrying once:`, first);
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          }
         } catch (error) {
           console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
           const info = brandInfo.get(brandId);
