@@ -15,6 +15,8 @@ import {
   bestMeetingPipePick,
   computeFleetIndexPoints,
   fleetIndexBySlug,
+  type BrandEngagement,
+  type ClientReturnInput,
   type FleetIndexDefinition,
   type MeetingPipeEvidence,
 } from "../lib/fleet-indexes.js";
@@ -23,7 +25,7 @@ import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG
 import { meetingResearchPoints } from "../lib/research/pipe-series.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
-import { readLegWorkflowRanking } from "./public.js";
+import { readFleetReturnOnSpend, readLegWorkflowRanking, readPublicRanked } from "./public.js";
 
 const router = Router();
 
@@ -102,6 +104,45 @@ router.get("/public/indexes/:slug", async (req, res) => {
 
 const RANKING_WAIT_MS = 10 * 60_000;
 
+// The landing hero reads `/public/stats/ranked` with these exact parameters: asking the same cache cell keeps the index
+// and the hero on one compute (INDEX-ENGAGED-ROI-1019).
+const RANKED_OBJECTIVE = "emailsSent";
+const RANKED_LIMIT = 200;
+// The owner's bar for the ROI median (« la médiane des clients ayant dépensé au moins $100 »), the landing's too.
+const CLIENT_RETURN_MIN_SPEND_USD = 100;
+
+function statOf(stats: Record<string, number | null>, key: string): number {
+  const v = stats[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** Every client brand's cold email spend and engaged leads; null (logged) when unreadable. */
+async function readBrandEngagement(): Promise<BrandEngagement[] | null> {
+  try {
+    const ranked = await readPublicRanked(SCEO_FEATURE_SLUG, RANKED_OBJECTIVE, "brand", RANKED_LIMIT);
+    return ranked.results.map((r) => ({
+      positiveReplies: statOf(r.stats, "recipientsRepliesPositive"),
+      clicks: statOf(r.stats, "recipientsClicked"),
+      spendCents: statOf(r.stats, "totalCostInUsdCents"),
+    }));
+  } catch (error) {
+    console.error("[features-service] fleet indexes: per-brand engagement unreadable:", error);
+    return null;
+  }
+}
+
+/** The fleet return median; null (logged) when unreadable or not computed yet (no point beats a false "not measured"). */
+async function readClientReturn(): Promise<ClientReturnInput | null> {
+  try {
+    const r = await readFleetReturnOnSpend(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD);
+    if (!r.measured && (r.reason === "no_snapshot_yet" || r.reason === "maturity_not_recorded_yet")) return null;
+    return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd: r.minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar };
+  } catch (error) {
+    console.error("[features-service] fleet indexes: client return unreadable:", error);
+    return null;
+  }
+}
+
 function computationLegKey(servedLeg: string): string {
   const leg = matchChannelLegKey(SCEO_FEATURE_SLUG, servedLeg);
   if (!leg) throw new Error(`[features-service] fleet indexes: leg ${servedLeg} is not a leg of ${SCEO_FEATURE_SLUG}`);
@@ -114,7 +155,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   // outbound spelling, maturity read the leg as unknown (0 days, no cutoff) and no workflow was mature (2026-10-18).
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
   const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
-  const [visit, reply, mbRanking, mbFleet] = await Promise.all([
+  const [visit, reply, mbRanking, mbFleet, brandEngagement, clientReturn] = await Promise.all([
     readLegWorkflowRanking(SCEO_FEATURE_SLUG, visitLeg, RANKING_WAIT_MS),
     readLegWorkflowRanking(SCEO_FEATURE_SLUG, replyLeg, RANKING_WAIT_MS),
     // The meeting chain's second pipe: Positive reply -> Meeting booked (AI Meeting Booking), its own workflows.
@@ -123,6 +164,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
       console.error("[features-service] fleet indexes: meeting pipe fleet unreadable:", error);
       return null;
     }),
+    readBrandEngagement(),
+    readClientReturn(),
   ]);
   if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
   if (!reply) console.warn("[features-service] fleet indexes: positive-reply ranking unreadable, its indexes not recorded this tick");
@@ -132,6 +175,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
     websiteVisitRows: visit?.computedAt ? visit.rows : null,
     positiveReplyRows: reply?.computedAt ? reply.rows : null,
     meetingPipe,
+    brandEngagement,
+    clientReturn,
   });
   // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
   if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));
