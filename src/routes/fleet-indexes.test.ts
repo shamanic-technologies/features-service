@@ -47,23 +47,23 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("GET /public/indexes", () => {
   it("lists every index with its latest value; one never recorded reads not_recorded_yet, never 0", async () => {
-    store.readLatestFleetIndexPoints.mockResolvedValue([pointRow("sceo-cost-per-click", "2026-10-18", 4.35)]);
+    store.readLatestFleetIndexPoints.mockResolvedValue([pointRow("cold-email-cost-per-click", "2026-10-18", 4.35)]);
     const res = await request(app).get("/public/indexes");
     expect(res.status).toBe(200);
     expect(res.body.statusRule).toEqual({ signalMinOutcomes: 10, robustMinOutcomes: 30 });
     const bySlug = new Map(res.body.indexes.map((i: { slug: string }) => [i.slug, i]));
     expect(bySlug.size).toBe(6);
-    expect(bySlug.get("sceo-cost-per-click")).toMatchObject({ value: 4.35, unit: "usd", valuePer: "per website visit", status: "signal", day: "2026-10-18" });
-    expect(bySlug.get("sceo-meeting-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_recorded_yet", day: null });
+    expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 4.35, unit: "usd", valuePer: "per website visit", status: "signal", day: "2026-10-18" });
+    expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_recorded_yet", day: null });
   });
 });
 
 describe("GET /public/indexes/:slug", () => {
   it("serves the series oldest first, the summary on the last day", async () => {
-    store.readFleetIndexSeries.mockResolvedValue([pointRow("sceo-click-rate", "2026-10-18", 2.08), pointRow("sceo-click-rate", "2026-10-19", 2.1)]);
-    const res = await request(app).get("/public/indexes/sceo-click-rate");
+    store.readFleetIndexSeries.mockResolvedValue([pointRow("cold-email-click-rate", "2026-10-18", 2.08), pointRow("cold-email-click-rate", "2026-10-19", 2.1)]);
+    const res = await request(app).get("/public/indexes/cold-email-click-rate");
     expect(res.status).toBe(200);
-    expect(res.body.index).toMatchObject({ slug: "sceo-click-rate", value: 2.1, unit: "percent", day: "2026-10-19" });
+    expect(res.body.index).toMatchObject({ slug: "cold-email-click-rate", value: 2.1, unit: "percent", day: "2026-10-19" });
     expect(res.body.points.map((p: { day: string }) => p.day)).toEqual(["2026-10-18", "2026-10-19"]);
     expect(res.body.points[0]).toMatchObject({ value: 2.08, basis: "recorded", status: "signal" });
   });
@@ -72,6 +72,23 @@ describe("GET /public/indexes/:slug", () => {
     const res = await request(app).get("/public/indexes/nope");
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("index_not_found");
+  });
+
+  it("serves the six SEO slugs with the positive reply names; a retired sceo-* slug is not found (INDEX-SLUGS-SEO-1019)", async () => {
+    store.readLatestFleetIndexPoints.mockResolvedValue([]);
+    const list = await request(app).get("/public/indexes");
+    expect(list.body.indexes.map((i: { slug: string; name: string }) => [i.slug, i.name])).toEqual([
+      ["cold-email-cost-per-click", "Distribute.you Cost Per Click Index"],
+      ["cold-email-click-rate", "Distribute.you Click Rate Index"],
+      ["cold-email-cost-per-positive-reply", "Distribute.you Cost Per Positive Reply Index"],
+      ["cold-email-positive-reply-rate", "Distribute.you Positive Reply Rate Index"],
+      ["cold-email-cost-per-meeting", "Distribute.you Cost Per Meeting Index"],
+      ["cold-email-meeting-rate", "Distribute.you Meeting Rate Index"],
+    ]);
+    expect(JSON.stringify(list.body.indexes)).not.toMatch(/interest/i);
+    const old = await request(app).get("/public/indexes/sceo-cost-per-click");
+    expect(old.status).toBe(404);
+    expect(old.body.error).toBe("index_not_found");
   });
 });
 
@@ -100,7 +117,7 @@ describe("recording", () => {
     expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
-    expect((bySlug.get("sceo-cost-per-meeting") as { value: number }).value).toBeCloseTo(128.8 / 0.25 + 17, 6);
+    expect((bySlug.get("cold-email-cost-per-meeting") as { value: number }).value).toBeCloseTo(128.8 / 0.25 + 17, 6);
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
     // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting
     expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
@@ -113,6 +130,6 @@ describe("recording", () => {
     meeting.getInternalPipeFleet.mockRejectedValue(new Error("lead-service down"));
     await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
-    expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["sceo-cost-per-interest", "sceo-interest-rate"]);
+    expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["cold-email-cost-per-positive-reply", "cold-email-positive-reply-rate"]);
   });
 });

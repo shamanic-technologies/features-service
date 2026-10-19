@@ -55,7 +55,7 @@ const CHANNEL = { channelSlug: SCEO_FEATURE_SLUG, channelName: "Sales Cold Email
 
 export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
   {
-    slug: "sceo-cost-per-click",
+    slug: "cold-email-cost-per-click",
     name: "Distribute.you Cost Per Click Index",
     ...CHANNEL,
     outcome: "website_visit",
@@ -65,7 +65,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     method: "What our best proven cold email workflow spends to bring one person to a client's website, counting only clicks judged human.",
   },
   {
-    slug: "sceo-click-rate",
+    slug: "cold-email-click-rate",
     name: "Distribute.you Click Rate Index",
     ...CHANNEL,
     outcome: "website_visit",
@@ -75,8 +75,8 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     method: "Share of the people emailed by our best proven cold email workflow who visit the client's website.",
   },
   {
-    slug: "sceo-cost-per-interest",
-    name: "Distribute.you Cost Per Interest Index",
+    slug: "cold-email-cost-per-positive-reply",
+    name: "Distribute.you Cost Per Positive Reply Index",
     ...CHANNEL,
     outcome: "positive_reply",
     metric: "cost_per_outcome",
@@ -85,17 +85,17 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     method: "What our best proven cold email workflow spends to get one positive reply.",
   },
   {
-    slug: "sceo-interest-rate",
-    name: "Distribute.you Interest Rate Index",
+    slug: "cold-email-positive-reply-rate",
+    name: "Distribute.you Positive Reply Rate Index",
     ...CHANNEL,
     outcome: "positive_reply",
     metric: "conversion_rate",
     unit: "percent",
     valuePer: "of people emailed",
-    method: "Share of the people emailed by our best proven cold email workflow who reply with interest.",
+    method: "Share of the people emailed by our best proven cold email workflow who reply positively.",
   },
   {
-    slug: "sceo-cost-per-meeting",
+    slug: "cold-email-cost-per-meeting",
     name: "Distribute.you Cost Per Meeting Index",
     ...CHANNEL,
     outcome: "meeting_booked",
@@ -105,14 +105,14 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     method: "What our best cold email workflow spends for one positive reply, divided by the share of positive replies our best AI meeting booking workflow turns into a meeting, plus what that workflow spends per meeting. Measured on the clients who report their booked meetings to us.",
   },
   {
-    slug: "sceo-meeting-rate",
+    slug: "cold-email-meeting-rate",
     name: "Distribute.you Meeting Rate Index",
     ...CHANNEL,
     outcome: "meeting_booked",
     metric: "conversion_rate",
     unit: "percent",
     valuePer: "of people emailed",
-    method: "The Interest Rate Index times the share of positive replies our best AI meeting booking workflow turns into a meeting. Measured on the clients who report their booked meetings to us.",
+    method: "The Positive Reply Rate Index times the share of positive replies our best AI meeting booking workflow turns into a meeting. Measured on the clients who report their booked meetings to us.",
   },
 ];
 
@@ -291,8 +291,8 @@ function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRo
   };
 }
 
-const COST_PER_INTEREST = fleetIndexBySlug("sceo-cost-per-interest")!;
-const INTEREST_RATE = fleetIndexBySlug("sceo-interest-rate")!;
+const COST_PER_INTEREST = fleetIndexBySlug("cold-email-cost-per-positive-reply")!;
+const INTEREST_RATE = fleetIndexBySlug("cold-email-positive-reply-rate")!;
 
 /** PURE. Today's point of every index whose inputs were readable (an unreadable input records nothing). */
 export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoint[] {
