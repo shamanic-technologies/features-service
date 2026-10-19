@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestMeetingPipePick, computeFleetIndexPoints, FLEET_INDEXES, indexStatus, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, FLEET_INDEXES, indexStatus, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 
 function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
@@ -121,15 +121,39 @@ describe("fleet indexes", () => {
 
   it("every index has a unique slug and states its unit", () => {
     expect(new Set(FLEET_INDEXES.map((d) => d.slug)).size).toBe(FLEET_INDEXES.length);
-    for (const d of FLEET_INDEXES) expect(d.unit).toBe(d.metric === "cost_per_outcome" ? "usd" : "percent");
+    const unitOf = { cost_per_outcome: "usd", conversion_rate: "percent", return_on_spend: "multiple" } as const;
+    for (const d of FLEET_INDEXES) expect(d.unit).toBe(unitOf[d.metric]);
   });
 });
 
-describe("public index names (owner 2026-10-18)", () => {
-  it("read \"Distribute.you <metric> Index\" and never carry the internal SCEO prefix", () => {
+describe("public index names (owner 2026-10-19, INDEX-SLUGS-SEO-1019)", () => {
+  it("read \"Cold Email <metric> Index\" on a cold-email-* slug, no Distribute.you, no SCEO, no interest", () => {
     for (const def of FLEET_INDEXES) {
-      expect(def.name).toMatch(/^Distribute\.you .+ Index$/);
-      expect(def.name).not.toContain("SCEO");
+      expect(def.name).toMatch(/^Cold Email .+ Index$/);
+      expect(def.slug).toMatch(/^cold-email-[a-z-]+$/);
+      expect(`${def.name} ${def.method} ${def.valuePer}`).not.toMatch(/SCEO|Distribute\.you|interest/i);
     }
+  });
+});
+
+describe("client indexes (owner 2026-10-19, INDEX-ENGAGED-ROI-1019)", () => {
+  it("the median client's cost per engaged lead counts replies + human clicks over brands with both spend and an engaged lead", () => {
+    const point = engagedLeadPoint([
+      { positiveReplies: 1, humanClicks: 1, spendCents: 2000 }, // $10
+      { positiveReplies: 0, humanClicks: 10, spendCents: 3000 }, // $3
+      { positiveReplies: 5, humanClicks: 0, spendCents: 10000 }, // $20
+      { positiveReplies: 0, humanClicks: 0, spendCents: 9000 }, // no engaged lead: out
+      { positiveReplies: 3, humanClicks: 0, spendCents: 0 }, // no spend: out
+    ]);
+    expect(point).toMatchObject({ indexSlug: "cold-email-cost-per-engaged-lead", value: 10, outcomes: 3, status: "noise", inputs: { clients: 3, engagedLeads: 17 } });
+  });
+
+  it("one client is not a fleet: null not_enough_clients, never that client's own price", () => {
+    expect(engagedLeadPoint([{ positiveReplies: 1, humanClicks: 0, spendCents: 500 }])).toMatchObject({ value: null, unavailableReason: "not_enough_clients" });
+  });
+
+  it("the ROI index is the served median; status counts the clients behind it", () => {
+    expect(clientReturnPoint({ measured: true, reason: null, brandCount: 31, minSpendUsd: 100, medianReturnPerDollar: 4.1 })).toMatchObject({ value: 4.1, status: "robust", outcomes: 31 });
+    expect(clientReturnPoint({ measured: false, reason: "not_enough_brands", brandCount: 4, minSpendUsd: 100, medianReturnPerDollar: null })).toMatchObject({ value: null, unavailableReason: "not_enough_brands" });
   });
 });

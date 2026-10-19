@@ -33,6 +33,8 @@ export interface Tactic {
   /** Who last edited the description, and when; null = never edited. */
   updatedBy?: string | null;
   updatedAt?: string | null;
+  /** The plain line a client reads (never the judged description); null = not shown to clients. */
+  clientLine?: string | null;
 }
 
 export interface Strategy {

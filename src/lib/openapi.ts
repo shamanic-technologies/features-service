@@ -2566,6 +2566,51 @@ registry.registerPath({
   },
 });
 
+const writtenByEntrySchema = z.object({
+  campaignId: z.string().describe("The campaign the writer record belongs to: a sent message shows the entry of its own campaign written at or before it."),
+  writtenAt: z.string().describe("When the message (a generated sequence: every email of it) was written."),
+  model: z
+    .object({
+      name: z.string().describe("The LLM's public name, e.g. \"Claude Opus 5.5\" (chat-service's served name)."),
+      vendor: z.object({ id: z.string().describe("Vendor id (`anthropic`, `google`, `openai`...): the dashboard keys the vendor logo on it."), name: z.string().describe("Vendor name, e.g. \"Anthropic\".") }),
+    })
+    .nullable()
+    .describe("The concrete model that wrote it (content-generation-service's record). Null with modelUnavailableReason."),
+  modelUnavailableReason: z.enum(["model_names_unreadable", "model_not_served"]).nullable(),
+  tactics: z.array(z.object({ line: z.string().describe("A plain line, e.g. \"Brand not named in the first email\".") })).describe("The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."),
+  tacticsUnavailableReason: z.enum(["no_workflow_recorded", "not_judged_yet"]).nullable(),
+  underTest: z.boolean().nullable().describe("True while the workflow that wrote it is still being tested (learning: not mature on any pipe it runs on); the dashboard marks its tactics as being tested. Null with underTestUnavailableReason."),
+  underTestUnavailableReason: z.enum(["no_workflow_recorded", "not_judged_yet", "ranking_unreadable", "not_ranked_on_any_pipe"]).nullable(),
+});
+const writtenByResponseRef = registry.register(
+  "WrittenByResponse",
+  z.object({
+    leadId: z.string(),
+    campaignId: z.string().nullable().describe("The campaign filter echoed (null = every campaign of the org)."),
+    entries: z.array(writtenByEntrySchema).describe("One per writer record of this person on the org's campaigns, newest first. Empty = nothing written for this person yet (a message is on record ~3 minutes after it is written), or a person of another org."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/orgs/leads/{leadId}/written-by",
+  summary: "Who wrote the messages we sent to one person, and how",
+  description:
+    "Owner 2026-10-19 (WRITTEN-BY-1019): a client may see, on every message we sent on their behalf, the LLM that wrote it (public name + vendor) and the plain lines of the tactics of the workflow version that wrote it, marked as being tested while that workflow is still learning. Never a workflow name or id, never a cost. " +
+    "Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ leadId: z.string().describe("lead-service lead id (the person page's id).") }),
+    query: z.object({ campaignId: z.string().optional().describe("Only this campaign's writer records.") }),
+  },
+  responses: {
+    200: { description: "The person's writer records", content: { "application/json": { schema: writtenByResponseRef } } },
+    400: { description: "`lead_id_unrecognised` / `campaign_id_unrecognised`.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Writer records unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const investedMoneySchema = z.object({
   billedUsd: z.number().describe("Committed (actual) cost at list price, before the org's usage discount, USD."),
   netUsd: z.number().describe("What the org pays for those rows: runs-service's frozen net (after the org's usage discount), USD."),
@@ -5367,22 +5412,22 @@ const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
     slug: z.string().describe("Stable index id, e.g. `cold-email-cost-per-click`."),
-    name: z.string().describe("Display name, e.g. `Distribute.you Cost Per Click Index`."),
+    name: z.string().describe("Display name, e.g. `Cold Email Cost Per Click Index`."),
     channelSlug: z.string(),
     channelName: z.string(),
-    outcome: z.enum(["website_visit", "positive_reply", "meeting_booked"]),
-    metric: z.enum(["cost_per_outcome", "conversion_rate"]),
-    unit: z.enum(["usd", "percent"]).describe("`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."),
+    outcome: z.enum(["website_visit", "positive_reply", "meeting_booked", "engaged_lead", "revenue"]).describe("`engaged_lead`: a positive reply or a website visit. `revenue`: the ROI index."),
+    metric: z.enum(["cost_per_outcome", "conversion_rate", "return_on_spend"]),
+    unit: z.enum(["usd", "percent", "multiple"]).describe("`usd`: dollars per outcome. `percent`: 0..100, share of people emailed. `multiple`: dollars back per dollar spent (3.6 reads 3.6x)."),
     valuePer: z.string().describe("What one unit of the value is, in words (`per website visit`, `of people emailed`)."),
     method: z.string().describe("How the value is computed, one plain sentence."),
     day: z.string().nullable().describe("UTC day of the latest recorded point; null before the first recording."),
     value: z.number().nullable().describe("The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
     status: fleetIndexStatusSchema,
-    outcomes: z.number().int().describe("Outcomes behind the value (website visits, positive replies, or meetings booked)."),
+    outcomes: z.number().int().describe("Outcomes behind the value (website visits, positive replies, or meetings booked). On the two client-median indexes (`cold-email-cost-per-engaged-lead`, `cold-email-roi`): the CLIENTS behind the median, and `status` counts them."),
     contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
     workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
     workflowDynastyName: z.string().nullable(),
-    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`."),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent)."),
     recordedAt: z.string().nullable(),
   }),
 );
@@ -7387,6 +7432,7 @@ const catalogueTacticRow = z.object({
   id: z.string(),
   name: z.string().describe("Unique (case-insensitive)."),
   description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
+  clientLine: z.string().nullable().describe("The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."),
   workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
   workflowsFollowing: z.number().int().describe("Of them, those judged to follow it."),
   judging: z
@@ -7524,7 +7570,7 @@ catalogueCreate(
   "/internal/catalogue/tactics",
   "Declare a tactic (internal, api-key)",
   "A yes/no tag on workflow versions. Its `description` is what Jev judges every version against (precise: what the workflow DOES, not what it is called). Name and description unique (409 `tactic_name_taken` / `tactic_description_taken`); id = the name slugged. Jev judges every assigned workflow version on it within minutes.",
-  z.object({ name: z.string(), description: z.string(), createdBy: z.string() }),
+  z.object({ name: z.string(), description: z.string(), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."), createdBy: z.string() }),
   catalogueTacticRow,
 );
 catalogueCreate(
@@ -7550,7 +7596,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A tactic id") }),
-    body: { content: { "application/json": { schema: z.object({ description: z.string().describe("<= 500 characters; what the workflow DOES."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
   },
   responses: {
     200: {
