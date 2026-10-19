@@ -17,7 +17,7 @@ import { servedLegKeyOf } from "./funnel-legs.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
 import { selectCostCentsString } from "./pricing.js";
-import { fetchPublicWorkflows } from "./public-stats-clients.js";
+import { executableDynasties, fetchPublicWorkflows } from "./public-stats-clients.js";
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import { indexTimelines } from "./serving-row-credit.js";
 import { fetchServingRowJourneys } from "./serving-row-journeys.js";
@@ -123,7 +123,11 @@ export async function readAssignmentChanges(featureSlug: string, legKeys: readon
   }));
 }
 
-export async function readWorkflowVersions(featureSlug: string): Promise<WorkflowVersion[]> {
+/** Every version of the channel's workflows, and the dynasties workflow-service can run today. */
+export async function readWorkflowVersions(featureSlug: string): Promise<{ versions: WorkflowVersion[]; runnableToday: Set<string> }> {
   const workflows = await fetchPublicWorkflows(featureSlug, "all");
-  return workflows.map((w) => ({ workflowSlug: w.workflowSlug, workflowDynastySlug: w.workflowDynastySlug, workflowDynastyName: w.workflowDynastyName ?? null }));
+  return {
+    versions: workflows.map((w) => ({ workflowSlug: w.workflowSlug, workflowDynastySlug: w.workflowDynastySlug, workflowDynastyName: w.workflowDynastyName ?? null })),
+    runnableToday: executableDynasties(workflows),
+  };
 }
