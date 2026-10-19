@@ -7363,8 +7363,8 @@ const catalogueTriggerRow = z.object({
   fromStep: z.string().nullable().describe("The step a lead stands at when it fires; null when it is not a step (`on_demand`). NOT where a reactive pipe on it starts: a pipe on a trigger standing at Lead found starts at Start (`fromStep: null`, `start_to_<step>`); or head a sales funnel with the trigger over the pipes leaving this step (`POST /internal/catalogue/sales-funnels` `triggerId`)."),
   fromStepName: z.string().nullable(),
   firedBy: z.string().describe("The service that detects the event."),
-  coded: z.boolean().describe("A service fires it today."),
-  kind: z.string().describe("`event`, `delay` or `poll`."),
+  coded: z.boolean().describe("A service fires it today: the same verdict that lets a reactive pipe name it (POST /internal/catalogue/pipes, else 409 `trigger_not_fired`). A declared `reported`, `delay` or `poll` trigger is coded (campaign-service fires every trigger of those kinds); a declared `event` is not."),
+  kind: z.string().describe("`event`, `delay`, `poll`, `reported`, `github_issue_in_prod` or `any_of`."),
   origin: z.enum(["code", "declared"]),
   pipeCount: z.number().int().describe("Reactive pipes that name this trigger."),
 });

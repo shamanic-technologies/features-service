@@ -59529,11 +59529,11 @@
                           },
                           "coded": {
                             "type": "boolean",
-                            "description": "A service fires it today."
+                            "description": "A service fires it today: the same verdict that lets a reactive pipe name it (POST /internal/catalogue/pipes, else 409 `trigger_not_fired`). A declared `reported`, `delay` or `poll` trigger is coded (campaign-service fires every trigger of those kinds); a declared `event` is not."
                           },
                           "kind": {
                             "type": "string",
-                            "description": "`event`, `delay` or `poll`."
+                            "description": "`event`, `delay`, `poll`, `reported`, `github_issue_in_prod` or `any_of`."
                           },
                           "origin": {
                             "type": "string",
@@ -59697,11 +59697,11 @@
                     },
                     "coded": {
                       "type": "boolean",
-                      "description": "A service fires it today."
+                      "description": "A service fires it today: the same verdict that lets a reactive pipe name it (POST /internal/catalogue/pipes, else 409 `trigger_not_fired`). A declared `reported`, `delay` or `poll` trigger is coded (campaign-service fires every trigger of those kinds); a declared `event` is not."
                     },
                     "kind": {
                       "type": "string",
-                      "description": "`event`, `delay` or `poll`."
+                      "description": "`event`, `delay`, `poll`, `reported`, `github_issue_in_prod` or `any_of`."
                     },
                     "origin": {
                       "type": "string",
