@@ -138,6 +138,11 @@ export function chartPersonsOf(
   persons: readonly EnginePerson[],
   personCampaignIds: ReadonlySet<string>,
   handed: ReadonlyMap<string, { claimedAt: string | null; actedAt: string | null; acted: boolean }>,
+  /**
+   * The scope's first day (its first spend): a date before it belongs to another campaign that worked the same person
+   * (a prospect re-contacted today was first emailed, and may have replied, months ago). Null = no such cut.
+   */
+  scopeStart: string | null = null,
 ): ChartPerson[] | null {
   // `persons` is the scope's own read (`readScopePeople`): everybody it served, once.
   const served = persons.filter((p) => p.campaignId != null && personCampaignIds.has(p.campaignId));
@@ -152,11 +157,12 @@ export function chartPersonsOf(
 
   if (isEntryLeg(leg)) {
     return served.map((p) => {
-      // The cohort day is the SERVE (the run that took the person for this scope, the maturity clock of
-      // `lib/maturity.ts`), else the first send: a prospect re-contacted today was first emailed months ago by another
-      // campaign, and its old date would file it in a cohort this scope never ran.
-      const enteredOn = dayOf(p.servedAt ?? null) ?? dayOf(p.signalDates?.contacted ?? p.signalDates?.sent ?? null);
-      return { entered: Boolean(p.signals.contacted), enteredOn, ...afterEntry(enteredOn, reached(p), reachedOn(p)) };
+      // The cohort day is the first send; one from before the scope existed is another campaign's (a prospect
+      // re-contacted today was first emailed months ago): then the scope's own SERVE (the maturity clock of
+      // `lib/maturity.ts`; `servedAt` is the LATEST serve, so it is never preferred over a send of this scope).
+      const sent = dayOf(p.signalDates?.contacted ?? p.signalDates?.sent ?? null);
+      const enteredOn = sent !== null && (scopeStart === null || sent >= scopeStart) ? sent : (dayOf(p.servedAt ?? null) ?? sent);
+      return { entered: Boolean(p.signals.contacted), enteredOn, ...ofScope(scopeStart, reached(p), reachedOn(p)) };
     });
   }
   const fromSignal = SIGNAL_OF_STEP[leg.fromStep!];
@@ -168,21 +174,21 @@ export function chartPersonsOf(
     out.set(leadId, {
       entered: true,
       enteredOn,
-      ...(actIsOutcome ? { converted: h.acted, convertedOn: dayOf(h.actedAt) } : afterEntry(enteredOn, p ? reached(p) : false, p ? reachedOn(p) : null)),
+      ...(actIsOutcome ? { converted: h.acted, convertedOn: dayOf(h.actedAt) } : ofScope(scopeStart, p ? reached(p) : false, p ? reachedOn(p) : null)),
     });
   }
   for (const p of served) {
     if (out.has(p.leadId) || !fromSignal || !p.signals[fromSignal]) continue;
     const enteredOn = dayOf(p.signalDates?.[fromSignal] ?? null);
-    out.set(p.leadId, { entered: true, enteredOn, ...afterEntry(enteredOn, reached(p), reachedOn(p)) });
+    out.set(p.leadId, { entered: true, enteredOn, ...ofScope(scopeStart, reached(p), reachedOn(p)) });
   }
   return [...out.values()];
 }
 
-/** An outcome counts for the scope only when it came on or after the person entered it (an undated one is given the benefit of the doubt). */
-function afterEntry(enteredOn: string | null, converted: boolean, convertedOn: string | null): { converted: boolean; convertedOn: string | null } {
+/** An outcome counts for the scope only when it came on or after the scope's first day (an undated one is given the benefit of the doubt). */
+function ofScope(scopeStart: string | null, converted: boolean, convertedOn: string | null): { converted: boolean; convertedOn: string | null } {
   if (!converted) return { converted: false, convertedOn: null };
-  if (enteredOn !== null && convertedOn !== null && convertedOn < enteredOn) return { converted: false, convertedOn: null };
+  if (scopeStart !== null && convertedOn !== null && convertedOn < scopeStart) return { converted: false, convertedOn: null };
   return { converted: true, convertedOn };
 }
 
@@ -281,7 +287,8 @@ export async function computeSpendChart(args: {
   }
 
   const persons = leg ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : [];
-  const chartPersons = leg ? chartPersonsOf(leg, persons, new Set(scope.personCampaignIds), handed) : null;
+  const spendDays = [...spend.byDay.keys()].sort();
+  const chartPersons = leg ? chartPersonsOf(leg, persons, new Set(scope.personCampaignIds), handed, spendDays[0] ?? null) : null;
   const maturity = leg ? legMaturity(storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey))) : null;
   const daily = buildSpendChartDays({
     spendByDay: spend.byDay,
