@@ -649,7 +649,8 @@ export const workflowTacticVerdicts = pgTable(
  * PUBLIC FLEET INDEX POINTS (`fleet_index_points`, owner 2026-10-18; `lib/fleet-indexes.ts`): one row per (index,
  * UTC day) = that index's value as recorded that day. TODAY's row is rewritten by every recorder tick (the day is
  * still open); a past day is never touched again, so the series is what we published, day after day.
- * `basis` = `recorded` (written live that day); a later backfill would write `recomputed`, never mixed silently.
+ * `basis` = `recorded` (written live that day) or `recomputed` (a day before the recorder, rebuilt as of that day by
+ * `scripts/backfill-fleet-indexes.ts`, never written over a recorded day).
  */
 export const fleetIndexPoints = pgTable(
   "fleet_index_points",
