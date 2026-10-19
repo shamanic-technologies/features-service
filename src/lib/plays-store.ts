@@ -3,7 +3,7 @@
  * through `loadPlayCatalogue`: the four tables are small, read together and shared 30 s in-process (the leg ladder
  * reads them on every campaign tick); every write clears that copy.
  */
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts } from "../db/schema.js";
 import { DeclarationError } from "./channel-declarations.js";
@@ -50,6 +50,7 @@ const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
   createdAt: r.createdAt.toISOString(),
   updatedBy: r.updatedBy,
   updatedAt: r.updatedAt?.toISOString() ?? null,
+  clientLine: r.clientLine,
 });
 const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   id: r.id,
@@ -122,11 +123,11 @@ function assertUnique(existing: ReadonlyArray<{ id: string; name: string; descri
   if (sameDescription) throw new DeclarationError(409, `${family}_description_taken`, `the ${family} ${sameDescription.id} already has this description`);
 }
 
-export async function insertTactic(input: { name: string; description: string; createdBy: string }): Promise<Tactic> {
+export async function insertTactic(input: { name: string; description: string; createdBy: string; clientLine?: string | null }): Promise<Tactic> {
   const id = idOfName(input.name);
   if (!id) throw new DeclarationError(400, "name_invalid", "name must hold at least one letter or digit");
   assertUnique((await loadPlayCatalogueFresh()).tactics, id, input.name, input.description, "tactic");
-  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy }).returning();
+  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy, clientLine: input.clientLine ?? null }).returning();
   invalidatePlayCatalogue();
   return tacticOf(row);
 }
@@ -151,6 +152,30 @@ export async function updateTacticDescription(input: { id: string; description: 
     .returning();
   invalidatePlayCatalogue();
   return { tactic: tacticOf(row), changed: true, previousDescription: current.description };
+}
+
+/**
+ * Set the line a client reads about a tactic (WRITTEN-BY-1019). Client copy only: no verdict moves, nothing is re-judged.
+ * `changed:false` when the line is the stored one.
+ */
+export async function updateTacticClientLine(input: { id: string; clientLine: string; updatedBy: string }): Promise<{ tactic: Tactic; changed: boolean }> {
+  const current = (await loadPlayCatalogueFresh()).tactics.find((t) => t.id === input.id);
+  if (!current) throw new DeclarationError(404, "tactic_not_found", `no tactic ${input.id} (GET /internal/catalogue/tactics)`);
+  if (current.clientLine === input.clientLine) return { tactic: current, changed: false };
+  const [row] = await db
+    .update(tactics)
+    .set({ clientLine: input.clientLine, updatedBy: input.updatedBy, updatedAt: new Date() })
+    .where(sql`${tactics.id} = ${input.id}`)
+    .returning();
+  invalidatePlayCatalogue();
+  return { tactic: tacticOf(row), changed: true };
+}
+
+/** Every stored verdict on these workflow VERSIONS (the client's "who wrote this" read). */
+export async function listVerdictsOfVersions(workflowSlugs: readonly string[]): Promise<StoredVerdict[]> {
+  if (workflowSlugs.length === 0) return [];
+  const rows = await db.select().from(workflowTacticVerdicts).where(inArray(workflowTacticVerdicts.workflowSlug, [...workflowSlugs]));
+  return rows.map(verdictOf);
 }
 
 /**

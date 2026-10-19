@@ -575,6 +575,11 @@ export const tactics = pgTable("tactics", {
   /** Who last edited the description, and when (migration 0030); null = never edited. */
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
+  /**
+   * The plain line a CLIENT reads about this tactic (migration 0041, WRITTEN-BY-1019): `description` is what Jev judges
+   * (service paths, field names), never client copy. Null = the tactic is not shown to clients.
+   */
+  clientLine: text("client_line"),
 });
 
 export const strategies = pgTable("strategies", {
@@ -729,5 +734,9 @@ export const generationSequenceCopy = pgTable(
     dash: text("dash"),
     copiedAt: timestamp("copied_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("idx_generation_sequence_copy_campaign_lead").on(t.campaignId, t.leadId)],
+  (t) => [
+    index("idx_generation_sequence_copy_campaign_lead").on(t.campaignId, t.leadId),
+    // One person's messages, org-scoped (the client's "who wrote this" read, migration 0041).
+    index("idx_generation_sequence_copy_org_lead").on(t.orgId, t.leadId),
+  ],
 );

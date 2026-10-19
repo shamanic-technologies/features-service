@@ -32,7 +32,8 @@ import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
-import { dynastyWriters, type DynastyWriter, type ModelIdRow, type WriterReason } from "../lib/research/writers.js";
+import { dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
+import { readModelIds } from "../lib/model-ids-client.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { pipeCatalog, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
@@ -227,15 +228,6 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<C
     names: new Map(ev.workflows.filter((w) => w.workflowDynastyName).map((w) => [w.workflowDynastySlug, w.workflowDynastyName])),
     split: { screened, signal: rule.outcomeSignal === "positiveReply" ? "positiveReply" : rule.outcomeSignal === "clicked" ? "clicked" : "other", cutoffDay: ev.cutoffIso ? ev.cutoffIso.slice(0, 10) : null },
   };
-}
-
-/** chat-service's served models: id, name, tier and the aliases a workflow names them by. */
-async function readModelIds(): Promise<Array<ModelIdRow & { capabilityTier: string }>> {
-  const res = await fetchWithRetry(`${process.env.CHAT_SERVICE_URL}/internal/model-ids`, { headers: { "x-api-key": process.env.CHAT_SERVICE_API_KEY ?? "" } });
-  if (!res.ok) throw new Error(`chat-service model-ids ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const body = (await res.json()) as { models?: Array<{ modelId: string; displayName: string; capabilityTier: string; aliases?: string[]; formerAliases?: string[] }> };
-  if (!Array.isArray(body.models)) throw new Error("chat-service model-ids: no models array");
-  return body.models.map((m) => ({ modelId: m.modelId, displayName: m.displayName, capabilityTier: m.capabilityTier, aliases: m.aliases ?? [], formerAliases: m.formerAliases ?? [] }));
 }
 
 /** chat-service's names and tiers of every concrete model id we wrote with (cheap = Flash, strong / frontier = Pro). */

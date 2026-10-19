@@ -109,7 +109,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticDescription } from "../lib/plays-store.js";
+import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
@@ -1859,6 +1859,8 @@ const tacticRowOf = (c: PlayCatalogue, t: Tactic) => {
     id: t.id,
     name: t.name,
     description: t.description,
+    // The plain line a client reads on a message this tactic's workflows wrote (null = not shown to clients).
+    clientLine: t.clientLine ?? null,
     // On each workflow's CURRENT version (the one a run executes).
     workflowsJudged: judged.length,
     workflowsFollowing: judged.filter((m) => m.get(t.id) === true).length,
@@ -1918,7 +1920,7 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
 router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
-    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body) });
+    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80) });
     console.log(`[features-service] agent catalogue: tactic ${t.id} declared by ${t.createdBy}; Jev judges every workflow version on it`);
     void kickTacticJudgments();
     res.status(201).json(tacticRowOf(await loadPlayCatalogue(), t));
@@ -1935,6 +1937,13 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
 router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    // The client line alone (WRITTEN-BY-1019): client copy, nothing re-judged. With a description, both are edited.
+    if (body.clientLine !== undefined) {
+      const line = await updateTacticClientLine({ id: req.params.id, clientLine: text(body, "clientLine", 80), updatedBy: actorOf(body, "updatedBy") });
+      if (body.description === undefined) {
+        return void res.json({ ...tacticRowOf(await loadPlayCatalogue(), line.tactic), changed: line.changed, previousDescription: line.tactic.description, updatedBy: line.tactic.updatedBy ?? null, updatedAt: line.tactic.updatedAt ?? null });
+      }
+    }
     const { tactic, changed, previousDescription } = await updateTacticDescription({ id: req.params.id, description: text(body, "description", 500), updatedBy: actorOf(body, "updatedBy") });
     if (changed) {
       console.log(`[features-service] agent catalogue: tactic ${tactic.id} description edited by ${tactic.updatedBy} (was ${JSON.stringify(previousDescription)}); Jev re-judges every workflow version on it`);
