@@ -37,6 +37,25 @@ export interface CatalogWriter {
   modelAlias: string | null;
 }
 
+/** Where one part of `wroteWith` comes from: the generated sequences (the real model), else the workflow's own DAG. */
+export type WroteWithSource = "sequences" | "workflow_definition";
+export type WroteWithReason = "workflow_definitions_unreadable" | "no_writing_step" | "no_workflow_definition";
+
+/**
+ * What wrote its figures, on EVERY row, deprecated workflows included (RESEARCH-DEPRECATED-LLM-TEMPLATE-1019): each part
+ * is what most of its people's sequences were written with, else what its newest writing version's DAG names.
+ */
+export interface CatalogWroteWith {
+  model: CatalogRef | null;
+  modelSource: WroteWithSource | null;
+  template: CatalogRef | null;
+  templateSource: WroteWithSource | null;
+  /** The DAG version a part was read off (`v5`); null when every part comes from the sequences. */
+  version: string | null;
+  /** The alias that DAG names (`pro`), when the model part was read off it. */
+  modelAlias: string | null;
+}
+
 export interface CatalogWorkflow extends CatalogFigures {
   key: string;
   label: string;
@@ -49,6 +68,8 @@ export interface CatalogWorkflow extends CatalogFigures {
   wroteWithMost: { model: CatalogRef | null; template: CatalogRef | null };
   writesWithNow: CatalogWriter | null;
   writesWithNowUnavailableReason: WriterReason | null;
+  wroteWith: CatalogWroteWith | null;
+  wroteWithUnavailableReason: WroteWithReason | null;
   runs: Array<{ when: string; version: string; status: string; duration: string | null; cost: string | null }>;
 }
 
@@ -156,6 +177,8 @@ export interface PipeCatalogInput {
   runnableWorkflows: ReadonlyArray<{ key: string; label: string; name: string | null }> | null;
   /** Dynasty → what its runnable version writes with now; a string when the definitions could not be read at all. */
   writerOf: ((dynasty: string) => DynastyWriter | null) | WriterReason;
+  /** Dynasty → what its newest writing version (any status) writes with; a string when the definitions could not be read. */
+  lastWriterOf?: ((dynasty: string) => DynastyWriter | null) | WriterReason;
 }
 
 /** PURE. One pipe's catalogue. */
@@ -168,12 +191,31 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const writer = (dynasty: string): DynastyWriter =>
     typeof p.writerOf === "string" ? { ok: false, reason: p.writerOf } : (p.writerOf(dynasty) ?? { ok: false, reason: "no_runnable_version" });
   const writers = new Map(allWorkflows.map((r) => [r.key, writer(r.key)]));
+  const lastWriter = (dynasty: string): DynastyWriter | WroteWithReason => {
+    if (p.lastWriterOf === undefined) return "workflow_definitions_unreadable";
+    if (typeof p.lastWriterOf === "string") return "workflow_definitions_unreadable";
+    return p.lastWriterOf(dynasty) ?? "no_workflow_definition";
+  };
+  // Per row, the DAG writer a part of `wroteWith` falls back on (only where the sequences name nothing).
+  const fallbacks = new Map(
+    allWorkflows.map((r) => {
+      const main = p.mainOf(r.key);
+      const last = main.model && main.template ? null : lastWriter(r.key);
+      return [r.key, { main, last }] as const;
+    }),
+  );
   const nowTemplates = new Set<string>();
   const nowModels = new Map<string, string>();
   for (const w of writers.values()) {
     if (!w.ok) continue;
     if (w.template) nowTemplates.add(w.template);
     if (w.model) nowModels.set(modelKey(w.model.label), w.model.label);
+  }
+  // A template or model that wrote a row's figures has its page too.
+  for (const { main, last } of fallbacks.values()) {
+    if (!last || typeof last === "string" || !last.ok) continue;
+    if (!main.template && last.template) nowTemplates.add(last.template);
+    if (!main.model && last.model) nowModels.set(modelKey(last.model.label), last.model.label);
   }
   const tplHave = new Set(p.templates.map((r) => r.key));
   const mdHave = new Set(p.models.map((r) => r.key));
@@ -201,9 +243,35 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     return wfKeys.has(d) ? { key: d, label: wfLabel.get(d)! } : null;
   };
   const workflows: CatalogWorkflow[] = wfRows.map((r, i) => {
-    const main = p.mainOf(r.key);
+    const { main, last } = fallbacks.get(r.key)!;
     const most = { model: modelRef(main.model), template: tplRef(main.template) };
     const w = writers.get(r.key)!;
+    const dag = last && typeof last !== "string" && last.ok ? last : null;
+    const dagModel = !most.model && dag ? resolvedModelRef(dag.model) : null;
+    const dagTemplate = !most.template && dag ? tplRef(dag.template) : null;
+    const model = most.model ?? dagModel;
+    const template = most.template ?? dagTemplate;
+    const fromDag = Boolean(dagModel || dagTemplate);
+    const wroteWith: CatalogWroteWith | null =
+      model || template
+        ? {
+            model,
+            modelSource: most.model ? "sequences" : dagModel ? "workflow_definition" : null,
+            template,
+            templateSource: most.template ? "sequences" : dagTemplate ? "workflow_definition" : null,
+            version: fromDag && dag ? `v${dag.version}` : null,
+            modelAlias: dagModel && dag ? dag.modelAlias : null,
+          }
+        : null;
+    const wroteWithUnavailableReason: WroteWithReason | null = wroteWith
+      ? null
+      : typeof last === "string"
+        ? last
+        : last && !last.ok
+          ? last.reason === "no_writing_step"
+            ? "no_writing_step"
+            : "workflow_definitions_unreadable"
+          : "no_writing_step";
     return {
       key: r.key,
       label: r.label,
@@ -214,6 +282,8 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       wroteWithMost: most,
       writesWithNow: w.ok ? { version: `v${w.version}`, template: tplRef(w.template), model: resolvedModelRef(w.model), modelAlias: w.modelAlias } : null,
       writesWithNowUnavailableReason: w.ok ? null : w.reason,
+      wroteWith,
+      wroteWithUnavailableReason,
       ...figures(p.terms, r, rankOf(r, i)),
       runs: p.workflowRuns
         .filter((x) => x.dynasty === r.key)
@@ -226,7 +296,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     label: r.label,
     hasText: p.templateTexts.has(r.key),
     ...figures(p.terms, r, rankOf(r, i)),
-    workflows: workflows.filter((w) => w.template?.key === r.key || w.writesWithNow?.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
+    workflows: workflows.filter((w) => w.template?.key === r.key || w.writesWithNow?.template?.key === r.key || w.wroteWith?.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => x.promptType === r.key)
       .slice(0, RUNS_SHOWN)
@@ -236,7 +306,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     key: r.key,
     label: r.label,
     ...figures(p.terms, r, rankOf(r, i)),
-    workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
+    workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key || w.wroteWith?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => modelKey(p.modelLabel(x.model)) === r.key)
       .slice(0, RUNS_SHOWN)

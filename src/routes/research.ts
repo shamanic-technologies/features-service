@@ -32,7 +32,7 @@ import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
-import { dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
+import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
@@ -239,10 +239,10 @@ async function readModelNames(): Promise<Map<string, ModelName>> {
  * What every cold email workflow's runnable version writes with now (RESEARCH-PAGES-ALL-1018). Unreadable = every
  * workflow states `workflow_definitions_unreadable` (logged), never a guessed template.
  */
-async function readDynastyWriters(): Promise<Map<string, DynastyWriter> | WriterReason> {
+async function readDynastyWriters(): Promise<{ now: Map<string, DynastyWriter>; last: Map<string, DynastyWriter> } | WriterReason> {
   try {
     const [definitions, models] = await Promise.all([fetchWorkflowDefinitions(COLD_EMAIL), readModelIds()]);
-    return dynastyWriters(definitions, models);
+    return { now: dynastyWriters(definitions, models), last: dynastyLastWriters(definitions, models) };
   } catch (error) {
     console.error("[features-service] research catalogue: what the workflows write with now could not be read this time:", error);
     return "workflow_definitions_unreadable";
@@ -447,13 +447,16 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     readDynastyWriters(),
   ]);
   // The text of every template a workflow writes with now, beside the ones its people were written with.
-  const nowTemplates = typeof writers === "string" ? [] : [...writers.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []));
+  // Every version's template too: a deprecated workflow's page names the template its newest writing version used.
+  const nowTemplates =
+    typeof writers === "string" ? [] : [...writers.now.values(), ...writers.last.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []));
   const nowTexts = await readTemplateTexts(nowTemplates).catch((err) => {
     console.error("[features-service] research catalogue: template texts unreadable this time:", err);
     return new Map<string, string>();
   });
   const allTexts = new Map([...gens.templateTexts, ...nowTexts]);
-  const writerOf = typeof writers === "string" ? writers : (d: string) => writers.get(d) ?? null;
+  const writerOf = typeof writers === "string" ? writers : (d: string) => writers.now.get(d) ?? null;
+  const lastWriterOf = typeof writers === "string" ? writers : (d: string) => writers.last.get(d) ?? null;
   const catalogOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, runs: WorkflowRun[], gensRuns: GenerationRun[], ranking: readonly LegWorkflowRankingRow[] | null) =>
     pipeCatalog({
       terms: termsOf(pipe, r.input, note),
@@ -469,6 +472,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       templateTexts: new Set(allTexts.keys()),
       runnableWorkflows: runnableWorkflowsOf(ranking),
       writerOf,
+      lastWriterOf,
     });
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),
