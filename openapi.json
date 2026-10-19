@@ -22803,6 +22803,1118 @@
           "pipes"
         ]
       },
+      "FunnelCampaignSpendChartsResponse": {
+        "type": "object",
+        "properties": {
+          "salesFunnelCampaignId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "campaign": {
+            "type": "object",
+            "properties": {
+              "leg": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "channelSlug": {
+                    "type": "string",
+                    "description": "The channel performing the leg."
+                  },
+                  "legKey": {
+                    "type": "string",
+                    "description": "The leg as the campaign stores it."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Null = from nothing (Start)."
+                  },
+                  "toStep": {
+                    "type": "string"
+                  },
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "Days a cohort needs before it is read as mature (lib/maturity)."
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: mature outcomes needed."
+                  }
+                },
+                "required": [
+                  "channelSlug",
+                  "legKey",
+                  "fromStep",
+                  "toStep",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+              },
+              "outcomeStep": {
+                "type": "string",
+                "nullable": true,
+                "description": "The step counted as the outcome (the leg's TO step)."
+              },
+              "outcomeUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_leg",
+                  "outcome_step_not_counted"
+                ]
+              },
+              "conversionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_leg",
+                  "no_entry_population"
+                ],
+                "description": "no_entry_population: a leg that FINDS people (Start -> Lead found) has nobody to convert; its outcome is the leads found."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC day, YYYY-MM-DD. One point per day from the scope's first activity to today, gaps filled."
+                    },
+                    "spendUsd": {
+                      "type": "number",
+                      "description": "Committed spend that day (the scope's own dated spend)."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number"
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "integer",
+                      "description": "Outcomes of the leg's step dated on or before the day. The last point also holds the outcomes with no date (counted, never back-dated)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "MEASURED cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes. Served while Learning (owner 2026-10-19), `learning` says so. Null only while there is no outcome yet or nothing spent. The last point is the scope's whole spend over its whole outcome count."
+                    },
+                    "entered": {
+                      "type": "integer",
+                      "description": "People who entered the leg that day: their first message (an entry leg), the day they were handed to the pipe (a leg from a later step)."
+                    },
+                    "cohortOutcomes": {
+                      "type": "integer",
+                      "description": "Of that day's entrants, how many reached the step by today, whenever it happened (a positive reply 5 days after the send counts for the send day)."
+                    },
+                    "cohortConversionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cohortOutcomes / entered x 100. Null with nobody entered."
+                    },
+                    "cohortMature": {
+                      "type": "boolean",
+                      "description": "The day's cohort has had the leg's whole maturity duration (leg.maturityDays) to convert. A recent cohort reads low and is flagged, never dropped."
+                    },
+                    "cumulativeEntered": {
+                      "type": "integer"
+                    },
+                    "cumulativeConverted": {
+                      "type": "integer",
+                      "description": "Of everybody who entered on or before the day, how many had reached the step by that day."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Conversion by entry cohort as of the day: cumulativeConverted / cumulativeEntered x 100. Null only with nobody entered: a measured 0 is drawn."
+                    },
+                    "matureConversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The same over the cohorts already mature on that day. Null while none was."
+                    },
+                    "matureOutcomes": {
+                      "type": "integer",
+                      "description": "Outcomes of the cohorts mature on that day: what the Learning bar counts."
+                    },
+                    "learning": {
+                      "type": "boolean",
+                      "description": "Below the leg's Learning bar (leg.learningOutcomesRequired mature outcomes) on that day. Every figure above is served all the same: grey it, never hide it."
+                    },
+                    "byAction": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "enum": [
+                              "prospects_found",
+                              "first_contacts",
+                              "follow_ups",
+                              "messages_written",
+                              "replies_read",
+                              "notifications",
+                              "other"
+                            ],
+                            "description": "The action, the same for every channel: prospects_found (finding, revealing, verifying and handing out new prospects), first_contacts (a first message of a sequence, or a call placed), follow_ups (step 2 and later of a sequence), messages_written (writing and researching the messages), replies_read (judging replies and leads), notifications, other."
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "The action in the customer's words (\"New prospects found\", \"Follow-ups\")."
+                          },
+                          "step": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The funnel step the action works toward: lead_found (a new prospect), contacted (a first contact or a follow-up). Null for the work around a step."
+                          },
+                          "unit": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "What `actions` counts (\"prospect\", \"first contact\", \"follow-up\"); null when the action has no countable unit (spend only)."
+                          },
+                          "spendUsd": {
+                            "type": "number",
+                            "description": "Committed spend on this action that day, on the read's pricing basis."
+                          },
+                          "actions": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "How many actions that day (runs that carried committed cost). Null when the action has no countable unit."
+                          },
+                          "costPerActionUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "spendUsd / actions: \"$0.06 per follow-up\". Null with no countable unit or no action that day."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "step",
+                          "unit",
+                          "spendUsd",
+                          "actions",
+                          "costPerActionUsd"
+                        ]
+                      },
+                      "description": "What the day's spend bought, per action (only actions with spend). Sum of spendUsd = the day's spend from the task read."
+                    },
+                    "byActionGapUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "spendUsd - sum of byAction[].spendUsd: 0 when the two reads agree. Null when the task read failed (spendByActionUnavailableReason)."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "spendUsd",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd",
+                    "entered",
+                    "cohortOutcomes",
+                    "cohortConversionPct",
+                    "cohortMature",
+                    "cumulativeEntered",
+                    "cumulativeConverted",
+                    "conversionRatePct",
+                    "matureConversionRatePct",
+                    "matureOutcomes",
+                    "learning",
+                    "byAction",
+                    "byActionGapUsd"
+                  ]
+                },
+                "description": "Since inception (never a window), ascending."
+              },
+              "spendByActionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "spend_by_action_unreadable"
+                ]
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "spendUsd": {
+                    "type": "number"
+                  },
+                  "outcomes": {
+                    "type": "integer"
+                  },
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "entered": {
+                    "type": "integer"
+                  },
+                  "converted": {
+                    "type": "integer"
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "learning": {
+                    "type": "boolean",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "spendUsd",
+                  "outcomes",
+                  "costPerOutcomeUsd",
+                  "entered",
+                  "converted",
+                  "conversionRatePct",
+                  "learning"
+                ],
+                "description": "The last point's figures (today's snapshot)."
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                  },
+                  "costPerOutcomeBasis": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "measured | stated | fleet | default."
+                  },
+                  "costPerOutcomeUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                  },
+                  "conversionBasis": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionSource": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "roiMultiple": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The scope's expected return from its sales path model."
+                  },
+                  "roiBasis": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "roiUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "costPerOutcomeUsd",
+                  "costPerOutcomeBasis",
+                  "costPerOutcomeUnavailableReason",
+                  "conversionRatePct",
+                  "conversionBasis",
+                  "conversionSource",
+                  "conversionUnavailableReason",
+                  "roiMultiple",
+                  "roiBasis",
+                  "roiUnavailableReason"
+                ]
+              }
+            },
+            "required": [
+              "leg",
+              "outcomeStep",
+              "outcomeUnavailableReason",
+              "conversionUnavailableReason",
+              "daily",
+              "spendByActionUnavailableReason",
+              "totals",
+              "expected"
+            ],
+            "description": "The campaign as a whole (every pipe's spend)."
+          },
+          "pipes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "leg": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "channelSlug": {
+                      "type": "string",
+                      "description": "The channel performing the leg."
+                    },
+                    "legKey": {
+                      "type": "string",
+                      "description": "The leg as the campaign stores it."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Null = from nothing (Start)."
+                    },
+                    "toStep": {
+                      "type": "string"
+                    },
+                    "maturityDays": {
+                      "type": "integer",
+                      "description": "Days a cohort needs before it is read as mature (lib/maturity)."
+                    },
+                    "learningOutcomesRequired": {
+                      "type": "integer",
+                      "description": "The Learning bar: mature outcomes needed."
+                    }
+                  },
+                  "required": [
+                    "channelSlug",
+                    "legKey",
+                    "fromStep",
+                    "toStep",
+                    "maturityDays",
+                    "learningOutcomesRequired"
+                  ],
+                  "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+                },
+                "outcomeStep": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The step counted as the outcome (the leg's TO step)."
+                },
+                "outcomeUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_leg",
+                    "outcome_step_not_counted"
+                  ]
+                },
+                "conversionUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_leg",
+                    "no_entry_population"
+                  ],
+                  "description": "no_entry_population: a leg that FINDS people (Start -> Lead found) has nobody to convert; its outcome is the leads found."
+                },
+                "daily": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": {
+                        "type": "string",
+                        "description": "UTC day, YYYY-MM-DD. One point per day from the scope's first activity to today, gaps filled."
+                      },
+                      "spendUsd": {
+                        "type": "number",
+                        "description": "Committed spend that day (the scope's own dated spend)."
+                      },
+                      "cumulativeSpendUsd": {
+                        "type": "number"
+                      },
+                      "cumulativeOutcomes": {
+                        "type": "integer",
+                        "description": "Outcomes of the leg's step dated on or before the day. The last point also holds the outcomes with no date (counted, never back-dated)."
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "MEASURED cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes. Served while Learning (owner 2026-10-19), `learning` says so. Null only while there is no outcome yet or nothing spent. The last point is the scope's whole spend over its whole outcome count."
+                      },
+                      "entered": {
+                        "type": "integer",
+                        "description": "People who entered the leg that day: their first message (an entry leg), the day they were handed to the pipe (a leg from a later step)."
+                      },
+                      "cohortOutcomes": {
+                        "type": "integer",
+                        "description": "Of that day's entrants, how many reached the step by today, whenever it happened (a positive reply 5 days after the send counts for the send day)."
+                      },
+                      "cohortConversionPct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "cohortOutcomes / entered x 100. Null with nobody entered."
+                      },
+                      "cohortMature": {
+                        "type": "boolean",
+                        "description": "The day's cohort has had the leg's whole maturity duration (leg.maturityDays) to convert. A recent cohort reads low and is flagged, never dropped."
+                      },
+                      "cumulativeEntered": {
+                        "type": "integer"
+                      },
+                      "cumulativeConverted": {
+                        "type": "integer",
+                        "description": "Of everybody who entered on or before the day, how many had reached the step by that day."
+                      },
+                      "conversionRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Conversion by entry cohort as of the day: cumulativeConverted / cumulativeEntered x 100. Null only with nobody entered: a measured 0 is drawn."
+                      },
+                      "matureConversionRatePct": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "The same over the cohorts already mature on that day. Null while none was."
+                      },
+                      "matureOutcomes": {
+                        "type": "integer",
+                        "description": "Outcomes of the cohorts mature on that day: what the Learning bar counts."
+                      },
+                      "learning": {
+                        "type": "boolean",
+                        "description": "Below the leg's Learning bar (leg.learningOutcomesRequired mature outcomes) on that day. Every figure above is served all the same: grey it, never hide it."
+                      },
+                      "byAction": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string",
+                              "enum": [
+                                "prospects_found",
+                                "first_contacts",
+                                "follow_ups",
+                                "messages_written",
+                                "replies_read",
+                                "notifications",
+                                "other"
+                              ],
+                              "description": "The action, the same for every channel: prospects_found (finding, revealing, verifying and handing out new prospects), first_contacts (a first message of a sequence, or a call placed), follow_ups (step 2 and later of a sequence), messages_written (writing and researching the messages), replies_read (judging replies and leads), notifications, other."
+                            },
+                            "label": {
+                              "type": "string",
+                              "description": "The action in the customer's words (\"New prospects found\", \"Follow-ups\")."
+                            },
+                            "step": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The funnel step the action works toward: lead_found (a new prospect), contacted (a first contact or a follow-up). Null for the work around a step."
+                            },
+                            "unit": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What `actions` counts (\"prospect\", \"first contact\", \"follow-up\"); null when the action has no countable unit (spend only)."
+                            },
+                            "spendUsd": {
+                              "type": "number",
+                              "description": "Committed spend on this action that day, on the read's pricing basis."
+                            },
+                            "actions": {
+                              "type": "integer",
+                              "nullable": true,
+                              "description": "How many actions that day (runs that carried committed cost). Null when the action has no countable unit."
+                            },
+                            "costPerActionUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "spendUsd / actions: \"$0.06 per follow-up\". Null with no countable unit or no action that day."
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "label",
+                            "step",
+                            "unit",
+                            "spendUsd",
+                            "actions",
+                            "costPerActionUsd"
+                          ]
+                        },
+                        "description": "What the day's spend bought, per action (only actions with spend). Sum of spendUsd = the day's spend from the task read."
+                      },
+                      "byActionGapUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "spendUsd - sum of byAction[].spendUsd: 0 when the two reads agree. Null when the task read failed (spendByActionUnavailableReason)."
+                      }
+                    },
+                    "required": [
+                      "date",
+                      "spendUsd",
+                      "cumulativeSpendUsd",
+                      "cumulativeOutcomes",
+                      "costPerOutcomeUsd",
+                      "entered",
+                      "cohortOutcomes",
+                      "cohortConversionPct",
+                      "cohortMature",
+                      "cumulativeEntered",
+                      "cumulativeConverted",
+                      "conversionRatePct",
+                      "matureConversionRatePct",
+                      "matureOutcomes",
+                      "learning",
+                      "byAction",
+                      "byActionGapUsd"
+                    ]
+                  },
+                  "description": "Since inception (never a window), ascending."
+                },
+                "spendByActionUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "spend_by_action_unreadable"
+                  ]
+                },
+                "totals": {
+                  "type": "object",
+                  "properties": {
+                    "spendUsd": {
+                      "type": "number"
+                    },
+                    "outcomes": {
+                      "type": "integer"
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "entered": {
+                      "type": "integer"
+                    },
+                    "converted": {
+                      "type": "integer"
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "learning": {
+                      "type": "boolean",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "spendUsd",
+                    "outcomes",
+                    "costPerOutcomeUsd",
+                    "entered",
+                    "converted",
+                    "conversionRatePct",
+                    "learning"
+                  ],
+                  "description": "The last point's figures (today's snapshot)."
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                    },
+                    "costPerOutcomeBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "measured | stated | fleet | default."
+                    },
+                    "costPerOutcomeUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                    },
+                    "conversionBasis": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "conversionSource": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "conversionUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "roiMultiple": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The scope's expected return from its sales path model."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "roiUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "costPerOutcomeUsd",
+                    "costPerOutcomeBasis",
+                    "costPerOutcomeUnavailableReason",
+                    "conversionRatePct",
+                    "conversionBasis",
+                    "conversionSource",
+                    "conversionUnavailableReason",
+                    "roiMultiple",
+                    "roiBasis",
+                    "roiUnavailableReason"
+                  ]
+                },
+                "campaignId": {
+                  "type": "string",
+                  "description": "The pipe's own (unit) campaign id."
+                },
+                "pipeId": {
+                  "type": "string"
+                },
+                "featureSlug": {
+                  "type": "string"
+                },
+                "legKey": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "leg",
+                "outcomeStep",
+                "outcomeUnavailableReason",
+                "conversionUnavailableReason",
+                "daily",
+                "spendByActionUnavailableReason",
+                "totals",
+                "expected",
+                "campaignId",
+                "pipeId",
+                "featureSlug",
+                "legKey",
+                "status"
+              ]
+            },
+            "description": "One chart per pipe, in path order. A pipe reads its OWN spend."
+          }
+        },
+        "required": [
+          "salesFunnelCampaignId",
+          "brandId",
+          "offerId",
+          "pricing",
+          "costBasis",
+          "campaign",
+          "pipes"
+        ]
+      },
+      "OfferSpendChartsResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "salesFunnelCampaignIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "offer": {
+            "type": "object",
+            "properties": {
+              "leg": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "channelSlug": {
+                    "type": "string",
+                    "description": "The channel performing the leg."
+                  },
+                  "legKey": {
+                    "type": "string",
+                    "description": "The leg as the campaign stores it."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Null = from nothing (Start)."
+                  },
+                  "toStep": {
+                    "type": "string"
+                  },
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "Days a cohort needs before it is read as mature (lib/maturity)."
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: mature outcomes needed."
+                  }
+                },
+                "required": [
+                  "channelSlug",
+                  "legKey",
+                  "fromStep",
+                  "toStep",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+              },
+              "outcomeStep": {
+                "type": "string",
+                "nullable": true,
+                "description": "The step counted as the outcome (the leg's TO step)."
+              },
+              "outcomeUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_leg",
+                  "outcome_step_not_counted"
+                ]
+              },
+              "conversionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "no_leg",
+                  "no_entry_population"
+                ],
+                "description": "no_entry_population: a leg that FINDS people (Start -> Lead found) has nobody to convert; its outcome is the leads found."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC day, YYYY-MM-DD. One point per day from the scope's first activity to today, gaps filled."
+                    },
+                    "spendUsd": {
+                      "type": "number",
+                      "description": "Committed spend that day (the scope's own dated spend)."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number"
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "integer",
+                      "description": "Outcomes of the leg's step dated on or before the day. The last point also holds the outcomes with no date (counted, never back-dated)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "MEASURED cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes. Served while Learning (owner 2026-10-19), `learning` says so. Null only while there is no outcome yet or nothing spent. The last point is the scope's whole spend over its whole outcome count."
+                    },
+                    "entered": {
+                      "type": "integer",
+                      "description": "People who entered the leg that day: their first message (an entry leg), the day they were handed to the pipe (a leg from a later step)."
+                    },
+                    "cohortOutcomes": {
+                      "type": "integer",
+                      "description": "Of that day's entrants, how many reached the step by today, whenever it happened (a positive reply 5 days after the send counts for the send day)."
+                    },
+                    "cohortConversionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cohortOutcomes / entered x 100. Null with nobody entered."
+                    },
+                    "cohortMature": {
+                      "type": "boolean",
+                      "description": "The day's cohort has had the leg's whole maturity duration (leg.maturityDays) to convert. A recent cohort reads low and is flagged, never dropped."
+                    },
+                    "cumulativeEntered": {
+                      "type": "integer"
+                    },
+                    "cumulativeConverted": {
+                      "type": "integer",
+                      "description": "Of everybody who entered on or before the day, how many had reached the step by that day."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Conversion by entry cohort as of the day: cumulativeConverted / cumulativeEntered x 100. Null only with nobody entered: a measured 0 is drawn."
+                    },
+                    "matureConversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The same over the cohorts already mature on that day. Null while none was."
+                    },
+                    "matureOutcomes": {
+                      "type": "integer",
+                      "description": "Outcomes of the cohorts mature on that day: what the Learning bar counts."
+                    },
+                    "learning": {
+                      "type": "boolean",
+                      "description": "Below the leg's Learning bar (leg.learningOutcomesRequired mature outcomes) on that day. Every figure above is served all the same: grey it, never hide it."
+                    },
+                    "byAction": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "enum": [
+                              "prospects_found",
+                              "first_contacts",
+                              "follow_ups",
+                              "messages_written",
+                              "replies_read",
+                              "notifications",
+                              "other"
+                            ],
+                            "description": "The action, the same for every channel: prospects_found (finding, revealing, verifying and handing out new prospects), first_contacts (a first message of a sequence, or a call placed), follow_ups (step 2 and later of a sequence), messages_written (writing and researching the messages), replies_read (judging replies and leads), notifications, other."
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "The action in the customer's words (\"New prospects found\", \"Follow-ups\")."
+                          },
+                          "step": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The funnel step the action works toward: lead_found (a new prospect), contacted (a first contact or a follow-up). Null for the work around a step."
+                          },
+                          "unit": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "What `actions` counts (\"prospect\", \"first contact\", \"follow-up\"); null when the action has no countable unit (spend only)."
+                          },
+                          "spendUsd": {
+                            "type": "number",
+                            "description": "Committed spend on this action that day, on the read's pricing basis."
+                          },
+                          "actions": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "How many actions that day (runs that carried committed cost). Null when the action has no countable unit."
+                          },
+                          "costPerActionUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "spendUsd / actions: \"$0.06 per follow-up\". Null with no countable unit or no action that day."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "step",
+                          "unit",
+                          "spendUsd",
+                          "actions",
+                          "costPerActionUsd"
+                        ]
+                      },
+                      "description": "What the day's spend bought, per action (only actions with spend). Sum of spendUsd = the day's spend from the task read."
+                    },
+                    "byActionGapUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "spendUsd - sum of byAction[].spendUsd: 0 when the two reads agree. Null when the task read failed (spendByActionUnavailableReason)."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "spendUsd",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd",
+                    "entered",
+                    "cohortOutcomes",
+                    "cohortConversionPct",
+                    "cohortMature",
+                    "cumulativeEntered",
+                    "cumulativeConverted",
+                    "conversionRatePct",
+                    "matureConversionRatePct",
+                    "matureOutcomes",
+                    "learning",
+                    "byAction",
+                    "byActionGapUsd"
+                  ]
+                },
+                "description": "Since inception (never a window), ascending."
+              },
+              "spendByActionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "spend_by_action_unreadable"
+                ]
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "spendUsd": {
+                    "type": "number"
+                  },
+                  "outcomes": {
+                    "type": "integer"
+                  },
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "entered": {
+                    "type": "integer"
+                  },
+                  "converted": {
+                    "type": "integer"
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "learning": {
+                    "type": "boolean",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "spendUsd",
+                  "outcomes",
+                  "costPerOutcomeUsd",
+                  "entered",
+                  "converted",
+                  "conversionRatePct",
+                  "learning"
+                ],
+                "description": "The last point's figures (today's snapshot)."
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                  },
+                  "costPerOutcomeBasis": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "measured | stated | fleet | default."
+                  },
+                  "costPerOutcomeUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                  },
+                  "conversionBasis": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionSource": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "roiMultiple": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The scope's expected return from its sales path model."
+                  },
+                  "roiBasis": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "roiUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "costPerOutcomeUsd",
+                  "costPerOutcomeBasis",
+                  "costPerOutcomeUnavailableReason",
+                  "conversionRatePct",
+                  "conversionBasis",
+                  "conversionSource",
+                  "conversionUnavailableReason",
+                  "roiMultiple",
+                  "roiBasis",
+                  "roiUnavailableReason"
+                ]
+              }
+            },
+            "required": [
+              "leg",
+              "outcomeStep",
+              "outcomeUnavailableReason",
+              "conversionUnavailableReason",
+              "daily",
+              "spendByActionUnavailableReason",
+              "totals",
+              "expected"
+            ],
+            "description": "Every sales funnel campaign of the offer as one scope."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "pricing",
+          "costBasis",
+          "salesFunnelCampaignIds",
+          "offer"
+        ]
+      },
       "BrandConversionRatesResponse": {
         "type": "object",
         "properties": {
@@ -40240,6 +41352,306 @@
           },
           "502": {
             "description": "campaign-service failed: no campaign is ever guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": {
+      "get": {
+        "summary": "Daily spend and convergence charts of one campaign and each of its pipes",
+        "description": "Why a day costs what it costs and whether it is converging (owner 2026-10-19). One point per UTC day since the scope's first activity: the measured cost per outcome (served while Learning, flagged), the conversion by entry cohort (a positive reply 5 days after the send counts for the send day; recent cohorts flagged not mature), the Learning flag, what the day's spend bought per action (new prospects found, first contacts, follow-ups, writing, reading replies; spend, count and cost per action), and the expected values the lines converge to. Same rule for every channel. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "salesFunnelCampaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross; the dashboard sends net."
+            },
+            "required": false,
+            "description": "Default gross; the dashboard sends net.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's and its pipes' charts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunnelCampaignSpendChartsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "pricing unrecognised (reason: pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found, or sales_funnel_campaign_not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A spend or people read failed: no chart is guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/spend-charts": {
+      "get": {
+        "summary": "Daily spend and convergence chart of one offer",
+        "description": "Why a day costs what it costs and whether it is converging (owner 2026-10-19). One point per UTC day since the scope's first activity: the measured cost per outcome (served while Learning, flagged), the conversion by entry cohort (a positive reply 5 days after the send counts for the send day; recent cohorts flagged not mature), the Learning flag, what the day's spend bought per action (new prospects found, first contacts, follow-ups, writing, reading replies; spend, count and cost per action), and the expected values the lines converge to. Same rule for every channel. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross; the dashboard sends net."
+            },
+            "required": false,
+            "description": "Default gross; the dashboard sends net.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer's chart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferSpendChartsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found, or offer_has_no_campaigns.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A spend or people read failed: no chart is guessed.",
             "content": {
               "application/json": {
                 "schema": {
