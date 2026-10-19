@@ -17,7 +17,8 @@ import { servedLegKeyOf } from "./funnel-legs.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
 import { selectCostCentsString } from "./pricing.js";
-import { executableDynasties, fetchPublicWorkflows } from "./public-stats-clients.js";
+import { fetchPublicWorkflows } from "./public-stats-clients.js";
+import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import { indexTimelines } from "./serving-row-credit.js";
 import { fetchServingRowJourneys } from "./serving-row-journeys.js";
@@ -132,11 +133,21 @@ export async function readAssignmentChanges(featureSlug: string, legKeys: readon
   }));
 }
 
-/** Every version of the channel's workflows, and the dynasties workflow-service can run today. */
-export async function readWorkflowVersions(featureSlug: string): Promise<{ versions: WorkflowVersion[]; runnableToday: Set<string> }> {
-  const workflows = await fetchPublicWorkflows(featureSlug, "all");
-  return {
-    versions: workflows.map((w) => ({ workflowSlug: w.workflowSlug, workflowDynastySlug: w.workflowDynastySlug, workflowDynastyName: w.workflowDynastyName ?? null })),
-    runnableToday: executableDynasties(workflows),
-  };
+/**
+ * Every version of the channel's workflows, each with the instants workflow-service records for it: created, and
+ * stopped being executable (`executableUntil`, null while it still is; WF-VERSION-DATES-1019). FAIL-LOUD on a version without them: who could be picked on a
+ * past day is read off those two instants, never guessed.
+ */
+export async function readWorkflowVersions(featureSlug: string): Promise<WorkflowVersion[]> {
+  const workflows = (await fetchPublicWorkflows(featureSlug, "all", true)) as Array<WorkflowMetadata & { createdAt?: string | null; executableUntil?: string | null }>;
+  return workflows.map((w) => {
+    if (!w.createdAt || w.executableUntil === undefined) throw new Error(`workflow-service states no createdAt / executableUntil for ${w.workflowSlug}`);
+    return {
+      workflowSlug: w.workflowSlug,
+      workflowDynastySlug: w.workflowDynastySlug,
+      workflowDynastyName: w.workflowDynastyName ?? null,
+      createdAt: w.createdAt,
+      executableUntil: w.executableUntil,
+    };
+  });
 }

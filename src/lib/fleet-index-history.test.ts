@@ -12,6 +12,8 @@ import {
   type DatedSlugSpend,
   type HistoryInputs,
   type StoredIndexRow,
+  type WorkflowVersion,
+  executableDynastiesOn,
 } from "./fleet-index-history.js";
 import { matchChannelLegKey } from "./funnel-legs.js";
 import type { Journey } from "./lived-sales-paths.js";
@@ -26,10 +28,14 @@ const LEGS = [
   { legKey: REPLY_LEG, campaignIds: new Set([CAMPAIGN]) },
   { legKey: VISIT_LEG, campaignIds: new Set([CAMPAIGN]) },
 ];
-const WORKFLOWS = [
-  { workflowSlug: "a1", workflowDynastySlug: "alpha", workflowDynastyName: "Alpha" },
-  { workflowSlug: "b1", workflowDynastySlug: "beta", workflowDynastyName: "Beta" },
-];
+const CREATED = "2026-07-01T00:00:00.000Z";
+/** Both executable today unless `executableUntil` names when workflow-service stopped running them. */
+function versions(executableUntil: Record<string, string> = {}): WorkflowVersion[] {
+  return [
+    { workflowSlug: "a1", workflowDynastySlug: "alpha", workflowDynastyName: "Alpha", createdAt: CREATED, executableUntil: executableUntil.alpha ?? null },
+    { workflowSlug: "b1", workflowDynastySlug: "beta", workflowDynastyName: "Beta", createdAt: CREATED, executableUntil: executableUntil.beta ?? null },
+  ];
+}
 
 interface Lead {
   id: string;
@@ -73,10 +79,10 @@ function spendDays(slug: string, from: string, to: string, cents: number): Dated
 }
 const BASE_SPEND = [...spendDays("a1", "2026-08-01", "2026-08-10", 1000), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)];
 
-function inputs(leads: Lead[], spend: DatedSlugSpend[], changes: AssignmentChange[] = [], runnableToday: string[] = ["alpha", "beta"]): HistoryInputs {
+function inputs(leads: Lead[], spend: DatedSlugSpend[], changes: AssignmentChange[] = [], workflows: WorkflowVersion[] = versions()): HistoryInputs {
   const persons = emptyPersonHistory(DAYS);
   addPairPersons(persons, leads.map(person), indexTimelines(leads.map(journey)), LEGS);
-  return { days: DAYS, websiteVisitLeg: VISIT_LEG, positiveReplyLeg: REPLY_LEG, persons, spend, assignmentChanges: changes, workflows: WORKFLOWS, runnableToday: new Set(runnableToday) };
+  return { days: DAYS, websiteVisitLeg: VISIT_LEG, positiveReplyLeg: REPLY_LEG, persons, spend, assignmentChanges: changes, workflows };
 }
 
 const on = (points: DatedIndexPoint[], slug: string, day: string) => points.find((p) => p.point.indexSlug === slug && p.day === day)?.point;
@@ -84,16 +90,36 @@ const COST = "cold-email-cost-per-positive-reply";
 const RATE = "cold-email-positive-reply-rate";
 
 describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
-  it("a workflow that can still run stays pickable after its last run; a retired one stops at its last run", () => {
+  it("a workflow that can still run stays pickable after its last run; a retired one stops when workflow-service retired it", () => {
     const spend = [...spendDays("a1", "2026-08-01", "2026-08-10", 100), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)];
-    // Alpha ($1 per reply) last ran 08-10. Runnable today: the money still goes to it once mature (08-23 on).
+    // Alpha ($1 per reply) last ran 08-10. Executable today: the money still goes to it once mature (08-23 on).
     const runnable = recomputeIndexHistory(inputs(BASE_LEADS, spend));
     expect(on(runnable, COST, "2026-09-30")!.workflowDynastySlug).toBe("alpha");
     expect(runnable.some((p) => p.point.indexSlug === COST && p.point.workflowDynastySlug === "beta")).toBe(false);
-    // Retired today: it stood until its last run (08-10), before it was ever mature; Beta is the index.
-    const retired = recomputeIndexHistory(inputs(BASE_LEADS, spend, [], ["beta"]));
-    expect(on(retired, COST, "2026-08-23")!.workflowDynastySlug).toBe("beta");
-    expect(retired.some((p) => p.point.indexSlug === COST && p.point.workflowDynastySlug === "alpha")).toBe(false);
+    // Retired 09-05 15:00: still the index on 09-04, Beta from 09-05 (the end of a day is the instant read).
+    const retired = recomputeIndexHistory(inputs(BASE_LEADS, spend, [], versions({ alpha: "2026-09-05T15:00:00.000Z" })));
+    expect(on(retired, COST, "2026-09-04")!.workflowDynastySlug).toBe("alpha");
+    expect(on(retired, COST, "2026-09-05")!.workflowDynastySlug).toBe("beta");
+  });
+
+  it("cost rows landing after a retirement never make a workflow pickable again (arcadia, INDEX-HISTORY-MATURITY-AUDIT-1019)", () => {
+    // Alpha retired 08-20 but its old sequences keep costing (reply handling) until 09-30: the index is Beta's from 08-23.
+    const spend = [...spendDays("a1", "2026-08-01", "2026-09-30", 100), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)];
+    const points = recomputeIndexHistory(inputs(BASE_LEADS, spend, [], versions({ alpha: "2026-08-20T10:00:00.000Z" })));
+    for (const day of dayRange("2026-08-23", "2026-09-30")) expect(on(points, COST, day)!.workflowDynastySlug, day).toBe("beta");
+  });
+
+  it("a dynasty can run when one of its versions was executable at the end of the day", () => {
+    const v: WorkflowVersion[] = [
+      { workflowSlug: "a1", workflowDynastySlug: "alpha", workflowDynastyName: null, createdAt: "2026-08-01T09:00:00.000Z", executableUntil: "2026-08-10T12:00:00.000Z" },
+      { workflowSlug: "a2", workflowDynastySlug: "alpha", workflowDynastyName: null, createdAt: "2026-08-10T12:00:00.000Z", executableUntil: "2026-08-20T08:00:00.000Z" },
+      { workflowSlug: "g1", workflowDynastySlug: "gamma", workflowDynastyName: null, createdAt: "2026-08-15T09:00:00.000Z", executableUntil: null },
+    ];
+    expect([...executableDynastiesOn("2026-07-31", v)]).toEqual([]);
+    expect([...executableDynastiesOn("2026-08-01", v)]).toEqual(["alpha"]);
+    expect([...executableDynastiesOn("2026-08-10", v)]).toEqual(["alpha"]);
+    expect([...executableDynastiesOn("2026-08-19", v)].sort()).toEqual(["alpha", "gamma"]);
+    expect([...executableDynastiesOn("2026-08-20", v)]).toEqual(["gamma"]);
   });
 
   it("cuts maturity on the live rule: a person served on day S is mature from S + duration + 1", () => {

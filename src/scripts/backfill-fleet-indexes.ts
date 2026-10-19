@@ -27,12 +27,12 @@ async function main(): Promise<void> {
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
   const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
   const legKeys = [visitLeg, replyLeg];
-  const [legs, { versions: workflows, runnableToday }, assignmentChanges] = await Promise.all([
+  const [legs, workflows, assignmentChanges] = await Promise.all([
     readHistoryLegs(SCEO_FEATURE_SLUG, legKeys),
     readWorkflowVersions(SCEO_FEATURE_SLUG),
     readAssignmentChanges(SCEO_FEATURE_SLUG, legKeys),
   ]);
-  log(`legs: ${legs.map((l) => `${l.legKey} ${l.campaignIds.size} campaigns`).join(", ")}; ${workflows.length} workflow versions (${runnableToday.size} dynasties runnable today); ${assignmentChanges.length} assignment changes`);
+  log(`legs: ${legs.map((l) => `${l.legKey} ${l.campaignIds.size} campaigns`).join(", ")}; ${workflows.length} workflow versions (${workflows.filter((w) => w.executableUntil === null).length} executable today); ${assignmentChanges.length} assignment changes`);
   const spend = await readDatedSlugSpend(SCEO_FEATURE_SLUG, legs);
   if (spend.length === 0) throw new Error("no spend on either leg: nothing to rebuild");
   const first = spend.reduce((a, s) => (s.day < a ? s.day : a), spend[0]!.day);
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const persons = emptyPersonHistory(days);
   const pairs = await readPersonHistory(SCEO_FEATURE_SLUG, persons, legs, log);
   log(`${pairs} pairs walked; ${persons.undatedPersons} persons with no serve date and no dated send (in no past day)`);
-  const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows, runnableToday };
+  const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows };
   const points = recomputeIndexHistory(inputs);
   const stored = await readFleetIndexRows(FLEET_INDEXES.map((d) => d.slug));
   const plan = planRecomputedWrites(points, stored);
