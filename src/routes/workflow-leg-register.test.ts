@@ -4,6 +4,8 @@ import request from "supertest";
 const rows = vi.hoisted(() => new Map<string, any>());
 // Legs a test adds to a channel, as a declaration would (`{ slug: [transition, ...] }`).
 const extraLegs = vi.hoisted(() => new Map<string, any[]>());
+// A dynasty already active on another leg (ONE-LEG-PER-WORKFLOW-1019): the lib refuses, the route answers 409.
+const activeElsewhere = vi.hoisted(() => ({ on: null as null | { featureSlug: string; legKey: string } }));
 vi.mock("../db/index.js", () => ({ db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn(async () => []) } } }, sql: {} }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
@@ -28,6 +30,10 @@ vi.mock("../lib/public-stats-clients.js", async (importOriginal) => ({
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   registerLegAssignment: async (input: any) => {
+    if (activeElsewhere.on) {
+      const { WorkflowOnAnotherLegError } = await importOriginal<typeof import("../lib/workflow-leg-assignments.js")>();
+      throw new WorkflowOnAnotherLegError(input.workflowDynastySlug, { featureSlug: input.featureSlug, legKey: input.legKey }, [activeElsewhere.on]);
+    }
     const key = `${input.featureSlug}|${input.legKey}|${input.workflowDynastySlug}`;
     if (rows.has(key)) return { assignment: rows.get(key), created: false };
     const row = { featureSlug: input.featureSlug, legKey: input.legKey, workflowDynastySlug: input.workflowDynastySlug, state: "active", decidedBy: input.registeredBy, decidedAt: "2026-10-10T00:00:00.000Z", note: null };
@@ -49,6 +55,7 @@ const KEY = { "x-api-key": "test-key" };
 const post = (body: object) => request(app).post("/internal/workflow-leg-assignments/register").set(KEY).send(body);
 
 beforeEach(() => {
+  activeElsewhere.on = null;
   rows.clear();
   extraLegs.clear();
 });
@@ -69,6 +76,13 @@ describe("POST /internal/workflow-leg-assignments/register (owner 2026-10-10, op
     vi.mocked(invalidateChannelCatalogue).mockClear();
     await post({ pipeId: "ai-meeting-booking|conversation_to_meeting_booked", workflowDynastySlug: "ai-meeting-booking-avior", registeredBy: "workflow-service" });
     expect(invalidateChannelCatalogue).toHaveBeenCalled();
+  });
+
+  it("refuses a workflow already active on another pipe: 409 workflow_on_another_leg naming it (owner 2026-10-19)", async () => {
+    activeElsewhere.on = { featureSlug: "ai-meeting-booking", legKey: "form_submitted_to_meeting_booked" };
+    const res = await post({ pipeId: "ai-meeting-booking|conversation_to_meeting_booked", workflowDynastySlug: "ai-meeting-booking-avior", registeredBy: "workflow-service" });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ reason: "workflow_on_another_leg", workflowDynastySlug: "ai-meeting-booking-avior", activeOn: [activeElsewhere.on] });
   });
 
   it("is insert-if-absent: a second call returns the existing row untouched", async () => {

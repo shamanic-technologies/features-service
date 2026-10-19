@@ -8,8 +8,8 @@
  *   • `active`      — assigned; the selector may pick it on this leg.
  *   • `deprecated`  — assigned once, now retired ON THIS LEG ONLY: no new run picks it here, but every
  *                     stats read keeps serving it with its history and says so.
- *   • no row        — `unassigned`: never put on this leg, so never selectable on it. A NEW dynasty is
- *                     on no leg until someone assigns it.
+ *   • no row        — `unassigned`: never put on this leg, so never selectable on it. A workflow created
+ *                     for a pipe is registered active on it at once (`registerLegAssignment`).
  *
  * Nothing here looks at a workflow's model, price or tier. The previous rule excluded workflows by the
  * capability tier of the model writing their emails, and it excluded one (`maelstrom`) that had already
@@ -19,12 +19,18 @@
  * workflow-service's own global dynasty status is untouched and still wins: a globally deprecated
  * dynasty is not enumerated by the projection at all, whatever its assignment says.
  *
+ * ONE LEG AT A TIME (owner 2026-10-19, ONE-LEG-PER-WORKFLOW-1019: « A workflow can only be at one leg at a time. »): a
+ * dynasty is `active` on at most one (channel, leg). Every write that would put it active on a SECOND leg is refused
+ * with `WorkflowOnAnotherLegError` (409 `workflow_on_another_leg`, naming the leg it holds): deprecate it there first.
+ * Checked inside the write's transaction under a per-dynasty advisory lock, so two concurrent writes cannot both pass.
+ * Re-confirming a leg it is already active on is not a second leg.
+ *
  * Every write lands in the same transaction as an append-only history row
  * (`workflow_leg_assignment_changes`), so "who deprecated this, when, and from what" always has an
  * answer. Reads and writes FAIL LOUD: the assignment decides what may run, so a swallowed read would
  * report "nothing is assigned" — i.e. exclude every workflow — on a database blip.
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { db } from "../db/index.js";
 import { workflowLegAssignmentChanges, workflowLegAssignments } from "../db/schema.js";
@@ -63,6 +69,43 @@ export interface LegAssignmentVerdict {
   decidedBy: string | null;
   /** When. Null ⟺ `unassigned`. */
   decidedAt: string | null;
+}
+
+/** A write would put a dynasty active on a second leg (owner 2026-10-19: one leg at a time). */
+export class WorkflowOnAnotherLegError extends Error {
+  readonly reason = "workflow_on_another_leg";
+  constructor(
+    readonly workflowDynastySlug: string,
+    readonly requested: { featureSlug: string; legKey: string },
+    readonly activeOn: Array<{ featureSlug: string; legKey: string }>,
+  ) {
+    super(
+      `workflow ${workflowDynastySlug} is already active on ${activeOn.map((a) => `${a.featureSlug}|${a.legKey}`).join(", ")}: ` +
+        `a workflow runs on one leg at a time, so it cannot also be active on ${requested.featureSlug}|${requested.legKey} (deprecate it there first)`,
+    );
+    this.name = "WorkflowOnAnotherLegError";
+  }
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * Refuse a write that would put `dynasty` active on a second leg. Runs INSIDE the write's transaction, after taking a
+ * per-dynasty advisory lock (released at commit), so the read and the write it guards cannot interleave with another.
+ */
+async function assertNoOtherActiveLeg(tx: Tx, key: { featureSlug: string; legKey: string; workflowDynastySlug: string }): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workflow-leg:${key.workflowDynastySlug}`}))`);
+  const others = await tx
+    .select({ featureSlug: workflowLegAssignments.featureSlug, legKey: workflowLegAssignments.legKey })
+    .from(workflowLegAssignments)
+    .where(
+      and(
+        eq(workflowLegAssignments.workflowDynastySlug, key.workflowDynastySlug),
+        eq(workflowLegAssignments.state, "active"),
+        or(ne(workflowLegAssignments.featureSlug, key.featureSlug), ne(workflowLegAssignments.legKey, key.legKey)),
+      ),
+    );
+  if (others.length > 0) throw new WorkflowOnAnotherLegError(key.workflowDynastySlug, { featureSlug: key.featureSlug, legKey: key.legKey }, others);
 }
 
 function toRow(r: typeof workflowLegAssignments.$inferSelect): LegAssignmentRow {
@@ -159,6 +202,8 @@ export async function setLegAssignment(input: {
       eq(workflowLegAssignments.workflowDynastySlug, input.workflowDynastySlug),
     );
     const [existing] = await tx.select().from(workflowLegAssignments).where(key).for("update");
+    // One leg at a time: turning it active here must not make a second active leg.
+    if (input.state === "active" && existing?.state !== "active") await assertNoOtherActiveLeg(tx, input);
     const [stored] = await tx
       .insert(workflowLegAssignments)
       .values({
@@ -218,6 +263,8 @@ export async function registerLegAssignment(input: {
   return db.transaction(async (tx) => {
     const [existing] = await tx.select().from(workflowLegAssignments).where(key).for("update");
     if (existing) return { assignment: toRow(existing), created: false };
+    // One leg at a time: a workflow already active on another pipe is refused, never registered on a second one.
+    await assertNoOtherActiveLeg(tx, { featureSlug: input.featureSlug, legKey, workflowDynastySlug: input.workflowDynastySlug });
     const decidedAt = new Date();
     const note = input.note ?? "registered at creation (a workflow created for a pipe is active at once)";
     const [stored] = await tx
