@@ -95,25 +95,28 @@ const dayOf = (iso: string | null | undefined): string | null => (iso ? iso.slic
 export const isEntryLeg = (leg: ChartLeg): boolean => leg.fromStep === null || leg.fromStep === "lead_found";
 
 /**
- * The request's people once, overlays applied: every scope filters this one array. Only the people the request's
- * units served or were handed are kept (and dated), never the brand's whole population.
+ * ONE SCOPE's people, overlays applied: the people its campaigns served (one campaign = lead-service's campaign read
+ * and that campaign's own event dates, several = the brand's rows of those campaigns, the identity rule every revenue
+ * read uses) plus, on a leg from a later step, the people its units were handed (read on the brand's rows).
  */
-export async function readChartPeople(
+export async function readScopePeople(
   brandId: string,
-  unitIds: readonly string[],
-  handedRows: readonly FollowupActionRow[],
+  personCampaignIds: readonly string[],
+  handedLeadIds: ReadonlySet<string>,
   headers: Headers,
 ): Promise<EnginePerson[]> {
-  const units = new Set(unitIds);
-  const handed = new Set(handedRows.map((r) => r.leadId));
-  const persons = dedupPersonsByLead(
-    (await fetchLeadsForRevenue(brandId, undefined, headers)).filter((p) => (p.campaignId != null && units.has(p.campaignId)) || handed.has(p.leadId)),
-  );
+  const single = personCampaignIds.length === 1 ? personCampaignIds[0] : undefined;
+  const [served, brandRows] = await Promise.all([
+    personCampaignIds.length === 0 ? Promise.resolve([]) : fetchLeadsForRevenue(brandId, single ?? [...personCampaignIds], headers),
+    handedLeadIds.size === 0 ? Promise.resolve([]) : fetchLeadsForRevenue(brandId, undefined, headers),
+  ]);
+  const servedIds = new Set(served.map((p) => p.leadId));
+  const persons = dedupPersonsByLead([...served, ...brandRows.filter((p) => handedLeadIds.has(p.leadId) && !servedIds.has(p.leadId))]);
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   // Dates are what the curves stand on: the timestamp read FAILS LOUD (an undated population would draw nothing).
   // The stated outcomes ride fail-soft like on every revenue read (unreadable = those rungs unobserved, logged).
   const [timestamps, observed] = await Promise.all([
-    fetchEventTimestamps(brandId, undefined, emails, headers),
+    fetchEventTimestamps(brandId, single, emails, headers),
     fetchObservedStepFacts(brandId, DEFAULT_PRICED_CAUSES).catch((err: Error) => {
       console.warn(`[features-service] spend charts: step statements unreadable for brand ${brandId} (overlay skipped): ${err.message}`);
       return null;
@@ -136,6 +139,7 @@ export function chartPersonsOf(
   personCampaignIds: ReadonlySet<string>,
   handed: ReadonlyMap<string, { claimedAt: string | null; actedAt: string | null; acted: boolean }>,
 ): ChartPerson[] | null {
+  // `persons` is the scope's own read (`readScopePeople`): everybody it served, once.
   const served = persons.filter((p) => p.campaignId != null && personCampaignIds.has(p.campaignId));
   if (leg.toStep === "lead_found") {
     return served.map((p) => ({ entered: false, enteredOn: null, converted: true, convertedOn: dayOf(p.servedAt ?? null) }));
@@ -147,31 +151,39 @@ export function chartPersonsOf(
   const reachedOn = (p: EnginePerson) => (toSignal ? dayOf(p.signalDates?.[toSignal] ?? null) : null);
 
   if (isEntryLeg(leg)) {
-    return served.map((p) => ({
-      entered: Boolean(p.signals.contacted),
-      enteredOn: dayOf(p.signalDates?.contacted ?? p.signalDates?.sent ?? null),
-      converted: reached(p),
-      convertedOn: reachedOn(p),
-    }));
+    return served.map((p) => {
+      // The cohort day is the SERVE (the run that took the person for this scope, the maturity clock of
+      // `lib/maturity.ts`), else the first send: a prospect re-contacted today was first emailed months ago by another
+      // campaign, and its old date would file it in a cohort this scope never ran.
+      const enteredOn = dayOf(p.servedAt ?? null) ?? dayOf(p.signalDates?.contacted ?? p.signalDates?.sent ?? null);
+      return { entered: Boolean(p.signals.contacted), enteredOn, ...afterEntry(enteredOn, reached(p), reachedOn(p)) };
+    });
   }
   const fromSignal = SIGNAL_OF_STEP[leg.fromStep!];
   const out = new Map<string, ChartPerson>();
   const byLead = new Map(persons.map((p) => [p.leadId, p] as const));
   for (const [leadId, h] of handed) {
     const p = byLead.get(leadId);
-    const converted = actIsOutcome ? h.acted : p ? reached(p) : false;
+    const enteredOn = dayOf(h.claimedAt) ?? (p && fromSignal ? dayOf(p.signalDates?.[fromSignal] ?? null) : null);
     out.set(leadId, {
       entered: true,
-      enteredOn: dayOf(h.claimedAt) ?? (p && fromSignal ? dayOf(p.signalDates?.[fromSignal] ?? null) : null),
-      converted,
-      convertedOn: actIsOutcome ? dayOf(h.actedAt) : p ? reachedOn(p) : null,
+      enteredOn,
+      ...(actIsOutcome ? { converted: h.acted, convertedOn: dayOf(h.actedAt) } : afterEntry(enteredOn, p ? reached(p) : false, p ? reachedOn(p) : null)),
     });
   }
   for (const p of served) {
     if (out.has(p.leadId) || !fromSignal || !p.signals[fromSignal]) continue;
-    out.set(p.leadId, { entered: true, enteredOn: dayOf(p.signalDates?.[fromSignal] ?? null), converted: reached(p), convertedOn: reachedOn(p) });
+    const enteredOn = dayOf(p.signalDates?.[fromSignal] ?? null);
+    out.set(p.leadId, { entered: true, enteredOn, ...afterEntry(enteredOn, reached(p), reachedOn(p)) });
   }
   return [...out.values()];
+}
+
+/** An outcome counts for the scope only when it came on or after the person entered it (an undated one is given the benefit of the doubt). */
+function afterEntry(enteredOn: string | null, converted: boolean, convertedOn: string | null): { converted: boolean; convertedOn: string | null } {
+  if (!converted) return { converted: false, convertedOn: null };
+  if (enteredOn !== null && convertedOn !== null && convertedOn < enteredOn) return { converted: false, convertedOn: null };
+  return { converted: true, convertedOn };
 }
 
 /** PURE. The leg's expected conversion: an entry leg on the fleet's (else the seeded entry default), a later leg on the brand's rate. */
@@ -217,11 +229,10 @@ export function expectedCostAndReturnOf(
 /** TODAY in UTC. */
 export const utcToday = (now: Date = new Date()): string => now.toISOString().slice(0, 10);
 
-/** One scope's chart. `persons` = `readChartPeople` (shared). Spend reads fail loud; the action split fails soft. */
+/** One scope's chart. Spend and people reads fail loud; the action split fails soft. */
 export async function computeSpendChart(args: {
   brandId: string;
   scope: ChartScope;
-  persons: readonly EnginePerson[];
   /** The follow-up ledger rows of every unit of the request (`fetchFollowupActionRows`); the scope keeps its own. */
   handedRows: readonly FollowupActionRow[];
   expected: ExpectedReturn;
@@ -231,7 +242,7 @@ export async function computeSpendChart(args: {
   headers: Headers;
   today?: string;
 }): Promise<SpendChart> {
-  const { brandId, scope, persons, handedRows, expected, fleetConversions, brandRateOf, pricing, headers } = args;
+  const { brandId, scope, handedRows, expected, fleetConversions, brandRateOf, pricing, headers } = args;
   const today = args.today ?? utcToday();
   const leg = scope.leg;
 
@@ -269,6 +280,7 @@ export async function computeSpendChart(args: {
     });
   }
 
+  const persons = leg ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : [];
   const chartPersons = leg ? chartPersonsOf(leg, persons, new Set(scope.personCampaignIds), handed) : null;
   const maturity = leg ? legMaturity(storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey))) : null;
   const daily = buildSpendChartDays({
