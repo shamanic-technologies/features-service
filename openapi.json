@@ -22503,7 +22503,7 @@
               "medianDays": {
                 "type": "number",
                 "nullable": true,
-                "description": "The delay to state: median days from a lead's first email to its first positive reply, on `basis`. Null while learning."
+                "description": "The delay to state: median days from the first message we sent a lead (email, WhatsApp, follow-up answer...) to its first positive reply, on `basis`. Null while learning."
               },
               "averageDays": {
                 "type": "number",
@@ -22536,7 +22536,7 @@
                   "medianDays": {
                     "type": "number",
                     "nullable": true,
-                    "description": "Median days from a lead's first email to its first positive reply (1 decimal)."
+                    "description": "Median days from the first message we sent a lead (any channel) to its first positive reply (1 decimal)."
                   },
                   "averageDays": {
                     "type": "number",
@@ -22553,7 +22553,7 @@
                   },
                   "sampleSize": {
                     "type": "integer",
-                    "description": "Leads with a measured first positive reply after their first email."
+                    "description": "Leads with a measured first positive reply after their first message (any channel)."
                   }
                 },
                 "required": [
@@ -22572,7 +22572,7 @@
                   "medianDays": {
                     "type": "number",
                     "nullable": true,
-                    "description": "Median days from a lead's first email to its first positive reply (1 decimal)."
+                    "description": "Median days from the first message we sent a lead (any channel) to its first positive reply (1 decimal)."
                   },
                   "averageDays": {
                     "type": "number",
@@ -22589,7 +22589,7 @@
                   },
                   "sampleSize": {
                     "type": "integer",
-                    "description": "Leads with a measured first positive reply after their first email."
+                    "description": "Leads with a measured first positive reply after their first message (any channel)."
                   }
                 },
                 "required": [
@@ -22623,7 +22623,7 @@
               "pipeFleet",
               "unavailableReason"
             ],
-            "description": "Measured time from the first email to the first positive reply, since inception. Never a default or another channel's delay."
+            "description": "Measured time from the first message (any channel, lead-service's timeline) to the first positive reply, since inception. Never a default or another channel's delay."
           },
           "pipes": {
             "type": "array",
@@ -39891,7 +39891,7 @@
     "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps": {
       "get": {
         "summary": "What comes next in one campaign: leads queued on every channel, when the next sends happen, and the measured time to a positive reply",
-        "description": "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+        "description": "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first message (any channel) to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
         "tags": [
           "Stats"
         ],
