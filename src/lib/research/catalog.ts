@@ -7,7 +7,7 @@
 import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
-import type { DynastyWriter, WriterReason } from "./writers.js";
+import { modelRowAliases, type DynastyWriter, type ModelAliasReason, type ModelIdRow, type WriterReason } from "./writers.js";
 
 export interface CatalogRef {
   key: string;
@@ -84,6 +84,13 @@ export interface CatalogTemplate extends CatalogFigures {
 export interface CatalogModel extends CatalogFigures {
   key: string;
   label: string;
+  /** chat-service's concrete model ids this page names (two ids with one display name are one page). */
+  modelIds: string[];
+  /** Every alias chat-service serves this model under NOW (the word a workflow writes in `model`); several when it truly serves it under several. */
+  aliases: string[];
+  /** Aliases that once named it and now name another model. */
+  formerAliases: string[];
+  aliasesUnavailableReason: ModelAliasReason | null;
   workflows: Array<{ key: string; label: string }>;
   runs: Array<{ when: string; workflow: { key: string; label: string } | null; template: CatalogRef | null; version: string | null; tokens: string | null }>;
 }
@@ -179,6 +186,8 @@ export interface PipeCatalogInput {
   writerOf: ((dynasty: string) => DynastyWriter | null) | WriterReason;
   /** Dynasty → what its newest writing version (any status) writes with; a string when the definitions could not be read. */
   lastWriterOf?: ((dynasty: string) => DynastyWriter | null) | WriterReason;
+  /** chat-service's served models (`/internal/model-ids`), for each model page's aliases; a reason when unreadable. */
+  servedModels?: readonly ModelIdRow[] | ModelAliasReason;
 }
 
 /** PURE. One pipe's catalogue. */
@@ -305,6 +314,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const models: CatalogModel[] = mdRows.map((r, i) => ({
     key: r.key,
     label: r.label,
+    ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", modelKey),
     ...figures(p.terms, r, rankOf(r, i)),
     workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key || w.wroteWith?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns

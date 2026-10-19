@@ -597,3 +597,57 @@ describe("research catalogue: what wrote every row's figures, deprecated workflo
     expect(by.get("ghost")!.wroteWithUnavailableReason).toBe("no_workflow_definition");
   });
 });
+
+import { modelRowAliases } from "./writers.js";
+import { modelKey } from "./format.js";
+describe("research catalogue: every model page states the aliases chat-service serves it under (TEMPLATE-MODEL-STATUS-1019)", () => {
+  // chat-service /internal/model-ids on 2026-10-19 (subset).
+  const served = [
+    { modelId: "deepseek-flash", displayName: "DeepSeek V4.1 Flash", aliases: ["deepseek-flash", "deepseek-pro"], formerAliases: [] },
+    { modelId: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash", aliases: [], formerAliases: ["deepseek-flash"] },
+    { modelId: "glm-5.3", displayName: "GLM-5.3", aliases: ["glm-pro"], formerAliases: [] },
+    { modelId: "glm-5.2", displayName: "GLM-5.2", aliases: [], formerAliases: ["glm-pro"] },
+    { modelId: "gpt-6-astra", displayName: "GPT-6 Astra", aliases: ["gpt-pro"], formerAliases: [] },
+    { modelId: "claude-fable-5-1", displayName: "Claude Fable 5.1", aliases: ["fable"], formerAliases: [] },
+  ];
+  const bucket = (key: string, label: string): ResearchBucket => ({ key, label, basis: "flash", figures: { spentUsd: 1, contacted: 10, outcomes: 0 }, learning: true, months: null, strata: null });
+  const catalogWith = (servedModels: Parameters<typeof pipeCatalog>[0]["servedModels"]) =>
+    pipeCatalog({
+      terms,
+      workflows: [],
+      templates: [],
+      models: [bucket("deepseek-v4.1-flash", "DeepSeek V4.1 Flash"), bucket("glm-5.2", "GLM-5.2"), bucket("gpt-6-astra", "GPT-6 Astra"), bucket("claude-fable-5.1", "Claude Fable 5.1"), bucket("mystery-1", "mystery-1")],
+      nameOf: () => null,
+      mainOf: () => ({ model: null, template: null }),
+      modelLabel: (id) => id,
+      dynastyOf: (s) => s,
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: [],
+      writerOf: () => null,
+      servedModels,
+    });
+
+  it("states each row's aliases from chat-service's list, models no workflow runs included; DeepSeek V4.1 Flash is served under two", () => {
+    const by = new Map(catalogWith(served).models.map((m) => [m.key, m]));
+    expect(by.get("deepseek-v4.1-flash")).toMatchObject({ modelIds: ["deepseek-flash"], aliases: ["deepseek-flash", "deepseek-pro"], formerAliases: [], aliasesUnavailableReason: null });
+    expect(by.get("gpt-6-astra")).toMatchObject({ modelIds: ["gpt-6-astra"], aliases: ["gpt-pro"], aliasesUnavailableReason: null });
+    expect(by.get("claude-fable-5.1")).toMatchObject({ modelIds: ["claude-fable-5-1"], aliases: ["fable"], aliasesUnavailableReason: null });
+    // Retired: no alias resolves to it any more, the alias it had is named as former.
+    expect(by.get("glm-5.2")).toMatchObject({ modelIds: ["glm-5.2"], aliases: [], formerAliases: ["glm-pro"], aliasesUnavailableReason: "no_alias_serves_it" });
+    expect(by.get("mystery-1")).toMatchObject({ modelIds: [], aliases: [], aliasesUnavailableReason: "model_not_in_chat_service" });
+  });
+
+  it("names the read failure, never a guessed alias", () => {
+    for (const m of catalogWith("model_ids_unreadable").models) expect(m).toMatchObject({ modelIds: [], aliases: [], aliasesUnavailableReason: "model_ids_unreadable" });
+  });
+
+  it("joins two ids with one display name into one page, and never lists a current alias as former", () => {
+    const two = [
+      { modelId: "a-1", displayName: "Same Model", aliases: ["x"], formerAliases: ["y"] },
+      { modelId: "a-2", displayName: "Same Model", aliases: ["y"], formerAliases: [] },
+    ];
+    expect(modelRowAliases(modelKey("Same Model"), two, modelKey)).toEqual({ modelIds: ["a-1", "a-2"], aliases: ["x", "y"], formerAliases: [], aliasesUnavailableReason: null });
+  });
+});
