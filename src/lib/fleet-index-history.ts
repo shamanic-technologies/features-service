@@ -17,8 +17,9 @@
  * leg), maturity, the ONE leg order (`rankLegWorkflows`), the index points (`computeFleetIndexPoints`). Data dated
  * after D never moves D's point (`fleet-index-history.test.ts`).
  *
- * The meeting indexes are NOT rebuilt: the AI meeting booking pipe's evidence (who it acted on, which brands report
- * meetings) is read live from lead-service with no dated cut. Their series start with the recorder.
+ * NOT rebuilt (their series start with the recorder): the meeting indexes, whose AI meeting booking pipe evidence (who
+ * it acted on, which brands report meetings) is read live from lead-service with no dated cut; the client-median
+ * indexes (engaged lead, ROI), whose per-brand inputs this does not build.
  */
 import { computeFleetIndexPoints, FLEET_INDEXES, type FleetIndexPoint } from "./fleet-indexes.js";
 import { buildFleetLegMaturity, rollUpLegEvidenceByDynasty, type DynastyLegEvidence, type SlugCostGroup } from "./fleet-leg-maturity.js";
