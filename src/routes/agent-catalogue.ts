@@ -83,7 +83,7 @@ import {
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
 import { campaignsOnTrigger, campaignsRunningFunnel, fetchFleetCampaignRows, fetchFleetLegCampaignsFor, type FleetCampaignRef } from "../lib/fleet-leg-campaigns.js";
-import { actorOf, DeclarationError, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
+import { actorOf, DeclarationError, isTriggerCoded, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf, triggerValueOf } from "../lib/outcome-vocabulary.js";
@@ -1353,7 +1353,9 @@ const triggerRowOf = (m: CatalogueModel, t: TriggerTypeRecord, pipeCount: number
   fromStep: t.fromStep,
   fromStepName: t.fromStep ? stepLabel(m, t.fromStep) : null,
   firedBy: t.firedBy,
-  coded: t.coded,
+  // Fireable today, read like the pipe guard reads it (`isTriggerCoded`): a declared `reported`/`delay`/`poll` trigger is
+  // fired by campaign-service's generic door, never the stored `false` every declaration is written with (HOT-LEAD-PROPOSAL-1019).
+  coded: isTriggerCoded(t),
   kind: t.kind,
   origin: t.origin,
   pipeCount,

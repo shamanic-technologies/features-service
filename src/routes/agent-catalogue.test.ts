@@ -911,6 +911,18 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     expect(r.body.rows.find((x: { id: string }) => x.id === "github_issue_in_prod")).toMatchObject({ type: "condition", outcomeKey: null, callable: false, valueUsd: null });
   });
 
+  it("serves a declared REPORTED trigger as coded: the verdict a pipe on it is held to, never the stored false (HOT-LEAD-PROPOSAL-1019)", async () => {
+    mem.triggers = [
+      ...CHANNEL_TRIGGER_TYPES.map(record),
+      { id: "hot_lead", label: "Hot lead", description: "A lead wrote to the brand and wants to do business with it.", icon: "fire", fromStep: "conversation", firedBy: "campaign-service", coded: false, kind: "reported", origin: "declared", params: { reportedBy: "lead-service" }, displayOrder: 999, createdBy: "staff", requestedByOrgId: null },
+      { id: "thing_noticed", label: "Thing noticed", description: "Nothing detects it.", icon: "eye", fromStep: null, firedBy: "not_built", coded: false, kind: "event", origin: "declared", params: null, displayOrder: 1000, createdBy: "staff", requestedByOrgId: null },
+    ];
+    const hot = await request(app).get("/internal/catalogue/triggers/hot_lead").set(KEY);
+    expect(hot.status).toBe(200);
+    expect(hot.body).toMatchObject({ id: "hot_lead", name: "Hot lead", kind: "reported", origin: "declared", coded: true, params: { reportedBy: "lead-service" } });
+    expect((await request(app).get("/internal/catalogue/triggers/thing_noticed").set(KEY)).body.coded).toBe(false);
+  });
+
   it("lists ENTRY DOORS only: on_demand / lead_requested leave the list, stay readable by id and with includeInline=true (2026-10-16)", async () => {
     const ids = async (query: Record<string, string>) =>
       (await request(app).get("/internal/catalogue/triggers").query({ limit: 25, ...query }).set(KEY)).body.rows.map((x: { id: string }) => x.id);
