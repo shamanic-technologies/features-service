@@ -150,11 +150,13 @@ import {
   furthestRungReached,
   pickRecentlyStartedByMeetings,
   pickShowcaseClients,
+  pickHighestReturnByStated,
   showcaseChainHasOutcome,
   SHOWCASE_MIN_OUTCOME_PEOPLE,
   SHOWCASE_GROUP_SIZE,
   type ShowcaseGroupPick,
 } from "../lib/showcase-clients.js";
+import { servedReturnOf } from "../lib/served-return.js";
 import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
 import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
@@ -3815,12 +3817,14 @@ async function computeShowcaseBrand(
         committedSpentCents: body.funnelSteps.committedSpentCents,
       };
     }
-    if (soldFunnels.length === 1) brandReturnPerDollar = body.costEconomics.roiMultiple ?? null;
+    // The return the client's dashboard Today page states: the HIGHER half of the served pair
+    // (`servedReturnOf`, owner 2026-10-08), never the mature legacy field alone.
+    if (soldFunnels.length === 1) brandReturnPerDollar = servedReturnOf(body.costEconomics.maturity).roiMultiple;
   }
   if (soldFunnels.length > 1) {
     const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
     const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "net");
-    brandReturnPerDollar = whole.costEconomics.roiMultiple ?? null;
+    brandReturnPerDollar = servedReturnOf(whole.costEconomics.maturity).roiMultiple;
   }
 
   return {
@@ -3959,44 +3963,6 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     }
   };
 
-  // Walk down one group's order in batches of exactly what is still missing, keeping a client only when
-  // its chain shows at least the minimum on one rung past the base. A client whose chain could not be
-  // read at all shows nothing either, and is not named on this read. Every rejection is subtracted from
-  // the group's `qualifyingCount`, so a short row states how many clients honestly qualified rather
-  // than being padded with one that did not.
-  const confirmGroup = async (label: string, pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
-    const confirmed: string[] = [];
-    let rejected = 0;
-    let cursor = 0;
-    while (confirmed.length < pick.requestedCount && cursor < walkable.length) {
-      const batch = walkable.slice(cursor, cursor + (pick.requestedCount - confirmed.length));
-      cursor += batch.length;
-      await walkAll(batch);
-      for (const id of batch) {
-        const entry = walked.get(id);
-        if (entry && showcaseChainHasOutcome(entry.funnels, SHOWCASE_MIN_OUTCOME_PEOPLE)) confirmed.push(id);
-        else rejected += 1;
-      }
-    }
-    if (rejected > 0) {
-      console.log(
-        `[features-service] showcase ${label}: ${rejected} candidate(s) showed fewer than ${SHOWCASE_MIN_OUTCOME_PEOPLE} people on every rung past the outreach base on their own chain and were not named`,
-      );
-    }
-    const qualifying = Math.max(0, pick.qualifyingCount - rejected);
-    return confirmed.length > 0
-      ? { ...pick, brandIds: confirmed, qualifyingCount: qualifying }
-      : {
-          ...pick,
-          brandIds: [],
-          measured: false,
-          // A snapshot with no candidates keeps its own silence; candidates that all fell short are
-          // "nobody qualifies", which is what they are.
-          unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
-          qualifyingCount: qualifying,
-        };
-  };
-
   // The hero row (owner 2026-10-19, SHOWCASE-MEETINGS-1019): walk newest first until 3 clients with a
   // booked meeting are found (or the cap), then name them, filling from the newest positive-reply
   // clients. Each client is judged on the counts its card states (`showcaseOutcomesOf`), so a card
@@ -4033,7 +3999,39 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
         };
   };
 
-  const returnPick = await confirmGroup("highestReturn", picks.highestReturn, returnWalkable);
+  // The proof section (SHOWCASE-RETURN-SAME-BASIS-1019): every return candidate is walked and the row
+  // is ranked on the return each card prints, the one the client's Today page states. The snapshot
+  // ratio is the channel's pipeline, not that figure, so it only orders the walk and caps it.
+  const confirmReturn = async (pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
+    await walkAll(walkable);
+    const verdict = pickHighestReturnByStated(
+      walkable.map((id) => {
+        const full = walkedFull.get(id);
+        return {
+          brandId: id,
+          statedReturn: full?.brandReturnPerDollar ?? null,
+          showsOutcome: full ? showcaseChainHasOutcome(full.entry.funnels, SHOWCASE_MIN_OUTCOME_PEOPLE) : false,
+        };
+      }),
+      pick.requestedCount,
+    );
+    if (verdict.rejectedNoOutcome + verdict.rejectedNoReturn > 0) {
+      console.log(
+        `[features-service] showcase highestReturn: ${verdict.rejectedNoOutcome} candidate(s) showed fewer than ${SHOWCASE_MIN_OUTCOME_PEOPLE} people on every rung past the outreach base, ${verdict.rejectedNoReturn} had no return on their dashboard; not named`,
+      );
+    }
+    const qualifying = Math.max(0, pick.qualifyingCount - verdict.rejectedNoOutcome - verdict.rejectedNoReturn);
+    return verdict.brandIds.length > 0
+      ? { ...pick, brandIds: verdict.brandIds, qualifyingCount: qualifying }
+      : {
+          ...pick,
+          brandIds: [],
+          measured: false,
+          unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
+          qualifyingCount: qualifying,
+        };
+  };
+  const returnPick = await confirmReturn(picks.highestReturn, returnWalkable);
   const recentPick = await confirmRecent(picks.recentlyStarted, recentWalkable);
 
   const named = [...new Set([...recentPick.brandIds, ...returnPick.brandIds])];

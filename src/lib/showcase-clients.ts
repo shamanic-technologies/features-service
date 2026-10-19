@@ -39,7 +39,10 @@
  *     that chain shows a measured, positive count past the base (`showcaseChainHasOutcome`). An
  *     UNMEASURED rung (`null`) never qualifies anybody: we cannot claim what we did not count.
  *   - **highestReturn** — the clients whose money came back best, past a floor of spend. The proof
- *     section's question is "what does this return", so it leads with the best measured answers.
+ *     section's question is "what does this return", so it leads with the best measured answers. Each
+ *     client is ranked and served on the return ITS OWN DASHBOARD states (`servedReturnOf`: the HIGHER
+ *     of its flash and mature halves, owner 2026-10-08; SHOWCASE-RETURN-SAME-BASIS-1019: Doc Dinners
+ *     read 2.2x on its Today page and 0.75x on the card, ranked and printed on the mature half alone).
  *
  * A client that both began recently and returns best is legitimately in both groups; nothing is
  * deduped between them, because a group is an ANSWER to its own question rather than a slice of one
@@ -81,6 +84,8 @@
  * on its first cold call.
  */
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
+import { combineVerdicts } from "./fleet-return-maturity.js";
+import { servedReturnOf } from "./served-return.js";
 import { funnelLeg } from "./funnel-legs.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 
@@ -137,6 +142,37 @@ export function pickRecentlyStartedByMeetings(
   };
 }
 
+/** One walked `highestReturn` candidate: the return its card prints and whether its chain shows an outcome. */
+export interface WalkedReturnCandidate {
+  brandId: string;
+  /** The return its dashboard Today page states (`servedReturnOf` over its walked pair). Null = none. */
+  statedReturn: number | null;
+  /** `showcaseChainHasOutcome` on its own walked chain. */
+  showsOutcome: boolean;
+}
+
+/**
+ * PURE: the `highestReturn` group over walked candidates, ranked on the return each card PRINTS — the
+ * one the client's own dashboard states (owner 2026-10-08, SHOWCASE-RETURN-SAME-BASIS-1019) — best
+ * first, brand id on a tie. A client whose chain shows no outcome, or whose dashboard states no return
+ * (Learning, nothing priced), is rejected.
+ */
+export function pickHighestReturnByStated(
+  walked: readonly WalkedReturnCandidate[],
+  requestedCount: number = SHOWCASE_GROUP_SIZE,
+): { brandIds: string[]; qualifying: number; rejectedNoOutcome: number; rejectedNoReturn: number } {
+  let rejectedNoOutcome = 0;
+  let rejectedNoReturn = 0;
+  const kept: { brandId: string; r: number }[] = [];
+  for (const w of walked) {
+    if (!w.showsOutcome) rejectedNoOutcome += 1;
+    else if (w.statedReturn === null || !Number.isFinite(w.statedReturn)) rejectedNoReturn += 1;
+    else kept.push({ brandId: w.brandId, r: w.statedReturn });
+  }
+  kept.sort((a, b) => (a.r === b.r ? a.brandId.localeCompare(b.brandId) : b.r - a.r));
+  return { brandIds: kept.slice(0, requestedCount).map((k) => k.brandId), qualifying: kept.length, rejectedNoOutcome, rejectedNoReturn };
+}
+
 /** Why a group named nobody. Both are real answers; neither is an error. */
 export type ShowcaseGroupUnmeasuredReason =
   /** No warm has written a snapshot for any channel yet, so there is nothing to rank at all. */
@@ -151,6 +187,15 @@ export interface ShowcaseCandidate {
   committedSpendUsd: number;
   /** Expected pipeline, summed across the channels that priced one. Null when NONE of them did. */
   expectedPipelineUsd: number | null;
+  /**
+   * The FLASH twins of the two above (whole history; the two above are the mature cohort) and the
+   * brand's maturity verdict across its channels (`combineVerdicts`). Together they are the return
+   * pair the client's dashboard states one half of. Optional: a snapshot row written before the twins
+   * existed carries none, and the pair is then read on the mature half alone.
+   */
+  flashCommittedSpendUsd?: number;
+  flashExpectedPipelineUsd?: number | null;
+  isMature?: boolean | null;
   /** The EARLIEST first-billed day across the brand's channels — one client, one beginning. */
   startedOn: string | null;
   /**
@@ -206,7 +251,10 @@ export interface ShowcaseClientPicks {
 export function buildShowcaseCandidates(
   rowsByChannel: ReadonlyArray<readonly BrandReturnRow[]>,
 ): ShowcaseCandidate[] {
-  const byBrand = new Map<string, ShowcaseCandidate & { hasPipeline: boolean; hasOutcome: boolean }>();
+  const byBrand = new Map<
+    string,
+    ShowcaseCandidate & { hasPipeline: boolean; hasOutcome: boolean; hasFlash: boolean; hasFlashPipeline: boolean; verdicts: (boolean | null | undefined)[] }
+  >();
   for (const rows of rowsByChannel) {
     for (const row of rows) {
       const agg =
@@ -219,12 +267,24 @@ export function buildShowcaseCandidates(
           outcomeCount: null,
           hasPipeline: false,
           hasOutcome: false,
+          hasFlash: false,
+          hasFlashPipeline: false,
+          verdicts: [],
         };
       agg.committedSpendUsd += row.committedSpendUsd;
       if (row.expectedPipelineUsd !== null && row.expectedPipelineUsd !== undefined) {
         agg.expectedPipelineUsd = (agg.hasPipeline ? (agg.expectedPipelineUsd as number) : 0) + row.expectedPipelineUsd;
         agg.hasPipeline = true;
       }
+      if (row.flashCommittedSpendUsd !== undefined) {
+        agg.flashCommittedSpendUsd = (agg.flashCommittedSpendUsd ?? 0) + row.flashCommittedSpendUsd;
+        agg.hasFlash = true;
+      }
+      if (row.flashExpectedPipelineUsd !== null && row.flashExpectedPipelineUsd !== undefined) {
+        agg.flashExpectedPipelineUsd = (agg.hasFlashPipeline ? (agg.flashExpectedPipelineUsd as number) : 0) + row.flashExpectedPipelineUsd;
+        agg.hasFlashPipeline = true;
+      }
+      agg.verdicts.push(row.isMature);
       const started = row.startedOn ?? null;
       // ISO `YYYY-MM-DD` sorts lexically, so the earliest is a string comparison — no parsing, and no
       // timezone to get wrong.
@@ -237,7 +297,33 @@ export function buildShowcaseCandidates(
       byBrand.set(row.brandId, agg);
     }
   }
-  return [...byBrand.values()].map(({ hasPipeline: _p, hasOutcome: _o, ...c }) => c);
+  return [...byBrand.values()].map(({ hasPipeline: _p, hasOutcome: _o, hasFlash, hasFlashPipeline, verdicts, ...c }) => {
+    const candidate: ShowcaseCandidate = { ...c };
+    if (hasFlash) {
+      candidate.flashExpectedPipelineUsd = hasFlashPipeline ? (c.flashExpectedPipelineUsd as number) : null;
+    } else {
+      delete candidate.flashCommittedSpendUsd;
+      delete candidate.flashExpectedPipelineUsd;
+    }
+    const verdict = combineVerdicts(verdicts);
+    if (verdict !== undefined) candidate.isMature = verdict;
+    return candidate;
+  });
+}
+
+/**
+ * PURE: the return a client's own dashboard states, off its snapshot ingredients (`servedReturnOf`
+ * over the flash and mature pair, the dashboard's rule). Null = its dashboard states no figure
+ * (Learning, or nothing priced), and the client is not ranked.
+ */
+export function candidateStatedReturn(c: ShowcaseCandidate): number | null {
+  const ratio = (pipeline: number | null | undefined, spend: number | undefined): number | null =>
+    pipeline === null || pipeline === undefined || spend === undefined || !(spend > 0) ? null : pipeline / spend;
+  return servedReturnOf({
+    flash: { roiMultiple: ratio(c.flashExpectedPipelineUsd, c.flashCommittedSpendUsd) },
+    mature: { roiMultiple: ratio(c.expectedPipelineUsd, c.committedSpendUsd) },
+    isMature: c.isMature ?? null,
+  }).roiMultiple;
 }
 
 /** An empty group, carrying the reason it is empty. */
@@ -363,6 +449,11 @@ export function pickShowcaseClients(
   // weaker answer, it is no answer: its ratio is decided by whichever single outcome happened to land.
   // The same outcome minimum as recency holds: a client the homepage names never leads with fewer than
   // `SHOWCASE_MIN_OUTCOME_PEOPLE` of an outcome, whichever question named it.
+  // Ordered on the snapshot's estimate of the return the client's dashboard states
+  // (`candidateStatedReturn`, none last). This is only the WALK order: the snapshot is the CHANNEL's
+  // pipeline, not the brand body the dashboard prices (prod 2026-10-19: Doc Dinners 7.2x here, 2.2x on
+  // its Today page), so the group is decided on each walked client's served return
+  // (`pickHighestReturnByStated`).
   const byReturn = candidates
     .filter(
       (c) =>
@@ -371,7 +462,7 @@ export function pickShowcaseClients(
         c.committedSpendUsd >= minSpendUsd &&
         mayShowOutcome(c, minOutcomePeople),
     )
-    .map((c) => ({ c, ratio: (c.expectedPipelineUsd as number) / c.committedSpendUsd }))
+    .map((c) => ({ c, ratio: candidateStatedReturn(c) ?? Number.NEGATIVE_INFINITY }))
     .sort((a, b) => (a.ratio === b.ratio ? a.c.brandId.localeCompare(b.c.brandId) : b.ratio - a.ratio))
     .map((r) => r.c);
 

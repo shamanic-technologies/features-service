@@ -31,7 +31,7 @@
  *     said 5.9x while its Today page said 4.3x). `expectedReturn.roiMultiple` = the return the customer is
  *     shown for the scope that sent: `/offers/:offerId/revenue?pricing=net` (the Today page's read, the SAME
  *     Gold cell via `offerRevenueJson`) → `costEconomics.maturity` → `servedReturnOf` (`lib/served-return.ts`:
- *     mature half; not mature → to-date half when > 1x, else null `return_learning`). Every offer with
+ *     the HIGHER half, owner 2026-10-08; not mature → to-date half when > 1x, else null `return_learning`). Every offer with
  *     channels of every brand that contacted someone in the window is a scope; they must state ONE value,
  *     else null + `return_differs_across_scopes` (never a blend, never a pick). `returnScopes` names each.
  *     The window's own reply-route valuation was a second formula for "return" and is gone: it divided the

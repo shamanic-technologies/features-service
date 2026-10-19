@@ -18,10 +18,13 @@ import {
   SHOWCASE_GROUP_SIZE,
   SHOWCASE_MIN_OUTCOME_PEOPLE,
   type ShowcaseCandidate,
+  candidateStatedReturn,
+  pickHighestReturnByStated,
   furthestRungReached,
   showcaseChainHasOutcome,
 } from "./showcase-clients.js";
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
+import { servedReturnOf } from "./served-return.js";
 
 const DOC = "brand-doc";
 const OPS = "brand-ops";
@@ -179,6 +182,69 @@ describe("pickShowcaseClients", () => {
     const picks = pickShowcaseClients(one, FLOOR);
     expect(ids(picks.recentlyStarted)).toEqual([OPS]);
     expect(ids(picks.highestReturn)).toEqual([OPS]);
+  });
+});
+
+describe("highestReturn ranks on the return the client's dashboard states (SHOWCASE-RETURN-SAME-BASIS-1019)", () => {
+  // Doc Dinners, prod 2026-10-19: mature 0.74x, flash 2.21x. Its Today page states the higher half.
+  const DOC_DINNERS: ShowcaseCandidate = {
+    brandId: "brand-doc-dinners",
+    committedSpendUsd: 1000,
+    expectedPipelineUsd: 740,
+    flashCommittedSpendUsd: 2000,
+    flashExpectedPipelineUsd: 4420,
+    isMature: true,
+    startedOn: "2026-03-01",
+    outcomeCount: 40,
+  };
+  const STEADY: ShowcaseCandidate = {
+    brandId: "brand-steady",
+    committedSpendUsd: 1000,
+    expectedPipelineUsd: 1500,
+    flashCommittedSpendUsd: 1200,
+    flashExpectedPipelineUsd: 1440,
+    isMature: true,
+    startedOn: "2026-04-01",
+    outcomeCount: 20,
+  };
+
+  it("a client with mature 0.74x / flash 2.21x is ranked and served at 2.21x, ahead of a 1.5x mature client", () => {
+    // The walked pick: each card's return is what servedReturnOf states over the client's served pair.
+    const docServed = servedReturnOf({ flash: { roiMultiple: 2.21 }, mature: { roiMultiple: 0.74 }, isMature: true }).roiMultiple;
+    const steadyServed = servedReturnOf({ flash: { roiMultiple: 1.2 }, mature: { roiMultiple: 1.5 }, isMature: true }).roiMultiple;
+    expect(docServed).toBe(2.21);
+    const walked = pickHighestReturnByStated([
+      { brandId: STEADY.brandId, statedReturn: steadyServed, showsOutcome: true },
+      { brandId: DOC_DINNERS.brandId, statedReturn: docServed, showsOutcome: true },
+      { brandId: "brand-learning", statedReturn: null, showsOutcome: true },
+      { brandId: "brand-visits-only", statedReturn: 9, showsOutcome: false },
+    ]);
+    expect(walked).toEqual({ brandIds: [DOC_DINNERS.brandId, STEADY.brandId], qualifying: 2, rejectedNoOutcome: 1, rejectedNoReturn: 1 });
+    // The snapshot walk order follows the same rule.
+    expect(candidateStatedReturn(DOC_DINNERS)).toBeCloseTo(2.21, 10);
+    expect(candidateStatedReturn(STEADY)).toBeCloseTo(1.5, 10);
+    // On the mature half alone Doc Dinners (0.74x) would sit BELOW Steady (1.5x).
+    expect(ids(pickShowcaseClients([STEADY, DOC_DINNERS], FLOOR).highestReturn)).toEqual([DOC_DINNERS.brandId, STEADY.brandId]);
+  });
+
+  it("a not-mature client's snapshot return counts only above 1x, else it is walked last (dashboard: Learning)", () => {
+    const young = { ...DOC_DINNERS, brandId: "brand-young", isMature: false };
+    expect(candidateStatedReturn(young)).toBeCloseTo(2.21, 10);
+    const thin = { ...young, brandId: "brand-thin", flashExpectedPipelineUsd: 1800 };
+    expect(candidateStatedReturn(thin)).toBeNull();
+    expect(ids(pickShowcaseClients([thin, STEADY], FLOOR).highestReturn)).toEqual([STEADY.brandId, thin.brandId]);
+  });
+
+  it("a snapshot row without flash twins ranks on its mature half, as before", () => {
+    expect(candidateStatedReturn({ brandId: "b", committedSpendUsd: 200, expectedPipelineUsd: 300, startedOn: null, outcomeCount: 9 })).toBeCloseTo(1.5, 10);
+  });
+
+  it("buildShowcaseCandidates carries the flash twins and the combined verdict across channels", () => {
+    const [c] = buildShowcaseCandidates([
+      [{ brandId: "x", committedSpendUsd: 100, expectedPipelineUsd: 50, flashCommittedSpendUsd: 300, flashExpectedPipelineUsd: 600, isMature: true }],
+      [{ brandId: "x", committedSpendUsd: 100, expectedPipelineUsd: 50, flashCommittedSpendUsd: 100, flashExpectedPipelineUsd: null, isMature: false }],
+    ]);
+    expect(c).toMatchObject({ flashCommittedSpendUsd: 400, flashExpectedPipelineUsd: 600, isMature: false });
   });
 });
 

@@ -473,6 +473,13 @@ const get = async (query = ""): Promise<Body> => {
 
 const brandOf = (body: Body, id: string) => body.brands.find((b) => b.brand.id === id)!;
 
+/** The return group's cards print returns best first: the row is ranked on the printed figure. */
+function expectPrintedReturnsDescending(brands: Array<{ funnels: Array<{ returnPerDollar: number | null }> }>): void {
+  const printed = brands.map((b) => b.funnels[0]?.returnPerDollar ?? null);
+  expect(printed.every((r) => r !== null)).toBe(true);
+  for (let i = 1; i < printed.length; i += 1) expect(printed[i - 1]!).toBeGreaterThanOrEqual(printed[i]!);
+}
+
 describe("GET /public/stats/showcase-funnels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -502,9 +509,11 @@ describe("GET /public/stats/showcase-funnels", () => {
     // though it began first; Shockwave (August, 1 positive reply) fills the next slot; opsfolio has
     // website visits only and is never named here.
     expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK]);
-    // Best return first, in a DIFFERENT order (55.6x / 3.6x / 1.65x). An implementation that served
-    // one ranking under both names cannot pass both of these.
-    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK, DOC]);
+    // Best return first, in a DIFFERENT order. The order is the walked return each card prints (the
+    // client's dashboard figure, SHOWCASE-RETURN-SAME-BASIS-1019), not the snapshot's channel ratio
+    // (55.6x / 3.6x / 1.65x). An implementation that served one ranking under both names cannot pass both.
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([DOC, OPS, SHOCK]);
+    expectPrintedReturnsDescending(body.groups.highestReturn.brands);
 
     expect(body.groups.recentlyStarted.measured).toBe(true);
     expect(body.groups.highestReturn.measured).toBe(true);
@@ -595,7 +604,7 @@ describe("GET /public/stats/showcase-funnels", () => {
   it("the return group is untouched by the recency check", async () => {
     mockFetch(WITH_VITAL);
     const body = await get();
-    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK, DOC]);
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([DOC, OPS, SHOCK]);
   });
 
   it("a SHORT group is a stated fact, not a list somebody has to count", async () => {
@@ -932,7 +941,10 @@ describe("showcase picks under the production minimum of 5", () => {
     mockFetch(FIXTURE);
     const body = await get();
     const ret = body.groups.highestReturn.brands.map((b) => b.brand.id);
-    expect(ret).toEqual([P7, P6, P5]);
+    // Ranked on each client's walked return (its dashboard figure), never the snapshot ratio that put
+    // OLDEST last (SHOWCASE-RETURN-SAME-BASIS-1019).
+    expect(ret).toEqual([OLDEST, P7, P6]);
+    expectPrintedReturnsDescending(body.groups.highestReturn.brands);
     expect(ret).not.toContain(ANECDOTE);
     expect(ret).not.toContain(FOUR);
     for (const entry of body.groups.highestReturn.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
