@@ -10,7 +10,7 @@
  *     D's cutoff (`maturityCutoffIso`, 21 days on both cold email legs); FLASH = served by D.
  *   - SPEND: the runs ledger per workflow version and run-start day (every org's leg campaigns); mature = runs started
  *     before D's cutoff, flash = started by D. Cost rows are today's ledger (the 08-24..10-02 send costs included).
- *   - WHO COULD BE PICKED on D: a workflow STARTED a run on the leg in the 7 days ending D (workflow-service records no
+ *   - WHO COULD BE PICKED on D: a workflow STARTED a run on the leg in the 21 days ending D (workflow-service records no
  *     date a workflow stopped running, so the runs ledger is the fact), AND, from the day stated assignments exist
  *     (2026-09-27), its leg assignment as of D is `active`.
  * Then the live code decides: per-slug evidence → dynasties (`rollUpLegEvidenceByDynasty`, screened visits on the visit
@@ -28,8 +28,13 @@ import type { EnginePerson } from "./revenue-engine.js";
 import { HUMAN_CLICKED_KEY, isScreenedVisitLeg, SCREENED_CONTACTED_KEY, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import { asOfPerson, creditedSignal, creditPerson, type PersonTimeline } from "./serving-row-credit.js";
 
-/** A workflow may be picked on day D only if it started a run on the leg in the 7 days ending D. */
-export const RUNNING_WINDOW_DAYS = 7;
+/**
+ * A workflow may be picked on day D only if it started a run on the leg in the 21 days ending D: the cold email legs'
+ * maturity horizon. The live rule reads whether workflow-service can run it TODAY, a status with no history; 7 days
+ * dropped the best proven workflow while it still stood as the live index (rampart, last run 2026-10-13, published on
+ * 2026-10-18).
+ */
+export const RUNNING_WINDOW_DAYS = 21;
 
 const DAY_MS = 86_400_000;
 
@@ -69,7 +74,7 @@ export interface PersonHistory {
   days: readonly string[];
   /** `${legKey}\t${half}\t${slug}` → per-day difference arrays. */
   cells: Map<string, Diff>;
-  /** Persons that could not be dated at all (no serve date): in no past day. */
+  /** Persons that could not be dated at all (no serve date, no dated send): in no past day. */
   undatedPersons: number;
 }
 
@@ -126,11 +131,11 @@ export function addPairPersons(
   if (!first || !last) return;
   const indexOf = (day: string) => Math.round((Date.parse(`${day}T00:00:00.000Z`) - Date.parse(`${first}T00:00:00.000Z`)) / DAY_MS);
   for (const person of persons) {
-    if (!person.servedAt) {
+    const t = timelines.get(person.leadId);
+    if (!person.servedAt && !(t?.sends ?? []).some((x) => x.first !== null)) {
       h.undatedPersons += 1;
       continue;
     }
-    const t = timelines.get(person.leadId);
     const days = eventDays(person, t).map((d) => (d < first ? first : d)).filter((d, i, a) => d <= last && a.indexOf(d) === i);
     for (let k = 0; k < days.length; k++) {
       const day = days[k]!;
