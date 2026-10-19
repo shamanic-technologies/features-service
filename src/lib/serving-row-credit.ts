@@ -91,7 +91,7 @@ interface Send {
   screenable: boolean;
 }
 
-interface PersonTimeline {
+export interface PersonTimeline {
   /** campaign id → its FIRST act on the person (ms); null when the act states no date. */
   firstActBy: Map<string, number | null>;
   replies: DatedEvidence[];
@@ -253,6 +253,65 @@ export function creditServingRows<T extends EnginePerson>(persons: readonly T[],
   const timelines = indexTimelines(journeys);
   const scope = campaignScope === undefined ? null : new Set(typeof campaignScope === "string" ? [campaignScope] : campaignScope);
   return persons.map((p) => creditPerson(p, timelines.get(p.leadId), scope));
+}
+
+/**
+ * PURE. The person and its timeline AS THEY STOOD at `endMs` (INDEX-HISTORY-BACKFILL-1019: a past day's index point is
+ * computed on what had happened by the end of that day, never on what came later). Only evidence DATED at or before
+ * `endMs` is kept: sends that had started (a send still going on after `endMs` is known only by its first instant),
+ * replies, clicks and acts dated by then, the CRM witness dated by then. A signal no kept evidence dates is dropped (an
+ * undated reply or click cannot be placed in time, so no past day counts it). The serve clock: a person whose recorded
+ * serve (the LATEST one) is after `endMs` stands on their earliest send by then, else was not served yet (null).
+ * Null = nothing of this person existed by `endMs`. Feed the result to {@link creditPerson}.
+ */
+export function asOfPerson<T extends EnginePerson>(
+  person: T,
+  timeline: PersonTimeline | undefined,
+  endMs: number,
+): { person: T; timeline: PersonTimeline | undefined } | null {
+  const served = ms(person.servedAt ?? null);
+  if (served === null) return null;
+  const t: PersonTimeline | undefined = timeline
+    ? {
+        firstActBy: new Map([...timeline.firstActBy].filter(([, at]) => at !== null && at <= endMs)),
+        replies: timeline.replies.filter((e) => e.at !== null && e.at <= endMs),
+        clicks: timeline.clicks.filter((e) => e.at !== null && e.at <= endMs),
+        sends:
+          timeline.sends === null
+            ? null
+            : timeline.sends
+                .filter((s) => s.first !== null && s.first <= endMs)
+                .map((s) => (s.last !== null && s.last <= endMs ? s : { ...s, last: s.first })),
+      }
+    : undefined;
+  let servedAt = person.servedAt ?? null;
+  if (served > endMs) {
+    const earliest = (t?.sends ?? []).reduce<Send | null>((a, s) => (a === null || (s.first as number) < (a.first as number) ? s : a), null);
+    if (!earliest?.firstIso) return null;
+    servedAt = earliest.firstIso;
+  }
+  const crmIso = person.crmPositiveReplyAt ?? person.signalDates?.positiveReply ?? null;
+  const crmAt = ms(crmIso);
+  const crmKept = crmAt !== null && crmAt <= endMs;
+  const own = person.signals;
+  const sent = t?.sends ? t.sends.length > 0 : true;
+  const signals = {
+    ...own,
+    contacted: Boolean(own.contacted) && sent,
+    clicked: Boolean(own.clicked) && (t?.clicks.length ?? 0) > 0,
+    positiveReply: Boolean(own.positiveReply) && ((t?.replies.length ?? 0) > 0 || crmKept),
+  };
+  const signalDates = person.signalDates ? { ...person.signalDates, positiveReply: crmKept ? crmIso : null } : person.signalDates;
+  return {
+    person: {
+      ...person,
+      servedAt,
+      signals,
+      ...(signalDates ? { signalDates } : {}),
+      crmPositiveReplyAt: crmKept ? (person.crmPositiveReplyAt ?? null) : null,
+    },
+    timeline: t,
+  };
 }
 
 /**

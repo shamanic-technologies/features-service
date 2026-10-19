@@ -68,6 +68,15 @@ describe("GET /public/indexes/:slug", () => {
     expect(res.body.points[0]).toMatchObject({ value: 2.08, basis: "recorded", status: "signal" });
   });
 
+  it("labels a recomputed day apart from a recorded one (INDEX-HISTORY-BACKFILL-1019)", async () => {
+    store.readFleetIndexSeries.mockResolvedValue([{ ...pointRow("cold-email-click-rate", "2026-09-01", 1.5), basis: "recomputed" }, pointRow("cold-email-click-rate", "2026-10-18", 2.08)]);
+    const res = await request(app).get("/public/indexes/cold-email-click-rate");
+    expect(res.status).toBe(200);
+    expect(res.body.points.map((p: { basis: string }) => p.basis)).toEqual(["recomputed", "recorded"]);
+    expect(res.body.basisRule.recorded).toMatch(/live/);
+    expect(res.body.basisRule.recomputed).toMatch(/end of that day/);
+  });
+
   it("404 on an unknown index", async () => {
     const res = await request(app).get("/public/indexes/nope");
     expect(res.status).toBe(404);
