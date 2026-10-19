@@ -26,8 +26,8 @@ vi.mock("../lib/plays-store.js", async (orig) => {
     ]),
     loadPlayCatalogue: vi.fn(async () => ({
       tactics: new Map([
-        ["blind-angle", { id: "blind-angle", clientLine: "Brand not named in the first email" }],
-        ["named-angle", { id: "named-angle", clientLine: "Brand named in the email" }],
+        ["blind-angle", { id: "blind-angle", name: "Blind angle", clientLine: "Brand not named in the first email" }],
+        ["named-angle", { id: "named-angle", name: "Named angle", clientLine: "Brand named in the email" }],
       ]),
     })),
   };
@@ -94,7 +94,7 @@ describe("GET /orgs/leads/:leadId/written-by (WRITTEN-BY-1019)", () => {
           writtenAt: "2026-10-19T05:38:48.854Z",
           model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } },
           modelUnavailableReason: null,
-          tactics: [{ line: "Brand not named in the first email" }],
+          tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }],
           tacticsUnavailableReason: null,
           underTest: true,
           underTestUnavailableReason: null,
@@ -110,7 +110,7 @@ describe("GET /orgs/leads/:leadId/written-by (WRITTEN-BY-1019)", () => {
           writtenBy: "workflow",
           model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } },
           modelUnavailableReason: null,
-          tactics: [{ line: "Brand not named in the first email" }],
+          tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }],
           tacticsUnavailableReason: null,
           underTest: true,
           underTestUnavailableReason: null,
@@ -147,7 +147,7 @@ describe("GET /orgs/leads/:leadId/written-by (WRITTEN-BY-1019)", () => {
     });
     const res = await request(app).get(`/orgs/leads/${LEAD}/written-by`).set(AUTH);
     const [own, foreign] = res.body.messages;
-    expect(own).toMatchObject({ id: "fa-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, tactics: [{ line: "Brand not named in the first email" }], underTest: true });
+    expect(own).toMatchObject({ id: "fa-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }], underTest: true });
     expect(foreign).toMatchObject({ id: "fa-2", writtenBy: "workflow", model: null, modelUnavailableReason: "no_workflow_recorded" });
   });
 

@@ -2577,7 +2577,7 @@ const writtenByEntrySchema = z.object({
     .nullable()
     .describe("The concrete model that wrote it (content-generation-service's record). Null with modelUnavailableReason."),
   modelUnavailableReason: z.enum(["model_names_unreadable", "model_not_served"]).nullable(),
-  tactics: z.array(z.object({ line: z.string().describe("A plain line, e.g. \"Brand not named in the first email\".") })).describe("The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."),
+  tactics: z.array(z.object({ name: z.string().describe("The tactic's catalogue name, the tag a client reads beside the message, e.g. \"Blind angle\"."), line: z.string().describe("A plain line, e.g. \"Brand not named in the first email\" (the tag's hover).") })).describe("The tactics the workflow version that wrote it follows (Jev's verdicts), each by its name and its client line; a tactic with no client line is not listed."),
   tacticsUnavailableReason: z.enum(["no_workflow_recorded", "not_judged_yet"]).nullable(),
   underTest: z.boolean().nullable().describe("True while the workflow that wrote it is still being tested (learning: not mature on any pipe it runs on); the dashboard marks its tactics as being tested. Null with underTestUnavailableReason."),
   underTestUnavailableReason: z.enum(["no_workflow_recorded", "not_judged_yet", "ranking_unreadable", "not_ranked_on_any_pipe"]).nullable(),
