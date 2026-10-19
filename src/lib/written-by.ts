@@ -12,7 +12,8 @@
  *    states it (`GET /internal/leads/{leadId}/sent-messages`, WRITTEN-BY-1019-SENDER). The model is the concrete one of
  *    the version's writer record on that campaign when one exists, else the model the version's writing step asks for
  *    (its DAG: the content-generation `/generate` step, else the chat-service `/complete` step), resolved by chat-service.
- * A tactic is shown when Jev judged that version follows it (`workflow_tactic_verdicts`) AND the tactic states a client line.
+ * A tactic is shown when Jev judged that version follows it (`workflow_tactic_verdicts`) AND the tactic states a client line;
+ * it is served as its catalogue NAME (the tag, e.g. "Blind angle", WRITTEN-WITH-TACTIC-NAMES-1019) beside that line (the tag's hover).
  */
 import type { ServedModel } from "./model-ids-client.js";
 import type { Tactic } from "./plays.js";
@@ -55,8 +56,8 @@ export interface WrittenByEntry {
   writtenAt: string;
   model: { name: string; vendor: { id: string; name: string } } | null;
   modelUnavailableReason: ModelUnavailableReason | null;
-  /** One plain line per tactic the writing version follows, in tactic id order. */
-  tactics: Array<{ line: string }>;
+  /** One tag per tactic the writing version follows, in tactic id order: its catalogue name + its plain client line. */
+  tactics: Array<{ name: string; line: string }>;
   tacticsUnavailableReason: TacticsUnavailableReason | null;
   /** True while the writing workflow is still being tested (learning) on its pipe; null + reason when unknown. */
   underTest: boolean | null;
@@ -80,7 +81,7 @@ export function underTestOf(verdicts: ReadonlyArray<boolean | null>): boolean | 
 
 export interface WrittenByInput {
   verdicts: readonly VersionVerdict[];
-  tactics: ReadonlyMap<string, Pick<Tactic, "id" | "clientLine">>;
+  tactics: ReadonlyMap<string, Pick<Tactic, "id" | "name" | "clientLine">>;
   /** null = chat-service's model list could not be read. */
   models: readonly ServedModel[] | null;
   /** dynasty -> maturity verdicts on its pipes; absent dynasty = not ranked anywhere; null map = ranking unreadable. */
@@ -106,9 +107,9 @@ function versionBlocks(input: WrittenByInput) {
     const tactics = own
       .filter((v) => v.verdict)
       .map((v) => input.tactics.get(v.tacticId))
-      .filter((t): t is Pick<Tactic, "id" | "clientLine"> => !!t && typeof t.clientLine === "string" && t.clientLine.length > 0)
+      .filter((t): t is Pick<Tactic, "id" | "name" | "clientLine"> => !!t && typeof t.clientLine === "string" && t.clientLine.length > 0)
       .sort((a, b) => (a.id < b.id ? -1 : 1))
-      .map((t) => ({ line: t.clientLine as string }));
+      .map((t) => ({ name: t.name, line: t.clientLine as string }));
     const dynasty = own[0]?.workflowDynastySlug ?? null;
     let underTest: boolean | null = null;
     let underTestUnavailableReason: UnderTestUnavailableReason | null = null;
@@ -172,7 +173,7 @@ export interface MessageWrittenBy {
   writtenBy: MessageWriter;
   model: WrittenByEntry["model"];
   modelUnavailableReason: ModelUnavailableReason | "written_by_a_person" | "writer_unknown" | "no_workflow_recorded" | "model_not_recorded" | null;
-  tactics: Array<{ line: string }>;
+  tactics: WrittenByEntry["tactics"];
   tacticsUnavailableReason: TacticsUnavailableReason | "written_by_a_person" | "writer_unknown" | null;
   underTest: boolean | null;
   underTestUnavailableReason: UnderTestUnavailableReason | "written_by_a_person" | "writer_unknown" | null;

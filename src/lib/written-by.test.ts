@@ -6,10 +6,10 @@ const MODELS = [
   { modelId: "claude-sonnet-5-5", displayName: "Claude Sonnet 5.5", provider: "anthropic", capabilityTier: "strong", aliases: ["sonnet"], formerAliases: [] },
 ];
 const TACTICS = new Map([
-  ["blind-angle", { id: "blind-angle", clientLine: "Brand not named in the first email" }],
-  ["fresh-contacts-only", { id: "fresh-contacts-only", clientLine: "Skips anyone you emailed in the last 3 months" }],
-  ["named-angle", { id: "named-angle", clientLine: "Brand named in the email" }],
-  ["catch-all", { id: "catch-all", clientLine: null }],
+  ["blind-angle", { id: "blind-angle", name: "Blind angle", clientLine: "Brand not named in the first email" }],
+  ["fresh-contacts-only", { id: "fresh-contacts-only", name: "Fresh contacts only", clientLine: "Skips anyone you emailed in the last 3 months" }],
+  ["named-angle", { id: "named-angle", name: "Named angle", clientLine: "Brand named in the email" }],
+  ["catch-all", { id: "catch-all", name: "Catch all", clientLine: null }],
 ]);
 const verdict = (workflowSlug: string, tacticId: string, v: boolean, dynasty = workflowSlug.replace(/-v\d+$/, "")): VersionVerdict => ({ workflowSlug, workflowDynastySlug: dynasty, tacticId, verdict: v });
 
@@ -42,13 +42,13 @@ describe("buildWrittenBy (WRITTEN-BY-1019)", () => {
       model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } },
       modelUnavailableReason: null,
       // A "no" verdict and a tactic with no client line are never listed.
-      tactics: [{ line: "Brand not named in the first email" }, { line: "Skips anyone you emailed in the last 3 months" }],
+      tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }, { name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }],
       tacticsUnavailableReason: null,
       underTest: true,
       underTestUnavailableReason: null,
     });
     expect(older.model?.name).toBe("Claude Sonnet 5.5");
-    expect(older.tactics).toEqual([{ line: "Brand named in the email" }]);
+    expect(older.tactics).toEqual([{ name: "Named angle", line: "Brand named in the email" }]);
     expect(older.underTest).toBe(false);
   });
 
@@ -106,8 +106,8 @@ describe("buildMessageWrittenBy: every message, any channel (WRITTEN-BY-1019-SEN
       messages: [msg("subj-1", "workflow", BLIND.workflowSlug), msg("crm-9", "workflow", "ai-follow-up-email-algenib-v16", { channel: "whatsapp", campaignId: null })],
       dagModelAliasOf: new Map([["ai-follow-up-email-algenib-v16", "opus"]]),
     });
-    expect(email).toMatchObject({ id: "subj-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, underTest: true, tactics: [{ line: "Brand not named in the first email" }, { line: "Skips anyone you emailed in the last 3 months" }] });
-    expect(whatsapp).toMatchObject({ id: "crm-9", channel: "whatsapp", writtenBy: "workflow", model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } }, modelUnavailableReason: null, underTest: false, tactics: [{ line: "Skips anyone you emailed in the last 3 months" }] });
+    expect(email).toMatchObject({ id: "subj-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, underTest: true, tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }, { name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }] });
+    expect(whatsapp).toMatchObject({ id: "crm-9", channel: "whatsapp", writtenBy: "workflow", model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } }, modelUnavailableReason: null, underTest: false, tactics: [{ name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }] });
   });
 
   it("a message a person sent, or whose writer is not on record, says so and names no model", () => {
