@@ -128,7 +128,9 @@ import { foldFleetPipelines, type FleetDynastyPipeline, type PairDynastyPipeline
 import {
   buildOutcomeReturnOnSpend,
   channelOutcomeEconomicsOf,
+  showcaseOutcomesOf,
   showcaseOutcomesPayloadOf,
+  type ShowcaseHeroCounts,
   type ChannelOutcomeEconomics,
   type OutcomeReturnFigures,
   type ShowcaseOutcomesPayload,
@@ -146,6 +148,7 @@ import {
 import {
   buildShowcaseCandidates,
   furthestRungReached,
+  pickRecentlyStartedByMeetings,
   pickShowcaseClients,
   showcaseChainHasOutcome,
   SHOWCASE_MIN_OUTCOME_PEOPLE,
@@ -3709,6 +3712,10 @@ const SHOWCASE_BRAND_CONCURRENCY = 2;
 /** The most candidates one refresh will walk PER GROUP while confirming the row on their own chains. */
 const SHOWCASE_MAX_WALKS_PER_GROUP = 20;
 
+/** The recent group walks deeper: it looks for 3 clients with a booked meeting, rarer than any rung
+ *  (prod 2026-10-19: 20 dated clients with a rung past the base). It stops once 3 are found. */
+const SHOWCASE_MAX_RECENT_WALKS = 30;
+
 /** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
 async function computeShowcaseBrand(
   brandId: string,
@@ -3717,7 +3724,7 @@ async function computeShowcaseBrand(
 ): Promise<WalkedShowcaseBrand> {
   const brand = { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null };
   if (!orgId) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" }, brandReturnPerDollar: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" }, brandReturnPerDollar: null, heroCounts: null };
   }
 
   const headers: DownstreamHeaders = { orgId };
@@ -3725,14 +3732,14 @@ async function computeShowcaseBrand(
   const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
   const channels = buildBrandChannels(rows);
   if (channels.length === 0) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" }, brandReturnPerDollar: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" }, brandReturnPerDollar: null, heroCounts: null };
   }
   // Which paths it sells through = the reading paths of the LEGS its campaigns perform, every offer —
   // the same set every pricing read resolves (wave C3: the funnel a campaign row stated is retired).
   // An unreadable leg economics read fails loud and lands on this brand's `read_failed`.
   const soldFunnels = brandReadingFunnels(await fetchPricingFunnelsAllOffers(brandId, orgId));
   if (soldFunnels.length === 0) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" }, brandReturnPerDollar: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" }, brandReturnPerDollar: null, heroCounts: null };
   }
 
   const featureSlugs = brandFeatureSlugs(channels);
@@ -3759,6 +3766,9 @@ async function computeShowcaseBrand(
   // path that IS the funnel-narrowed read's return, so it is taken off that pass at no cost; only a
   // brand selling several pays one extra, un-narrowed pass — off the request path, in this warm.
   let brandReturnPerDollar: number | null = null;
+  // The hero's two counts (positive replies, meetings booked) are PERSON flags of the brand's whole
+  // lead population, the same on every funnel-narrowed pass: taken off the first one that walked.
+  let heroCounts: ShowcaseHeroCounts | null = null;
   for (const funnelKey of soldFunnels) {
     const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels, funnelKey) : undefined;
     // The byte-same call the brand revenue read makes for its own body: the brand's
@@ -3793,6 +3803,13 @@ async function computeShowcaseBrand(
     // is the return this client reads on their own dashboard, and each rung already carries what it
     // cost. Nothing extra is fetched for either.
     if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps, body.costEconomics));
+    if (heroCounts === null && body.funnelSteps) {
+      heroCounts = {
+        positiveReplies: body.recipientsRepliesPositive.total,
+        meetingsBooked: body.meetingsBooked.total,
+        committedSpentCents: body.funnelSteps.committedSpentCents,
+      };
+    }
     if (soldFunnels.length === 1) brandReturnPerDollar = body.costEconomics.roiMultiple ?? null;
   }
   if (soldFunnels.length > 1) {
@@ -3811,13 +3828,16 @@ async function computeShowcaseBrand(
       unmeasuredReason: funnels.length > 0 ? null : "read_failed",
     },
     brandReturnPerDollar,
+    heroCounts,
   };
 }
 
-/** One walked showcase brand: its funnel-keyed entry, and the brand-wide return its per-outcome twin states. */
+/** One walked showcase brand: its funnel-keyed entry, the brand-wide return its per-outcome twin states,
+ *  and its positive-reply / meeting-booked person counts (the hero card's two figures). */
 interface WalkedShowcaseBrand {
   entry: ShowcaseBrandFunnels;
   brandReturnPerDollar: number | null;
+  heroCounts: ShowcaseHeroCounts | null;
 }
 
 /** Both showcase payloads, built by ONE walk and cached as ONE cell, so the two vocabularies can never
@@ -3887,7 +3907,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   // `SHOWCASE_MIN_OUTCOME_PEOPLE` on every rung after it. The walk is bounded: the snapshot prefilter
   // already reads rungs, so a rejection is rare, and a cap keeps a stale snapshot from turning one
   // refresh into a fleet-wide fan-out.
-  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_WALKS_PER_GROUP);
+  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_RECENT_WALKS);
   const returnWalkable = picks.highestReturn.rankedBrandIds.slice(0, SHOWCASE_MAX_WALKS_PER_GROUP);
   const infoIds = [...new Set([...returnWalkable, ...recentWalkable])];
   const brandInfo = infoIds.length > 0 ? await fetchBrandInfoBatch(infoIds) : new Map();
@@ -3904,7 +3924,14 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
       SHOWCASE_BRAND_CONCURRENCY,
       async (brandId): Promise<WalkedShowcaseBrand> => {
         try {
-          return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          try {
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          } catch (first) {
+            // One retry: runs-service statement timeouts are transient under load (prod 2026-10-19,
+            // Doc Dinners' 162 meetings left the hero row on one 500 per refresh).
+            console.warn(`[features-service] showcase funnel read failed for brand ${brandId}, retrying once:`, first);
+            return await computeShowcaseBrand(brandId, orgByBrand.get(brandId), brandInfo.get(brandId));
+          }
         } catch (error) {
           console.error(`[features-service] showcase funnel read failed for brand ${brandId}:`, error);
           const info = brandInfo.get(brandId);
@@ -3916,6 +3943,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
               unmeasuredReason: "read_failed",
             },
             brandReturnPerDollar: null,
+            heroCounts: null,
           };
         }
       },
@@ -3964,8 +3992,44 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
         };
   };
 
+  // The hero row (owner 2026-10-19, SHOWCASE-MEETINGS-1019): walk newest first until 3 clients with a
+  // booked meeting are found (or the cap), then name them, filling from the newest positive-reply
+  // clients. Each client is judged on the counts its card states (`showcaseOutcomesOf`), so a card
+  // never shows 0 meetings and 0 positive replies, and website visits never qualify anybody.
+  const confirmRecent = async (pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
+    const counted: { brandId: string; meetingsBooked: number | null; positiveReplies: number | null }[] = [];
+    const BATCH = 3;
+    let verdict = pickRecentlyStartedByMeetings([], pick.requestedCount);
+    for (let cursor = 0; cursor < walkable.length && !verdict.complete; cursor += BATCH) {
+      const batch = walkable.slice(cursor, cursor + BATCH);
+      await walkAll(batch);
+      for (const id of batch) {
+        const full = walkedFull.get(id);
+        const outcomes = full ? showcaseOutcomesOf(full.entry, null, full.heroCounts).outcomes : [];
+        const countOf = (key: string) => outcomes.find((o) => o.key === key)?.peopleReached ?? null;
+        counted.push({ brandId: id, meetingsBooked: countOf("meeting_booked"), positiveReplies: countOf("conversation") });
+      }
+      verdict = pickRecentlyStartedByMeetings(counted, pick.requestedCount);
+    }
+    if (verdict.rejected > 0) {
+      console.log(
+        `[features-service] showcase recentlyStarted: ${verdict.rejected} candidate(s) had no meeting booked and no positive reply and were not named`,
+      );
+    }
+    const qualifying = Math.max(0, pick.qualifyingCount - verdict.rejected);
+    return verdict.brandIds.length > 0
+      ? { ...pick, brandIds: verdict.brandIds, qualifyingCount: qualifying }
+      : {
+          ...pick,
+          brandIds: [],
+          measured: false,
+          unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
+          qualifyingCount: qualifying,
+        };
+  };
+
   const returnPick = await confirmGroup("highestReturn", picks.highestReturn, returnWalkable);
-  const recentPick = await confirmGroup("recentlyStarted", picks.recentlyStarted, recentWalkable);
+  const recentPick = await confirmRecent(picks.recentlyStarted, recentWalkable);
 
   const named = [...new Set([...recentPick.brandIds, ...returnPick.brandIds])];
   const brands = named
@@ -3994,7 +4058,9 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     minSpendUsd: picks.minSpendUsd,
   };
   const brandReturns = new Map([...walkedFull].map(([id, w]) => [id, w.brandReturnPerDollar]));
-  return { funnels: funnelsPayload, outcomes: showcaseOutcomesPayloadOf(funnelsPayload, brandReturns) };
+  const heroCounts = new Map<string, ShowcaseHeroCounts>();
+  for (const [id, w] of walkedFull) if (w.heroCounts) heroCounts.set(id, w.heroCounts);
+  return { funnels: funnelsPayload, outcomes: showcaseOutcomesPayloadOf(funnelsPayload, brandReturns, heroCounts) };
 }
 
 async function readShowcasePayloads(): Promise<ShowcasePayloads> {

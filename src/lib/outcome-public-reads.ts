@@ -348,7 +348,30 @@ export interface ShowcaseOutcomesPayload {
  * brand's whole committed spend — neither depends on which path the rung was walked on, so two paths
  * that reach one step state the same figures. They are merged by step, the legs landing on it listed.
  */
-export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, brandReturnPerDollar: number | null): ShowcaseBrandOutcomes {
+/**
+ * The brand's own whole-population counts of the two outcomes the homepage hero card states — positive
+ * replies and meetings booked — read off the SAME engine pass the chain was walked on (distinct leads
+ * carrying the flag), with the committed spend every rung divides. A chain of a funnel that does not
+ * walk one of these steps (a website funnel has no Positive reply rung) still carries the person flag,
+ * so the hero can always print both (owner 2026-10-19, SHOWCASE-MEETINGS-1019). Null = not walked.
+ */
+export interface ShowcaseHeroCounts {
+  positiveReplies: number | null;
+  meetingsBooked: number | null;
+  committedSpentCents: number | null;
+}
+
+/** The two steps every showcase brand states, whether or not its chain walks them. */
+const SHOWCASE_HERO_STEPS: ReadonlyArray<{ key: ChannelStepKey; count: (c: ShowcaseHeroCounts) => number | null }> = [
+  { key: "conversation", count: (c) => c.positiveReplies },
+  { key: "meeting_booked", count: (c) => c.meetingsBooked },
+];
+
+export function showcaseOutcomesOf(
+  entry: ShowcaseBrandFunnels,
+  brandReturnPerDollar: number | null,
+  heroCounts: ShowcaseHeroCounts | null = null,
+): ShowcaseBrandOutcomes {
   const reason: ShowcaseOutcomeUnmeasuredReason | null =
     entry.unmeasuredReason === "no_funnel_sold" ? "no_leg_performed" : entry.unmeasuredReason;
   const byKey = new Map<string, ShowcaseOutcome>();
@@ -376,6 +399,24 @@ export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, brandReturnPerDo
       });
     }
   }
+  // A walked brand always states positive replies and meetings booked: a step its chain does not walk
+  // is added from the brand's own person counts (legs `[]`: no leg of its paths lands there), priced on
+  // the same committed spend as every rung. A chain rung, when present, is the figure (same leads).
+  if (entry.measured && heroCounts) {
+    for (const { key, count } of SHOWCASE_HERO_STEPS) {
+      if (byKey.has(key)) continue;
+      const people = count(heroCounts);
+      if (people === null) continue;
+      const spent = heroCounts.committedSpentCents;
+      byKey.set(key, {
+        key,
+        label: CHANNEL_STEPS[key].label,
+        legKeys: [],
+        peopleReached: people,
+        costPerReachUsd: spent !== null && spent > 0 && people > 0 ? spent / 100 / people : null,
+      });
+    }
+  }
   const outcomes = [...byKey.values()].sort((a, b) => {
     const ia = a.key === SHOWCASE_CONTACTED_KEY ? -1 : stepOrder(a.key as ChannelStepKey);
     const ib = b.key === SHOWCASE_CONTACTED_KEY ? -1 : stepOrder(b.key as ChannelStepKey);
@@ -394,8 +435,10 @@ export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, brandReturnPerDo
 export function showcaseOutcomesPayloadOf(
   payload: ShowcaseFunnelsPayload,
   brandReturns: ReadonlyMap<string, number | null>,
+  heroCounts: ReadonlyMap<string, ShowcaseHeroCounts> = new Map(),
 ): ShowcaseOutcomesPayload {
-  const of = (e: ShowcaseBrandFunnels) => showcaseOutcomesOf(e, brandReturns.get(e.brand.id) ?? null);
+  const of = (e: ShowcaseBrandFunnels) =>
+    showcaseOutcomesOf(e, brandReturns.get(e.brand.id) ?? null, heroCounts.get(e.brand.id) ?? null);
   const group = (g: ShowcaseGroup): ShowcaseOutcomeGroup => ({ ...g, brands: g.brands.map(of) });
   return {
     brands: payload.brands.map(of),
