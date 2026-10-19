@@ -16096,6 +16096,130 @@
           "categories"
         ]
       },
+      "WrittenByResponse": {
+        "type": "object",
+        "properties": {
+          "leadId": {
+            "type": "string"
+          },
+          "campaignId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign filter echoed (null = every campaign of the org)."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "campaignId": {
+                  "type": "string",
+                  "description": "The campaign the writer record belongs to: a sent message shows the entry of its own campaign written at or before it."
+                },
+                "writtenAt": {
+                  "type": "string",
+                  "description": "When the message (a generated sequence: every email of it) was written."
+                },
+                "model": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The LLM's public name, e.g. \"Claude Opus 5.5\" (chat-service's served name)."
+                    },
+                    "vendor": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Vendor id (`anthropic`, `google`, `openai`...): the dashboard keys the vendor logo on it."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Vendor name, e.g. \"Anthropic\"."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "vendor"
+                  ],
+                  "description": "The concrete model that wrote it (content-generation-service's record). Null with modelUnavailableReason."
+                },
+                "modelUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "model_names_unreadable",
+                    "model_not_served"
+                  ]
+                },
+                "tactics": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "line": {
+                        "type": "string",
+                        "description": "A plain line, e.g. \"Brand not named in the first email\"."
+                      }
+                    },
+                    "required": [
+                      "line"
+                    ]
+                  },
+                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."
+                },
+                "tacticsUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_workflow_recorded",
+                    "not_judged_yet"
+                  ]
+                },
+                "underTest": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "True while the workflow that wrote it is still being tested (learning: not mature on any pipe it runs on); the dashboard marks its tactics as being tested. Null with underTestUnavailableReason."
+                },
+                "underTestUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_workflow_recorded",
+                    "not_judged_yet",
+                    "ranking_unreadable",
+                    "not_ranked_on_any_pipe"
+                  ]
+                }
+              },
+              "required": [
+                "campaignId",
+                "writtenAt",
+                "model",
+                "modelUnavailableReason",
+                "tactics",
+                "tacticsUnavailableReason",
+                "underTest",
+                "underTestUnavailableReason"
+              ]
+            },
+            "description": "One per writer record of this person on the org's campaigns, newest first. Empty = nothing written for this person yet (a message is on record ~3 minutes after it is written), or a person of another org."
+          }
+        },
+        "required": [
+          "leadId",
+          "campaignId",
+          "entries"
+        ]
+      },
       "SourcingInvestmentResponse": {
         "type": "object",
         "properties": {
@@ -38191,6 +38315,128 @@
         }
       }
     },
+    "/orgs/leads/{leadId}/written-by": {
+      "get": {
+        "summary": "Who wrote the messages we sent to one person, and how",
+        "description": "Owner 2026-10-19 (WRITTEN-BY-1019): a client may see, on every message we sent on their behalf, the LLM that wrote it (public name + vendor) and the plain lines of the tactics of the workflow version that wrote it, marked as being tested while that workflow is still learning. Never a workflow name or id, never a cost. Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "lead-service lead id (the person page's id)."
+            },
+            "required": true,
+            "description": "lead-service lead id (the person page's id).",
+            "name": "leadId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only this campaign's writer records."
+            },
+            "required": false,
+            "description": "Only this campaign's writer records.",
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The person's writer records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WrittenByResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`lead_id_unrecognised` / `campaign_id_unrecognised`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Writer records unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/brands/{brandId}/sourcing-investment": {
       "get": {
         "summary": "STAFF: $ invested in sourcing a brand's audiences (totals + per audience)",
@@ -59984,6 +60230,11 @@
                             "type": "string",
                             "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
                           },
+                          "clientLine": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
+                          },
                           "workflowsJudged": {
                             "type": "integer",
                             "description": "Workflows (current version) Jev judged on it."
@@ -60059,6 +60310,7 @@
                           "id",
                           "name",
                           "description",
+                          "clientLine",
                           "workflowsJudged",
                           "workflowsFollowing",
                           "judging"
@@ -60110,6 +60362,10 @@
                   "description": {
                     "type": "string"
                   },
+                  "clientLine": {
+                    "type": "string",
+                    "description": "<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."
+                  },
                   "createdBy": {
                     "type": "string"
                   }
@@ -60148,6 +60404,11 @@
                       "type": "string",
                       "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
                     },
+                    "clientLine": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
+                    },
                     "workflowsJudged": {
                       "type": "integer",
                       "description": "Workflows (current version) Jev judged on it."
@@ -60223,6 +60484,7 @@
                     "id",
                     "name",
                     "description",
+                    "clientLine",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging"
@@ -60255,6 +60517,11 @@
                       "type": "string",
                       "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
                     },
+                    "clientLine": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
+                    },
                     "workflowsJudged": {
                       "type": "integer",
                       "description": "Workflows (current version) Jev judged on it."
@@ -60330,6 +60597,7 @@
                     "id",
                     "name",
                     "description",
+                    "clientLine",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging"
@@ -60402,6 +60670,11 @@
                     "description": {
                       "type": "string",
                       "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
+                    },
+                    "clientLine": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                     },
                     "workflowsJudged": {
                       "type": "integer",
@@ -60541,6 +60814,7 @@
                     "id",
                     "name",
                     "description",
+                    "clientLine",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging",
@@ -60594,7 +60868,11 @@
                 "properties": {
                   "description": {
                     "type": "string",
-                    "description": "<= 500 characters; what the workflow DOES."
+                    "description": "<= 500 characters; what the workflow DOES. Required unless clientLine is sent."
+                  },
+                  "clientLine": {
+                    "type": "string",
+                    "description": "<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."
                   },
                   "updatedBy": {
                     "type": "string",
@@ -60602,7 +60880,6 @@
                   }
                 },
                 "required": [
-                  "description",
                   "updatedBy"
                 ]
               }
@@ -60633,6 +60910,11 @@
                     "description": {
                       "type": "string",
                       "description": "Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."
+                    },
+                    "clientLine": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                     },
                     "workflowsJudged": {
                       "type": "integer",
@@ -60724,6 +61006,7 @@
                     "id",
                     "name",
                     "description",
+                    "clientLine",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging",

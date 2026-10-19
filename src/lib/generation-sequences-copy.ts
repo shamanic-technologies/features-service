@@ -7,17 +7,22 @@
  * read those buckets.
  *
  *  - One row per sequence (`generationId`), upserted (a re-read refreshes it: the classes are computed on read there).
- *  - The cursor is persisted (`lib/fleet-cell-store.ts`); followed every 2 minutes after listen, single-flight; a failed
- *    tick logs and the next one resumes from the stored cursor.
+ *  - The cursor is persisted per feature (`lib/fleet-cell-store.ts`); followed every 2 minutes after listen,
+ *    single-flight; a failed tick logs and the next one resumes from the stored cursor.
+ *  - Every feature holding a pipe workflow is followed (WRITTEN-BY-1019: a client reads who wrote ANY message we sent;
+ *    the features come from `workflow_leg_assignments`, never a slug list). The research studies key on the cold email
+ *    campaigns' (campaign, lead) pairs, so another feature's rows never enter them.
  */
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { generationSequenceCopy } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
+import { listLegAssignments } from "./workflow-leg-assignments.js";
 
-const FEATURE = "sales-cold-email-outreach";
-const cursorKey = `generation-sequences-cursor:${FEATURE}:v1`;
+const COLD_EMAIL = "sales-cold-email-outreach";
+
+const cursorKeyOf = (feature: string) => `generation-sequences-cursor:${feature}:v1`;
 const TICK_MS = 2 * 60_000;
 const FIRST_TICK_MS = 100_000;
 
@@ -50,17 +55,31 @@ export function rowOfSequence(s: RawSequence): typeof generationSequenceCopy.$in
   };
 }
 
+/** Every feature holding a pipe workflow, cold email first (the research studies read it). */
+async function followedFeatures(): Promise<string[]> {
+  const slugs = new Set((await listLegAssignments()).map((r) => r.featureSlug));
+  slugs.delete(COLD_EMAIL);
+  return [COLD_EMAIL, ...[...slugs].sort()];
+}
+
 export async function copyGenerationSequences(): Promise<number> {
+  let read = 0;
+  for (const feature of await followedFeatures()) read += await copyFeatureSequences(feature);
+  return read;
+}
+
+async function copyFeatureSequences(feature: string): Promise<number> {
   const base = process.env.CONTENT_GENERATION_SERVICE_URL;
   const key = process.env.CONTENT_GENERATION_SERVICE_API_KEY;
   if (!base || !key) throw new Error("CONTENT_GENERATION_SERVICE_URL / CONTENT_GENERATION_SERVICE_API_KEY not configured");
+  const cursorKey = cursorKeyOf(feature);
   let cursor = (await loadFleetCell(cursorKey))?.text ?? null;
   let read = 0;
   for (let page = 0; page < 1000; page++) {
-    const q = new URLSearchParams({ featureSlug: FEATURE, limit: "1000" });
+    const q = new URLSearchParams({ featureSlug: feature, limit: "1000" });
     if (cursor) q.set("cursor", cursor);
     const res = await fetchWithRetry(`${base}/internal/sequences?${q}`, { headers: { "x-api-key": key } }, { timeoutMs: 60_000 });
-    if (!res.ok) throw new Error(`content-generation-service sequences ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`content-generation-service sequences (${feature}) ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const body = (await res.json()) as { sequences?: RawSequence[]; nextCursor?: string | null; hasMore?: boolean };
     if (!Array.isArray(body.sequences)) throw new Error("content-generation-service sequences: malformed page");
     const rows = body.sequences.map(rowOfSequence);
