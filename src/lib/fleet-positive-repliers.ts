@@ -371,6 +371,27 @@ export async function fetchFleetScreenedVisitCounts(featureSlug: string, campaig
   return out;
 }
 
+/**
+ * THE FLEET'S ENGAGED PERSONS PER BRAND (every org's pairs from the cell, every bucket): persons who replied positively
+ * and persons whose click was judged HUMAN (`lib/screened-visits.ts`: a scanner's click is not a visit). Read by the
+ * Cold Email Cost Per Engaged Lead Index (owner 2026-10-19, INDEX-ENGAGED-HUMAN-CLICKS-1019). A brand claimed by
+ * several orgs sums its pairs.
+ */
+export async function fetchFleetEngagementByBrand(featureSlug: string): Promise<Map<string, { positiveReplies: number; humanClicks: number }>> {
+  const cell = await getCell(featureSlug);
+  const out = new Map<string, { positiveReplies: number; humanClicks: number }>();
+  for (const [key, pair] of cell.byPair) {
+    const brandId = key.slice(key.indexOf(":") + 1);
+    const t = out.get(brandId) ?? { positiveReplies: 0, humanClicks: 0 };
+    for (const [, [, , r, , hk]] of pair.buckets) {
+      t.positiveReplies += r;
+      t.humanClicks += hk ?? 0;
+    }
+    out.set(brandId, t);
+  }
+  return out;
+}
+
 /** One bucket of the fleet person cell, with the org that holds it (`fetchFleetPersonBuckets`). */
 export interface FleetPersonBucket {
   orgId: string;
