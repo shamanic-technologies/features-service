@@ -23,7 +23,9 @@ import { indexTimelines } from "./serving-row-credit.js";
 import { fetchServingRowJourneys } from "./serving-row-journeys.js";
 import { addPairPersons, type AssignmentChange, type DatedSlugSpend, type HistoryLeg, type PersonHistory, type WorkflowVersion } from "./fleet-index-history.js";
 
-const RUNS_CONCURRENCY = 4;
+const RUNS_CONCURRENCY = 2;
+const RUNS_ATTEMPTS = 4;
+const RUNS_RETRY_WAIT_MS = 20_000;
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -77,10 +79,17 @@ export async function readDatedSlugSpend(
     for (const c of leg.campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
     return [...byOrg].flatMap(([orgId, ids]) => chunk([...new Set(ids)].sort(), RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => ({ legKey: leg.legKey, orgId, ids: c })));
   });
+  // A big org's dated read can hit runs-service's statement timeout on a busy box (500, 2 runs of 7 on 2026-10-19):
+  // the run is one-off and off any request, so it waits and asks again before failing loud.
   const get = async (path: string, params: URLSearchParams, orgId: string): Promise<unknown> => {
-    const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers: { "x-api-key": apiKey, "x-org-id": orgId } });
-    if (!res.ok) throw new Error(`runs-service ${path} (org ${orgId}) failed (${res.status}): ${await res.text()}`);
-    return res.json();
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers: { "x-api-key": apiKey, "x-org-id": orgId } });
+      if (res.ok) return res.json();
+      const body = await res.text();
+      if (res.status < 500 || attempt >= RUNS_ATTEMPTS) throw new Error(`runs-service ${path} (org ${orgId}) failed (${res.status}) after ${attempt} attempt(s): ${body}`);
+      console.warn(`[fleet-index-backfill] runs-service ${path} (org ${orgId}) answered ${res.status}, attempt ${attempt}/${RUNS_ATTEMPTS}; retrying`);
+      await new Promise((r) => setTimeout(r, RUNS_RETRY_WAIT_MS * attempt));
+    }
   };
   // Which versions spent on these campaigns, then each version's spend per run-start day.
   const slugReads = (
