@@ -30,16 +30,18 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     ]);
   });
 
-  it("a re-contacted prospect enters on THIS scope's serve, and an outcome from before it is not this scope's", () => {
+  it("a re-contacted prospect enters on this scope's own day, and an outcome from before the scope is not its", () => {
     const out = chartPersonsOf(
       coldEmail,
       [
-        // First emailed in April by another campaign, replied then; served by this campaign in October.
+        // First emailed in April by another campaign, replied then; served by this scope (started Oct 16) in October.
         p("a", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-04-24T09:00:00Z", positiveReply: "2026-04-30T10:00:00Z" }, "2026-10-16T08:00:00Z"),
-        p("b", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-04-24T09:00:00Z", positiveReply: "2026-10-18T10:00:00Z" }, "2026-10-16T08:00:00Z"),
+        // Emailed by this scope Oct 16, replied Oct 18, RE-served Oct 19 (servedAt is the latest serve): still its reply.
+        p("b", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-10-16T09:00:00Z", positiveReply: "2026-10-18T10:00:00Z" }, "2026-10-19T08:00:00Z"),
       ],
       new Set(["u1"]),
       new Map(),
+      "2026-10-16",
     );
     expect(out).toEqual([
       { entered: true, enteredOn: "2026-10-16", converted: false, convertedOn: null },
