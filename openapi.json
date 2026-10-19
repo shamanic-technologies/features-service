@@ -28363,7 +28363,7 @@
           },
           "name": {
             "type": "string",
-            "description": "Display name, e.g. `Distribute.you Cost Per Click Index`."
+            "description": "Display name, e.g. `Cold Email Cost Per Click Index`."
           },
           "channelSlug": {
             "type": "string"
@@ -28376,23 +28376,28 @@
             "enum": [
               "website_visit",
               "positive_reply",
-              "meeting_booked"
-            ]
+              "meeting_booked",
+              "engaged_lead",
+              "revenue"
+            ],
+            "description": "`engaged_lead`: a positive reply or a website visit. `revenue`: the ROI index."
           },
           "metric": {
             "type": "string",
             "enum": [
               "cost_per_outcome",
-              "conversion_rate"
+              "conversion_rate",
+              "return_on_spend"
             ]
           },
           "unit": {
             "type": "string",
             "enum": [
               "usd",
-              "percent"
+              "percent",
+              "multiple"
             ],
-            "description": "`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."
+            "description": "`usd`: dollars per outcome. `percent`: 0..100, share of people emailed. `multiple`: dollars back per dollar spent (3.6 reads 3.6x)."
           },
           "valuePer": {
             "type": "string",
@@ -28423,7 +28428,7 @@
           },
           "outcomes": {
             "type": "integer",
-            "description": "Outcomes behind the value (website visits, positive replies, or meetings booked)."
+            "description": "Outcomes behind the value (website visits, positive replies, or meetings booked). On the two client-median indexes (`cold-email-cost-per-engaged-lead`, `cold-email-roi`): the CLIENTS behind the median, and `status` counts them."
           },
           "contacted": {
             "type": "integer",
@@ -28442,7 +28447,7 @@
           "unavailableReason": {
             "type": "string",
             "nullable": true,
-            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`."
+            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent)."
           },
           "recordedAt": {
             "type": "string",

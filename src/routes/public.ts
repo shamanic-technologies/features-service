@@ -704,11 +704,30 @@ export async function handleRanked(
     return;
   }
 
-  const objective = requestedObjective ?? "costPerRecipientPositiveReplyCents";
+  res.json(await readPublicRanked(featureSlug, requestedObjective ?? "costPerRecipientPositiveReplyCents", groupBy, limit));
+}
+
+export interface PublicRankedPayload {
+  costBasis: "incurred";
+  objective: string;
+  sortDirection: "asc" | "desc";
+  results: Array<{ brand?: { id: string; name: string | null; domain: string | null }; workflow?: unknown; stats: Record<string, number | null> }>;
+}
+
+/**
+ * The `/public/stats/ranked` body for an EXISTING feature (validation stays in `handleRanked`), served from the
+ * same in-memory cache cell, so an in-process reader (the fleet indexes) and the landing's HTTP read share one compute.
+ */
+export async function readPublicRanked(
+  featureSlug: string,
+  objective: string,
+  groupBy: "workflow" | "brand",
+  limit: number,
+): Promise<PublicRankedPayload> {
   const objectiveDef = STATS_REGISTRY[objective];
   const sortDirection = (objectiveDef?.kind === "derived" && objectiveDef.type === "currency") ? "asc" : "desc";
   const cacheKey = `${featureSlug}|${objective}|${groupBy}|${limit}`;
-  const payload = await servedPublicCached<{ objective: string; sortDirection: "asc" | "desc"; results: unknown[] }>({
+  return servedPublicCached<PublicRankedPayload>({
     cache: publicRankedCache,
     key: cacheKey,
     windows: LIFETIME_AGGREGATE_WINDOWS,
@@ -792,7 +811,6 @@ export async function handleRanked(
     return { costBasis: "incurred" as const, objective, sortDirection, results };
     },
   });
-  res.json(payload);
 }
 
 // ── Best handler ────────────────────────────────────────────────────────────
@@ -1558,7 +1576,7 @@ export function warmFleetReturnSnapshotsOnBoot(): void {
   })();
 }
 
-interface FleetReturnPayload extends FleetReturnOnSpend {
+export interface FleetReturnPayload extends FleetReturnOnSpend {
   /**
    * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend is absent),
    * on the COMMITTED basis every money figure in this service rides. ORTHOGONAL to gross-vs-net
@@ -1598,6 +1616,11 @@ export async function handleFleetReturnOnSpend(
     return;
   }
 
+  res.json(await readFleetReturnOnSpend(featureSlug, minSpendUsd));
+}
+
+/** The `/public/stats/return-on-spend` body for an EXISTING feature (validation stays in the handler). */
+export async function readFleetReturnOnSpend(featureSlug: string, minSpendUsd: number): Promise<FleetReturnPayload> {
   const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
 
   // Kick the warm when there is nothing, or when what there is has aged out. Deliberately NOT awaited:
@@ -1606,7 +1629,7 @@ export async function handleFleetReturnOnSpend(
     void warmFleetReturnSnapshot(featureSlug);
   }
 
-  const payload: FleetReturnPayload = {
+  return {
     costBasis: "charged",
     featureSlug,
     unit: "brand",
@@ -1616,7 +1639,6 @@ export async function handleFleetReturnOnSpend(
     ...overMatureScopes(snapshot?.brands ?? null, (r) => r.isMature, (pop) => buildFleetReturnOnSpend(pop, minSpendUsd)),
     maturity: buildMatureScopesReturn(snapshot?.brands ?? null, minSpendUsd, MIN_RETURN_BRANDS),
   };
-  res.json(payload);
 }
 
 // ── Public FLEET (channel × sales funnel) RETURN-ON-SPEND handler ────────────
