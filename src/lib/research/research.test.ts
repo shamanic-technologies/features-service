@@ -456,7 +456,7 @@ describe("research catalogue", () => {
   });
 });
 
-import { dynastyWriters, resolveModelAlias, writerOfDag } from "./writers.js";
+import { dynastyLastWriters, dynastyWriters, resolveModelAlias, writerOfDag } from "./writers.js";
 describe("research catalogue: every runnable workflow, and what it writes with now (RESEARCH-PAGES-ALL-1018)", () => {
   const models = [
     { modelId: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro", aliases: ["pro"], formerAliases: [] },
@@ -526,5 +526,74 @@ describe("research catalogue: every runnable workflow, and what it writes with n
     expect(c.templates.find((t) => t.key === "blind-discovery-email-v47")!.workflows).toEqual([{ key: "azalea", label: "Azalea" }]);
     expect(c.models.map((m) => [m.key, m.emails])).toEqual([["gemini-3.1-pro", "500"], ["deepseek-v4.1-flash", "0"]]);
     expect(c.models[1]!.sample).toMatch(/^0 /);
+  });
+});
+
+describe("research catalogue: what wrote every row's figures, deprecated workflows included (RESEARCH-DEPRECATED-LLM-TEMPLATE-1019)", () => {
+  const models = [{ modelId: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro", aliases: ["pro"], formerAliases: [] }];
+  const dagOf = (type: string, model: string) => ({ nodes: [{ id: "g", type: "http.call", config: { service: "content-generation", path: "/generate", body: { type, model } } }] });
+  const def = (slug: string, dynasty: string, version: number, active: boolean, dag: unknown) => ({ workflowSlug: slug, workflowDynastySlug: dynasty, version, versionActive: active, description: null, dag });
+  const bucket = (key: string, label: string): ResearchBucket => ({ key, label, basis: "mature", figures: { spentUsd: 50, contacted: 300, outcomes: 2 }, learning: false, months: null, strata: null });
+
+  it("takes the newest version that writes, any status", () => {
+    const w = dynastyLastWriters(
+      [def("isthmus", "isthmus", 1, false, dagOf("blind-discovery-email-v14", "pro")), def("isthmus-v2", "isthmus", 2, false, dagOf("blind-discovery-email-v15", "pro")), def("birch", "birch", 3, false, { nodes: [{ config: { service: "content-generation" } }] })],
+      models,
+    );
+    expect(w.get("isthmus")).toEqual({ ok: true, workflowSlug: "isthmus-v2", version: 2, template: "blind-discovery-email-v15", modelAlias: "pro", model: { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" } });
+    expect(w.get("birch")).toEqual({ ok: false, reason: "no_writing_step" });
+  });
+
+  it("serves the sequences' model and template, else the DAG's, each linked to its page; never blanks a live row", () => {
+    const definitions = [
+      def("nobelium-v5", "nobelium", 5, false, dagOf("blind-discovery-email-v33", "pro")),
+      def("isthmus-v2", "isthmus", 2, false, dagOf("blind-discovery-email-v15", "pro")),
+      def("osprey-v9", "osprey", 9, true, dagOf("cold-email-v55", "pro")),
+    ];
+    const now = dynastyWriters(definitions, models);
+    const last = dynastyLastWriters(definitions, models);
+    const c = pipeCatalog({
+      terms,
+      workflows: [bucket("nobelium", "Nobelium"), bucket("isthmus", "Isthmus"), bucket("osprey", "Osprey"), bucket("ghost", "Ghost")],
+      templates: [bucket("blind-discovery-email-v26", "Blind discovery v26")],
+      models: [bucket("gemini-3.1-pro", "Gemini 3.1 Pro")],
+      nameOf: () => null,
+      mainOf: (d) => (d === "nobelium" || d === "osprey" ? { model: "gemini-3.1-pro-preview", template: "blind-discovery-email-v26" } : { model: null, template: null }),
+      modelLabel: (id) => (id === "gemini-3.1-pro-preview" ? "Gemini 3.1 Pro" : id),
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: null,
+      writerOf: (d) => now.get(d) ?? null,
+      lastWriterOf: (d) => last.get(d) ?? null,
+    });
+    const by = new Map(c.workflows.map((w) => [w.key, w]));
+    // Deprecated with sequences: the real model and template its people were written with.
+    expect(by.get("nobelium")!.writesWithNow).toBeNull();
+    expect(by.get("nobelium")!.wroteWith).toEqual({
+      model: { key: "gemini-3.1-pro", label: "Gemini 3.1 Pro", linked: true },
+      modelSource: "sequences",
+      template: { key: "blind-discovery-email-v26", label: "Blind discovery v26", linked: true },
+      templateSource: "sequences",
+      version: null,
+      modelAlias: null,
+    });
+    // Deprecated, no sequence recorded: its newest writing version's DAG, and that template gets a page.
+    expect(by.get("isthmus")!.wroteWith).toEqual({
+      model: { key: "gemini-3.1-pro", label: "Gemini 3.1 Pro", linked: true },
+      modelSource: "workflow_definition",
+      template: { key: "blind-discovery-email-v15", label: "Blind discovery v15", linked: true },
+      templateSource: "workflow_definition",
+      version: "v2",
+      modelAlias: "pro",
+    });
+    expect(c.templates.find((t) => t.key === "blind-discovery-email-v15")!.workflows).toEqual([{ key: "isthmus", label: "Isthmus" }]);
+    // Live row: writesWithNow untouched.
+    expect(by.get("osprey")!.writesWithNow?.template?.key).toBe("cold-email-v55");
+    expect(by.get("osprey")!.wroteWith?.templateSource).toBe("sequences");
+    // Nothing anywhere: named reason, never a guess.
+    expect(by.get("ghost")!.wroteWith).toBeNull();
+    expect(by.get("ghost")!.wroteWithUnavailableReason).toBe("no_workflow_definition");
   });
 });

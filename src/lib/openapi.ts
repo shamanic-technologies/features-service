@@ -8236,6 +8236,18 @@ const researchCatalogPipeSchema = z.object({
       .nullable()
       .describe("What its runnable version writes with NOW (workflow-service DAG), whether or not it sent anything. Its template and model each have a page (zero figures until used)."),
     writesWithNowUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_runnable_version", "no_writing_step"]).nullable(),
+    wroteWith: z
+      .object({
+        model: researchRefSchema.nullable().describe("The real model behind its figures: what most of its people's sequences were written with, else the model its newest writing version's DAG names (resolved by chat-service)."),
+        modelSource: z.enum(["sequences", "workflow_definition"]).nullable(),
+        template: researchRefSchema.nullable().describe("The template behind its figures: what most of its people's sequences were written with, else its newest writing version's DAG template."),
+        templateSource: z.enum(["sequences", "workflow_definition"]).nullable(),
+        version: z.string().nullable().describe("The DAG version a part was read off (`v5`); null when every part comes from the sequences."),
+        modelAlias: z.string().nullable().describe("The alias that DAG names (`pro`), when the model part was read off it."),
+      })
+      .nullable()
+      .describe("What wrote its figures, on EVERY row, deprecated workflows included (a deprecated workflow has no `writesWithNow`). Each part links to its own page."),
+    wroteWithUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_writing_step", "no_workflow_definition"]).nullable(),
     ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
   templates: z.array(z.object({ key: z.string(), label: z.string(), hasText: z.boolean(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
   models: z.array(z.object({ key: z.string(), label: z.string(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
