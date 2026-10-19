@@ -129,7 +129,13 @@ async function readBrandEngagement(): Promise<BrandEngagement[] | null> {
     ]);
     return ranked.results.map((r) => {
       const e = r.brand ? engaged.get(r.brand.id) : undefined;
-      return { positiveReplies: e?.positiveReplies ?? 0, humanClicks: e?.humanClicks ?? 0, spendCents: statOf(r.stats, "totalCostInUsdCents") };
+      return {
+        contacted: e?.contacted ?? 0,
+        positiveReplies: e?.positiveReplies ?? 0,
+        screenedContacted: e?.screenedContacted ?? 0,
+        humanClicks: e?.humanClicks ?? 0,
+        spendCents: statOf(r.stats, "totalCostInUsdCents"),
+      };
     });
   } catch (error) {
     console.error("[features-service] fleet indexes: per-brand engagement unreadable:", error);

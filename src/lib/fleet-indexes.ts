@@ -19,7 +19,10 @@
  * Two indexes are CLIENT figures, not pipe figures (owner 2026-10-19): the median client's cost per engaged lead (the
  * landing hero's figure: per brand total spend (`/public/stats/ranked?groupBy=brand`) ÷ (persons who replied positively +
  * persons whose click was judged HUMAN, the fleet person cell: owner 2026-10-19, a scanner's click is not a visit), brands
- * with both; ≥ 2 brands) and the median client's return on spend (`/public/stats/return-on-spend`, ≥ $100 spent, MATURE
+ * with both; ≥ 2 brands). Only a send through our own transport can have its click judged, so a brand's human clicks are
+ * read over its whole reach at the rate measured on those sends (× contacted ÷ screened contacted): the byte-same
+ * screenable-share correction the Cost Per Click Index applies to spend (`lib/screened-visits.ts`). Without it, lifetime
+ * spend over clicks judgeable only since recently read $105.61 against $10.48 (2026-10-19). and the median client's return on spend (`/public/stats/return-on-spend`, ≥ $100 spent, MATURE
  * brands, ≥ 5 brands). Their status counts the CLIENTS behind the median (`outcomes` = clients), the same bars.
  *
  * Each value carries a `status` saying how far to trust it, from the outcomes behind it (the weakest link of a
@@ -252,10 +255,19 @@ export interface FleetIndexInputs {
 
 /** A client brand's lifetime cold email spend and engaged persons. */
 export interface BrandEngagement {
+  /** Persons the brand's cold email reached. */
+  contacted: number;
   positiveReplies: number;
+  /** Of `contacted`, persons emailed through our own transport: the only sends whose click can be judged. */
+  screenedContacted: number;
   /** Persons whose click was judged human (never a provider-reported click: mostly link scanners). */
   humanClicks: number;
   spendCents: number;
+}
+
+/** PURE. A brand's visits over its whole reach: human clicks at the rate measured on its judgeable sends; none judgeable = 0. */
+export function brandVisits(b: BrandEngagement): number {
+  return b.screenedContacted > 0 ? (b.humanClicks * b.contacted) / b.screenedContacted : 0;
 }
 
 /** The fleet return median as `/public/stats/return-on-spend` states it. */
@@ -293,10 +305,10 @@ function clientPoint(def: FleetIndexDefinition, value: number | null, clients: n
 export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndexPoint {
   const def = COST_PER_ENGAGED_LEAD;
   const priced = brands
-    .map((b) => ({ engaged: b.positiveReplies + b.humanClicks, spendCents: b.spendCents }))
+    .map((b) => ({ engaged: b.positiveReplies + brandVisits(b), spendCents: b.spendCents }))
     .filter((b) => b.engaged > 0 && b.spendCents > 0);
-  const engagedLeads = priced.reduce((t, b) => t + b.engaged, 0);
-  const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS };
+  const engagedLeads = Math.round(priced.reduce((t, b) => t + b.engaged, 0));
+  const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human_over_reach", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS };
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
   return clientPoint(def, value, priced.length, null, inputs);
