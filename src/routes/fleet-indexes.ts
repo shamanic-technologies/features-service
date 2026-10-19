@@ -36,7 +36,7 @@ const STATUS_RULE = { signalMinOutcomes: SIGNAL_MIN_OUTCOMES, robustMinOutcomes:
 const BASIS_RULE = {
   recorded: "Recorded live on that day.",
   recomputed:
-    "Recomputed later with today's rules, on what had happened by the end of that day: the workflows running that week, their spend and the replies and human clicks dated by then.",
+    "Recomputed later with today's rules, on what had happened by the end of that day: the workflows that had run in the three weeks before, their spend and the replies and human clicks dated by then.",
 } as const;
 
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
