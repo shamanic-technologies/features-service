@@ -270,7 +270,6 @@ export function asOfPerson<T extends EnginePerson>(
   endMs: number,
 ): { person: T; timeline: PersonTimeline | undefined } | null {
   const served = ms(person.servedAt ?? null);
-  if (served === null) return null;
   const t: PersonTimeline | undefined = timeline
     ? {
         firstActBy: new Map([...timeline.firstActBy].filter(([, at]) => at !== null && at <= endMs)),
@@ -285,7 +284,9 @@ export function asOfPerson<T extends EnginePerson>(
       }
     : undefined;
   let servedAt = person.servedAt ?? null;
-  if (served > endMs) {
+  // No serve recorded (an emailed person whose row states none), or a serve after `endMs`: the person stands on their
+  // earliest send by then, the same clock a re-attributed person stands on.
+  if (served === null || served > endMs) {
     const earliest = (t?.sends ?? []).reduce<Send | null>((a, s) => (a === null || (s.first as number) < (a.first as number) ? s : a), null);
     if (!earliest?.firstIso) return null;
     servedAt = earliest.firstIso;

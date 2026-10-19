@@ -377,14 +377,24 @@ export async function fetchFleetScreenedVisitCounts(featureSlug: string, campaig
  * Cold Email Cost Per Engaged Lead Index (owner 2026-10-19, INDEX-ENGAGED-HUMAN-CLICKS-1019). A brand claimed by
  * several orgs sums its pairs.
  */
-export async function fetchFleetEngagementByBrand(featureSlug: string): Promise<Map<string, { positiveReplies: number; humanClicks: number }>> {
+export interface BrandEngagementCounts {
+  contacted: number;
+  positiveReplies: number;
+  /** Of `contacted`, persons emailed through our own transport: the only sends whose clicks can be judged. */
+  screenedContacted: number;
+  humanClicks: number;
+}
+
+export async function fetchFleetEngagementByBrand(featureSlug: string): Promise<Map<string, BrandEngagementCounts>> {
   const cell = await getCell(featureSlug);
-  const out = new Map<string, { positiveReplies: number; humanClicks: number }>();
+  const out = new Map<string, BrandEngagementCounts>();
   for (const [key, pair] of cell.byPair) {
     const brandId = key.slice(key.indexOf(":") + 1);
-    const t = out.get(brandId) ?? { positiveReplies: 0, humanClicks: 0 };
-    for (const [, [, , r, , hk]] of pair.buckets) {
+    const t = out.get(brandId) ?? { contacted: 0, positiveReplies: 0, screenedContacted: 0, humanClicks: 0 };
+    for (const [, [c, , r, sc, hk]] of pair.buckets) {
+      t.contacted += c;
       t.positiveReplies += r;
+      t.screenedContacted += sc ?? 0;
       t.humanClicks += hk ?? 0;
     }
     out.set(brandId, t);

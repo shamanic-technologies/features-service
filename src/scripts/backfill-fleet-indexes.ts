@@ -8,7 +8,7 @@
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
 import { FLEET_INDEXES, SCEO_FEATURE_SLUG, SCEO_POSITIVE_REPLY_LEG, SCEO_WEBSITE_VISIT_LEG } from "../lib/fleet-indexes.js";
-import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, recomputeIndexHistory } from "../lib/fleet-index-history.js";
+import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, rankingOn, recomputeIndexHistory } from "../lib/fleet-index-history.js";
 import { readAssignmentChanges, readDatedSlugSpend, readHistoryLegs, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
 import { readFleetIndexRows, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
@@ -42,8 +42,9 @@ async function main(): Promise<void> {
   log(`${spend.length} (version, day) spend buckets; days ${first} .. ${last} (${days.length})`);
   const persons = emptyPersonHistory(days);
   const pairs = await readPersonHistory(SCEO_FEATURE_SLUG, persons, legs, log);
-  log(`${pairs} pairs walked; ${persons.undatedPersons} persons with no serve date (in no past day)`);
-  const points = recomputeIndexHistory({ days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows });
+  log(`${pairs} pairs walked; ${persons.undatedPersons} persons with no serve date and no dated send (in no past day)`);
+  const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows };
+  const points = recomputeIndexHistory(inputs);
   const stored = await readFleetIndexRows(FLEET_INDEXES.map((d) => d.slug));
   const plan = planRecomputedWrites(points, stored);
   for (const def of FLEET_INDEXES) {
@@ -54,7 +55,16 @@ async function main(): Promise<void> {
   // A day both recorded live and recomputed: the two side by side (the recorded one is kept).
   for (const r of stored.filter((s) => s.basis === "recorded")) {
     const p = points.find((x) => x.day === r.day && x.point.indexSlug === r.indexSlug);
-    if (p) log(`check ${r.indexSlug} ${r.day}: recorded ${r.value} @${r.workflowDynastySlug ?? "-"} / recomputed ${p.point.value} @${p.point.workflowDynastySlug ?? "-"}`);
+    if (!p) continue;
+    log(`check ${r.indexSlug} ${r.day}: recorded ${r.value} @${r.workflowDynastySlug ?? "-"} / recomputed ${p.point.value} @${p.point.workflowDynastySlug ?? "-"}`);
+    if (p.point.workflowDynastySlug === r.workflowDynastySlug) continue;
+    // Why the two differ: the recomputed ranking's head rows and the recorded workflow's row, that day.
+    const def = FLEET_INDEXES.find((d) => d.slug === r.indexSlug);
+    const leg = def?.outcome === "website_visit" ? visitLeg : replyLeg;
+    const rows = rankingOn(inputs, leg, days.indexOf(r.day));
+    for (const row of rows.filter((x) => x.rank <= 5 || x.workflowDynastySlug === r.workflowDynastySlug)) {
+      log(`  ${row.rank} ${row.workflowDynastySlug} ${row.place} selectable=${row.selectable} assignment=${row.assignment} executable=${row.executable} basis=${row.basis} outcomes=${row.outcomes} contacted=${row.contacted} spent=${row.spentUsd.toFixed(2)}`);
+    }
   }
   log(`plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
   if (!apply) {

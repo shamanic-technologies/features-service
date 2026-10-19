@@ -36,7 +36,7 @@ const STATUS_RULE = { signalMinOutcomes: SIGNAL_MIN_OUTCOMES, robustMinOutcomes:
 const BASIS_RULE = {
   recorded: "Recorded live on that day.",
   recomputed:
-    "Recomputed later with today's rules, on what had happened by the end of that day: the workflows running that week, their spend and the replies and human clicks dated by then.",
+    "Recomputed later with today's rules, on what had happened by the end of that day: the workflows that had run in the three weeks before, their spend and the replies and human clicks dated by then.",
 } as const;
 
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
@@ -129,7 +129,13 @@ async function readBrandEngagement(): Promise<BrandEngagement[] | null> {
     ]);
     return ranked.results.map((r) => {
       const e = r.brand ? engaged.get(r.brand.id) : undefined;
-      return { positiveReplies: e?.positiveReplies ?? 0, humanClicks: e?.humanClicks ?? 0, spendCents: statOf(r.stats, "totalCostInUsdCents") };
+      return {
+        contacted: e?.contacted ?? 0,
+        positiveReplies: e?.positiveReplies ?? 0,
+        screenedContacted: e?.screenedContacted ?? 0,
+        humanClicks: e?.humanClicks ?? 0,
+        spendCents: statOf(r.stats, "totalCostInUsdCents"),
+      };
     });
   } catch (error) {
     console.error("[features-service] fleet indexes: per-brand engagement unreadable:", error);
