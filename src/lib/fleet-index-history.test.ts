@@ -84,13 +84,20 @@ const COST = "cold-email-cost-per-positive-reply";
 const RATE = "cold-email-positive-reply-rate";
 
 describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
+  it("a workflow that stopped running leaves the window after RUNNING_WINDOW_DAYS", () => {
+    const points = recomputeIndexHistory(inputs(BASE_LEADS, [...spendDays("a1", "2026-08-01", "2026-08-10", 100), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)]));
+    // Alpha ($1 per reply) last ran 08-10: picked through 08-30 (window of 21 days), Beta from 08-31.
+    expect(on(points, COST, "2026-08-30")!.workflowDynastySlug).toBe("alpha");
+    expect(on(points, COST, "2026-08-31")!.workflowDynastySlug).toBe("beta");
+  });
+
   it("cuts maturity on the live rule: a person served on day S is mature from S + duration + 1", () => {
     expect(cutoffDayOn(REPLY_LEG, "2026-08-22")).toBe("2026-08-01");
     const points = recomputeIndexHistory(inputs(BASE_LEADS, BASE_SPEND));
     // Served 08-01: not mature on 08-22 (cutoff 08-01), mature on 08-23 (cutoff 08-02). The series starts there.
     expect(on(points, COST, "2026-08-22")).toBeUndefined();
     const first = on(points, COST, "2026-08-23")!;
-    // Alpha stopped running on 08-10: on 08-23 only Beta ran in the last 7 days. Mature spend = runs started before 08-02.
+    // Both ran in the window; Beta is cheaper ($2 vs $10 per reply). Mature spend = runs started before 08-02.
     expect(first.workflowDynastySlug).toBe("beta");
     expect(first.value).toBeCloseTo(2, 6);
     expect(on(points, RATE, "2026-08-23")!.value).toBeCloseTo(25, 6);
@@ -114,7 +121,7 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     // The 09-10 reply is in the 09-10 point on (served 08-01, mature), not before.
     expect(on(withLater, COST, "2026-09-09")!.outcomes).toBe(1);
     expect(on(withLater, COST, "2026-09-10")!.outcomes).toBe(2);
-    // From the deprecation on, Beta can no longer be picked, and Alpha has not run in 7 days: no point is stated.
+    // From the deprecation on, Beta can no longer be picked, and Alpha has not run in the window: no point is stated.
     expect(on(withLater, COST, "2026-09-16")!.value).toBeNull();
     expect(on(withLater, COST, "2026-09-16")!.unavailableReason).toBe("no_mature_workflow");
   });
@@ -139,6 +146,19 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     expect(cut.timeline!.replies).toEqual([]);
     expect(asOfPerson(p, t, Date.parse("2026-07-31T23:59:59.999Z"))).toBeNull();
     expect(asOfPerson(p, t, Date.parse("2026-09-25T23:59:59.999Z"))!.person.signals.positiveReply).toBe(true);
+  });
+
+  it("a person with no serve date stands on their first send", () => {
+    const lead: Lead = { id: "n", slug: "b1", servedAt: "2026-08-04T08:00:00.000Z", replyAt: "2026-08-06T08:00:00.000Z" };
+    const p = { ...person(lead), servedAt: null } as EnginePerson;
+    const t = indexTimelines([journey(lead)]).get("n");
+    expect(asOfPerson(p, t, Date.parse("2026-08-03T23:59:59.999Z"))).toBeNull();
+    const cut = asOfPerson(p, t, Date.parse("2026-08-10T23:59:59.999Z"))!;
+    expect(cut.person.servedAt).toBe("2026-08-04T08:00:00.000Z");
+    expect(cut.person.signals.positiveReply).toBe(true);
+    const h = emptyPersonHistory(DAYS);
+    addPairPersons(h, [p], indexTimelines([journey(lead)]), LEGS);
+    expect(h.undatedPersons).toBe(0);
   });
 
   it("a re-run writes nothing and a recorded day is never in the plan", () => {
