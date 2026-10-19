@@ -8250,7 +8250,14 @@ const researchCatalogPipeSchema = z.object({
     wroteWithUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_writing_step", "no_workflow_definition"]).nullable(),
     ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
   templates: z.array(z.object({ key: z.string(), label: z.string(), hasText: z.boolean(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
-  models: z.array(z.object({ key: z.string(), label: z.string(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
+  models: z.array(z.object({
+    key: z.string(),
+    label: z.string(),
+    modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (`glm-5.3`); two ids with one display name are one page. Empty when chat-service lists none."),
+    aliases: z.array(z.string()).describe("Every alias chat-service serves this model under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
+    formerAliases: z.array(z.string()).describe("Aliases that once named this model and now name another (a status set on them acts on that other model)."),
+    aliasesUnavailableReason: z.enum(["model_ids_unreadable", "model_not_in_chat_service", "no_alias_serves_it"]).nullable().describe("Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."),
+    ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
 });
 
 registry.registerPath({

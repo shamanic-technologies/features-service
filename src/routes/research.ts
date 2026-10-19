@@ -446,6 +446,10 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     rankingOf(visit),
     readDynastyWriters(),
   ]);
+  const servedModels = await readModelIds().catch((err): "model_ids_unreadable" => {
+    console.error("[features-service] research catalogue: chat-service model ids unreadable this time:", err);
+    return "model_ids_unreadable";
+  });
   // The text of every template a workflow writes with now, beside the ones its people were written with.
   // Every version's template too: a deprecated workflow's page names the template its newest writing version used.
   const nowTemplates =
@@ -473,6 +477,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       runnableWorkflows: runnableWorkflowsOf(ranking),
       writerOf,
       lastWriterOf,
+      servedModels,
     });
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),

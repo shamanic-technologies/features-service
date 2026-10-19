@@ -66991,6 +66991,37 @@
                             "label": {
                               "type": "string"
                             },
+                            "modelIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "chat-service's concrete model ids this page names (`glm-5.3`); two ids with one display name are one page. Empty when chat-service lists none."
+                            },
+                            "aliases": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Every alias chat-service serves this model under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."
+                            },
+                            "formerAliases": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Aliases that once named this model and now name another (a status set on them acts on that other model)."
+                            },
+                            "aliasesUnavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "model_ids_unreadable",
+                                "model_not_in_chat_service",
+                                "no_alias_serves_it"
+                              ],
+                              "description": "Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."
+                            },
                             "rank": {
                               "type": "integer",
                               "nullable": true,
@@ -67234,6 +67265,10 @@
                           "required": [
                             "key",
                             "label",
+                            "modelIds",
+                            "aliases",
+                            "formerAliases",
+                            "aliasesUnavailableReason",
                             "rank",
                             "emails",
                             "emailsNoun",
