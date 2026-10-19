@@ -81,6 +81,7 @@
  * on its first cold call.
  */
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
+import { funnelLeg } from "./funnel-legs.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 
 /** How many clients each group names. Both groups of the homepage show three. */
@@ -287,19 +288,33 @@ export function furthestRungReached(breakdown: FunnelStepBreakdown | null | unde
 /** The one step of a showcase chain that is the outreach BASE rather than a rung. */
 const OUTREACH_BASE_STEP_KEY = "contacted";
 
+/** The step a homepage card never draws (owner 2026-10-19, SHOWCASE-NO-VISITS-1019). */
+const UNDRAWN_STEP_KEY = "website_visit";
+
 /**
  * PURE: does a client's walked showcase chain show a real outcome past the outreach base? True iff SOME
  * funnel carries a step other than `contacted` with a MEASURED count of at least
  * `SHOWCASE_MIN_OUTCOME_PEOPLE`. A null is nothing counted and never qualifies; a count under the
  * minimum is an anecdote. This is the check BOTH groups are finally decided on, because it reads the
  * exact chain the homepage draws under the client's name.
+ *
+ * A rung landing on Website visit never qualifies (owner 2026-10-19, SHOWCASE-NO-VISITS-1019): the
+ * homepage card never draws a visit (a visit proves attention, not demand), so a client whose only
+ * outcome is visits would be dropped by the page and leave a hole nothing backfills. Prod 2026-10-19:
+ * Pocket CMO (54 visits, 0 positive replies, 0 meetings) was the 3rd highest return.
  */
 export function showcaseChainHasOutcome(
   funnels: ReadonlyArray<{ steps: ReadonlyArray<{ key: string; peopleReached: number | null }> }>,
   minPeople: number = SHOWCASE_MIN_OUTCOME_PEOPLE,
 ): boolean {
   return funnels.some((f) =>
-    f.steps.some((s) => s.key !== OUTREACH_BASE_STEP_KEY && s.peopleReached !== null && s.peopleReached >= minPeople),
+    f.steps.some(
+      (s) =>
+        s.key !== OUTREACH_BASE_STEP_KEY &&
+        funnelLeg(s.key)?.toStep.key !== UNDRAWN_STEP_KEY &&
+        s.peopleReached !== null &&
+        s.peopleReached >= minPeople,
+    ),
   );
 }
 
