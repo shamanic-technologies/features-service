@@ -3376,6 +3376,146 @@ registry.registerPath({
   },
 });
 
+// ── Spend charts (owner 2026-10-19, SPEND-CHARTS-1019) ─────────────────────────────────────────────
+const spendActionDaySchema = z.object({
+  key: z.enum(["prospects_found", "first_contacts", "follow_ups", "messages_written", "replies_read", "notifications", "other"]).describe("The action, the same for every channel: prospects_found (finding, revealing, verifying and handing out new prospects), first_contacts (a first message of a sequence, or a call placed), follow_ups (step 2 and later of a sequence), messages_written (writing and researching the messages), replies_read (judging replies and leads), notifications, other."),
+  label: z.string().describe("The action in the customer's words (\"New prospects found\", \"Follow-ups\")."),
+  step: z.string().nullable().describe("The funnel step the action works toward: lead_found (a new prospect), contacted (a first contact or a follow-up). Null for the work around a step."),
+  unit: z.string().nullable().describe("What `actions` counts (\"prospect\", \"first contact\", \"follow-up\"); null when the action has no countable unit (spend only)."),
+  spendUsd: z.number().describe("Committed spend on this action that day, on the read's pricing basis."),
+  actions: z.number().int().nullable().describe("How many actions that day (runs that carried committed cost). Null when the action has no countable unit."),
+  costPerActionUsd: z.number().nullable().describe("spendUsd / actions: \"$0.06 per follow-up\". Null with no countable unit or no action that day."),
+});
+const spendChartPointSchema = z.object({
+  date: z.string().describe("UTC day, YYYY-MM-DD. One point per day from the scope's first activity to today, gaps filled."),
+  spendUsd: z.number().describe("Committed spend that day (the scope's own dated spend)."),
+  cumulativeSpendUsd: z.number(),
+  cumulativeOutcomes: z.number().int().describe("Outcomes of the leg's step dated on or before the day. The last point also holds the outcomes with no date (counted, never back-dated)."),
+  costPerOutcomeUsd: z.number().nullable().describe("MEASURED cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes. Served while Learning (owner 2026-10-19), `learning` says so. Null only while there is no outcome yet or nothing spent. The last point is the scope's whole spend over its whole outcome count."),
+  entered: z.number().int().describe("People who entered the leg that day: their first message (an entry leg), the day they were handed to the pipe (a leg from a later step)."),
+  cohortOutcomes: z.number().int().describe("Of that day's entrants, how many reached the step by today, whenever it happened (a positive reply 5 days after the send counts for the send day)."),
+  cohortConversionPct: z.number().nullable().describe("cohortOutcomes / entered x 100. Null with nobody entered."),
+  cohortMature: z.boolean().describe("The day's cohort has had the leg's whole maturity duration (leg.maturityDays) to convert. A recent cohort reads low and is flagged, never dropped."),
+  cumulativeEntered: z.number().int(),
+  cumulativeConverted: z.number().int().describe("Of everybody who entered on or before the day, how many had reached the step by that day."),
+  conversionRatePct: z.number().nullable().describe("Conversion by entry cohort as of the day: cumulativeConverted / cumulativeEntered x 100. Null only with nobody entered: a measured 0 is drawn."),
+  matureConversionRatePct: z.number().nullable().describe("The same over the cohorts already mature on that day. Null while none was."),
+  matureOutcomes: z.number().int().describe("Outcomes of the cohorts mature on that day: what the Learning bar counts."),
+  learning: z.boolean().describe("Below the leg's Learning bar (leg.learningOutcomesRequired mature outcomes) on that day. Every figure above is served all the same: grey it, never hide it."),
+  byAction: z.array(spendActionDaySchema).describe("What the day's spend bought, per action (only actions with spend). Sum of spendUsd = the day's spend from the task read."),
+  byActionGapUsd: z.number().nullable().describe("spendUsd - sum of byAction[].spendUsd: 0 when the two reads agree. Null when the task read failed (spendByActionUnavailableReason)."),
+});
+const spendChartSchema = z.object({
+  leg: z
+    .object({
+      channelSlug: z.string().describe("The channel performing the leg."),
+      legKey: z.string().describe("The leg as the campaign stores it."),
+      fromStep: z.string().nullable().describe("Null = from nothing (Start)."),
+      toStep: z.string(),
+      maturityDays: z.number().int().describe("Days a cohort needs before it is read as mature (lib/maturity)."),
+      learningOutcomesRequired: z.number().int().describe("The Learning bar: mature outcomes needed."),
+    })
+    .nullable()
+    .describe("The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."),
+  outcomeStep: z.string().nullable().describe("The step counted as the outcome (the leg's TO step)."),
+  outcomeUnavailableReason: z.enum(["no_leg", "outcome_step_not_counted"]).nullable(),
+  conversionUnavailableReason: z.enum(["no_leg", "no_entry_population"]).nullable().describe("no_entry_population: a leg that FINDS people (Start -> Lead found) has nobody to convert; its outcome is the leads found."),
+  daily: z.array(spendChartPointSchema).describe("Since inception (never a window), ascending."),
+  spendByActionUnavailableReason: z.enum(["spend_by_action_unreadable"]).nullable(),
+  totals: z.object({
+    spendUsd: z.number(),
+    outcomes: z.number().int(),
+    costPerOutcomeUsd: z.number().nullable(),
+    entered: z.number().int(),
+    converted: z.number().int(),
+    conversionRatePct: z.number().nullable(),
+    learning: z.boolean().nullable(),
+  }).describe("The last point's figures (today's snapshot)."),
+  expected: z.object({
+    costPerOutcomeUsd: z.number().nullable().describe("What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."),
+    costPerOutcomeBasis: z.string().nullable().describe("measured | stated | fleet | default."),
+    costPerOutcomeUnavailableReason: z.string().nullable(),
+    conversionRatePct: z.number().nullable().describe("The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."),
+    conversionBasis: z.string().nullable(),
+    conversionSource: z.string().nullable(),
+    conversionUnavailableReason: z.string().nullable(),
+    roiMultiple: z.number().nullable().describe("The scope's expected return from its sales path model."),
+    roiBasis: z.string().nullable(),
+    roiUnavailableReason: z.string().nullable(),
+  }),
+});
+const funnelCampaignSpendChartsResponseRef = registry.register(
+  "FunnelCampaignSpendChartsResponse",
+  z.object({
+    salesFunnelCampaignId: z.string(),
+    brandId: z.string(),
+    offerId: z.string(),
+    pricing: z.enum(["gross", "net"]),
+    costBasis: z.literal("charged"),
+    campaign: spendChartSchema.describe("The campaign as a whole (every pipe's spend)."),
+    pipes: z.array(
+      spendChartSchema.extend({
+        campaignId: z.string().describe("The pipe's own (unit) campaign id."),
+        pipeId: z.string(),
+        featureSlug: z.string(),
+        legKey: z.string(),
+        status: z.string(),
+      }),
+    ).describe("One chart per pipe, in path order. A pipe reads its OWN spend."),
+  }),
+);
+const offerSpendChartsResponseRef = registry.register(
+  "OfferSpendChartsResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    pricing: z.enum(["gross", "net"]),
+    costBasis: z.literal("charged"),
+    salesFunnelCampaignIds: z.array(z.string()),
+    offer: spendChartSchema.describe("Every sales funnel campaign of the offer as one scope."),
+  }),
+);
+const spendChartsDescription =
+  "Why a day costs what it costs and whether it is converging (owner 2026-10-19). One point per UTC day since the scope's first activity: the measured cost per outcome (served while Learning, flagged), the conversion by entry cohort (a positive reply 5 days after the send counts for the send day; recent cohorts flagged not mature), the Learning flag, what the day's spend bought per action (new prospects found, first contacts, follow-ups, writing, reading replies; spend, count and cost per action), and the expected values the lines converge to. Same rule for every channel. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).";
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts",
+  summary: "Daily spend and convergence charts of one campaign and each of its pipes",
+  description: spendChartsDescription,
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Default gross; the dashboard sends net.") }),
+  },
+  responses: {
+    200: { description: "The campaign's and its pipes' charts.", content: { "application/json": { schema: funnelCampaignSpendChartsResponseRef } } },
+    400: { description: "pricing unrecognised (reason: pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found, or sales_funnel_campaign_not_found.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A spend or people read failed: no chart is guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/spend-charts",
+  summary: "Daily spend and convergence chart of one offer",
+  description: spendChartsDescription,
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({ brandId: z.string(), pricing: z.enum(["gross", "net"]).optional().describe("Default gross; the dashboard sends net.") }),
+  },
+  responses: {
+    200: { description: "The offer's chart.", content: { "application/json": { schema: offerSpendChartsResponseRef } } },
+    400: { description: "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found, or offer_has_no_campaigns.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A spend or people read failed: no chart is guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const measuredArrowRateSchema = z.object({
   basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),
