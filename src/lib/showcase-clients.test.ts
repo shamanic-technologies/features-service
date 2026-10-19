@@ -13,6 +13,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildShowcaseCandidates,
+  pickRecentlyStartedByMeetings,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
   SHOWCASE_MIN_OUTCOME_PEOPLE,
@@ -87,13 +88,14 @@ describe("pickShowcaseClients", () => {
     expect(pickShowcaseClients(withMin, FLOOR).recentlyStarted.brandIds[0]).toBe(SILENT);
   });
 
-  it("ONE positive reply is an anecdote: under 5 people on a rung, a client is in NEITHER group", () => {
+  it("ONE positive reply is an anecdote for the return group, yet enough to be put forward for the hero row", () => {
     // Production 2026-10-10: legistai.com and obra.cam led the row on a single positive reply each.
+    // The hero row's floor was lifted by the owner on 2026-10-19 (1 meeting, else 1 positive reply),
+    // decided after the walk; the snapshot only prefilters it on any rung reached.
     for (const n of [1, 4]) {
       const anecdote = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: n } : c));
       const picks = pickShowcaseClients(anecdote, FLOOR);
-      expect(ids(picks.recentlyStarted)).not.toContain(SILENT);
-      expect(picks.recentlyStarted.rankedBrandIds).not.toContain(SILENT);
+      expect(picks.recentlyStarted.rankedBrandIds).toContain(SILENT);
       expect(picks.highestReturn.rankedBrandIds).not.toContain(SILENT);
     }
     // The same client at 5 is named by BOTH questions it answers (it clears the spend floor too).
@@ -298,5 +300,32 @@ describe("showcaseChainHasOutcome", () => {
         { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_website_visit", peopleReached: 7 }] },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("pickRecentlyStartedByMeetings (owner 2026-10-19, SHOWCASE-MEETINGS-1019)", () => {
+  const c = (brandId: string, meetingsBooked: number | null, positiveReplies: number | null) => ({
+    brandId,
+    meetingsBooked,
+    positiveReplies,
+  });
+
+  it("names meeting clients first, newest first, then fills with positive-reply clients", () => {
+    const v = pickRecentlyStartedByMeetings([c("new-reply", 0, 3), c("mid-meet", 1, 7), c("visits", 0, 0), c("old-meet", 3, 2)]);
+    expect(v.brandIds).toEqual(["mid-meet", "old-meet", "new-reply"]);
+    expect(v.rejected).toBe(1);
+    expect(v.complete).toBe(false);
+  });
+
+  it("is complete once 3 meeting clients are found, and a reply client never displaces one", () => {
+    const v = pickRecentlyStartedByMeetings([c("a", 1, 1), c("r", 0, 50), c("b", 2, 0), c("d", 1, null)]);
+    expect(v.brandIds).toEqual(["a", "b", "d"]);
+    expect(v.complete).toBe(true);
+  });
+
+  it("website visits alone or an uncounted client never qualifies", () => {
+    const v = pickRecentlyStartedByMeetings([c("visits", 0, 0), c("unknown", null, null)]);
+    expect(v.brandIds).toEqual([]);
+    expect(v.rejected).toBe(2);
   });
 });

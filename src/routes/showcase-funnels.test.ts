@@ -490,10 +490,12 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(READABLE_SHOCK);
     const body = await get();
 
-    // Newest beginning first. Shockwave began in August, opsfolio in June, docdinners in March.
-    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([SHOCK, OPS, DOC]);
-    // Best return first — the SAME three clients in a DIFFERENT order (55.6x / 3.6x / 1.65x). An
-    // implementation that served one ranking under both names cannot pass both of these.
+    // The hero row proves BOOKED MEETINGS (owner 2026-10-19): docdinners booked one, so it leads even
+    // though it began first; Shockwave (August, 1 positive reply) fills the next slot; opsfolio has
+    // website visits only and is never named here.
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK]);
+    // Best return first, in a DIFFERENT order (55.6x / 3.6x / 1.65x). An implementation that served
+    // one ranking under both names cannot pass both of these.
     expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK, DOC]);
 
     expect(body.groups.recentlyStarted.measured).toBe(true);
@@ -534,7 +536,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     // The outsider began in September — later than every client named — and has moved nobody past
     // outreach, so the row of live cards does not lead with it.
     expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
-    expect(body.groups.recentlyStarted.brands[0].brand.id).toBe(SHOCK);
+    expect(body.groups.recentlyStarted.brands[0].brand.id).toBe(DOC);
   });
 
   // ── AN OUTCOME IS A RUNG PAST THE BASE, READ ON THE CLIENT'S OWN CHAIN ─────────────────────────
@@ -558,15 +560,15 @@ describe("GET /public/stats/showcase-funnels", () => {
     }
   });
 
-  it("the next honest candidate takes the refused client's place, and the refusal comes off qualifyingCount", async () => {
+  it("website visits never qualify the hero row: meetings first, then positive replies, refusals off qualifyingCount", async () => {
     mockFetch(WITH_VITAL);
     const recent = (await get()).groups.recentlyStarted;
 
-    // Vital began first (September) and is refused; the three that produced something fill the row in
-    // their own recency order.
-    expect(recent.brands.map((b) => b.brand.id)).toEqual([SHOCK, OPS, DOC]);
-    // Four passed the snapshot prefilter; one showed nothing on its own chain.
-    expect(recent.qualifyingCount).toBe(3);
+    // Vital (clicks only, newest) and opsfolio (website visits only) are refused; the meeting client
+    // leads, the positive-reply client fills.
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK]);
+    // Four passed the snapshot prefilter; two had neither a meeting nor a positive reply.
+    expect(recent.qualifyingCount).toBe(2);
     expect(recent.requestedCount).toBe(3);
   });
 
@@ -576,10 +578,10 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(BASE);
     const recent = (await get()).groups.recentlyStarted;
 
-    expect(recent.brands.map((b) => b.brand.id)).toEqual([OPS, DOC]);
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([DOC]);
     expect(recent.measured).toBe(true);
     expect(recent.requestedCount).toBe(3);
-    expect(recent.qualifyingCount).toBe(2);
+    expect(recent.qualifyingCount).toBe(1);
   });
 
   it("the return group is untouched by the recency check", async () => {
@@ -892,12 +894,30 @@ describe("showcase picks under the production minimum of 5", () => {
   const bestPastBase = (entry: Body["brands"][number]) =>
     Math.max(...entry.funnels.flatMap((f) => f.steps.filter((st) => st.key !== "contacted").map((st) => st.peopleReached ?? 0)));
 
-  it("recency names the 3 NEWEST clients that clear 5, skipping the newer anecdotes", async () => {
+  it("the hero row needs only ONE positive reply when nobody booked a meeting (the floor of 5 is lifted there)", async () => {
     mockFetch(FIXTURE);
     const recent = (await get()).groups.recentlyStarted;
-    expect(recent.brands.map((b) => b.brand.id)).toEqual([P5, P6, P7]);
-    expect(recent.qualifyingCount).toBe(4);
-    for (const entry of recent.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([ANECDOTE, FOUR, P5]);
+  });
+
+  it("the hero row names the newest clients with a BOOKED MEETING first, older ones included, then fills with replies", async () => {
+    mockFetch({
+      ...FIXTURE,
+      brands: {
+        ...FIXTURE.brands,
+        [P6]: { funnelKey: CONVERSATION, leads: replies(P6, 6), stated: { meeting_booked: ["r0"] } },
+        [OLDEST]: { funnelKey: CONVERSATION, leads: replies(OLDEST, 9), stated: { meeting_booked: ["r0", "r1"] } },
+      },
+    });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    expect(res.status).toBe(200);
+    const recent = res.body.groups.recentlyStarted.brands as Array<{
+      brand: { id: string };
+      outcomes: Array<{ key: string; peopleReached: number | null }>;
+    }>;
+    expect(recent.map((b) => b.brand.id)).toEqual([P6, OLDEST, ANECDOTE]);
+    const count = (b: (typeof recent)[number], key: string) => b.outcomes.find((o) => o.key === key)?.peopleReached;
+    expect(recent.map((b) => [count(b, "meeting_booked"), count(b, "conversation")])).toEqual([[1, 6], [2, 9], [0, 1]]);
   });
 
   it("highest return never names a client under 5, however well its money came back", async () => {
@@ -907,7 +927,7 @@ describe("showcase picks under the production minimum of 5", () => {
     expect(ret).toEqual([P7, P6, P5]);
     expect(ret).not.toContain(ANECDOTE);
     expect(ret).not.toContain(FOUR);
-    for (const entry of body.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
+    for (const entry of body.groups.highestReturn.brands) expect(bestPastBase(entry)).toBeGreaterThanOrEqual(5);
   });
 });
 
@@ -969,11 +989,15 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
       if (entry.funnels.length !== 1) continue;
       const chain = entry.funnels[0];
       expect(twin.returnPerDollar).toBe(chain.returnPerDollar);
-      expect(twin.outcomes.map((o) => [o.key, o.peopleReached, o.costPerReachUsd])).toEqual(
+      // Every walked client states positive replies and meetings booked, even when its path walks
+      // neither (opsfolio's form path): those rows carry no leg.
+      expect(twin.outcomes.map((o) => o.key)).toEqual(expect.arrayContaining(["conversation", "meeting_booked"]));
+      const walked = twin.outcomes.filter((o) => o.key === "contacted" || o.legKeys.length > 0);
+      expect(walked.map((o) => [o.key, o.peopleReached, o.costPerReachUsd])).toEqual(
         chain.steps.map((s) => [s.key === "contacted" ? "contacted" : funnelLeg(s.key)!.toStep.key, s.peopleReached, s.costPerReachUsd]),
       );
       // Each outcome names the leg that lands on it — the rung's own key on the funnel read.
-      expect(twin.outcomes.slice(1).map((o) => o.legKeys)).toEqual(chain.steps.slice(1).map((s) => [s.key]));
+      expect(walked.slice(1).map((o) => o.legKeys)).toEqual(chain.steps.slice(1).map((s) => [s.key]));
       reconciled += 1;
     }
     expect(reconciled).toBeGreaterThan(0);

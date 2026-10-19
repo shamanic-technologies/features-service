@@ -17,12 +17,14 @@
  *
  * ── TWO GROUPS, TWO QUESTIONS, AND A CLIENT MAY BE IN BOTH ──────────────────────────────────────
  *
- *   - **recentlyStarted** — the most recently begun clients whose chain shows at least
- *     `SHOWCASE_MIN_OUTCOME_PEOPLE` (5) people on one rung past the base, active or not (owner
- *     2026-10-10: "Pas besoin de prendre des actives, tu prends juste les 3 plus récentes"). The same
- *     minimum gates highestReturn: one positive reply is an anecdote, never the card a client leads with.
- *     The card row's question is "who else is on this right now", so a client that started last week
- *     and has something to show beats one that started a year ago and has more.
+ *   - **recentlyStarted** — the hero card row, which proves BOOKED MEETINGS (owner 2026-10-19,
+ *     SHOWCASE-MEETINGS-1019: « mettre les last 3 brand qui ont eu au moins des booked meetings? Si
+ *     moins de 3, tu peux prendre ceux qui ont eu des Interested leads? ... et plus jamais des "website
+ *     visits" »; supersedes, for this group, the 2026-10-10 floor of 5 people on one rung). The 3 most
+ *     recently begun clients with at least 1 meeting booked, newest first; then, if fewer than 3, the
+ *     most recently begun clients with at least 1 positive reply. A website visit never qualifies a
+ *     client here. Active or not (owner 2026-10-10). Decided on each walked client's own person
+ *     counts (`pickRecentlyStartedByMeetings`); the snapshot only prefilters on any rung reached.
  *
  *     **AN OUTCOME IS A RUNG THE FUNNEL CONVERTS TO — never the outreach base.** Being contacted is
  *     the base every funnel converts FROM, so a client whose only measured count is how many people
@@ -91,6 +93,48 @@ export const SHOWCASE_GROUP_SIZE = 3;
  * landing refuses a client below it too, so serving one would only make the row short on the page.
  */
 export const SHOWCASE_MIN_OUTCOME_PEOPLE = 5;
+
+/**
+ * The fewest people on a rung for the snapshot to put a client forward for `recentlyStarted`: any.
+ * The group is decided after the walk on meetings booked, then positive replies, at least 1 each
+ * (owner 2026-10-19, SHOWCASE-MEETINGS-1019), so the prefilter only drops clients with nothing at all.
+ */
+export const SHOWCASE_RECENT_MIN_RUNG_PEOPLE = 1;
+
+/** One walked recent candidate's two hero counts. Null = could not count (never qualifies). */
+export interface RecentShowcaseCounts {
+  brandId: string;
+  meetingsBooked: number | null;
+  positiveReplies: number | null;
+}
+
+/**
+ * PURE: the `recentlyStarted` group over walked candidates given NEWEST FIRST. Clients with at least 1
+ * meeting booked lead, in that order; the remaining slots go to clients with at least 1 positive reply
+ * and no meeting, in that order. A client with neither (website visits only, or nothing counted) is
+ * rejected. `complete` is true once `requestedCount` meeting clients are found: no older client can
+ * displace them, so the walk may stop.
+ */
+export function pickRecentlyStartedByMeetings(
+  walkedNewestFirst: readonly RecentShowcaseCounts[],
+  requestedCount: number = SHOWCASE_GROUP_SIZE,
+): { brandIds: string[]; meetingClients: number; replyClients: number; rejected: number; complete: boolean } {
+  const meetings: string[] = [];
+  const replies: string[] = [];
+  let rejected = 0;
+  for (const c of walkedNewestFirst) {
+    if (c.meetingsBooked !== null && c.meetingsBooked >= 1) meetings.push(c.brandId);
+    else if (c.positiveReplies !== null && c.positiveReplies >= 1) replies.push(c.brandId);
+    else rejected += 1;
+  }
+  return {
+    brandIds: [...meetings, ...replies].slice(0, requestedCount),
+    meetingClients: meetings.length,
+    replyClients: replies.length,
+    rejected,
+    complete: meetings.length >= requestedCount,
+  };
+}
 
 /** Why a group named nobody. Both are real answers; neither is an error. */
 export type ShowcaseGroupUnmeasuredReason =
@@ -278,6 +322,7 @@ export function pickShowcaseClients(
   minSpendUsd: number,
   requestedCount: number = SHOWCASE_GROUP_SIZE,
   minOutcomePeople: number = SHOWCASE_MIN_OUTCOME_PEOPLE,
+  recentMinRungPeople: number = SHOWCASE_RECENT_MIN_RUNG_PEOPLE,
 ): ShowcaseClientPicks {
   if (candidates === null) {
     return {
@@ -288,12 +333,11 @@ export function pickShowcaseClients(
   }
 
   // RECENCY — a client we can date, whose funnel has moved at least one person onto a RUNG past the
-  // outreach base. The outcome gate is what stops the row leading with a brand that signed up on Friday
-  // and has nothing to show; a MEASURED 0 fails it, and an unmeasured null fails it too (we cannot
-  // claim what we did not count). This is the PREFILTER; the route confirms each pick on its own
-  // walked chain before naming it.
+  // outreach base (a measured 0 or an unmeasured null fails). This is only the PREFILTER, newest
+  // first: the route walks the candidates and names meetings-booked clients first, then positive-reply
+  // clients (`pickRecentlyStartedByMeetings`), never one with website visits alone.
   const recent = candidates
-    .filter((c) => c.startedOn !== null && mayShowOutcome(c, minOutcomePeople))
+    .filter((c) => c.startedOn !== null && mayShowOutcome(c, recentMinRungPeople))
     .sort((a, b) =>
       a.startedOn === b.startedOn
         ? a.brandId.localeCompare(b.brandId)
