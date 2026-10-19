@@ -3275,11 +3275,11 @@ registry.registerPath({
 
 const timeToReplyFigureSchema = z
   .object({
-    medianDays: z.number().nullable().describe("Median days from a lead's first email to its first positive reply (1 decimal)."),
+    medianDays: z.number().nullable().describe("Median days from the first message we sent a lead (any channel) to its first positive reply (1 decimal)."),
     averageDays: z.number().nullable().describe("Average days, same population (1 decimal). Long tails pull it above the median: state the median."),
     medianMs: z.number().nullable(),
     averageMs: z.number().nullable(),
-    sampleSize: z.number().int().describe("Leads with a measured first positive reply after their first email."),
+    sampleSize: z.number().int().describe("Leads with a measured first positive reply after their first message (any channel)."),
   })
   .nullable();
 
@@ -3334,7 +3334,7 @@ const campaignNextStepsResponseRef = registry.register(
       .describe("What waits to go out and when, every channel composed: read this to say how many leads are queued and when the next sends happen."),
     timeToFirstPositiveReply: z
       .object({
-        medianDays: z.number().nullable().describe("The delay to state: median days from a lead's first email to its first positive reply, on `basis`. Null while learning."),
+        medianDays: z.number().nullable().describe("The delay to state: median days from the first message we sent a lead (email, WhatsApp, follow-up answer...) to its first positive reply, on `basis`. Null while learning."),
         averageDays: z.number().nullable(),
         sampleSize: z.number().int().nullable(),
         basis: z.enum(["campaign", "pipe_fleet"]).nullable().describe("campaign: this campaign's own reply pipes, once they hold minSample measured replies. pipe_fleet: the same pipes (channel x leg) across every client, once THAT holds minSample. Null: nothing measurable yet."),
@@ -3344,7 +3344,7 @@ const campaignNextStepsResponseRef = registry.register(
         pipeFleet: timeToReplyFigureSchema.describe("The same pipes across every client, since inception."),
         unavailableReason: z.enum(["learning", "no_positive_reply_pipe", "reply_latency_unreadable"]).nullable().describe("Why medianDays is null. no_positive_reply_pipe: no pipe of this campaign ends on a positive reply."),
       })
-      .describe("Measured time from the first email to the first positive reply, since inception. Never a default or another channel's delay."),
+      .describe("Measured time from the first message (any channel, lead-service's timeline) to the first positive reply, since inception. Never a default or another channel's delay."),
     pipes: z.array(
       z.object({
         campaignId: z.string().describe("The pipe's own (unit) campaign id."),
@@ -3363,7 +3363,7 @@ registry.registerPath({
   path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/next-steps",
   summary: "What comes next in one campaign: leads queued on every channel, when the next sends happen, and the measured time to a positive reply",
   description:
-    "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first email to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
+    "For our assistant (owner 2026-10-18): per sales funnel campaign, nextSends = every lead waiting for a send on any channel and the earliest next send (the follow-ups the campaign's writers scheduled, from lead-service, plus our email sender's queue); the leads whose first email waits in our email sender and when the sending window next opens in each lead's own business hours (a snapshot from the sender), and the measured median time from the first message (any channel) to the first positive reply (this campaign's own once it holds enough replies, else the same pipes across every client, else learning; since inception, never a window, never a default). A pipe (unit campaign) id is accepted too and answers for its campaign. Each part fails soft to a named null. Org-scoped (`x-org-id`).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
