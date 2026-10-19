@@ -31,6 +31,13 @@ const router = Router();
 
 const STATUS_RULE = { signalMinOutcomes: SIGNAL_MIN_OUTCOMES, robustMinOutcomes: ROBUST_MIN_OUTCOMES } as const;
 
+/** What each point's `basis` means, in words a landing page can show beside the curve (INDEX-HISTORY-BACKFILL-1019). */
+const BASIS_RULE = {
+  recorded: "Recorded live on that day.",
+  recomputed:
+    "Recomputed later with today's rules, on what had happened by the end of that day: the workflows running that week, their spend and the replies and human clicks dated by then.",
+} as const;
+
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
   return {
     slug: def.slug,
@@ -74,6 +81,7 @@ router.get("/public/indexes/:slug", async (req, res) => {
     const series = await readFleetIndexSeries(def.slug);
     res.json({
       statusRule: STATUS_RULE,
+      basisRule: BASIS_RULE,
       index: summaryOf(def, series[series.length - 1]),
       points: series.map((r) => ({
         day: r.day,

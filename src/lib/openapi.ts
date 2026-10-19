@@ -5407,7 +5407,8 @@ registry.registerPath({
   method: "get",
   path: "/public/indexes/{slug}",
   summary: "One public fleet index and every recorded day (public, no auth)",
-  description: "The index summary (latest day) + one point per recorded UTC day, oldest first. `basis` is `recorded` (written live that day).",
+  description:
+    "The index summary (latest day) + one point per UTC day, oldest first. `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
   tags: ["Public"],
   request: { params: z.object({ slug: z.string() }) },
   responses: {
@@ -5417,6 +5418,9 @@ registry.registerPath({
         "application/json": {
           schema: z.object({
             statusRule: fleetIndexStatusRuleSchema,
+            basisRule: z
+              .object({ recorded: z.string(), recomputed: z.string() })
+              .describe("What each `points[].basis` means, one plain sentence each, for a label beside the curve."),
             index: fleetIndexSummarySchema,
             points: z.array(
               z.object({
@@ -5428,7 +5432,7 @@ registry.registerPath({
                 workflowDynastySlug: z.string().nullable(),
                 workflowDynastyName: z.string().nullable(),
                 unavailableReason: z.string().nullable(),
-                basis: z.enum(["recorded", "recomputed"]),
+                basis: z.enum(["recorded", "recomputed"]).describe("`recorded`: written live that day. `recomputed`: rebuilt later as of that day (`basisRule`)."),
                 inputs: z.record(z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
               }),
             ),
