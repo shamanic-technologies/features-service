@@ -10,10 +10,12 @@
  *     D's cutoff (`maturityCutoffIso`, 21 days on both cold email legs); FLASH = served by D.
  *   - SPEND: the runs ledger per workflow version and run-start day (every org's leg campaigns); mature = runs started
  *     before D's cutoff, flash = started by D. Cost rows are today's ledger (the 08-24..10-02 send costs included).
- *   - WHO COULD BE PICKED on D: `runnableOn` (runnable today: from its first run on the leg; retired: up to its last
- *     run), AND, from the day stated assignments exist (2026-09-27), its leg assignment as of D is `active`. The stop
- *     date of a retired workflow is not recorded anywhere: its last run stands for it (the one input that is not
- *     strictly as of D).
+ *   - WHO COULD BE PICKED on D: the live rule as of the end of D (INDEX-HISTORY-MATURITY-AUDIT-1019). A dynasty can run
+ *     when one of its versions was executable at that instant, read from workflow-service's own record of each
+ *     version (created at, stopped being executable at; `executableDynastiesOn`); AND, from the day stated assignments
+ *     exist (2026-09-27), its leg assignment as of D is `active`. Never a run or cost date: cost rows keep landing for
+ *     weeks after a workflow is retired (reply handling on old sequences), so "last run" kept arcadia (retired
+ *     2026-09-24) the money workflow until 2026-10-06 and ballad (retired 2026-10-06 16:26) on 2026-10-07.
  * Then the live code decides: per-slug evidence → dynasties (`rollUpLegEvidenceByDynasty`, screened visits on the visit
  * leg), maturity, the ONE leg order (`rankLegWorkflows`), the index points (`computeFleetIndexPoints`). Data dated
  * after D never moves D's point (`fleet-index-history.test.ts`).
@@ -30,18 +32,6 @@ import type { EnginePerson } from "./revenue-engine.js";
 import { HUMAN_CLICKED_KEY, isScreenedVisitLeg, SCREENED_CONTACTED_KEY, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import { asOfPerson, creditedSignal, creditPerson, type PersonTimeline } from "./serving-row-credit.js";
 
-/**
- * PURE. Could the dynasty be picked on `day`: the live rule ("can still run") on the past. workflow-service records no
- * date a workflow stopped being runnable, so a dynasty it can run TODAY could from its first run on the leg, and one it
- * can no longer run could from its first run up to its LAST run on the leg (the latest fact that it ran). Windows tried
- * against prod on 2026-10-19: 7 days dropped rampart (last run 10-13, the live visit index on 10-18); 21 days kept
- * arcadia (retired, cheaper) over azalea, the live positive-reply index. This rule matches both recorded days.
- */
-export function runnableOn(day: string, run: { first: string; last: string } | undefined, runnableToday: boolean): boolean {
-  if (!run || run.first > day) return false;
-  return runnableToday || day <= run.last;
-}
-
 const DAY_MS = 86_400_000;
 
 export function addDays(day: string, n: number): string {
@@ -56,6 +46,21 @@ export function dayRange(first: string, last: string): string[] {
 }
 
 const endOfDayMs = (day: string): number => Date.parse(`${day}T00:00:00.000Z`) + DAY_MS - 1;
+
+/**
+ * PURE. The dynasties workflow-service could run at the end of `day`: one of their versions was created by then and
+ * had not yet stopped being executable (`executableUntil` null = still executable today). The live rule
+ * (`executableDynasties`: a version active in an active dynasty) read on the past.
+ */
+export function executableDynastiesOn(day: string, versions: readonly WorkflowVersion[]): Set<string> {
+  const end = endOfDayMs(day);
+  const out = new Set<string>();
+  for (const v of versions) {
+    if (Date.parse(v.createdAt) > end) continue;
+    if (v.executableUntil === null || Date.parse(v.executableUntil) > end) out.add(v.workflowDynastySlug);
+  }
+  return out;
+}
 
 /** The leg's cutoff DAY when the index is read on `day` (the live rule: UTC midnight of the day − the leg's duration). */
 export function cutoffDayOn(legKey: string, day: string): string {
@@ -152,7 +157,8 @@ export function addPairPersons(
       const campaignId = credited.campaignId ?? null;
       const slug = credited.workflowSlug ?? null;
       const servedDay = credited.servedAt ? credited.servedAt.slice(0, 10) : null;
-      if (!campaignId || !slug || !servedDay) continue;
+      // No serve date: IN the mature cohort at once, as the live cohort keeps it (`servedInMatureCohort`).
+      if (!campaignId || !slug) continue;
       const values: Record<Metric, number> = {
         contacted: creditedSignal(credited, "contacted") ? 1 : 0,
         clicked: creditedSignal(credited, "clicked") ? 1 : 0,
@@ -166,7 +172,7 @@ export function addPairPersons(
         if (!leg.campaignIds.has(campaignId)) continue;
         // Mature on day D ⟺ served before D's cutoff (D − the leg's duration).
         const duration = legMaturity(leg.legKey).durationDays;
-        const matureFrom = duration === 0 ? from : Math.max(from, indexOf(addDays(servedDay, duration + 1)));
+        const matureFrom = duration === 0 || !servedDay ? from : Math.max(from, indexOf(addDays(servedDay, duration + 1)));
         const spans: Array<[string, number]> = [["flash", from]];
         if (matureFrom < until) spans.push(["mature", matureFrom]);
         for (const [half, start] of spans) {
@@ -226,6 +232,10 @@ export interface WorkflowVersion {
   workflowSlug: string;
   workflowDynastySlug: string;
   workflowDynastyName: string | null;
+  /** When workflow-service created the version (ISO). */
+  createdAt: string;
+  /** When it stopped being executable (ISO); null = executable today. */
+  executableUntil: string | null;
 }
 
 export interface HistoryInputs {
@@ -238,8 +248,6 @@ export interface HistoryInputs {
   /** Every change of the two legs, any order. Computation leg keys. */
   assignmentChanges: readonly AssignmentChange[];
   workflows: readonly WorkflowVersion[];
-  /** Dynasties workflow-service can run today (`executableDynasties`). */
-  runnableToday: ReadonlySet<string>;
 }
 
 /** PURE. The leg ranking as it stood on `days[dayIndex]`. */
@@ -248,15 +256,8 @@ export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: numbe
   const cutoff = cutoffDayOn(legKey, day);
   const flashCents = new Map<string, number>();
   const matureCents = new Map<string, number>();
-  const runs = new Map<string, { first: string; last: string }>();
-  const dynastyOf = new Map(inputs.workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
   for (const s of inputs.spend) {
     if (s.legKey !== legKey) continue;
-    const dynasty = dynastyOf.get(s.workflowSlug);
-    if (dynasty && s.runCount > 0) {
-      const r = runs.get(dynasty);
-      runs.set(dynasty, { first: r && r.first < s.day ? r.first : s.day, last: r && r.last > s.day ? r.last : s.day });
-    }
     if (s.day > day) continue;
     flashCents.set(s.workflowSlug, (flashCents.get(s.workflowSlug) ?? 0) + s.spentCents);
     if (s.day < cutoff) matureCents.set(s.workflowSlug, (matureCents.get(s.workflowSlug) ?? 0) + s.spentCents);
@@ -290,7 +291,7 @@ export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: numbe
   }
   const names = new Map<string, string | null>();
   for (const w of inputs.workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName);
-  return rankLegWorkflows({ byDynasty, names, assignments, executable: new Set(dynasties.filter((d) => runnableOn(day, runs.get(d), inputs.runnableToday.has(d)))), pipelineUsd: new Map(), billedSpendUsd: new Map() });
+  return rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynastiesOn(day, inputs.workflows), pipelineUsd: new Map(), billedSpendUsd: new Map() });
 }
 
 /** One recomputed point, on its day. */
