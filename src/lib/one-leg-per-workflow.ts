@@ -4,7 +4,8 @@
  * second leg; this resolves the ones stated before the rule.
  *
  * Per dynasty active on 2+ legs:
- *   1. a leg its channel no longer performs (no pipe in the catalogue) comes off first: there is no pipe to keep;
+ *   1. a leg with no PUBLISHED pipe (its channel no longer performs it, or staff hid it: Email Sending's retired
+ *      "Email sent" leg) comes off first: no customer surface runs it, so there is no pipe to keep;
  *   2. among the legs left, the leg its template TYPE is built for is KEPT. Judged on the type only (owner rule
  *      2026-10-17): the content-generation template type(s) the workflow's latest version renders (a reply template =
  *      the positive reply leg, a click template = the website visit leg), else the workflow's own description when it
@@ -183,7 +184,7 @@ export async function resolveOneLegPerWorkflow(opts: { apply: boolean; decidedBy
   const multi = active.filter((r) => (count.get(r.workflowDynastySlug) ?? 0) > 1);
   if (multi.length === 0) return { applied: opts.apply, resolutions: [] };
 
-  const cat = await loadChannelCatalogue({ publishedOnly: false });
+  const cat = await loadChannelCatalogue({ publishedOnly: true });
   const performed = (featureSlug: string, legKey: string): PerformedLeg | null => {
     const ch = cat.channels.find((c) => c.slug === featureSlug);
     const computed = pipeLegKeyOf(featureSlug, legKey);
