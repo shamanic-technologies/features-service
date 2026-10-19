@@ -26871,7 +26871,7 @@
               "roiMultiple": {
                 "type": "number",
                 "nullable": true,
-                "description": "EXACTLY the return the dashboard shows (Today page 'Return') for the offer that contacted people in the window: /offers/{offerId}/revenue?brandId=&pricing=net costEconomics.maturity, mature half; a not-mature offer shows its to-date (flash) half when above 1x, else null return_learning. Not rounded. Every scope that sent must show the same value, else null return_differs_across_scopes."
+                "description": "EXACTLY the return the dashboard shows (Today page 'Return') for the offer that contacted people in the window: /offers/{offerId}/revenue?brandId=&pricing=net costEconomics.maturity, the HIGHER half (flash when its return is above the mature one, owner 2026-10-08); a not-mature offer shows its to-date (flash) half when above 1x, else null return_learning. Not rounded. Every scope that sent must show the same value, else null return_differs_across_scopes."
               },
               "returnHalf": {
                 "type": "string",
@@ -48030,7 +48030,7 @@
                             "requestedCount",
                             "qualifyingCount"
                           ],
-                          "description": "THE CLIENTS WHOSE MONEY CAME BACK BEST, past `minSpendUsd` of spend, best first — ranked on the same realized return each chain states as returnPerDollar. The floor is the point: below it a ratio is whatever that client's first outcome happened to do (measured in production, the top of an UNFILTERED ranking is 21.5x on $4.12 of spend and 12.3x on $9.77). The same minimum as recentlyStarted holds: a client is named only when its own chain shows at least 5 people on one step other than `contacted`; a refused candidate is replaced by the next best and comes off `qualifyingCount`."
+                          "description": "THE CLIENTS WHOSE MONEY CAME BACK BEST, past `minSpendUsd` of spend, best first — ranked on the return each client's own dashboard Today page states (the HIGHER of its flash and mature halves, owner 2026-10-08; a not-mature client only when its to-date return is above 1x), the same figure /showcase-outcomes serves as returnPerDollar. The floor is the point: below it a ratio is whatever that client's first outcome happened to do (measured in production, the top of an UNFILTERED ranking is 21.5x on $4.12 of spend and 12.3x on $9.77). The same minimum as recentlyStarted holds: a client is named only when its own chain shows at least 5 people on one step other than `contacted`; a refused candidate is replaced by the next best and comes off `qualifyingCount`."
                         }
                       },
                       "required": [
@@ -49645,7 +49645,7 @@
                           "returnPerDollar": {
                             "type": "number",
                             "nullable": true,
-                            "description": "REALIZED — the brand's own ROI across every path it sells (its dashboard's `costEconomics.roiMultiple`, net). For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                            "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                           },
                           "measured": {
                             "type": "boolean"
@@ -49744,7 +49744,7 @@
                                   "returnPerDollar": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "REALIZED — the brand's own ROI across every path it sells (its dashboard's `costEconomics.roiMultiple`, net). For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                                    "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                                   },
                                   "measured": {
                                     "type": "boolean"
@@ -49866,7 +49866,7 @@
                                   "returnPerDollar": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "REALIZED — the brand's own ROI across every path it sells (its dashboard's `costEconomics.roiMultiple`, net). For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                                    "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                                   },
                                   "measured": {
                                     "type": "boolean"

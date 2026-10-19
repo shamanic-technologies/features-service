@@ -87,6 +87,7 @@
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 import type { CostEconomics } from "./cost-economics.js";
+import { servedReturnOf } from "./served-return.js";
 import type { ShowcaseGroupUnmeasuredReason } from "./showcase-clients.js";
 
 /** The key + label of the outreach base — a step of no funnel, and the base every funnel converts from. */
@@ -130,7 +131,8 @@ export interface ShowcaseFunnel {
   funnelName: string;
   /**
    * WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED
-   * spend, i.e. `costEconomics.roiMultiple` for the funnel-narrowed read, on the **NET** pricing basis
+   * spend, i.e. the half of `costEconomics.maturity` the client's dashboard states (`servedReturnOf`: the
+   * HIGHER of flash and mature, owner 2026-10-08) for the funnel-narrowed read, on the **NET** pricing basis
    * (what the client actually paid after their usage discount). The byte-same statistic the client
    * reads as ROI on their own dashboard — which reads net too — so the two surfaces cannot state two
    * numbers.
@@ -227,15 +229,16 @@ export function brandReadingFunnels(reading: ReadonlyArray<{ funnelKey: SalesFun
 export function showcaseFunnelOf(
   breakdown: FunnelStepBreakdown,
   /**
-   * The funnel-narrowed read's OWN economics block, whose `roiMultiple` is the return. Absent on a
+   * The funnel-narrowed read's OWN economics block, whose `maturity` pair holds the return. Absent on a
    * path that produced none — the return is then `null`, never a substituted figure.
    */
-  costEconomics?: Pick<CostEconomics, "roiMultiple"> | null,
+  costEconomics?: Pick<CostEconomics, "maturity"> | null,
 ): ShowcaseFunnel {
   return {
     funnelKey: breakdown.funnelKey,
     funnelName: breakdown.name,
-    returnPerDollar: costEconomics?.roiMultiple ?? null,
+    // The return the client's dashboard states: the HIGHER half of the pair (`servedReturnOf`).
+    returnPerDollar: costEconomics ? servedReturnOf(costEconomics.maturity).roiMultiple : null,
     steps: [
       {
         key: SHOWCASE_CONTACTED_KEY,

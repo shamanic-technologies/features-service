@@ -109,11 +109,17 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     });
   });
 
-  it("a mature offer is shown its MATURE return", async () => {
-    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 9 }, mature: { roiMultiple: 2.5 }, isMature: true }) });
+  it("a mature offer is shown its MATURE return when it is the higher half", async () => {
+    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 1.5 }, mature: { roiMultiple: 2.5 }, isMature: true }) });
     const res = await get();
     expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 2.5, returnHalf: "mature" });
     expect(res.body.budgetIncrease.expectedAdditionalRevenueUsd).toBe(250);
+  });
+
+  it("a mature offer whose flash return is higher is shown the FLASH return, like its Today page (owner 2026-10-08)", async () => {
+    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 2.21 }, mature: { roiMultiple: 0.74 }, isMature: true }) });
+    const res = await get();
+    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 2.21, returnHalf: "flash" });
   });
 
   it("a not-mature offer at or under 1x reads Learning on the dashboard → null + return_learning, never a figure", async () => {
