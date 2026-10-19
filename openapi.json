@@ -28359,7 +28359,7 @@
         "properties": {
           "slug": {
             "type": "string",
-            "description": "Stable index id, e.g. `sceo-cost-per-click` (SCEO = Sales Cold Email Outreach)."
+            "description": "Stable index id, e.g. `cold-email-cost-per-click`."
           },
           "name": {
             "type": "string",

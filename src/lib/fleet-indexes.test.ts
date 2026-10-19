@@ -45,17 +45,17 @@ describe("fleet indexes", () => {
       row({ workflowDynastySlug: "rampart", costPerOutcomeUsd: 4.35, conversionRatePct: 2.08, outcomes: 15, contacted: 720 }),
     ];
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: visitRows, positiveReplyRows: null, meetingPipe: null }));
-    expect(p.get("sceo-cost-per-click")).toMatchObject({ value: 4.35, status: "signal", outcomes: 15, contacted: 720, workflowDynastySlug: "rampart" });
-    expect(p.get("sceo-click-rate")).toMatchObject({ value: 2.08, status: "signal" });
+    expect(p.get("cold-email-cost-per-click")).toMatchObject({ value: 4.35, status: "signal", outcomes: 15, contacted: 720, workflowDynastySlug: "rampart" });
+    expect(p.get("cold-email-click-rate")).toMatchObject({ value: 2.08, status: "signal" });
     // An unreadable input records nothing (never a null pretending to be a measure).
-    expect(p.has("sceo-cost-per-interest")).toBe(false);
-    expect(p.has("sceo-cost-per-meeting")).toBe(false);
+    expect(p.has("cold-email-cost-per-positive-reply")).toBe(false);
+    expect(p.has("cold-email-cost-per-meeting")).toBe(false);
   });
 
   it("no mature workflow that can run = a null value with its reason, status noise", () => {
     const rows = [row({ moneyGoesHere: false, basis: "flash", isMature: false })];
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null }));
-    expect(p.get("sceo-cost-per-interest")).toMatchObject({ value: null, status: "noise", unavailableReason: "no_mature_workflow" });
+    expect(p.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "no_mature_workflow" });
   });
 
   const mbRow = (over: Partial<LegWorkflowRankingRow>) =>
@@ -70,10 +70,10 @@ describe("fleet indexes", () => {
     };
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingPipe }));
     // rhodium: $17 per meeting, 25% of positive replies booked (cheaper than torcular's $20)
-    expect(p.get("sceo-cost-per-meeting")!.value).toBeCloseTo(182 / 0.25 + 17, 6);
-    expect(p.get("sceo-meeting-rate")!.value).toBeCloseTo(0.15 * 0.25, 6);
-    expect(p.get("sceo-cost-per-meeting")).toMatchObject({ status: "noise", outcomes: 3, contacted: null, workflowDynastySlug: "azalea" });
-    expect(p.get("sceo-cost-per-meeting")!.inputs).toMatchObject({
+    expect(p.get("cold-email-cost-per-meeting")!.value).toBeCloseTo(182 / 0.25 + 17, 6);
+    expect(p.get("cold-email-meeting-rate")!.value).toBeCloseTo(0.15 * 0.25, 6);
+    expect(p.get("cold-email-cost-per-meeting")).toMatchObject({ status: "noise", outcomes: 3, contacted: null, workflowDynastySlug: "azalea" });
+    expect(p.get("cold-email-cost-per-meeting")!.inputs).toMatchObject({
       interestWorkflowDynastySlug: "azalea",
       meetingWorkflowDynastySlug: "ai-meeting-booking-rhodium",
       meetingPipeSource: "best_workflow_learning",
@@ -93,8 +93,8 @@ describe("fleet indexes", () => {
     };
     expect(bestMeetingPipePick(meetingPipe)).toMatchObject({ source: "mature_workflow", mature: true, costPerMeetingUsd: 10, ratePct: 20 });
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingPipe }));
-    expect(p.get("sceo-cost-per-interest")!.status).toBe("robust");
-    expect(p.get("sceo-cost-per-meeting")!.status).toBe("signal");
+    expect(p.get("cold-email-cost-per-positive-reply")!.status).toBe("robust");
+    expect(p.get("cold-email-cost-per-meeting")!.status).toBe("signal");
   });
 
   it("no workflow alone owns a meeting = the pipe as a whole stands in, named, noise", () => {
@@ -103,10 +103,10 @@ describe("fleet indexes", () => {
       pooled: { spentUsd: 3.8, contacted: 10, outcomes: 3, spentByDynasty: { "ai-meeting-booking-rhodium": 3.67, "ai-meeting-booking-avior": 0.13 } },
     };
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: [row({ costPerOutcomeUsd: 182 })], meetingPipe }));
-    expect(p.get("sceo-cost-per-meeting")!.value).toBeCloseTo(182 / 0.3 + 3.8 / 3, 6);
-    expect(p.get("sceo-cost-per-meeting")).toMatchObject({ status: "noise", outcomes: 3 });
-    expect(p.get("sceo-cost-per-meeting")!.inputs).toMatchObject({ meetingPipeSource: "pipe_all_workflows", meetingWorkflowDynastySlug: null });
-    expect(String(p.get("sceo-cost-per-meeting")!.inputs.meetingPipeSpentByDynasty)).toContain("avior");
+    expect(p.get("cold-email-cost-per-meeting")!.value).toBeCloseTo(182 / 0.3 + 3.8 / 3, 6);
+    expect(p.get("cold-email-cost-per-meeting")).toMatchObject({ status: "noise", outcomes: 3 });
+    expect(p.get("cold-email-cost-per-meeting")!.inputs).toMatchObject({ meetingPipeSource: "pipe_all_workflows", meetingWorkflowDynastySlug: null });
+    expect(String(p.get("cold-email-cost-per-meeting")!.inputs.meetingPipeSpentByDynasty)).toContain("avior");
   });
 
   it("a workflow that cannot run never stands in", () => {
@@ -116,7 +116,7 @@ describe("fleet indexes", () => {
 
   it("no meeting on the pipe at all = null meeting index, never infinite", () => {
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: [row({})], meetingPipe: { rows: [], pooled: { ...noPool, spentUsd: 5, contacted: 20 } } }));
-    expect(p.get("sceo-cost-per-meeting")).toMatchObject({ value: null, unavailableReason: "no_meeting_on_pipe", status: "noise" });
+    expect(p.get("cold-email-cost-per-meeting")).toMatchObject({ value: null, unavailableReason: "no_meeting_on_pipe", status: "noise" });
   });
 
   it("every index has a unique slug and states its unit", () => {
