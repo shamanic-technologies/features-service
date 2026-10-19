@@ -16165,16 +16165,21 @@
                   "items": {
                     "type": "object",
                     "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "The tactic's catalogue name, the tag a client reads beside the message, e.g. \"Blind angle\"."
+                      },
                       "line": {
                         "type": "string",
-                        "description": "A plain line, e.g. \"Brand not named in the first email\"."
+                        "description": "A plain line, e.g. \"Brand not named in the first email\" (the tag's hover)."
                       }
                     },
                     "required": [
+                      "name",
                       "line"
                     ]
                   },
-                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."
+                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), each by its name and its client line; a tactic with no client line is not listed."
                 },
                 "tacticsUnavailableReason": {
                   "type": "string",
@@ -16298,16 +16303,21 @@
                   "items": {
                     "type": "object",
                     "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "The tactic's catalogue name, the tag a client reads beside the message, e.g. \"Blind angle\"."
+                      },
                       "line": {
                         "type": "string",
-                        "description": "A plain line, e.g. \"Brand not named in the first email\"."
+                        "description": "A plain line, e.g. \"Brand not named in the first email\" (the tag's hover)."
                       }
                     },
                     "required": [
+                      "name",
                       "line"
                     ]
                   },
-                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."
+                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), each by its name and its client line; a tactic with no client line is not listed."
                 },
                 "tacticsUnavailableReason": {
                   "type": "string",
