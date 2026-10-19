@@ -17,7 +17,8 @@
  *   several workflows cannot say which booked), always `noise` with the meetings it rests on.
  *
  * Two indexes are CLIENT figures, not pipe figures (owner 2026-10-19): the median client's cost per engaged lead (the
- * landing hero's figure, `/public/stats/ranked?groupBy=brand`: per brand total spend ÷ (positive replies + clicks), brands
+ * landing hero's figure: per brand total spend (`/public/stats/ranked?groupBy=brand`) ÷ (persons who replied positively +
+ * persons whose click was judged HUMAN, the fleet person cell: owner 2026-10-19, a scanner's click is not a visit), brands
  * with both; ≥ 2 brands) and the median client's return on spend (`/public/stats/return-on-spend`, ≥ $100 spent, MATURE
  * brands, ≥ 5 brands). Their status counts the CLIENTS behind the median (`outcomes` = clients), the same bars.
  *
@@ -128,7 +129,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per engaged lead, median of our clients",
-    method: "Each client's cold email spend divided by its engaged leads (people who replied positively or visited its website), then the median across our clients.",
+    method: "Each client's cold email spend divided by its engaged leads (people who replied positively, or visited its website from our email, link scanners left out), then the median across our clients.",
   },
   {
     slug: "cold-email-roi",
@@ -249,10 +250,11 @@ export interface FleetIndexInputs {
   clientReturn?: ClientReturnInput | null;
 }
 
-/** A client brand's lifetime cold email spend and engaged leads. */
+/** A client brand's lifetime cold email spend and engaged persons. */
 export interface BrandEngagement {
   positiveReplies: number;
-  clicks: number;
+  /** Persons whose click was judged human (never a provider-reported click: mostly link scanners). */
+  humanClicks: number;
   spendCents: number;
 }
 
@@ -287,14 +289,14 @@ function clientPoint(def: FleetIndexDefinition, value: number | null, clients: n
   };
 }
 
-/** PURE. The median client's cost per engaged lead: the landing hero's rule, byte for byte. */
+/** PURE. The median client's cost per engaged lead (positive replies + human clicks). */
 export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndexPoint {
   const def = COST_PER_ENGAGED_LEAD;
   const priced = brands
-    .map((b) => ({ engaged: b.positiveReplies + b.clicks, spendCents: b.spendCents }))
+    .map((b) => ({ engaged: b.positiveReplies + b.humanClicks, spendCents: b.spendCents }))
     .filter((b) => b.engaged > 0 && b.spendCents > 0);
   const engagedLeads = priced.reduce((t, b) => t + b.engaged, 0);
-  const inputs = { population: "clients_with_engaged_lead_and_spend", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS };
+  const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS };
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
   return clientPoint(def, value, priced.length, null, inputs);
