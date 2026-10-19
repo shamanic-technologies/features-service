@@ -281,6 +281,13 @@
       "when": 1792900800000,
       "tag": "0039_generation_sequence_copy",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792908000000,
+      "tag": "0040_fleet_index_seo_slugs",
+      "breakpoints": true
     }
   ]
 }

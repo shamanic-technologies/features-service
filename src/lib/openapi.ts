@@ -5366,7 +5366,7 @@ const fleetIndexStatusRuleSchema = z.object({ signalMinOutcomes: z.number().int(
 const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
-    slug: z.string().describe("Stable index id, e.g. `sceo-cost-per-click` (SCEO = Sales Cold Email Outreach)."),
+    slug: z.string().describe("Stable index id, e.g. `cold-email-cost-per-click`."),
     name: z.string().describe("Display name, e.g. `Distribute.you Cost Per Click Index`."),
     channelSlug: z.string(),
     channelName: z.string(),
