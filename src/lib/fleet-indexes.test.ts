@@ -137,19 +137,19 @@ describe("public index names (owner 2026-10-19, INDEX-SLUGS-SEO-1019)", () => {
 });
 
 describe("client indexes (owner 2026-10-19, INDEX-ENGAGED-ROI-1019)", () => {
-  it("the median client's cost per engaged lead counts replies + clicks over brands with both spend and an engaged lead", () => {
+  it("the median client's cost per engaged lead counts replies + human clicks over brands with both spend and an engaged lead", () => {
     const point = engagedLeadPoint([
-      { positiveReplies: 1, clicks: 1, spendCents: 2000 }, // $10
-      { positiveReplies: 0, clicks: 10, spendCents: 3000 }, // $3
-      { positiveReplies: 5, clicks: 0, spendCents: 10000 }, // $20
-      { positiveReplies: 0, clicks: 0, spendCents: 9000 }, // no engaged lead: out
-      { positiveReplies: 3, clicks: 0, spendCents: 0 }, // no spend: out
+      { positiveReplies: 1, humanClicks: 1, spendCents: 2000 }, // $10
+      { positiveReplies: 0, humanClicks: 10, spendCents: 3000 }, // $3
+      { positiveReplies: 5, humanClicks: 0, spendCents: 10000 }, // $20
+      { positiveReplies: 0, humanClicks: 0, spendCents: 9000 }, // no engaged lead: out
+      { positiveReplies: 3, humanClicks: 0, spendCents: 0 }, // no spend: out
     ]);
     expect(point).toMatchObject({ indexSlug: "cold-email-cost-per-engaged-lead", value: 10, outcomes: 3, status: "noise", inputs: { clients: 3, engagedLeads: 17 } });
   });
 
   it("one client is not a fleet: null not_enough_clients, never that client's own price", () => {
-    expect(engagedLeadPoint([{ positiveReplies: 1, clicks: 0, spendCents: 500 }])).toMatchObject({ value: null, unavailableReason: "not_enough_clients" });
+    expect(engagedLeadPoint([{ positiveReplies: 1, humanClicks: 0, spendCents: 500 }])).toMatchObject({ value: null, unavailableReason: "not_enough_clients" });
   });
 
   it("the ROI index is the served median; status counts the clients behind it", () => {

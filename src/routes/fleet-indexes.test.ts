@@ -21,6 +21,9 @@ vi.mock("./public.js", () => ranking);
 const meeting = vi.hoisted(() => ({ getInternalPipeFleet: vi.fn() }));
 vi.mock("../lib/meeting-leg-fleet.js", () => ({ ...meeting, MEETING_BOOKING_FEATURE_SLUG: "ai-meeting-booking", MEETING_BOOKING_LEG_KEY: "conversation_to_meeting_booked" }));
 
+const persons = vi.hoisted(() => ({ fetchFleetEngagementByBrand: vi.fn(async () => new Map<string, { positiveReplies: number; humanClicks: number }>()) }));
+vi.mock("../lib/fleet-positive-repliers.js", () => persons);
+
 const { default: router, recordFleetIndexesNow } = await import("./fleet-indexes.js");
 const app = express().use(router);
 
@@ -160,15 +163,21 @@ describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
     meeting.getInternalPipeFleet.mockResolvedValue(null);
   });
 
-  it("records the hero's median cost per engaged lead and the median client ROI from the same reads the landing makes", async () => {
+  it("records the median cost per engaged lead on HUMAN clicks (never the provider's click count) and the median client ROI", async () => {
     ranking.readPublicRanked.mockResolvedValueOnce({
       costBasis: "incurred", objective: "emailsSent", sortDirection: "desc",
       results: [
-        { brand: { id: "a", name: null, domain: null }, stats: { recipientsRepliesPositive: 2, recipientsClicked: 8, totalCostInUsdCents: 5000 } },
-        { brand: { id: "b", name: null, domain: null }, stats: { recipientsRepliesPositive: 0, recipientsClicked: 4, totalCostInUsdCents: 6000 } },
+        // recipientsClicked counts link scanners: never read (INDEX-ENGAGED-HUMAN-CLICKS-1019)
+        { brand: { id: "a", name: null, domain: null }, stats: { recipientsRepliesPositive: 2, recipientsClicked: 80, totalCostInUsdCents: 5000 } },
+        { brand: { id: "b", name: null, domain: null }, stats: { recipientsRepliesPositive: 0, recipientsClicked: 40, totalCostInUsdCents: 6000 } },
         { brand: { id: "c", name: null, domain: null }, stats: { recipientsRepliesPositive: 1, recipientsClicked: 0, totalCostInUsdCents: 0 } },
       ],
     });
+    persons.fetchFleetEngagementByBrand.mockResolvedValueOnce(new Map([
+      ["a", { positiveReplies: 2, humanClicks: 8 }],
+      ["b", { positiveReplies: 0, humanClicks: 4 }],
+      ["c", { positiveReplies: 1, humanClicks: 0 }],
+    ]));
     ranking.readFleetReturnOnSpend.mockResolvedValueOnce({ measured: true, reason: null, brandCount: 12, minSpendUsd: 100, medianReturnPerDollar: 3.6 });
     const n = await recordFleetIndexesNow(new Date("2026-10-19T13:00:00Z"));
     expect(n).toBe(2);
@@ -177,7 +186,7 @@ describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
     // a: $50 / 10 = $5, b: $60 / 4 = $15, c has no spend (out) -> median of [5, 15] = 10
-    expect(bySlug.get("cold-email-cost-per-engaged-lead")).toMatchObject({ value: 10, outcomes: 2, status: "noise", inputs: { clients: 2, engagedLeads: 14 } });
+    expect(bySlug.get("cold-email-cost-per-engaged-lead")).toMatchObject({ value: 10, outcomes: 2, status: "noise", inputs: { clients: 2, engagedLeads: 14, clicks: "judged_human" } });
     expect(bySlug.get("cold-email-roi")).toMatchObject({ value: 3.6, outcomes: 12, status: "signal", unavailableReason: null });
   });
 
