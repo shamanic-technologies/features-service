@@ -282,7 +282,17 @@ describe("showcaseChainHasOutcome", () => {
     expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 5]))).toBe(true);
     // The base never counts, however large.
     expect(showcaseChainHasOutcome(chain(["contacted", 5000], ["start_to_conversation", 0]))).toBe(false);
-    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 51], ["website_visit_to_signup", 0]))).toBe(true);
+    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 51], ["website_visit_to_signup", 5]))).toBe(true);
+  });
+
+  it("website visits never qualify a client, in either group (SHOWCASE-NO-VISITS-1019)", () => {
+    // Pocket CMO in prod 2026-10-19: 54 visits, nothing else past the base. The card never draws a visit.
+    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 54], ["website_visit_to_signup", 0]))).toBe(false);
+    expect(
+      pickRecentlyStartedByMeetings([{ brandId: "pocket", meetingsBooked: 0, positiveReplies: 0 }]).brandIds,
+    ).toEqual([]);
+    // A drawn outcome beside the visits still qualifies.
+    expect(showcaseChainHasOutcome(chain(["contacted", 900], ["start_to_website_visit", 54], ["start_to_conversation", 20]))).toBe(true);
   });
 
   it("an UNMEASURED rung never qualifies a client", () => {
@@ -297,7 +307,7 @@ describe("showcaseChainHasOutcome", () => {
     expect(
       showcaseChainHasOutcome([
         { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_conversation", peopleReached: 0 }] },
-        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_website_visit", peopleReached: 7 }] },
+        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "website_visit_to_form_submitted", peopleReached: 7 }] },
       ]),
     ).toBe(true);
   });

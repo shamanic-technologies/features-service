@@ -193,6 +193,8 @@ interface BrandFixture {
   leads: Array<Record<string, unknown>>;
   /** lead ids a HUMAN stated reached each rung. */
   stated?: Partial<Record<"meeting_booked" | "meeting_attended" | "sale", string[]>>;
+  /** lead ids the conversion tracker attributes a form submission to. */
+  formSubmissions?: string[];
   /** campaign-service lists NO campaign for this brand. */
   noCampaigns?: boolean;
   /** the campaign read for this brand THROWS — one brand's failure. */
@@ -322,7 +324,11 @@ function mockFetch(fixture: Fixture): void {
       return json({ leads: fixture.brands[brandId]?.leads ?? [] });
     }
 
-    if (path.includes("/converted-lead-emails")) return json({ event: q.get("event"), emails: [] });
+    if (path.includes("/converted-lead-emails")) {
+      const brandId = path.split("/brands/")[1]?.split("/")[0] ?? "";
+      const ids = q.get("event") === "form_submission" ? (fixture.brands[brandId]?.formSubmissions ?? []) : [];
+      return json({ event: q.get("event"), emails: ids.map((leadId) => emailOf(brandId, leadId)) });
+    }
     if (path.includes("/converted-leads")) {
       if (fixture.statedReadable === false) return new Response("boom", { status: 502 });
       const brandId = path.split("/brands/")[1]?.split("/")[0] ?? "";
@@ -391,6 +397,8 @@ const BASE: Fixture = {
     [OPS]: {
       funnelKey: FORM,
       leads: [lead(OPS, "l1", "click"), lead(OPS, "l2", "none")],
+      // The visit alone never qualifies (SHOWCASE-NO-VISITS-1019): the form fill does.
+      formSubmissions: ["l1"],
     },
     [SHOCK]: { funnelKey: CONVERSATION, leads: [] },
     [OUTSIDER]: { funnelKey: CONVERSATION, leads: [lead(OUTSIDER, "l1", "reply")] },
@@ -654,10 +662,10 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(ops.funnels[0].steps[1].peopleReached).toBe(1);
     // THE MIDDLE RUNG IS MEASURED, NOT NULL. The website-conversion attribution sets are fetched on
     // the same flag the spend block is, so a cheaper read would leave this rung permanently
-    // unmeasurable — a gate excluding the very funnel this brand sells. The tracker answered with an
-    // EMPTY set here, which is a measured 0 and a different statement from "we have no figure".
+    // unmeasurable — a gate excluding the very funnel this brand sells. The tracker attributes one
+    // form fill here, a measured count, a different statement from "we have no figure".
     expect(ops.funnels[0].steps[2].label).toBe("Form submitted");
-    expect(ops.funnels[0].steps[2].peopleReached).toBe(0);
+    expect(ops.funnels[0].steps[2].peopleReached).toBe(1);
     // The other brand's chain is a different shape entirely.
     expect(brandOf(body, DOC).funnels[0].steps).toHaveLength(5);
   });
@@ -828,11 +836,11 @@ describe("GET /public/stats/showcase-funnels", () => {
     const body = await get();
     const ops = brandOf(body, OPS).funnels[0];
 
-    // opsfolio: $100 over 2 contacted / 1 visit / 0 form fills — its own chain, its own denominators.
+    // opsfolio: $100 over 2 contacted / 1 visit / 1 form fill — its own chain, its own denominators.
     expect(ops.steps.map((s) => [s.label, s.costPerReachUsd])).toEqual([
       ["Contacted", 50],
       ["Website visit", 100],
-      ["Form submitted", null],
+      ["Form submitted", 100],
       ["Paid client", null],
     ]);
 
