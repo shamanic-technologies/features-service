@@ -1212,8 +1212,13 @@ export async function handlePublicRevenue(
 
 /** A read older than this kicks a background refresh (it is still SERVED — nobody waits on the warm). */
 const FLEET_RETURN_STALE_MS = 60 * 60 * 1000;
-/** A single brand's engine pass may not hang the whole warm; a hung fetch never rejects on its own. */
-const FLEET_RETURN_BRAND_TIMEOUT_MS = 120_000;
+/**
+ * A single brand's engine pass may not hang the whole warm; a hung fetch never rejects on its own.
+ * 300 s, not 120 s: the fleet's biggest brand (Doc Dinners, 2026-10-19) finishes in over 2 minutes
+ * under paced lead reads, timed out every hour, and so vanished from every snapshot and from the
+ * homepage hero (SHOWCASE-MEETINGS-1019). Off the request path, so nobody waits on it.
+ */
+const FLEET_RETURN_BRAND_TIMEOUT_MS = 300_000;
 
 /** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
 const fleetReturnWarmInFlight = new Map<string, Promise<void>>();
