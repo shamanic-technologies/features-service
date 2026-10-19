@@ -51,6 +51,11 @@ async function main(): Promise<void> {
     const sample = series.filter((_, i) => i % 7 === 0 || i === series.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}@${p.point.workflowDynastySlug ?? "-"}`);
     log(`${def.slug}: ${series.length} days from ${series[0]?.day ?? "-"}; ${sample.join(" ")}`);
   }
+  // A day both recorded live and recomputed: the two side by side (the recorded one is kept).
+  for (const r of stored.filter((s) => s.basis === "recorded")) {
+    const p = points.find((x) => x.day === r.day && x.point.indexSlug === r.indexSlug);
+    if (p) log(`check ${r.indexSlug} ${r.day}: recorded ${r.value} @${r.workflowDynastySlug ?? "-"} / recomputed ${p.point.value} @${p.point.workflowDynastySlug ?? "-"}`);
+  }
   log(`plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
   if (!apply) {
     log("dry run: nothing written (pass --apply to write)");
