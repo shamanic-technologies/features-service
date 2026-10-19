@@ -433,6 +433,29 @@ export async function fetchOrgIdentity(orgId: string): Promise<OrgIdentity> {
 }
 
 /**
+ * Every member email of an org (`""` for a member with none), from client-service `GET /internal/users?orgId=`. Null = client-service
+ * holds no row for the org (404, the same documented not-found as `fetchOrgIdentity`); any other
+ * failure throws.
+ */
+export async function fetchOrgUserEmails(orgId: string): Promise<string[] | null> {
+  const { url, apiKey } = clientConfig();
+  const res = await fetchWithRetry(`${url}/internal/users?orgId=${encodeURIComponent(orgId)}&limit=100`, {
+    headers: { "x-api-key": apiKey },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`[features-service] client-service /internal/users failed (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { users?: Array<{ email?: string | null }> };
+  if (!Array.isArray(data.users)) {
+    throw new Error("[features-service] client-service /internal/users returned no users array");
+  }
+  // A member with no email on record stays in the list as "": nobody can say it is staff.
+  return data.users.map((u) => u.email ?? "");
+}
+
+/**
  * Batch-resolve brand name + domain by ids, from brand-service `GET /internal/brands?ids=`.
  * Chunked at the 100-id cap. Missing ids are silently omitted by brand-service; the caller maps by id
  * (an absent brand yields no map entry → row renders null name/domain, still listed).
