@@ -186,6 +186,10 @@ vi.mock("../lib/plays-store.js", async () => {
       if (previousDescription === input.description) return { tactic: t, changed: false, previousDescription };
       return { tactic: { ...t, description: input.description, updatedBy: input.updatedBy, updatedAt: "2026-10-14T08:00:00.000Z" }, changed: true, previousDescription };
     }),
+    updateTacticClientLine: vi.fn(async (input: { id: string; clientLine: string; updatedBy: string }) => {
+      const t = tactics.find((x) => x.id === input.id)!;
+      return { tactic: { ...t, clientLine: input.clientLine, updatedBy: input.updatedBy, updatedAt: "2026-10-19T08:00:00.000Z" }, changed: true };
+    }),
     insertStrategy: vi.fn(),
     insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string; isDefault?: boolean }) => {
       const all = [...plays, ...playState.added];
@@ -471,6 +475,19 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect((await request(app).patch("/internal/catalogue/tactics/nope").set(KEY).send({ description: words, updatedBy: "u" })).status).toBe(404);
     expect((await request(app).patch(url).set(KEY).send({ description: "  ", updatedBy: "u" })).body.reason).toBe("description_required");
     expect((await request(app).patch(url).set(KEY).send({ description: words })).body.reason).toBe("updatedBy_required");
+  });
+
+  it("a tactic's client line is set alone (WRITTEN-BY-1019): client copy, nothing re-judged", async () => {
+    const { kickTacticJudgments } = await import("../lib/tactic-judgments.js");
+    const kick = vi.mocked(kickTacticJudgments);
+    kick.mockClear();
+    const res = await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ clientLine: "Also reaches addresses the mail server cannot confirm", updatedBy: "user:u1" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "catch-all", clientLine: "Also reaches addresses the mail server cannot confirm", changed: true });
+    expect(kick).not.toHaveBeenCalled();
+    const listed = (await request(app).get("/internal/catalogue/tactics").set(KEY)).body.rows;
+    expect(listed.find((t: any) => t.id === "unknown-email").clientLine).toBeNull();
+    expect((await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ clientLine: " ", updatedBy: "u" })).body.reason).toBe("clientLine_required");
   });
 
   it("an unknown pipe is 404", async () => {

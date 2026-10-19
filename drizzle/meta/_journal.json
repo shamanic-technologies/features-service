@@ -288,6 +288,13 @@
       "when": 1792908000000,
       "tag": "0040_fleet_index_seo_slugs",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792915200000,
+      "tag": "0041_tactic_client_lines",
+      "breakpoints": true
     }
   ]
 }
