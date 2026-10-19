@@ -9,13 +9,21 @@ import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { invalidateChannelCatalogue } from "./public.js";
+import { resolveOneLegPerWorkflow } from "../lib/one-leg-per-workflow.js";
 import {
   isLegAssignmentState,
   listLegAssignmentChanges,
   listLegAssignments,
   registerLegAssignment,
   setLegAssignment,
+  WorkflowOnAnotherLegError,
 } from "../lib/workflow-leg-assignments.js";
+
+/** 409 for a write that would put a workflow active on a second leg (owner 2026-10-19: one leg at a time). */
+function sendOnAnotherLeg(res: import("express").Response, err: WorkflowOnAnotherLegError): void {
+  console.warn(`[features-service] refused: ${err.message}`);
+  res.status(409).json({ error: err.message, reason: err.reason, workflowDynastySlug: err.workflowDynastySlug, activeOn: err.activeOn });
+}
 
 /**
  * Staff routes for WHICH WORKFLOWS MAY RUN ON A LEG (`lib/workflow-leg-assignments.ts`). Service-key
@@ -122,6 +130,7 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     invalidateChannelCatalogue();
     res.json(result);
   } catch (err) {
+    if (err instanceof WorkflowOnAnotherLegError) return sendOnAnotherLeg(res, err);
     console.error("[features-service] workflow-leg-assignments write failed:", err);
     res.status(502).json({ error: (err as Error).message });
   }
@@ -201,7 +210,33 @@ router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (re
       },
     });
   } catch (err) {
+    if (err instanceof WorkflowOnAnotherLegError) return sendOnAnotherLeg(res, err);
     console.error("[features-service] workflow-leg-assignments register failed:", err);
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * ONE LEG PER WORKFLOW (owner 2026-10-19): resolve every workflow active on several legs to the leg its template type is
+ * built for (`lib/one-leg-per-workflow.ts`). `apply: false` (default) answers the plan and writes nothing; `apply: true`
+ * deprecates the removed legs, each with a history row decided by `decidedBy`.
+ */
+router.post("/internal/workflow-leg-assignments/one-leg-resolution", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (body.apply != null && typeof body.apply !== "boolean") {
+    res.status(400).json({ error: "apply must be a boolean", reason: "apply_invalid" });
+    return;
+  }
+  if (typeof body.decidedBy !== "string" || body.decidedBy.trim() === "") {
+    res.status(400).json({ error: "decidedBy (who decided) is required", reason: "decided_by_required" });
+    return;
+  }
+  try {
+    const result = await resolveOneLegPerWorkflow({ apply: body.apply === true, decidedBy: body.decidedBy.trim() });
+    if (result.applied) invalidateChannelCatalogue();
+    res.json(result);
+  } catch (err) {
+    console.error("[features-service] one-leg resolution failed:", err);
     res.status(502).json({ error: (err as Error).message });
   }
 });

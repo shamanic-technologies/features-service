@@ -83,6 +83,8 @@ process.env.WORKFLOW_SERVICE_URL = "http://workflow:3000";
 process.env.WORKFLOW_SERVICE_API_KEY = "workflow-key";
 process.env.BILLING_SERVICE_URL = "http://billing:3000";
 process.env.BILLING_SERVICE_API_KEY = "billing-key";
+process.env.CLIENT_SERVICE_URL = "http://client:3000";
+process.env.CLIENT_SERVICE_API_KEY = "client-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
 process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
@@ -221,6 +223,8 @@ interface Fixture {
    * which is a different silence from "a snapshot exists and nobody qualifies".
    */
   snapshot?: SnapshotRow[] | null;
+  /** brand ids whose org has ONLY staff members (a staff test org). Every other org has a client. */
+  staffOrgBrands?: string[];
 }
 
 /** One stored row of the persisted fleet snapshot — what a ranking has to work with. */
@@ -250,6 +254,15 @@ function mockFetch(fixture: Fixture): void {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
+    if (path.endsWith("/internal/users")) {
+      const orgId = q.get("orgId") ?? "";
+      const staff = (fixture.staffOrgBrands ?? []).some((b) => orgId === `org-${b}`);
+      return json({
+        users: staff
+          ? [{ email: "kevin@distribute.you" }, { email: "kevin.lourd+e2e@gmail.com" }]
+          : [{ email: "kevin@distribute.you" }, { email: "founder@client.com" }],
+      });
+    }
     if (path.includes("/internal/feature-memberships")) {
       const ids = fixture.memberships ?? Object.keys(fixture.brands);
       return json({
@@ -544,6 +557,16 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toContain(DOC);
     // A ranking whose population a reader cannot see is a ranking they cannot check.
     expect(body.minSpendUsd).toBe(100);
+  });
+
+  it("never names a STAFF TEST client, in either group, even one that booked a meeting", async () => {
+    mockFetch({ ...READABLE_SHOCK, staffOrgBrands: [DOC] });
+    const body = await get();
+
+    // Doc is the only meeting client and returns in the top three, yet its org holds only staff.
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([SHOCK]);
+    expect(body.groups.highestReturn.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK]);
+    expect(body.brands.map((b) => b.brand.id)).not.toContain(DOC);
   });
 
   it("the OUTCOME gate keeps out the client that began most recently and produced nothing", async () => {

@@ -4929,6 +4929,9 @@ const STATED_AMOUNT_DESCRIPTION =
   "least one), so no org id lives in code and a second agency needs no change. Consumed by GET /internal/stats/revenue's " +
   "mrrSplit. api-key only; staff-gated at api-service.";
 
+const ONE_LEG_409 =
+  "`workflow_on_another_leg`: the workflow is already active on another leg (`activeOn` names it). A workflow runs on one leg at a time (owner 2026-10-19): deprecate it there first.";
+
 const LEG_ASSIGNMENT_DESCRIPTION =
   "WHICH WORKFLOWS MAY RUN ON A LEG — a STATED assignment per (acquisition channel = featureSlug, leg, workflow dynasty), never derived " +
   "from the workflow's model or price. `active` = a new run may pick it on this leg; `deprecated` = retired on this leg only (no new run " +
@@ -5067,6 +5070,7 @@ registry.registerPath({
     },
     400: { description: "A field is missing or invalid (`reason` names it)." },
     404: { description: "feature_not_found or workflow_dynasty_not_found." },
+    409: { description: ONE_LEG_409 },
   },
 });
 
@@ -5096,6 +5100,51 @@ registry.registerPath({
     200: { description: "Already stated on the pipe: the existing row, unchanged (`created: false`)." },
     400: { description: "`pipe_id_required`, `workflow_dynasty_required`, `registered_by_required`, `note_invalid`." },
     404: { description: "`pipe_not_found` (the channel does not perform that leg) or `workflow_dynasty_not_found`." },
+    409: { description: ONE_LEG_409 },
+  },
+});
+
+const oneLegLegSchema = z.object({ legKey: z.string(), reason: z.string() });
+registry.registerPath({
+  method: "post",
+  path: "/internal/workflow-leg-assignments/one-leg-resolution",
+  summary: "Resolve every workflow active on several legs to one leg (internal, api-key)",
+  description:
+    "Owner 2026-10-19 (ONE-LEG-PER-WORKFLOW-1019): a workflow runs on one leg at a time. Per workflow active on 2+ legs: a leg its channel no longer performs comes off; among the rest, the leg its template TYPE is built for (Jev `choice` on the content-generation template type(s) of its active version, else latest; on its description when it renders none) is kept, every other leg comes off, EXCEPT where that would leave the pipe with no other active workflow (or no runnable one when it had one): that leg is kept with reason `would_empty_pipe`. An unsure Jev (confidence < 0.6) moves nothing (`jev_unsure`). `apply: false` (default) answers the plan only; `apply: true` deprecates each removed leg with a history row decided by `decidedBy`.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            apply: z.boolean().optional().describe("Write the plan. Absent/false = dry run."),
+            decidedBy: z.string().describe("Who decided, stored on every history row."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "One resolution per workflow active on 2+ legs.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            applied: z.boolean(),
+            resolutions: z.array(z.object({
+              featureSlug: z.string(),
+              workflowDynastySlug: z.string(),
+              judgedOn: z.object({ templateTypes: z.array(z.string()), description: z.string().nullable() }),
+              pick: z.object({ legKey: z.string(), confidence: z.number(), model: z.string() }).nullable(),
+              kept: z.array(oneLegLegSchema).describe("`template_type` | `only_performed_leg` | `would_empty_pipe` | `jev_unsure`."),
+              removed: z.array(oneLegLegSchema).describe("`leg_not_performed` | `template_type`."),
+            })),
+          }),
+        },
+      },
+    },
+    400: { description: "`decided_by_required` or `apply_invalid`." },
+    502: { description: "A read (catalogue, workflow-service, Jev) or a write failed." },
   },
 });
 

@@ -107,6 +107,31 @@ export const SHOWCASE_MIN_OUTCOME_PEOPLE = 5;
  */
 export const SHOWCASE_RECENT_MIN_RUNG_PEOPLE = 1;
 
+/**
+ * Staff, mirrored from api-service `STAFF_EMAILS` (billing-service keeps the same copy), plus any
+ * `@distribute.you` address. Plus-addressing is ignored, so `kevin.lourd+e2e@gmail.com` is staff.
+ */
+const STAFF_EMAILS = new Set(["kevin.lourd@gmail.com", "kevin@distribute.you"]);
+const STAFF_DOMAIN = "@distribute.you";
+
+export function isStaffEmail(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return false;
+  if (normalized.endsWith(STAFF_DOMAIN)) return true;
+  const [local, domain] = normalized.split("@");
+  return STAFF_EMAILS.has(`${local.split("+")[0]}@${domain}`);
+}
+
+/**
+ * PURE: a STAFF TEST org = every member is staff (billing-service's `staff_test_org`, the same rule).
+ * The homepage never names a client whose every claiming org is one (owner 2026-10-19: Reed, a brand
+ * of "STAFF TEST - Email Sending E2E", stood on the hero). An org with no member is not called staff, and a
+ * member with no email on record is a person nobody can call staff (GrowthAgency.dev: 6 of 7 members).
+ */
+export function isStaffOnlyOrg(memberEmails: readonly string[] | null): boolean {
+  return memberEmails !== null && memberEmails.length > 0 && memberEmails.every(isStaffEmail);
+}
+
 /** One walked recent candidate's two hero counts. Null = could not count (never qualifies). */
 export interface RecentShowcaseCounts {
   brandId: string;

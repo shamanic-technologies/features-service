@@ -44625,6 +44625,9 @@
           },
           "404": {
             "description": "feature_not_found or workflow_dynasty_not_found."
+          },
+          "409": {
+            "description": "`workflow_on_another_leg`: the workflow is already active on another leg (`activeOn` names it). A workflow runs on one leg at a time (owner 2026-10-19): deprecate it there first."
           }
         }
       }
@@ -44876,6 +44879,166 @@
           },
           "404": {
             "description": "`pipe_not_found` (the channel does not perform that leg) or `workflow_dynasty_not_found`."
+          },
+          "409": {
+            "description": "`workflow_on_another_leg`: the workflow is already active on another leg (`activeOn` names it). A workflow runs on one leg at a time (owner 2026-10-19): deprecate it there first."
+          }
+        }
+      }
+    },
+    "/internal/workflow-leg-assignments/one-leg-resolution": {
+      "post": {
+        "summary": "Resolve every workflow active on several legs to one leg (internal, api-key)",
+        "description": "Owner 2026-10-19 (ONE-LEG-PER-WORKFLOW-1019): a workflow runs on one leg at a time. Per workflow active on 2+ legs: a leg its channel no longer performs comes off; among the rest, the leg its template TYPE is built for (Jev `choice` on the content-generation template type(s) of its active version, else latest; on its description when it renders none) is kept, every other leg comes off, EXCEPT where that would leave the pipe with no other active workflow (or no runnable one when it had one): that leg is kept with reason `would_empty_pipe`. An unsure Jev (confidence < 0.6) moves nothing (`jev_unsure`). `apply: false` (default) answers the plan only; `apply: true` deprecates each removed leg with a history row decided by `decidedBy`.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apply": {
+                    "type": "boolean",
+                    "description": "Write the plan. Absent/false = dry run."
+                  },
+                  "decidedBy": {
+                    "type": "string",
+                    "description": "Who decided, stored on every history row."
+                  }
+                },
+                "required": [
+                  "decidedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One resolution per workflow active on 2+ legs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "applied": {
+                      "type": "boolean"
+                    },
+                    "resolutions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "featureSlug": {
+                            "type": "string"
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "judgedOn": {
+                            "type": "object",
+                            "properties": {
+                              "templateTypes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "description": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "templateTypes",
+                              "description"
+                            ]
+                          },
+                          "pick": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "legKey": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number"
+                              },
+                              "model": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "legKey",
+                              "confidence",
+                              "model"
+                            ]
+                          },
+                          "kept": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "legKey": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "legKey",
+                                "reason"
+                              ]
+                            },
+                            "description": "`template_type` | `only_performed_leg` | `would_empty_pipe` | `jev_unsure`."
+                          },
+                          "removed": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "legKey": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "legKey",
+                                "reason"
+                              ]
+                            },
+                            "description": "`leg_not_performed` | `template_type`."
+                          }
+                        },
+                        "required": [
+                          "featureSlug",
+                          "workflowDynastySlug",
+                          "judgedOn",
+                          "pick",
+                          "kept",
+                          "removed"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "applied",
+                    "resolutions"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`decided_by_required` or `apply_invalid`."
+          },
+          "502": {
+            "description": "A read (catalogue, workflow-service, Jev) or a write failed."
           }
         }
       }

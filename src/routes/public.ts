@@ -136,6 +136,7 @@ import {
   type ShowcaseOutcomesPayload,
 } from "../lib/outcome-public-reads.js";
 import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
+import { fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { buildBrandChannels, brandFeatureSlugs } from "../lib/brand-channels.js";
 import {
   brandReadingFunnels,
@@ -148,6 +149,7 @@ import {
 import {
   buildShowcaseCandidates,
   furthestRungReached,
+  isStaffOnlyOrg,
   pickRecentlyStartedByMeetings,
   pickShowcaseClients,
   pickHighestReturnByStated,
@@ -3889,6 +3891,25 @@ export function warmShowcaseFunnelsOnBoot(): void {
  * the section rather than block a build. Those passes already happened, off the request path, in the
  * fleet-return warm; this reads the rows they wrote. See `lib/showcase-clients.ts` for both rankings.
  */
+/** The candidate brands every claiming org of which is a staff test org (all members staff). */
+async function staffOnlyBrandIds(
+  brandIds: readonly string[],
+  orgsByBrand: ReadonlyMap<string, ReadonlySet<string>>,
+): Promise<Set<string>> {
+  const orgIds = [...new Set(brandIds.flatMap((id) => [...(orgsByBrand.get(id) ?? [])]))];
+  const verdicts = await mapWithConcurrency(orgIds, SHOWCASE_BRAND_CONCURRENCY * 3, async (orgId) => ({
+    orgId,
+    staffOnly: isStaffOnlyOrg(await fetchOrgUserEmails(orgId)),
+  }));
+  const staffOrgs = new Set(verdicts.filter((v) => v.staffOnly).map((v) => v.orgId));
+  return new Set(
+    brandIds.filter((id) => {
+      const orgs = orgsByBrand.get(id);
+      return orgs !== undefined && orgs.size > 0 && [...orgs].every((o) => staffOrgs.has(o));
+    }),
+  );
+}
+
 async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   // Every seed slug in one membership read (308 rows fleet-wide, 2026-09-08) rather than a guess
   // at which channels a showcase brand happens to run — a brand that moves to a new channel keeps
@@ -3896,8 +3917,10 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   const allSlugs = (await db.query.features.findMany()).map((f) => f.slug);
   const memberships = allSlugs.length > 0 ? await fetchFeatureMemberships(allSlugs.join(",")) : [];
   const orgByBrand = new Map<string, string>();
+  const orgsByBrand = new Map<string, Set<string>>();
   for (const m of memberships) {
     if (!orgByBrand.has(m.brandId)) orgByBrand.set(m.brandId, m.orgId);
+    orgsByBrand.set(m.brandId, (orgsByBrand.get(m.brandId) ?? new Set()).add(m.orgId));
   }
 
   // The snapshots to rank over: every cold-email channel's, so a client that runs two of them is ONE
@@ -3908,7 +3931,15 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   const snapshots = (await Promise.all(channelSlugs.map((slug) => readFleetReturnSnapshotSoft(slug)))).filter(
     (snap): snap is NonNullable<typeof snap> => snap !== null,
   );
-  const candidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
+  const allCandidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
+  // The homepage never names a STAFF TEST client: a brand every claiming org of which has only staff
+  // members (owner 2026-10-19, Reed of "STAFF TEST - Email Sending E2E" stood on the hero). A failed
+  // member read throws: the previous showcase stays served rather than naming an unchecked client.
+  const staffOnlyBrands = allCandidates === null ? new Set<string>() : await staffOnlyBrandIds(allCandidates.map((c) => c.brandId), orgsByBrand);
+  if (staffOnlyBrands.size > 0) {
+    console.log(`[features-service] showcase: ${staffOnlyBrands.size} staff test client(s) left out: ${[...staffOnlyBrands].join(", ")}`);
+  }
+  const candidates = allCandidates === null ? null : allCandidates.filter((c) => !staffOnlyBrands.has(c.brandId));
   const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE, SHOWCASE_MIN_OUTCOME_PEOPLE);
 
   // BOTH rows are CONFIRMED on each candidate's own walked chain — the one the homepage draws — before

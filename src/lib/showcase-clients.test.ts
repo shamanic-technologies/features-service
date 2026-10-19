@@ -13,6 +13,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildShowcaseCandidates,
+  isStaffOnlyOrg,
   pickRecentlyStartedByMeetings,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
@@ -403,5 +404,19 @@ describe("pickRecentlyStartedByMeetings (owner 2026-10-19, SHOWCASE-MEETINGS-101
     const v = pickRecentlyStartedByMeetings([c("visits", 0, 0), c("unknown", null, null)]);
     expect(v.brandIds).toEqual([]);
     expect(v.rejected).toBe(2);
+  });
+});
+
+describe("isStaffOnlyOrg (staff test org, billing-service's rule)", () => {
+  it("is a staff test org only when EVERY member is staff, plus-addressing ignored", () => {
+    expect(isStaffOnlyOrg(["kevin@distribute.you", "kevin.lourd+e2eclient1014@gmail.com"])).toBe(true);
+    expect(isStaffOnlyOrg(["kevin@distribute.you", "founder@client.com"])).toBe(false);
+  });
+
+  it("an org with no member, or one client-service does not know, is not called staff", () => {
+    expect(isStaffOnlyOrg([])).toBe(false);
+    expect(isStaffOnlyOrg(null)).toBe(false);
+    // GrowthAgency.dev, prod 2026-10-19: one staff member and six with no email on record.
+    expect(isStaffOnlyOrg(["", "", "kevin.lourd@gmail.com", ""])).toBe(false);
   });
 });
