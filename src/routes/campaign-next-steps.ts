@@ -9,7 +9,7 @@
  *   - `scheduledFollowups`: the people the campaign's writers scheduled a follow-up for, on ANY channel (lead-service: a
  *     follow-up writer replies in Gmail threads, WhatsApp... and states a date there rather than queueing in a sender);
  *   - `nextSends`: both composed, what to say as "queued" and "next send" (NEXT-STEPS-ALL-CHANNELS-1019);
- *   - `timeToFirstPositiveReply`: the measured delay from a lead's first email to its first positive reply, on this
+ *   - `timeToFirstPositiveReply`: the measured delay from a lead's first message (any channel) to its first positive reply, on this
  *     campaign once it holds enough replies, else on the same pipes across the fleet, else `learning` (since
  *     inception, never a window, never a default).
  * Accepts a unit campaign id too (a pipe of a campaign): the answer is its campaign's, with `requestedPipeId` set.

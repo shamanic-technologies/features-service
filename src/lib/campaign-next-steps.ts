@@ -1,14 +1,15 @@
 /**
  * WHAT COMES NEXT IN ONE SALES FUNNEL CAMPAIGN (owner 2026-10-18, CAMPAIGN-NEXT-STEPS-1018): the figures our
  * assistant (Sophie, the Copilot on web and WhatsApp) needs to say "N leads are queued and go out from tomorrow in
- * their business hours; expect a positive reply about X days after the first email", never inventing one.
+ * their business hours; expect a positive reply about X days after the first message", never inventing one.
  *
  * Every fact is its owner's, read never re-derived:
  *   - the EMAIL SEND QUEUE (leads awaiting their first email, follow-ups queued, queued emails, when the window next
  *     opens in each lead's own local business hours): instantly-service `GET /orgs/send-queue` over the campaign's
  *     unit campaigns (the sender holds sequences only for the units that email, so no channel list is kept here);
- *   - the TIME FROM THE FIRST EMAIL TO THE FIRST POSITIVE REPLY: instantly-service's dated events
- *     (`POST /public/stats/engagement-latency/grouped`, groups by campaign ids), since inception, measured on
+ *   - the TIME FROM THE FIRST MESSAGE TO THE FIRST POSITIVE REPLY, on every channel: lead-service's timeline
+ *     (`POST /internal/reply-latency/grouped`, groups by campaign ids; REPLY-LATENCY-ALL-CHANNELS-1019 supersedes
+ *     instantly-service's engagement latency, blind to every channel but its own sends), since inception, measured on
  *       1. this campaign's own reply pipes (units whose leg ends on a positive reply), once it holds
  *          `TIME_TO_REPLY_MIN_SAMPLE` measured replies; else
  *       2. the SAME pipes across the fleet (every org's campaigns of the same channel x leg, campaign-service's own
