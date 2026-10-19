@@ -175,7 +175,8 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     expect(first.writes.some((w) => w.point.indexSlug === COST && w.day === "2026-09-30")).toBe(false);
     // What the first run wrote, read back as stored rows (jsonb round trip).
     const stored: StoredIndexRow[] = [
-      ...first.writes.map((w) => ({ ...w.point, day: w.day, basis: "recomputed", inputs: JSON.parse(JSON.stringify(w.point.inputs)) })),
+      // jsonb hands the keys back in its own order (shortest first), never the written one.
+      ...first.writes.map((w) => ({ ...w.point, day: w.day, basis: "recomputed", inputs: Object.fromEntries(Object.entries(w.point.inputs).reverse()) })),
       { indexSlug: COST, day: "2026-09-30", basis: "recorded", value: 9, status: "noise", outcomes: 1, contacted: 4, workflowDynastySlug: "beta", unavailableReason: null, inputs: {} },
     ];
     const again = planRecomputedWrites(recomputeIndexHistory(inputs(BASE_LEADS, BASE_SPEND)), stored);

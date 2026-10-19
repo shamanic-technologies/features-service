@@ -337,6 +337,18 @@ export interface StoredIndexRow {
   inputs: unknown;
 }
 
+/** JSON with object keys sorted: a jsonb column hands keys back in its own order, never the written one. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v as Record<string, unknown>)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
 const sameStored = (r: StoredIndexRow, p: FleetIndexPoint): boolean =>
   r.value === p.value &&
   r.status === p.status &&
@@ -344,7 +356,7 @@ const sameStored = (r: StoredIndexRow, p: FleetIndexPoint): boolean =>
   r.contacted === p.contacted &&
   r.workflowDynastySlug === p.workflowDynastySlug &&
   r.unavailableReason === p.unavailableReason &&
-  JSON.stringify(r.inputs) === JSON.stringify(p.inputs);
+  canonical(r.inputs) === canonical(p.inputs);
 
 /**
  * PURE. What a run writes: a day a row was RECORDED live on is never touched; a recomputed row identical to the new point
