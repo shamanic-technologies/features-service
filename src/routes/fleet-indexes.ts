@@ -23,6 +23,7 @@ import {
 import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { meetingResearchPoints } from "../lib/research/pipe-series.js";
+import { fetchFleetEngagementByBrand } from "../lib/fleet-positive-repliers.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
 import { readFleetReturnOnSpend, readLegWorkflowRanking, readPublicRanked } from "./public.js";
@@ -104,8 +105,8 @@ router.get("/public/indexes/:slug", async (req, res) => {
 
 const RANKING_WAIT_MS = 10 * 60_000;
 
-// The landing hero reads `/public/stats/ranked` with these exact parameters: asking the same cache cell keeps the index
-// and the hero on one compute (INDEX-ENGAGED-ROI-1019).
+// Spend per brand from the `/public/stats/ranked` cell the landing read before it read this index (INDEX-ENGAGED-ROI-1019);
+// the landing hero now reads the index itself.
 const RANKED_OBJECTIVE = "emailsSent";
 const RANKED_LIMIT = 200;
 // The owner's bar for the ROI median (« la médiane des clients ayant dépensé au moins $100 »), the landing's too.
@@ -116,15 +117,20 @@ function statOf(stats: Record<string, number | null>, key: string): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Every client brand's cold email spend and engaged leads; null (logged) when unreadable. */
+/**
+ * Every client brand's cold email spend (the ranked read) and engaged PERSONS: positive replies + clicks judged human
+ * (the fleet person cell, owner 2026-10-19: a scanner's click is not a visit). Null (logged) when either is unreadable.
+ */
 async function readBrandEngagement(): Promise<BrandEngagement[] | null> {
   try {
-    const ranked = await readPublicRanked(SCEO_FEATURE_SLUG, RANKED_OBJECTIVE, "brand", RANKED_LIMIT);
-    return ranked.results.map((r) => ({
-      positiveReplies: statOf(r.stats, "recipientsRepliesPositive"),
-      clicks: statOf(r.stats, "recipientsClicked"),
-      spendCents: statOf(r.stats, "totalCostInUsdCents"),
-    }));
+    const [ranked, engaged] = await Promise.all([
+      readPublicRanked(SCEO_FEATURE_SLUG, RANKED_OBJECTIVE, "brand", RANKED_LIMIT),
+      fetchFleetEngagementByBrand(SCEO_FEATURE_SLUG),
+    ]);
+    return ranked.results.map((r) => {
+      const e = r.brand ? engaged.get(r.brand.id) : undefined;
+      return { positiveReplies: e?.positiveReplies ?? 0, humanClicks: e?.humanClicks ?? 0, spendCents: statOf(r.stats, "totalCostInUsdCents") };
+    });
   } catch (error) {
     console.error("[features-service] fleet indexes: per-brand engagement unreadable:", error);
     return null;
