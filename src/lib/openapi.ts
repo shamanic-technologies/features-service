@@ -5110,7 +5110,7 @@ registry.registerPath({
   path: "/internal/workflow-leg-assignments/one-leg-resolution",
   summary: "Resolve every workflow active on several legs to one leg (internal, api-key)",
   description:
-    "Owner 2026-10-19 (ONE-LEG-PER-WORKFLOW-1019): a workflow runs on one leg at a time. Per workflow active on 2+ legs: a leg with no published pipe (no longer performed, or hidden by staff) comes off; among the rest, the leg its template TYPE is built for (Jev `choice` on the content-generation template type(s) of its active version, else latest; on its description when it renders none) is kept, every other leg comes off, EXCEPT where that would leave the pipe with no other active workflow (or no runnable one when it had one): that leg is kept with reason `would_empty_pipe`. An unsure Jev (confidence < 0.6) moves nothing (`jev_unsure`). `apply: false` (default) answers the plan only; `apply: true` deprecates each removed leg with a history row decided by `decidedBy`.",
+    "Owner 2026-10-19 (ONE-LEG-PER-WORKFLOW-1019): a workflow runs on one leg at a time, never forked (« non fork, pas de duplicate de leg »). Per workflow active on 2+ legs: a leg with no published pipe (no longer performed, or hidden by staff) comes off; among the rest ONE leg is kept and every other comes off, always. Kept = the leg an `ongoing` campaign (any org) would lose its only runnable workflow on (`live_campaign`; several: ranked by the template pick), else the leg its template TYPE is built for (`template_type`: Jev `choice` on the content-generation template type(s), else its description). A removed leg that leaves its pipe with no active workflow says `emptiesPipe: true` (that pipe needs a workflow of its own). `apply: false` (default) answers the plan only; `apply: true` deprecates each removed leg with a history row decided by `decidedBy`.",
   tags: ["Internal"],
   request: {
     body: {
@@ -5135,9 +5135,9 @@ registry.registerPath({
               featureSlug: z.string(),
               workflowDynastySlug: z.string(),
               judgedOn: z.object({ templateTypes: z.array(z.string()), description: z.string().nullable() }),
-              pick: z.object({ legKey: z.string(), confidence: z.number(), model: z.string() }).nullable(),
-              kept: z.array(oneLegLegSchema).describe("`template_type` | `only_performed_leg` | `would_empty_pipe` | `jev_unsure`."),
-              removed: z.array(oneLegLegSchema).describe("`leg_not_performed` | `template_type`."),
+              pick: z.object({ legKey: z.string(), confidence: z.number(), probabilities: z.record(z.number()), model: z.string() }).nullable(),
+              kept: z.array(oneLegLegSchema).describe("`live_campaign` | `template_type` | `only_performed_leg`."),
+              removed: z.array(oneLegLegSchema.extend({ emptiesPipe: z.boolean() })).describe("`leg_not_performed` | `one_leg`."),
             })),
           }),
         },

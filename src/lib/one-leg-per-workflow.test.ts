@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { judgedVersionOf, legQuestion, plan, templateTypesOf, type PerformedLeg } from "./one-leg-per-workflow.js";
+import { judgedVersionOf, legQuestion, livePipesOf, plan, templateTypesOf, type PerformedLeg } from "./one-leg-per-workflow.js";
 import type { LegAssignmentRow } from "./workflow-leg-assignments.js";
 
 const row = (featureSlug: string, legKey: string, workflowDynastySlug: string): LegAssignmentRow => ({
@@ -17,88 +17,77 @@ const CE = "sales-cold-email-outreach";
 const REPLY = "lead_found_to_conversation";
 const VISIT = "lead_found_to_website_visit";
 const performedAll = (_f: string, legKey: string): PerformedLeg => ({ legKey, label: legKey });
-const pick = (legKey: string, confidence = 0.95) => ({ legKey, confidence, model: "jev" });
+const pick = (legKey: string, confidence = 0.95) => ({ legKey, confidence, probabilities: { [legKey]: confidence }, model: "jev" });
 
-describe("ONE-LEG-PER-WORKFLOW-1019 plan", () => {
+describe("ONE-LEG-PER-WORKFLOW-1019 plan: one leg, always, never forked (owner 2026-10-19)", () => {
+  const base = { performed: performedAll, runnable: new Set<string>(), livePipes: new Set<string>(), judgedOn: new Map() };
+
   it("a reply template keeps the positive reply leg and comes off the website visit leg (Nobelium)", () => {
     const active = [row(CE, REPLY, "nobelium"), row(CE, VISIT, "nobelium"), row(CE, VISIT, "rampart"), row(CE, REPLY, "keel")];
-    const [r] = plan({
-      active,
-      performed: performedAll,
-      runnable: new Set(["rampart", "keel"]),
-      picks: new Map([["nobelium", pick(REPLY)]]),
-      judgedOn: new Map([["nobelium", { templateTypes: ["blind-discovery-email-v33"], description: null }]]),
-    });
+    const [r] = plan({ ...base, active, runnable: new Set(["rampart", "keel"]), picks: new Map([["nobelium", pick(REPLY)]]) });
     expect(r.kept).toEqual([{ legKey: REPLY, reason: "template_type" }]);
-    expect(r.removed).toEqual([{ legKey: VISIT, reason: "template_type" }]);
+    expect(r.removed).toEqual([{ legKey: VISIT, reason: "one_leg", emptiesPipe: false }]);
   });
 
-  it("never empties a pipe: a workflow alone on a pipe stays there, named", () => {
+  it("never stays doubled to spare a pipe: a workflow alone on its pipes keeps ONE and says which pipes empty (Zaurak)", () => {
     const F = "cold-whatsapp-outreach";
+    const [r] = plan({ ...base, active: [row(F, REPLY, "zaurak"), row(F, VISIT, "zaurak")], runnable: new Set(["zaurak"]), picks: new Map([["zaurak", pick(REPLY)]]) });
+    expect(r.kept).toEqual([{ legKey: REPLY, reason: "template_type" }]);
+    expect(r.removed).toEqual([{ legKey: VISIT, reason: "one_leg", emptiesPipe: true }]);
+  });
+
+  it("keeps the leg a LIVE campaign would lose its only workflow on, over the template pick (Belenos, Doc Dinners' Form Callback)", () => {
+    const F = "ai-instant-call";
+    const FORM = "form_submitted_to_booking_call";
+    const CALL = "conversation_to_booking_call";
     const [r] = plan({
-      active: [row(F, REPLY, "zaurak"), row(F, VISIT, "zaurak")],
-      performed: performedAll,
-      runnable: new Set(["zaurak"]),
-      picks: new Map([["zaurak", pick(REPLY)]]),
-      judgedOn: new Map(),
+      ...base,
+      active: [row(F, CALL, "belenos"), row(F, FORM, "belenos"), row(F, CALL, "alsciaukat")],
+      runnable: new Set(["belenos", "alsciaukat"]),
+      livePipes: new Set([`${F}|${FORM}`, `${F}|${CALL}`]),
+      picks: new Map([["belenos", pick(CALL)]]),
     });
-    expect(r.kept).toEqual([
-      { legKey: REPLY, reason: "template_type" },
-      { legKey: VISIT, reason: "would_empty_pipe" },
-    ]);
-    expect(r.removed).toEqual([]);
+    expect(r.kept).toEqual([{ legKey: FORM, reason: "live_campaign" }]);
+    expect(r.removed).toEqual([{ legKey: CALL, reason: "one_leg", emptiesPipe: false }]);
   });
 
-  it("a runnable workflow never leaves a pipe whose other workflows cannot run", () => {
+  it("several live pipes would stop: the template pick ranks them, every other leg still comes off", () => {
+    const F = "ai-follow-up-email";
     const [r] = plan({
-      active: [row(CE, REPLY, "azalea"), row(CE, VISIT, "azalea"), row(CE, VISIT, "allegro")],
-      performed: performedAll,
-      runnable: new Set(["azalea"]),
-      picks: new Map([["azalea", pick(REPLY)]]),
-      judgedOn: new Map(),
+      ...base,
+      active: [row(F, "a_to_b", "algenib"), row(F, "c_to_d", "algenib"), row(F, "e_to_f", "algenib")],
+      runnable: new Set(["algenib"]),
+      livePipes: new Set([`${F}|a_to_b`, `${F}|c_to_d`]),
+      picks: new Map([["algenib", { legKey: "e_to_f", confidence: 0.5, probabilities: { e_to_f: 0.5, c_to_d: 0.3, a_to_b: 0.2 }, model: "jev" }]]),
     });
-    expect(r.kept.map((k) => k.reason)).toEqual(["template_type", "would_empty_pipe"]);
+    expect(r.kept).toEqual([{ legKey: "c_to_d", reason: "live_campaign" }]);
+    expect(r.removed.map((x) => x.legKey).sort()).toEqual(["a_to_b", "e_to_f"]);
   });
 
-  it("each resolution sees the pipes as the previous one left them (two workflows never both leave)", () => {
-    const res = plan({
-      active: [row(CE, REPLY, "a"), row(CE, VISIT, "a"), row(CE, REPLY, "b"), row(CE, VISIT, "b")],
-      performed: performedAll,
-      runnable: new Set(),
-      picks: new Map([["a", pick(REPLY)], ["b", pick(REPLY)]]),
-      judgedOn: new Map(),
-    });
-    expect(res[0].removed).toEqual([{ legKey: VISIT, reason: "template_type" }]);
-    expect(res[1].kept).toContainEqual({ legKey: VISIT, reason: "would_empty_pipe" });
-  });
-
-  it("a leg the channel no longer performs comes off first, with no Jev question (Email Sending's retired Email sent leg)", () => {
+  it("a leg the channel no longer publishes comes off first, with no Jev question (Email Sending's retired Email sent leg)", () => {
     const F = "email-sending";
     const [r] = plan({
+      ...base,
       active: [row(F, "start_to_conversation", "bubup"), row(F, "start_to_email_sent", "bubup")],
       performed: (_f, legKey) => (legKey === "start_to_email_sent" ? null : { legKey, label: legKey }),
       runnable: new Set(["bubup"]),
       picks: new Map(),
-      judgedOn: new Map(),
     });
-    expect(r.removed).toEqual([{ legKey: "start_to_email_sent", reason: "leg_not_performed" }]);
+    expect(r.removed).toEqual([{ legKey: "start_to_email_sent", reason: "leg_not_performed", emptiesPipe: true }]);
     expect(r.kept).toEqual([{ legKey: "start_to_conversation", reason: "only_performed_leg" }]);
   });
 
-  it("an unsure Jev moves nothing", () => {
-    const [r] = plan({
-      active: [row(CE, REPLY, "x"), row(CE, VISIT, "x"), row(CE, VISIT, "y"), row(CE, REPLY, "y2")],
-      performed: performedAll,
-      runnable: new Set(),
-      picks: new Map([["x", pick(VISIT, 0.4)]]),
-      judgedOn: new Map(),
-    });
-    expect(r.removed).toEqual([]);
-    expect(r.kept.every((k) => k.reason === "jev_unsure")).toBe(true);
+  it("a workflow on one leg is not resolved", () => {
+    expect(plan({ ...base, active: [row(CE, REPLY, "solo")], picks: new Map() })).toEqual([]);
   });
 
-  it("a workflow on one leg is not resolved", () => {
-    expect(plan({ active: [row(CE, REPLY, "solo")], performed: performedAll, runnable: new Set(), picks: new Map(), judgedOn: new Map() })).toEqual([]);
+  it("reads live pipes off ongoing campaigns only, in the stored spelling", () => {
+    const pipes = livePipesOf([
+      { status: "ongoing", featureSlug: CE, legKey: "start_to_conversation" },
+      { status: "stopped", featureSlug: CE, legKey: VISIT },
+      { status: "ongoing", featureSlug: "ai-instant-call", legKey: "form_submitted_to_booking_call" },
+    ]);
+    expect([...pipes].sort()).toEqual(["ai-instant-call|form_submitted_to_booking_call", `${CE}|${REPLY}`]);
   });
 });
 

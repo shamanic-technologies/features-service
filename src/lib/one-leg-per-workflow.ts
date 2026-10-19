@@ -6,14 +6,18 @@
  * Per dynasty active on 2+ legs:
  *   1. a leg with no PUBLISHED pipe (its channel no longer performs it, or staff hid it: Email Sending's retired
  *      "Email sent" leg) comes off first: no customer surface runs it, so there is no pipe to keep;
- *   2. among the legs left, the leg its template TYPE is built for is KEPT. Judged on the type only (owner rule
- *      2026-10-17): the content-generation template type(s) the workflow's latest version renders (a reply template =
- *      the positive reply leg, a click template = the website visit leg), else the workflow's own description when it
- *      renders no template. Jev picks (a `choice` among the legs, never a hand list); an unsure Jev (confidence below
- *      `MIN_CONFIDENCE`) moves nothing;
- *   3. every other leg comes off (deprecated there, history row decided by this task), EXCEPT where that would empty
- *      a pipe: the pipe must keep another active workflow, and a runnable one when it had one. Such a leg is KEPT and
- *      named (`would_empty_pipe`), so a live campaign or a public index on that pipe never loses its last workflow.
+ *   2. among the legs left, ONE is kept and every other comes off, ALWAYS: no leg stays doubled to spare a pipe, and
+ *      no workflow is forked to fill one (owner 2026-10-19: « non fork, pas de duplicate de leg »; supersedes the
+ *      first rule that kept a leg whose pipe it was alone on). The kept leg:
+ *        a. the leg a LIVE campaign (any org, `ongoing`) would lose its only runnable workflow on (`live_campaign`),
+ *           so a running campaign never stops (Doc Dinners' Form Callback keeps Belenos on Form submitted -> Booking
+ *           call, its Positive reply pipe keeps Alsciaukat);
+ *        b. else (none, or several: then among those) the leg its template TYPE is built for (`template_type`):
+ *           judged on the type only (owner rule 2026-10-17): the content-generation template type(s) the workflow's
+ *           version renders (a reply template = the positive reply leg, a click template = the website visit leg), else
+ *           its own description when it renders none. Jev's `choice` probabilities rank the legs, never a hand list.
+ *   3. a removed leg that leaves its pipe with no active workflow says so (`emptiesPipe`): that pipe needs a workflow
+ *      of its own, registered by workflow-service (never a copy of this one).
  *
  * `plan` is PURE (tests); `resolveOneLegPerWorkflow` reads, asks Jev, and writes only when `apply` is true.
  */
@@ -25,8 +29,6 @@ import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-de
 import { listLegAssignments, setLegAssignment, type LegAssignmentRow } from "./workflow-leg-assignments.js";
 
 export const ONE_LEG_TASK = "ONE-LEG-PER-WORKFLOW-1019";
-/** Below this Jev was hesitating between legs (chat-service: "decline to act on it"): nothing moves. */
-export const MIN_CONFIDENCE = 0.6;
 const JEV_TIMEOUT_MS = 60_000;
 
 /** A leg as the channel performs it: its label for Jev, or null when the channel no longer performs it. */
@@ -38,6 +40,8 @@ export interface PerformedLeg {
 export interface LegPick {
   legKey: string;
   confidence: number;
+  /** Jev's probability per leg offered: ranks the legs when the kept one must be chosen among a subset. */
+  probabilities: Record<string, number>;
   model: string;
 }
 
@@ -46,10 +50,11 @@ export interface DynastyResolution {
   workflowDynastySlug: string;
   /** What the pick was judged on: the template type(s), or the description when it renders none. */
   judgedOn: { templateTypes: string[]; description: string | null };
-  /** Jev's pick, null when no pick was needed (one performed leg left) or Jev was unsure. */
+  /** Jev's answer, null when no pick was needed (one performed leg left). */
   pick: LegPick | null;
-  kept: Array<{ legKey: string; reason: "template_type" | "only_performed_leg" | "would_empty_pipe" | "jev_unsure" }>;
-  removed: Array<{ legKey: string; reason: "leg_not_performed" | "template_type" }>;
+  kept: Array<{ legKey: string; reason: "live_campaign" | "template_type" | "only_performed_leg" }>;
+  /** `emptiesPipe`: no other workflow stays active on that pipe. */
+  removed: Array<{ legKey: string; reason: "leg_not_performed" | "one_leg"; emptiesPipe: boolean }>;
 }
 
 /** PURE: the content-generation template types a DAG renders (workflow-service's own extraction rule). */
@@ -96,11 +101,35 @@ async function askJev(state: Record<string, unknown>, legs: readonly PerformedLe
     { timeoutMs: JEV_TIMEOUT_MS },
   );
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; choice?: unknown; confidence?: unknown }> };
+  const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; choice?: unknown; confidence?: unknown; probabilities?: unknown }> };
   const a = body.answers?.leg;
   if (a?.type !== "choice" || typeof a.choice !== "string" || typeof a.confidence !== "number") throw new Error("chat-service answered without a readable choice");
   if (!legs.some((l) => l.legKey === a.choice)) throw new Error(`chat-service picked ${a.choice}, not one of the legs offered`);
-  return { legKey: a.choice, confidence: a.confidence, model: typeof body.model === "string" ? body.model : "unknown" };
+  const probabilities = (a.probabilities && typeof a.probabilities === "object" ? a.probabilities : { [a.choice]: 1 }) as Record<string, number>;
+  return { legKey: a.choice, confidence: a.confidence, probabilities, model: typeof body.model === "string" ? body.model : "unknown" };
+}
+
+/** Pipes (`<featureSlug>|<stored legKey>`) an `ongoing` campaign of any org runs on: ONE campaign-service read, fail-loud. */
+async function fetchLivePipes(): Promise<Set<string>> {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const response = await fetchWithRetry(`${url}/campaigns/list`, { headers: { "x-api-key": apiKey } });
+  if (!response.ok) throw new Error(`campaign-service /campaigns/list failed (${response.status}): ${await response.text()}`);
+  const data = (await response.json()) as { campaigns?: unknown };
+  if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
+  return livePipesOf(data.campaigns);
+}
+
+/** PURE: the pipes `ongoing` campaigns run on, in the assignments' stored spelling. */
+export function livePipesOf(campaigns: unknown[]): Set<string> {
+  const out = new Set<string>();
+  for (const raw of campaigns) {
+    const c = raw as { status?: unknown; featureSlug?: unknown; legKey?: unknown };
+    if (c.status !== "ongoing" || typeof c.featureSlug !== "string" || typeof c.legKey !== "string") continue;
+    out.add(`${c.featureSlug}|${servedLegKeyOf(c.featureSlug, pipeLegKeyOf(c.featureSlug, c.legKey))}`);
+  }
+  return out;
 }
 
 export interface PlanInput {
@@ -110,7 +139,9 @@ export interface PlanInput {
   performed: (featureSlug: string, legKey: string) => PerformedLeg | null;
   /** Dynasties workflow-service can run. */
   runnable: ReadonlySet<string>;
-  /** The kept leg per dynasty (Jev), asked only for dynasties with 2+ performed legs. */
+  /** Pipes (`<featureSlug>|<stored legKey>`) at least one `ongoing` campaign of any org runs on. */
+  livePipes: ReadonlySet<string>;
+  /** Jev's answer per dynasty, asked only for dynasties with 2+ performed legs. */
   picks: ReadonlyMap<string, LegPick | null>;
   judgedOn: ReadonlyMap<string, DynastyResolution["judgedOn"]>;
 }
@@ -137,15 +168,10 @@ export function plan(input: PlanInput): DynastyResolution[] {
       kept: [],
       removed: [],
     };
-    // Coming off a pipe must leave it another active workflow, and a runnable one when it had one.
-    const canLeave = (r: LegAssignmentRow): boolean => {
-      const others = [...(onPipe.get(pipeKey(r)) ?? [])].filter((d) => d !== dynasty);
-      if (others.length === 0) return false;
-      return !input.runnable.has(dynasty) || others.some((d) => input.runnable.has(d));
-    };
+    const othersOn = (r: LegAssignmentRow) => [...(onPipe.get(pipeKey(r)) ?? [])].filter((d) => d !== dynasty);
     const leave = (r: LegAssignmentRow, reason: DynastyResolution["removed"][number]["reason"]) => {
       onPipe.get(pipeKey(r))!.delete(dynasty);
-      res.removed.push({ legKey: r.legKey, reason });
+      res.removed.push({ legKey: r.legKey, reason, emptiesPipe: othersOn(r).length === 0 });
     };
     const performedRows: LegAssignmentRow[] = [];
     for (const r of rows) {
@@ -155,17 +181,14 @@ export function plan(input: PlanInput): DynastyResolution[] {
     if (performedRows.length === 1) res.kept.push({ legKey: performedRows[0].legKey, reason: "only_performed_leg" });
     else if (performedRows.length > 1) {
       const pick = input.picks.get(dynasty) ?? null;
-      if (!pick || pick.confidence < MIN_CONFIDENCE || !performedRows.some((r) => r.legKey === pick.legKey)) {
-        res.pick = pick;
-        for (const r of performedRows) res.kept.push({ legKey: r.legKey, reason: "jev_unsure" });
-      } else {
-        res.pick = pick;
-        for (const r of performedRows) {
-          if (r.legKey === pick.legKey) res.kept.push({ legKey: r.legKey, reason: "template_type" });
-          else if (canLeave(r)) leave(r, "template_type");
-          else res.kept.push({ legKey: r.legKey, reason: "would_empty_pipe" });
-        }
-      }
+      res.pick = pick;
+      // A live campaign would stop where this workflow is the pipe's only runnable one.
+      const stops = performedRows.filter((r) => input.livePipes.has(pipeKey(r)) && !othersOn(r).some((d) => input.runnable.has(d)));
+      const candidates = stops.length > 0 ? stops : performedRows;
+      const p = (r: LegAssignmentRow) => pick?.probabilities[r.legKey] ?? (pick?.legKey === r.legKey ? 1 : 0);
+      const keep = [...candidates].sort((a, b) => p(b) - p(a) || a.legKey.localeCompare(b.legKey))[0];
+      res.kept.push({ legKey: keep.legKey, reason: stops.length > 0 ? "live_campaign" : "template_type" });
+      for (const r of performedRows) if (r !== keep) leave(r, "one_leg");
     }
     out.push(res);
   }
@@ -194,9 +217,10 @@ export async function resolveOneLegPerWorkflow(opts: { apply: boolean; decidedBy
     return { legKey, label: `${from} -> ${t.to.label}` };
   };
   const features = [...new Set(active.map((r) => r.featureSlug))];
-  const [workflows, defsByFeature] = await Promise.all([
+  const [workflows, defsByFeature, livePipes] = await Promise.all([
     fetchPublicWorkflows(features.join(","), "all", true),
     Promise.all([...new Set(multi.map((r) => r.featureSlug))].map(async (f) => [f, await fetchWorkflowDefinitions(f)] as const)),
+    fetchLivePipes(),
   ]);
   const runnable = executableDynasties(workflows);
   const defs = new Map(defsByFeature);
@@ -211,30 +235,29 @@ export async function resolveOneLegPerWorkflow(opts: { apply: boolean; decidedBy
     const on = { templateTypes, description: templateTypes.length > 0 ? null : (version?.description ?? null) };
     judgedOn.set(dynasty, on);
     if (legs.length < 2) continue;
-    if (!version) {
-      console.error(`[features-service] one-leg: workflow-service describes no version of ${dynasty}: nothing moves on it`);
-      picks.set(dynasty, null);
-      continue;
-    }
+    if (!version) throw new Error(`workflow-service describes no version of ${dynasty}: its template type cannot be judged`);
     const state = templateTypes.length > 0 ? { templateTypes } : { description: on.description ?? "(no description)" };
     picks.set(dynasty, await ask(state, legs));
   }
 
-  const resolutions = plan({ active, performed, runnable, picks, judgedOn });
+  const resolutions = plan({ active, performed, runnable, livePipes, picks, judgedOn });
   if (opts.apply) {
     for (const r of resolutions) {
       for (const leg of r.removed) {
+        const kept = r.kept[0];
         const why =
           leg.reason === "leg_not_performed"
-            ? "its channel no longer performs this leg"
-            : `its template type (${r.judgedOn.templateTypes.join(", ") || "its description"}) is built for ${r.pick!.legKey} (Jev, confidence ${r.pick!.confidence.toFixed(2)})`;
+            ? "its channel no longer publishes this leg"
+            : kept.reason === "live_campaign"
+              ? `it stays on ${kept.legKey}, where a live campaign has no other workflow`
+              : `its template type (${r.judgedOn.templateTypes.join(", ") || "its description"}) is built for ${kept.legKey} (Jev, confidence ${r.pick!.confidence.toFixed(2)})`;
         await setLegAssignment({
           featureSlug: r.featureSlug,
           legKey: leg.legKey,
           workflowDynastySlug: r.workflowDynastySlug,
           state: "deprecated",
           decidedBy: opts.decidedBy,
-          note: `${ONE_LEG_TASK}: a workflow runs on one leg at a time (owner 2026-10-19); off this leg because ${why}`,
+          note: `${ONE_LEG_TASK}: a workflow runs on one leg at a time, never forked (owner 2026-10-19); off this leg because ${why}`,
         });
       }
     }
