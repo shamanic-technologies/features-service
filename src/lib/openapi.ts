@@ -2582,12 +2582,32 @@ const writtenByEntrySchema = z.object({
   underTest: z.boolean().nullable().describe("True while the workflow that wrote it is still being tested (learning: not mature on any pipe it runs on); the dashboard marks its tactics as being tested. Null with underTestUnavailableReason."),
   underTestUnavailableReason: z.enum(["no_workflow_recorded", "not_judged_yet", "ranking_unreadable", "not_ranked_on_any_pipe"]).nullable(),
 });
+const messageReason = (base: readonly [string, ...string[]]) => z.enum([...base, "written_by_a_person", "writer_unknown"] as [string, ...string[]]).nullable();
+const writtenByMessageSchema = z.object({
+  id: z.string().describe("lead-service's message id: the person timeline fact id (outreach subject key) or the Unibox (crm) fact id. The dashboard matches a message row on it."),
+  kind: z.string().describe("lead-service's message kind (`email_sent`, `reply_sent`, `message_out`, `followup_act`)."),
+  channel: z.string().nullable().describe("`email`, the Unibox channel (whatsapp, linkedin, gmail...), null for a bare act."),
+  campaignId: z.string().nullable(),
+  sentAt: z.string().nullable(),
+  writtenBy: z.enum(["workflow", "person", "unknown"]).describe("`workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record (never guessed)."),
+  model: writtenByEntrySchema.shape.model.describe("The LLM that wrote it: the concrete model of the version's writer record on that campaign when one exists, else the model the version's writing step asks for. Null with modelUnavailableReason."),
+  modelUnavailableReason: messageReason(["model_names_unreadable", "model_not_served", "no_workflow_recorded", "model_not_recorded"]),
+  tactics: writtenByEntrySchema.shape.tactics,
+  tacticsUnavailableReason: messageReason(["no_workflow_recorded", "not_judged_yet"]),
+  underTest: writtenByEntrySchema.shape.underTest,
+  underTestUnavailableReason: messageReason(["no_workflow_recorded", "not_judged_yet", "ranking_unreadable", "not_ranked_on_any_pipe"]),
+});
 const writtenByResponseRef = registry.register(
   "WrittenByResponse",
   z.object({
     leadId: z.string(),
     campaignId: z.string().nullable().describe("The campaign filter echoed (null = every campaign of the org)."),
     entries: z.array(writtenByEntrySchema).describe("One per writer record of this person on the org's campaigns, newest first. Empty = nothing written for this person yet (a message is on record ~3 minutes after it is written), or a person of another org."),
+    messages: z
+      .array(writtenByMessageSchema)
+      .nullable()
+      .describe("Every message we sent this person for the org, ANY channel (email, follow-up, WhatsApp, LinkedIn, Gmail...), each with who wrote it, in lead-service's order (WRITTEN-BY-1019-SENDER). Null with messagesUnavailableReason."),
+    messagesUnavailableReason: z.enum(["sent_messages_unreadable"]).nullable(),
   }),
 );
 
@@ -2597,7 +2617,7 @@ registry.registerPath({
   summary: "Who wrote the messages we sent to one person, and how",
   description:
     "Owner 2026-10-19 (WRITTEN-BY-1019): a client may see, on every message we sent on their behalf, the LLM that wrote it (public name + vendor) and the plain lines of the tactics of the workflow version that wrote it, marked as being tested while that workflow is still learning. Never a workflow name or id, never a cost. " +
-    "Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
+    "Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), lead-service's sent messages (every channel, the version that wrote each), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The sent messages, model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

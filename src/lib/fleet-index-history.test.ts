@@ -73,10 +73,10 @@ function spendDays(slug: string, from: string, to: string, cents: number): Dated
 }
 const BASE_SPEND = [...spendDays("a1", "2026-08-01", "2026-08-10", 1000), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)];
 
-function inputs(leads: Lead[], spend: DatedSlugSpend[], changes: AssignmentChange[] = []): HistoryInputs {
+function inputs(leads: Lead[], spend: DatedSlugSpend[], changes: AssignmentChange[] = [], runnableToday: string[] = ["alpha", "beta"]): HistoryInputs {
   const persons = emptyPersonHistory(DAYS);
   addPairPersons(persons, leads.map(person), indexTimelines(leads.map(journey)), LEGS);
-  return { days: DAYS, websiteVisitLeg: VISIT_LEG, positiveReplyLeg: REPLY_LEG, persons, spend, assignmentChanges: changes, workflows: WORKFLOWS };
+  return { days: DAYS, websiteVisitLeg: VISIT_LEG, positiveReplyLeg: REPLY_LEG, persons, spend, assignmentChanges: changes, workflows: WORKFLOWS, runnableToday: new Set(runnableToday) };
 }
 
 const on = (points: DatedIndexPoint[], slug: string, day: string) => points.find((p) => p.point.indexSlug === slug && p.day === day)?.point;
@@ -84,11 +84,16 @@ const COST = "cold-email-cost-per-positive-reply";
 const RATE = "cold-email-positive-reply-rate";
 
 describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
-  it("a workflow that stopped running leaves the window after RUNNING_WINDOW_DAYS", () => {
-    const points = recomputeIndexHistory(inputs(BASE_LEADS, [...spendDays("a1", "2026-08-01", "2026-08-10", 100), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)]));
-    // Alpha ($1 per reply) last ran 08-10: picked through 08-30 (window of 21 days), Beta from 08-31.
-    expect(on(points, COST, "2026-08-30")!.workflowDynastySlug).toBe("alpha");
-    expect(on(points, COST, "2026-08-31")!.workflowDynastySlug).toBe("beta");
+  it("a workflow that can still run stays pickable after its last run; a retired one stops at its last run", () => {
+    const spend = [...spendDays("a1", "2026-08-01", "2026-08-10", 100), ...spendDays("b1", "2026-08-01", "2026-09-30", 200)];
+    // Alpha ($1 per reply) last ran 08-10. Runnable today: the money still goes to it once mature (08-23 on).
+    const runnable = recomputeIndexHistory(inputs(BASE_LEADS, spend));
+    expect(on(runnable, COST, "2026-09-30")!.workflowDynastySlug).toBe("alpha");
+    expect(runnable.some((p) => p.point.indexSlug === COST && p.point.workflowDynastySlug === "beta")).toBe(false);
+    // Retired today: it stood until its last run (08-10), before it was ever mature; Beta is the index.
+    const retired = recomputeIndexHistory(inputs(BASE_LEADS, spend, [], ["beta"]));
+    expect(on(retired, COST, "2026-08-23")!.workflowDynastySlug).toBe("beta");
+    expect(retired.some((p) => p.point.indexSlug === COST && p.point.workflowDynastySlug === "alpha")).toBe(false);
   });
 
   it("cuts maturity on the live rule: a person served on day S is mature from S + duration + 1", () => {
@@ -97,7 +102,7 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     // Served 08-01: not mature on 08-22 (cutoff 08-01), mature on 08-23 (cutoff 08-02). The series starts there.
     expect(on(points, COST, "2026-08-22")).toBeUndefined();
     const first = on(points, COST, "2026-08-23")!;
-    // Both ran in the window; Beta is cheaper ($2 vs $10 per reply). Mature spend = runs started before 08-02.
+    // Both can run; Beta is cheaper ($2 vs $10 per reply). Mature spend = runs started before 08-02.
     expect(first.workflowDynastySlug).toBe("beta");
     expect(first.value).toBeCloseTo(2, 6);
     expect(on(points, RATE, "2026-08-23")!.value).toBeCloseTo(25, 6);
@@ -121,9 +126,9 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     // The 09-10 reply is in the 09-10 point on (served 08-01, mature), not before.
     expect(on(withLater, COST, "2026-09-09")!.outcomes).toBe(1);
     expect(on(withLater, COST, "2026-09-10")!.outcomes).toBe(2);
-    // From the deprecation on, Beta can no longer be picked, and Alpha has not run in the window: no point is stated.
-    expect(on(withLater, COST, "2026-09-16")!.value).toBeNull();
-    expect(on(withLater, COST, "2026-09-16")!.unavailableReason).toBe("no_mature_workflow");
+    // From the deprecation on, Beta can no longer be picked: Alpha (still runnable) is the index.
+    expect(on(withLater, COST, "2026-09-14")!.workflowDynastySlug).toBe("beta");
+    expect(on(withLater, COST, "2026-09-16")!.workflowDynastySlug).toBe("alpha");
   });
 
   it("a person stands as they stood at the end of the day: later and undated evidence are out", () => {

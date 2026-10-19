@@ -16212,12 +16212,162 @@
               ]
             },
             "description": "One per writer record of this person on the org's campaigns, newest first. Empty = nothing written for this person yet (a message is on record ~3 minutes after it is written), or a person of another org."
+          },
+          "messages": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "lead-service's message id: the person timeline fact id (outreach subject key) or the Unibox (crm) fact id. The dashboard matches a message row on it."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "lead-service's message kind (`email_sent`, `reply_sent`, `message_out`, `followup_act`)."
+                },
+                "channel": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "`email`, the Unibox channel (whatsapp, linkedin, gmail...), null for a bare act."
+                },
+                "campaignId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "sentAt": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "writtenBy": {
+                  "type": "string",
+                  "enum": [
+                    "workflow",
+                    "person",
+                    "unknown"
+                  ],
+                  "description": "`workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record (never guessed)."
+                },
+                "model": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The LLM's public name, e.g. \"Claude Opus 5.5\" (chat-service's served name)."
+                    },
+                    "vendor": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Vendor id (`anthropic`, `google`, `openai`...): the dashboard keys the vendor logo on it."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Vendor name, e.g. \"Anthropic\"."
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "vendor"
+                  ],
+                  "description": "The LLM that wrote it: the concrete model of the version's writer record on that campaign when one exists, else the model the version's writing step asks for. Null with modelUnavailableReason."
+                },
+                "modelUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "model_names_unreadable",
+                    "model_not_served",
+                    "no_workflow_recorded",
+                    "model_not_recorded",
+                    "written_by_a_person",
+                    "writer_unknown"
+                  ]
+                },
+                "tactics": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "line": {
+                        "type": "string",
+                        "description": "A plain line, e.g. \"Brand not named in the first email\"."
+                      }
+                    },
+                    "required": [
+                      "line"
+                    ]
+                  },
+                  "description": "The tactics the workflow version that wrote it follows (Jev's verdicts), as client lines; a tactic with no client line is not listed."
+                },
+                "tacticsUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_workflow_recorded",
+                    "not_judged_yet",
+                    "written_by_a_person",
+                    "writer_unknown"
+                  ]
+                },
+                "underTest": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "True while the workflow that wrote it is still being tested (learning: not mature on any pipe it runs on); the dashboard marks its tactics as being tested. Null with underTestUnavailableReason."
+                },
+                "underTestUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "no_workflow_recorded",
+                    "not_judged_yet",
+                    "ranking_unreadable",
+                    "not_ranked_on_any_pipe",
+                    "written_by_a_person",
+                    "writer_unknown"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "channel",
+                "campaignId",
+                "sentAt",
+                "writtenBy",
+                "model",
+                "modelUnavailableReason",
+                "tactics",
+                "tacticsUnavailableReason",
+                "underTest",
+                "underTestUnavailableReason"
+              ]
+            },
+            "description": "Every message we sent this person for the org, ANY channel (email, follow-up, WhatsApp, LinkedIn, Gmail...), each with who wrote it, in lead-service's order (WRITTEN-BY-1019-SENDER). Null with messagesUnavailableReason."
+          },
+          "messagesUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sent_messages_unreadable"
+            ]
           }
         },
         "required": [
           "leadId",
           "campaignId",
-          "entries"
+          "entries",
+          "messages",
+          "messagesUnavailableReason"
         ]
       },
       "SourcingInvestmentResponse": {
@@ -39430,7 +39580,7 @@
     "/orgs/leads/{leadId}/written-by": {
       "get": {
         "summary": "Who wrote the messages we sent to one person, and how",
-        "description": "Owner 2026-10-19 (WRITTEN-BY-1019): a client may see, on every message we sent on their behalf, the LLM that wrote it (public name + vendor) and the plain lines of the tactics of the workflow version that wrote it, marked as being tested while that workflow is still learning. Never a workflow name or id, never a cost. Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
+        "description": "Owner 2026-10-19 (WRITTEN-BY-1019): a client may see, on every message we sent on their behalf, the LLM that wrote it (public name + vendor) and the plain lines of the tactics of the workflow version that wrote it, marked as being tested while that workflow is still learning. Never a workflow name or id, never a cost. Read from our copy of content-generation-service's writer records (one per generated sequence, campaign x person), lead-service's sent messages (every channel, the version that wrote each), Jev's tactic verdicts on the writing version, chat-service's model names and the pipe workflow ranking. Org-scoped (x-org-id). The sent messages, model names, verdicts and maturity fail soft to a named null; the writer records fail loud (502).",
         "tags": [
           "Stats"
         ],

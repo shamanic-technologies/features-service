@@ -5,12 +5,18 @@
  * see the LLM that wrote it (public name + vendor) and the plain lines of the TACTICS of the workflow version that
  * wrote it, marked as being tested while that version is still learning. Never the workflow's name or id, never a cost.
  *
- * Pure. The writer record is content-generation-service's (one per generated sequence, campaign x person: the concrete
- * model it wrote with and the workflow version that asked), copied here (`generation_sequence_copy`). A tactic is shown
- * when Jev judged that version follows it (`workflow_tactic_verdicts`) AND the tactic states a client line.
+ * Pure. Two producers, one rule for every channel:
+ *  - `entries`: content-generation-service's writer records (one per generated sequence, campaign x person: the concrete
+ *    model it wrote with and the workflow version that asked), copied here (`generation_sequence_copy`).
+ *  - `messages`: every message we sent the person, any channel, with the workflow version that wrote it, as lead-service
+ *    states it (`GET /internal/leads/{leadId}/sent-messages`, WRITTEN-BY-1019-SENDER). The model is the concrete one of
+ *    the version's writer record on that campaign when one exists, else the model the version's writing step asks for
+ *    (its DAG: the content-generation `/generate` step, else the chat-service `/complete` step), resolved by chat-service.
+ * A tactic is shown when Jev judged that version follows it (`workflow_tactic_verdicts`) AND the tactic states a client line.
  */
 import type { ServedModel } from "./model-ids-client.js";
 import type { Tactic } from "./plays.js";
+import { resolveModelAlias } from "./research/writers.js";
 
 /** chat-service's vendor ids in the words a client reads (the dashboard keys the logo on `id`). */
 const VENDOR_NAMES: Record<string, string> = {
@@ -72,23 +78,32 @@ export function underTestOf(verdicts: ReadonlyArray<boolean | null>): boolean | 
   return null;
 }
 
-/** PURE. One entry per writer record, newest first. */
-export function buildWrittenBy(input: {
-  records: readonly WriterRecord[];
+export interface WrittenByInput {
   verdicts: readonly VersionVerdict[];
   tactics: ReadonlyMap<string, Pick<Tactic, "id" | "clientLine">>;
   /** null = chat-service's model list could not be read. */
   models: readonly ServedModel[] | null;
   /** dynasty -> maturity verdicts on its pipes; absent dynasty = not ranked anywhere; null map = ranking unreadable. */
   maturityByDynasty: ReadonlyMap<string, ReadonlyArray<boolean | null>> | null;
-}): WrittenByEntry[] {
+}
+
+type ModelBlock = Pick<WrittenByEntry, "model" | "modelUnavailableReason">;
+type VersionBlock = Pick<WrittenByEntry, "tactics" | "tacticsUnavailableReason" | "underTest" | "underTestUnavailableReason">;
+
+/** PURE. A concrete model id as the client reads it; null + reason when chat-service names none. */
+function modelBlockOf(modelId: string | null, models: readonly ServedModel[] | null): ModelBlock {
+  const served = modelId ? (models?.find((m) => m.modelId === modelId) ?? null) : null;
+  if (served) return { model: { name: served.displayName, vendor: vendorOf(served.provider) }, modelUnavailableReason: null };
+  return { model: null, modelUnavailableReason: models ? "model_not_served" : "model_names_unreadable" };
+}
+
+/** PURE. The tactic lines of one workflow VERSION and whether its workflow is still under test. */
+function versionBlocks(input: WrittenByInput) {
   const verdictsOf = new Map<string, VersionVerdict[]>();
   for (const v of input.verdicts) verdictsOf.set(v.workflowSlug, [...(verdictsOf.get(v.workflowSlug) ?? []), v]);
-  const records = [...input.records].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.campaignId < b.campaignId ? -1 : 1));
-  return records.map((r) => {
-    const served = input.models?.find((m) => m.modelId === r.model) ?? null;
-    const own = r.workflowSlug ? (verdictsOf.get(r.workflowSlug) ?? []) : [];
-    const lines = own
+  return (workflowSlug: string | null): VersionBlock => {
+    const own = workflowSlug ? (verdictsOf.get(workflowSlug) ?? []) : [];
+    const tactics = own
       .filter((v) => v.verdict)
       .map((v) => input.tactics.get(v.tacticId))
       .filter((t): t is Pick<Tactic, "id" | "clientLine"> => !!t && typeof t.clientLine === "string" && t.clientLine.length > 0)
@@ -96,23 +111,108 @@ export function buildWrittenBy(input: {
       .map((t) => ({ line: t.clientLine as string }));
     const dynasty = own[0]?.workflowDynastySlug ?? null;
     let underTest: boolean | null = null;
-    let underTestReason: UnderTestUnavailableReason | null = null;
-    if (!r.workflowSlug) underTestReason = "no_workflow_recorded";
-    else if (!dynasty) underTestReason = "not_judged_yet";
-    else if (!input.maturityByDynasty) underTestReason = "ranking_unreadable";
+    let underTestUnavailableReason: UnderTestUnavailableReason | null = null;
+    if (!workflowSlug) underTestUnavailableReason = "no_workflow_recorded";
+    else if (!dynasty) underTestUnavailableReason = "not_judged_yet";
+    else if (!input.maturityByDynasty) underTestUnavailableReason = "ranking_unreadable";
     else {
       underTest = underTestOf(input.maturityByDynasty.get(dynasty) ?? []);
-      if (underTest === null) underTestReason = "not_ranked_on_any_pipe";
+      if (underTest === null) underTestUnavailableReason = "not_ranked_on_any_pipe";
     }
-    return {
-      campaignId: r.campaignId,
-      writtenAt: r.createdAt.toISOString(),
-      model: served ? { name: served.displayName, vendor: vendorOf(served.provider) } : null,
-      modelUnavailableReason: served ? null : input.models ? "model_not_served" : "model_names_unreadable",
-      tactics: lines,
-      tacticsUnavailableReason: !r.workflowSlug ? "no_workflow_recorded" : own.length === 0 ? "not_judged_yet" : null,
-      underTest,
-      underTestUnavailableReason: underTestReason,
-    };
+    return { tactics, tacticsUnavailableReason: !workflowSlug ? "no_workflow_recorded" : own.length === 0 ? "not_judged_yet" : null, underTest, underTestUnavailableReason };
+  };
+}
+
+/** PURE. One entry per writer record, newest first. */
+export function buildWrittenBy(input: WrittenByInput & { records: readonly WriterRecord[] }): WrittenByEntry[] {
+  const versionOf = versionBlocks(input);
+  const records = [...input.records].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.campaignId < b.campaignId ? -1 : 1));
+  return records.map((r) => ({ campaignId: r.campaignId, writtenAt: r.createdAt.toISOString(), ...modelBlockOf(r.model, input.models), ...versionOf(r.workflowSlug) }));
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * PURE. The model alias a workflow version WRITES with: its content-generation `/generate` step's body `model`, else its
+ * chat-service `/complete` step's (a workflow drafting its own message). Null when no writing step names a model.
+ */
+export function writingModelAliasOfDag(dag: unknown): string | null {
+  const nodes = isRecord(dag) && Array.isArray(dag.nodes) ? dag.nodes : [];
+  const bodies = (service: string, path: string | null) =>
+    nodes
+      .map((n) => (isRecord(n) && isRecord(n.config) ? n.config : null))
+      .filter((c): c is Record<string, unknown> => !!c && c.service === service && (path === null || c.path === path) && isRecord(c.body))
+      .map((c) => c.body as Record<string, unknown>);
+  for (const body of [...bodies("content-generation", null).filter((b) => typeof b.type === "string"), ...bodies("chat", "/complete")]) {
+    if (typeof body.model === "string" && body.model) return body.model;
+  }
+  return null;
+}
+
+/** One message we sent the person, as lead-service states it (`SentMessage`). */
+export interface SentMessage {
+  id: string;
+  kind: string;
+  channel: string | null;
+  campaignId: string | null;
+  sentAt: string | null;
+  writtenBy: { by: "workflow" | "person" | "unknown"; workflowSlug: string | null; campaignId: string | null; runId?: string | null };
+}
+
+export type MessageWriter = "workflow" | "person" | "unknown";
+
+export interface MessageWrittenBy {
+  /** lead-service's message id: the timeline fact id (outreach subject key) or the Unibox (crm) fact id. */
+  id: string;
+  kind: string;
+  channel: string | null;
+  campaignId: string | null;
+  sentAt: string | null;
+  /** `workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record. */
+  writtenBy: MessageWriter;
+  model: WrittenByEntry["model"];
+  modelUnavailableReason: ModelUnavailableReason | "written_by_a_person" | "writer_unknown" | "no_workflow_recorded" | "model_not_recorded" | null;
+  tactics: Array<{ line: string }>;
+  tacticsUnavailableReason: TacticsUnavailableReason | "written_by_a_person" | "writer_unknown" | null;
+  underTest: boolean | null;
+  underTestUnavailableReason: UnderTestUnavailableReason | "written_by_a_person" | "writer_unknown" | null;
+}
+
+/**
+ * PURE. One row per message we sent the person, in lead-service's order. Model: the version's writer record on the
+ * message's campaign (the latest written at or before the send) when one exists, else the model its DAG writes with.
+ */
+export function buildMessageWrittenBy(
+  input: WrittenByInput & {
+    messages: readonly SentMessage[];
+    records: readonly WriterRecord[];
+    /** workflow version slug -> the model alias its writing step names (null = names none); absent = DAG not read. */
+    dagModelAliasOf: ReadonlyMap<string, string | null>;
+  },
+): MessageWrittenBy[] {
+  const versionOf = versionBlocks(input);
+  return input.messages.map((m) => {
+    const head = { id: m.id, kind: m.kind, channel: m.channel, campaignId: m.campaignId, sentAt: m.sentAt, writtenBy: m.writtenBy.by };
+    if (m.writtenBy.by !== "workflow") {
+      const reason = m.writtenBy.by === "person" ? ("written_by_a_person" as const) : ("writer_unknown" as const);
+      return { ...head, model: null, modelUnavailableReason: reason, tactics: [], tacticsUnavailableReason: reason, underTest: null, underTestUnavailableReason: reason };
+    }
+    const slug = m.writtenBy.workflowSlug;
+    const campaign = m.campaignId ?? m.writtenBy.campaignId;
+    const sentAt = m.sentAt ? Date.parse(m.sentAt) : null;
+    const record = slug
+      ? input.records
+          .filter((r) => r.workflowSlug === slug && r.campaignId === campaign && (sentAt === null || r.createdAt.getTime() <= sentAt))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
+      : undefined;
+    let modelBlock: Pick<MessageWrittenBy, "model" | "modelUnavailableReason">;
+    if (!slug) modelBlock = { model: null, modelUnavailableReason: "no_workflow_recorded" };
+    else if (record) modelBlock = modelBlockOf(record.model, input.models);
+    else {
+      const alias = input.dagModelAliasOf.get(slug) ?? null;
+      const resolved = alias && input.models ? resolveModelAlias(alias, input.models) : null;
+      modelBlock = resolved ? modelBlockOf(resolved.id, input.models) : alias && !input.models ? modelBlockOf(null, null) : { model: null, modelUnavailableReason: "model_not_recorded" };
+    }
+    return { ...head, ...modelBlock, ...versionOf(slug) };
   });
 }

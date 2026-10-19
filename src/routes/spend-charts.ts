@@ -22,8 +22,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { expectedReturnForCampaign, expectedReturnForFunnelCampaign, expectedReturnForOffer, type ExpectedReturn } from "../lib/expected-return.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
-import { computeSpendChart, fetchFollowupActionRows, readChartPeople, type ChartLeg, type ChartScope, type SpendChart } from "../lib/spend-charts-io.js";
-import type { EnginePerson } from "../lib/revenue-engine.js";
+import { computeSpendChart, fetchFollowupActionRows, type ChartLeg, type ChartScope, type SpendChart } from "../lib/spend-charts-io.js";
 import type { FollowupActionRow } from "../lib/followup-actions-client.js";
 
 const router = Router();
@@ -137,7 +136,6 @@ export function offerLeg(rows: readonly SalesFunnelCampaignRow[], steps: PipeSte
 
 interface ChartContext {
   brandId: string;
-  persons: EnginePerson[];
   handedRows: FollowupActionRow[];
   fleetConversions: ReadonlyMap<string, number>;
   brandRateOf: (legKey: string) => { ratePct: number | null; source: string | null } | null;
@@ -148,19 +146,18 @@ interface ChartContext {
 async function chartContext(brandId: string, unitIds: readonly string[], pricing: Pricing, headers: DownstreamHeaders): Promise<ChartContext> {
   const { fleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
   const handedRows = unitIds.length > 0 ? await fetchFollowupActionRows(brandId, unitIds) : [];
-  const [persons, rates] = await Promise.all([
-    readChartPeople(brandId, unitIds, handedRows, headers),
+  const [rates] = await Promise.all([
     getBrandEffectiveRates(brandId, headers.orgId).catch((err: Error) => {
       console.error(`[features-service] spend charts: brand rates unreadable for brand ${brandId} (expected conversion of later legs null): ${err.message}`);
       return null;
     }),
   ]);
   const byLeg = new Map((rates?.legs ?? []).filter((l) => l.legKey).map((l) => [l.legKey!, { ratePct: l.effectiveRatePct, source: l.source }] as const));
-  return { brandId, persons, handedRows, fleetConversions: fleetLegConversionRatesFromOutcomePrices(), brandRateOf: (k) => byLeg.get(k) ?? null, pricing, headers };
+  return { brandId, handedRows, fleetConversions: fleetLegConversionRatesFromOutcomePrices(), brandRateOf: (k) => byLeg.get(k) ?? null, pricing, headers };
 }
 
 const chartOf = (ctx: ChartContext, scope: ChartScope, expected: ExpectedReturn): Promise<SpendChart> =>
-  computeSpendChart({ brandId: ctx.brandId, scope, persons: ctx.persons, handedRows: ctx.handedRows, expected, fleetConversions: ctx.fleetConversions, brandRateOf: ctx.brandRateOf, pricing: ctx.pricing, headers: ctx.headers });
+  computeSpendChart({ brandId: ctx.brandId, scope, handedRows: ctx.handedRows, expected, fleetConversions: ctx.fleetConversions, brandRateOf: ctx.brandRateOf, pricing: ctx.pricing, headers: ctx.headers });
 
 export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignRow, pricing: Pricing, headers: DownstreamHeaders): Promise<FunnelCampaignSpendChartsBody> {
   const brandId = row.brandId;

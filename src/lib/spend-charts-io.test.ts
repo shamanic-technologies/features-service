@@ -30,6 +30,23 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     ]);
   });
 
+  it("a re-contacted prospect enters on THIS scope's serve, and an outcome from before it is not this scope's", () => {
+    const out = chartPersonsOf(
+      coldEmail,
+      [
+        // First emailed in April by another campaign, replied then; served by this campaign in October.
+        p("a", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-04-24T09:00:00Z", positiveReply: "2026-04-30T10:00:00Z" }, "2026-10-16T08:00:00Z"),
+        p("b", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-04-24T09:00:00Z", positiveReply: "2026-10-18T10:00:00Z" }, "2026-10-16T08:00:00Z"),
+      ],
+      new Set(["u1"]),
+      new Map(),
+    );
+    expect(out).toEqual([
+      { entered: true, enteredOn: "2026-10-16", converted: false, convertedOn: null },
+      { entered: true, enteredOn: "2026-10-16", converted: true, convertedOn: "2026-10-18" },
+    ]);
+  });
+
   it("a leg from a later step: the people its unit was HANDED, entering the day they were handed", () => {
     const meeting = { channelSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", fromStep: "conversation", toStep: "meeting_booked" };
     const out = chartPersonsOf(
