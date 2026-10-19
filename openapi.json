@@ -44261,7 +44261,7 @@
     "/public/indexes/{slug}": {
       "get": {
         "summary": "One public fleet index and every recorded day (public, no auth)",
-        "description": "The index summary (latest day) + one point per recorded UTC day, oldest first. `basis` is `recorded` (written live that day).",
+        "description": "The index summary (latest day) + one point per UTC day, oldest first. `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
         "tags": [
           "Public"
         ],
@@ -44297,6 +44297,22 @@
                         "signalMinOutcomes",
                         "robustMinOutcomes"
                       ]
+                    },
+                    "basisRule": {
+                      "type": "object",
+                      "properties": {
+                        "recorded": {
+                          "type": "string"
+                        },
+                        "recomputed": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "recorded",
+                        "recomputed"
+                      ],
+                      "description": "What each `points[].basis` means, one plain sentence each, for a label beside the curve."
                     },
                     "index": {
                       "$ref": "#/components/schemas/FleetIndexSummary"
@@ -44346,7 +44362,8 @@
                             "enum": [
                               "recorded",
                               "recomputed"
-                            ]
+                            ],
+                            "description": "`recorded`: written live that day. `recomputed`: rebuilt later as of that day (`basisRule`)."
                           },
                           "inputs": {
                             "type": "object",
@@ -44386,6 +44403,7 @@
                   },
                   "required": [
                     "statusRule",
+                    "basisRule",
                     "index",
                     "points"
                   ]
