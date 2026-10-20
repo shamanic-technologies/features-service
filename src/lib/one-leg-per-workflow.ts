@@ -6,8 +6,8 @@
  * Per dynasty active on 2+ legs:
  *   1. a leg with no PUBLISHED pipe (its channel no longer performs it, or staff hid it: Email Sending's retired
  *      "Email sent" leg) comes off first: no customer surface runs it, so there is no pipe to keep;
- *   2. among the legs left, ONE is kept and every other comes off, ALWAYS: no leg stays doubled to spare a pipe, and
- *      no workflow is forked to fill one (owner 2026-10-19: « non fork, pas de duplicate de leg »; supersedes the
+ *   2. among the legs left, ONE is kept and every other comes off, ALWAYS: no leg stays doubled to spare a pipe; a pipe
+ *      left empty gets a FORK of the workflow of its own, from workflow-service (owner 2026-10-19: « non, fork, pas de duplicate de leg »; supersedes the
  *      first rule that kept a leg whose pipe it was alone on). The kept leg:
  *        a. the leg a LIVE campaign (any org, `ongoing`) would lose its only runnable workflow on (`live_campaign`),
  *           so a running campaign never stops (Doc Dinners' Form Callback keeps Belenos on Form submitted -> Booking
@@ -17,7 +17,7 @@
  *           version renders (a reply template = the positive reply leg, a click template = the website visit leg), else
  *           its own description when it renders none. Jev's `choice` probabilities rank the legs, never a hand list.
  *   3. a removed leg that leaves its pipe with no active workflow says so (`emptiesPipe`): that pipe needs a workflow
- *      of its own, registered by workflow-service (never a copy of this one).
+ *      of its own: workflow-service forks this one for it and registers the fork.
  *
  * `plan` is PURE (tests); `resolveOneLegPerWorkflow` reads, asks Jev, and writes only when `apply` is true.
  */
@@ -257,7 +257,7 @@ export async function resolveOneLegPerWorkflow(opts: { apply: boolean; decidedBy
           workflowDynastySlug: r.workflowDynastySlug,
           state: "deprecated",
           decidedBy: opts.decidedBy,
-          note: `${ONE_LEG_TASK}: a workflow runs on one leg at a time, never forked (owner 2026-10-19); off this leg because ${why}`,
+          note: `${ONE_LEG_TASK}: a workflow runs on one leg at a time; a pipe it leaves gets its own fork (owner 2026-10-19); off this leg because ${why}`,
         });
       }
     }
