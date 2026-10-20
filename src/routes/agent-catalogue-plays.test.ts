@@ -202,6 +202,11 @@ vi.mock("../lib/plays-store.js", async () => {
       playState.added.push({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: input.isDefault === true });
       return { created: true, defaultChanged };
     }),
+    clearDefaultPlay: vi.fn(async (pipeId: string) => {
+      const current = [...plays, ...playState.added].filter((p) => p.pipeId === pipeId && p.isDefault);
+      for (const p of current) p.isDefault = false;
+      return { changed: current.length > 0, previousStrategyId: current[0]?.strategyId ?? null };
+    }),
     insertVerdict: vi.fn(),
     refreshVersionActive: vi.fn(),
   };
@@ -448,6 +453,21 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(res.body).toMatchObject({ created: false, default: false });
     const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
     expect(plays.map((p: any) => [p.strategyId, p.default])).toEqual([["valid-only", true], ["valid-catch-all", false]]);
+  });
+
+  // DOTTEREL-NO-DEFAULT-1020 (owner 2026-10-20: "Dotterel doit avoir aucune strategy par défaut").
+  it("staff clear a pipe's DEFAULT play: the pipe runs every assigned workflow, the old default stays a play", async () => {
+    const url = `/internal/catalogue/pipes/${encodeURIComponent(COLD)}/default-play`;
+    const cleared = await request(app).delete(url).set(KEY).send({ decidedBy: "test" });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ changed: true, previousStrategyId: "valid-only", id: COLD });
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
+    expect(plays.some((p: any) => p.default === true && p.strategyId !== null)).toBe(false);
+    expect(plays.map((p: any) => p.strategyId)).toContain("valid-only");
+    const again = await request(app).delete(url).set(KEY).send({ decidedBy: "test" });
+    expect(again.body).toMatchObject({ changed: false, previousStrategyId: null });
+    expect((await request(app).delete(url).set(KEY).send({})).status).toBe(400);
+    expect((await request(app).delete(`/internal/catalogue/pipes/${encodeURIComponent("nope|x")}/default-play`).set(KEY).send({ decidedBy: "t" })).status).toBe(404);
   });
 
   it("a tactic's description is edited (owner 2026-10-14): unique, and every workflow version is re-judged on the new words", async () => {

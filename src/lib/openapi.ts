@@ -8000,6 +8000,25 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: "delete",
+  path: "/internal/catalogue/pipes/{pipeId}/default-play",
+  summary: "Remove a pipe's DEFAULT play (internal, api-key, staff)",
+  description:
+    "The pipe has no default play any more (owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020): every campaign naming no strategy on the pipe runs every assigned workflow, ranked as usual. The previous default stays a play of the pipe. `changed:false` when the pipe had no default.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ pipeId: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded.") }),
+    body: { content: { "application/json": { schema: z.object({ decidedBy: z.string().describe("Who decides (staff identity).") }) } } },
+  },
+  responses: {
+    200: { description: "The pipe now, with no default play.", content: { "application/json": { schema: catalogueTacticPlayRow.extend({ changed: z.boolean().describe("false when the pipe had no default play."), previousStrategyId: z.string().nullable().describe("The strategy that was the default, null when none was.") }) } } },
+    400: { description: "A field is missing or invalid, or `pipe_not_ours`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`pipe_not_found`." },
+  },
+});
+
+registry.registerPath({
   method: "get",
   path: "/public/catalogue/sales-funnels",
   summary: "The sales funnels we can run today (public)",
