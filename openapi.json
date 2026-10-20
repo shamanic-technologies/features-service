@@ -65349,6 +65349,207 @@
             "description": "`default_play_runs_nothing`."
           }
         }
+      },
+      "delete": {
+        "summary": "Remove a pipe's DEFAULT play (internal, api-key, staff)",
+        "description": "The pipe has no default play any more (owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020): every campaign naming no strategy on the pipe runs every assigned workflow, ranked as usual. The previous default stays a play of the pipe. `changed:false` when the pipe had no default.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded."
+            },
+            "required": true,
+            "description": "A pipe id (`<channel slug>|<leg key>`), URL-encoded.",
+            "name": "pipeId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "decidedBy": {
+                    "type": "string",
+                    "description": "Who decides (staff identity)."
+                  }
+                },
+                "required": [
+                  "decidedBy"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The pipe now, with no default play.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "play"
+                      ]
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "The play id a sales funnel names: the bare pipe id for the default play, `<pipe id>~<strategy id>` for another (`POST /internal/catalogue/sales-funnels` takes either in `pipeIds`). In a funnel id the leg reads `<leg>@<channel slug>~<strategy id>`."
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "strategyId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "strategyName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "strategyDescription": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."
+                    },
+                    "default": {
+                      "type": "boolean"
+                    },
+                    "costUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."
+                    },
+                    "costPer": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."
+                    },
+                    "roi": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Average fleet return multiple. Null unless measured or estimated."
+                    },
+                    "roiBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "estimated"
+                      ],
+                      "description": "`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "estimated",
+                        "learning",
+                        "customer_time"
+                      ],
+                      "description": "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate."
+                    },
+                    "bestWorkflowSlug": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The allowed workflow the figure rests on."
+                    },
+                    "measuredBasis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "allowedActiveWorkflowCount": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "allowedWorkflowDynastySlugs": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
+                    "runnable": {
+                      "type": "boolean",
+                      "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
+                    },
+                    "notRunnableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "judging_failing",
+                        "judging_pending",
+                        "no_workflow_follows_strategy",
+                        "unpublished",
+                        "no_workflow"
+                      ],
+                      "description": "Why nothing runs it (null when `runnable`). Owner 2026-10-14: a play blocked on its strategy says whether Jev is still judging (`judging_pending`), FAILING to judge (`judging_failing`: retried by every sweep, so it resumes by itself), or judged every active workflow out (`no_workflow_follows_strategy`: a workflow following it must be built). `no_workflow`: no active workflow works the pipe; `unpublished`: hidden by staff."
+                    },
+                    "notRunnableDetail": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The reason in one plain sentence an agent can relay."
+                    },
+                    "changed": {
+                      "type": "boolean",
+                      "description": "false when the pipe had no default play."
+                    },
+                    "previousStrategyId": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The strategy that was the default, null when none was."
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "id",
+                    "pipeId",
+                    "strategyId",
+                    "strategyName",
+                    "strategyDescription",
+                    "default",
+                    "costUsd",
+                    "costPer",
+                    "roi",
+                    "roiBasis",
+                    "status",
+                    "bestWorkflowSlug",
+                    "measuredBasis",
+                    "allowedActiveWorkflowCount",
+                    "allowedWorkflowDynastySlugs",
+                    "runnable",
+                    "notRunnableReason",
+                    "notRunnableDetail",
+                    "changed",
+                    "previousStrategyId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field is missing or invalid, or `pipe_not_ours`."
+          },
+          "401": {
+            "description": "Missing or wrong service key."
+          },
+          "404": {
+            "description": "`pipe_not_found`."
+          }
+        }
       }
     },
     "/public/catalogue/sales-funnels": {

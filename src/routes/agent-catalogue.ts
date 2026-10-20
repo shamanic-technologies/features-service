@@ -109,7 +109,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { clearDefaultPlay, insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
@@ -2214,6 +2214,32 @@ router.put("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (
     res.json({ created, defaultChanged, ...playRowOf(model, play) });
   } catch (err) {
     fail(res, err, "create play");
+  }
+});
+
+/**
+ * STAFF: the pipe has NO default play any more (`{decidedBy}`; owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020): every
+ * campaign naming no strategy on the pipe runs every assigned workflow, ranked as usual. The previous default stays a
+ * play of the pipe. Re-stating it changes nothing (`changed:false`).
+ */
+router.delete("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const decidedBy = text(body, "decidedBy", 200);
+    const pipeId = req.params.pipeId;
+    const before = await loadModel();
+    const pipe = before.model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
+    const { changed, previousStrategyId } = await clearDefaultPlay(pipeId);
+    const { model } = await loadModel();
+    const after = model.pipes.get(pipeId);
+    if (!after) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
+    console.log(`[features-service] agent catalogue: ${pipeId} default play ${changed ? `cleared (was ${previousStrategyId})` : "already none"} by ${decidedBy}`);
+    if (changed) void refreshCatalogueMeasurementsAfterPlayWrite();
+    res.json({ changed, previousStrategyId, ...playRowOf(model, after) });
+  } catch (err) {
+    fail(res, err, "clear default play");
   }
 });
 
