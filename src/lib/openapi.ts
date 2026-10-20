@@ -2536,18 +2536,26 @@ registry.registerPath({
 });
 
 const usageCategorySchema = z.object({
-  key: z.enum(["setup", "finding_contacts", "writing_emails", "sending_emails", "reading_replies", "notifications", "other"]),
+  key: z.enum(["setup", "finding_contacts", "writing_emails", "sending_emails", "reading_replies", "notifications", "other", "account_adjustments"]),
   label: z.string(),
-  billedUsd: z.number().describe("Net actual spend in this category (what was billed)."),
+  billedUsd: z.number().describe("Net actual spend in this category billed to the org (spend the platform absorbed is not in it). For account_adjustments: what billing bills beyond the classified spend (a staff debit, a brand-transfer correction, expired subscription credit, a cost written between the reads); can be negative."),
   setAsideUsd: z.number().describe("Net provisioned spend in this category (held, not yet billed)."),
 });
 const orgUsageResponseRef = registry.register(
   "OrgUsageResponse",
   z.object({
     basis: z.literal("billed"),
-    totalBilledUsd: z.number().describe("Sum of every category's billedUsd; equals billing's Billed figure for the org."),
-    totalSetAsideUsd: z.number(),
+    totalBilledUsd: z.number().describe("billing-service's Billed for the org (credited minus actual balance), to the cent; the sum of every category's billedUsd."),
+    totalSetAsideUsd: z.number().describe("billing-service's Set aside for the org (actual balance minus balance); the sum of every category's setAsideUsd."),
     categories: z.array(usageCategorySchema).describe("Every category, in a fixed order, zeros included."),
+    coveredByUs: z
+      .object({
+        billedUsd: z.number().describe("Actualized spend with no campaign the platform absorbed."),
+        setAsideUsd: z.number().describe("Held spend with no campaign the platform will absorb."),
+        sinceIso: z.string().describe("billing-service's cutover: no-campaign spend from this instant on is the platform's cost."),
+      })
+      .describe("Spend with no campaign (Copilot chat, onboarding reads, card fees) the platform covers: recorded, never billed to the org, in no category and no total."),
+    totalsSource: z.enum(["billing", "no_billing_account"]).describe("billing = the totals are billing-service's figures; no_billing_account = billing holds no account for the org, the totals are the classified spend net of coveredByUs."),
   }),
 );
 
@@ -2557,7 +2565,7 @@ registry.registerPath({
   summary: "Where an org's money went, by customer-facing activity",
   description:
     "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. " +
-    "Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+    "Read from runs-service costs grouped by service, task and campaign, on the NET basis. Spend with no campaign since billing's cutover is the platform's cost: it is taken out of the categories and served as coveredByUs. The totals are billing-service's own Billed and Set aside; whatever billing bills beyond the classified spend is the account_adjustments category, so the categories sum to the totals to the cent. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
   tags: ["Stats"],
   request: { headers: identityHeaders },
   responses: {
