@@ -279,6 +279,17 @@ export async function insertPlay(input: { pipeId: string; strategyId: string; cr
   return result;
 }
 
+/**
+ * The pipe has NO default play any more (owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020: "Dotterel doit avoir aucune strategy
+ * par défaut"): every campaign naming no strategy on it runs every assigned workflow. The previous default stays
+ * catalogued as a non-default play. `changed:false` when the pipe had no default.
+ */
+export async function clearDefaultPlay(pipeId: string): Promise<{ changed: boolean; previousStrategyId: string | null }> {
+  const cleared = await db.update(plays).set({ isDefault: false }).where(sql`${plays.pipeId} = ${pipeId} AND ${plays.isDefault}`).returning();
+  invalidatePlayCatalogue();
+  return { changed: cleared.length > 0, previousStrategyId: cleared[0]?.strategyId ?? null };
+}
+
 /** The tables as rows, read now (never the 30 s shared copy): a uniqueness check reads what is stored. */
 async function loadPlayCatalogueFresh(): Promise<{ tactics: Tactic[]; strategies: Strategy[] }> {
   const [t, s] = await Promise.all([db.select().from(tactics), db.select().from(strategies)]);
