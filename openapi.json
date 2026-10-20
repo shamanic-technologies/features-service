@@ -16045,10 +16045,11 @@
           },
           "totalBilledUsd": {
             "type": "number",
-            "description": "Sum of every category's billedUsd; equals billing's Billed figure for the org."
+            "description": "billing-service's Billed for the org (credited minus actual balance), to the cent; the sum of every category's billedUsd."
           },
           "totalSetAsideUsd": {
-            "type": "number"
+            "type": "number",
+            "description": "billing-service's Set aside for the org (actual balance minus balance); the sum of every category's setAsideUsd."
           },
           "categories": {
             "type": "array",
@@ -16064,7 +16065,8 @@
                     "sending_emails",
                     "reading_replies",
                     "notifications",
-                    "other"
+                    "other",
+                    "account_adjustments"
                   ]
                 },
                 "label": {
@@ -16072,7 +16074,7 @@
                 },
                 "billedUsd": {
                   "type": "number",
-                  "description": "Net actual spend in this category (what was billed)."
+                  "description": "Net actual spend in this category billed to the org (spend the platform absorbed is not in it). For account_adjustments: what billing bills beyond the classified spend (a staff debit, a brand-transfer correction, expired subscription credit, a cost written between the reads); can be negative."
                 },
                 "setAsideUsd": {
                   "type": "number",
@@ -16087,13 +16089,46 @@
               ]
             },
             "description": "Every category, in a fixed order, zeros included."
+          },
+          "coveredByUs": {
+            "type": "object",
+            "properties": {
+              "billedUsd": {
+                "type": "number",
+                "description": "Actualized spend with no campaign the platform absorbed."
+              },
+              "setAsideUsd": {
+                "type": "number",
+                "description": "Held spend with no campaign the platform will absorb."
+              },
+              "sinceIso": {
+                "type": "string",
+                "description": "billing-service's cutover: no-campaign spend from this instant on is the platform's cost."
+              }
+            },
+            "required": [
+              "billedUsd",
+              "setAsideUsd",
+              "sinceIso"
+            ],
+            "description": "Spend with no campaign (Copilot chat, onboarding reads, card fees) the platform covers: recorded, never billed to the org, in no category and no total."
+          },
+          "totalsSource": {
+            "type": "string",
+            "enum": [
+              "billing",
+              "no_billing_account"
+            ],
+            "description": "billing = the totals are billing-service's figures; no_billing_account = billing holds no account for the org, the totals are the classified spend net of coveredByUs."
           }
         },
         "required": [
           "basis",
           "totalBilledUsd",
           "totalSetAsideUsd",
-          "categories"
+          "categories",
+          "coveredByUs",
+          "totalsSource"
         ]
       },
       "WrittenByResponse": {
@@ -39506,7 +39541,7 @@
     "/orgs/usage": {
       "get": {
         "summary": "Where an org's money went, by customer-facing activity",
-        "description": "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. Read from runs-service costs grouped by service, task and campaign, on the NET basis; totalBilledUsd equals the Billed figure billing shows. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
+        "description": "The org's whole net spend (every brand, every campaign, and the setup work outside any campaign), grouped into activities a customer recognises: setting up the brand, finding contacts, writing emails, sending emails, reading replies, notifications. Read from runs-service costs grouped by service, task and campaign, on the NET basis. Spend with no campaign since billing's cutover is the platform's cost: it is taken out of the categories and served as coveredByUs. The totals are billing-service's own Billed and Set aside; whatever billing bills beyond the classified spend is the account_adjustments category, so the categories sum to the totals to the cent. A line the classifier does not recognise lands in 'other', never dropped. Vendor and model names never appear.",
         "tags": [
           "Stats"
         ],

@@ -22,6 +22,8 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 process.env.RUNS_SERVICE_URL = "http://runs";
 process.env.RUNS_SERVICE_API_KEY = "rk";
+process.env.BILLING_SERVICE_URL = "http://billing";
+process.env.BILLING_SERVICE_API_KEY = "bk";
 
 const { servedCachedJson, campaignLiveTtlMs } = await import("../lib/view-cache.js");
 const { buildUsageBreakdown } = await import("../lib/usage-categories.js");
@@ -37,16 +39,37 @@ describe("GET /orgs/usage", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
     vi.mocked(servedCachedJson).mockClear();
-    fetchMock.mockReset().mockImplementation(async () => new Response(JSON.stringify({ groups: GROUPS }), { status: 200 }));
+    fetchMock.mockReset().mockImplementation(async (url: string) => {
+      if (url.startsWith("http://runs/internal/org-no-campaign-total")) {
+        return new Response(JSON.stringify({ net_spent_cents: "9.0000000000", net_total_expected_cents: "9.0000000000" }), { status: 200 });
+      }
+      if (url.endsWith("/balance")) {
+        return new Response(JSON.stringify({ balance_cents: "-108.3", actual_balance_cents: "-90.1" }), { status: 200 });
+      }
+      if (url.endsWith("/cash")) return new Response(JSON.stringify({ credited_cents: "0.0000000000" }), { status: 200 });
+      return new Response(JSON.stringify({ groups: GROUPS }), { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
   });
 
-  it("serves exactly the bytes res.json(buildUsageBreakdown(groups)) did", async () => {
+  it("serves the breakdown closed on billing's figures, absorbed setup spend out of billed", async () => {
     const res = await request(app).get("/orgs/usage").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("application/json; charset=utf-8");
-    expect(res.text).toBe(JSON.stringify(buildUsageBreakdown(GROUPS as never)));
-    const [url, init] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }];
+    const expected = buildUsageBreakdown(GROUPS as never, {
+      absorbed: { billedCents: "9.0000000000", setAsideCents: "0.0000000000" },
+      billing: { billedCents: "90.1", setAsideCents: "18.2" },
+    }).breakdown;
+    expect(res.text).toBe(JSON.stringify(expected));
+    expect(res.body.totalBilledUsd).toBeCloseTo(0.901, 10);
+    expect(res.body.totalSetAsideUsd).toBe(0.182);
+    expect(res.body.coveredByUs.billedUsd).toBe(0.09);
+    expect(res.body.categories.find((c: { key: string }) => c.key === "setup").billedUsd).toBe(0);
+    expect(res.body.categories.find((c: { key: string }) => c.key === "account_adjustments").billedUsd).toBe(0);
+    const calls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("http://runs/internal/org-no-campaign-total?org_id=0e9a0000-0000-4000-8000-000000000001&since=2026-10-13T00%3A00%3A00.000Z");
+    expect(calls).toContain("http://billing/internal/accounts/by-org/0e9a0000-0000-4000-8000-000000000001/cash");
+    const [url, init] = fetchMock.mock.calls.find((c) => (c[0] as string).includes("/v1/stats/costs")) as [string, { headers: Record<string, string> }];
     expect(url).toBe("http://runs/v1/stats/costs?groupBy=serviceName%2CtaskName%2CcampaignId");
     expect(init.headers).toMatchObject({ "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" });
   });
@@ -58,6 +81,26 @@ describe("GET /orgs/usage", () => {
     expect(args.scopeKey).toBe("org-usage|orgId=0e9a0000-0000-4000-8000-000000000001");
     expect(args.orgId).toBe("0e9a0000-0000-4000-8000-000000000001");
     expect(args.ttlMs).toBe(campaignLiveTtlMs());
+  });
+
+  it("an org billing holds no account for: totals are the classified spend net of absorbed", async () => {
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string) =>
+      url.startsWith("http://billing") ? new Response("nope", { status: 404 }) : base(url),
+    );
+    const res = await request(app).get("/orgs/usage").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.totalsSource).toBe("no_billing_account");
+    expect(res.body.totalBilledUsd).toBeCloseTo(0.901, 10);
+  });
+
+  it("fails loud: a billing-service failure is a 502, never a guessed bill", async () => {
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith("/cash") ? new Response("boom", { status: 502 }) : base(url),
+    );
+    const res = await request(app).get("/orgs/usage").set(AUTH);
+    expect(res.status).toBe(502);
   });
 
   it("fails loud: a runs-service failure is a 502, never a $0 bill", async () => {

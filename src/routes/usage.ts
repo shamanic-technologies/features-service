@@ -1,12 +1,15 @@
 /**
  * GET /orgs/usage — what the org (from `x-org-id`) was billed for, by customer activity. Org-wide,
  * like billing: no brand filter. The classification lives in `lib/usage-categories.ts`; this route
- * only reads runs-service and fails loud (a swallowed error would show a fake $0 bill).
+ * reads runs-service's cost groups, the no-campaign spend the platform absorbed, and billing-service's
+ * own Billed / Set aside (the totals, USAGE-MATCHES-BILLED-1021), and fails loud (a swallowed error
+ * would show a fake bill).
  */
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
-import { buildUsageBreakdown } from "../lib/usage-categories.js";
+import { buildUsageBreakdown, PLATFORM_ABSORBS_NO_CAMPAIGN_SINCE_ISO } from "../lib/usage-categories.js";
+import { fetchAbsorbedNoCampaignCents, fetchBillingBilledCents } from "../lib/usage-totals-client.js";
 import { buildScopeKey, campaignLiveTtlMs, sendSnapshotJson, servedCachedJson } from "../lib/view-cache.js";
 
 const router = Router();
@@ -32,15 +35,28 @@ router.get("/orgs/usage", apiKeyAuth, async (rawReq, res) => {
       ttlMs: campaignLiveTtlMs(),
       compute: async () => {
         const params = new URLSearchParams({ groupBy: "serviceName,taskName,campaignId" });
-        const response = await fetchWithRetry(`${url}/v1/stats/costs?${params}`, {
-          headers: { "x-api-key": apiKey, "x-org-id": req.orgId, "x-user-id": req.userId, "x-run-id": req.runId },
-        });
+        const [response, absorbed, billing] = await Promise.all([
+          fetchWithRetry(`${url}/v1/stats/costs?${params}`, {
+            headers: { "x-api-key": apiKey, "x-org-id": req.orgId, "x-user-id": req.userId, "x-run-id": req.runId },
+          }),
+          fetchAbsorbedNoCampaignCents(req.orgId, PLATFORM_ABSORBS_NO_CAMPAIGN_SINCE_ISO),
+          fetchBillingBilledCents(req.orgId),
+        ]);
         if (!response.ok) {
           throw new Error(`runs-service /v1/stats/costs failed (${response.status}): ${await response.text()}`);
         }
         const data = (await response.json()) as { groups?: unknown };
         if (!Array.isArray(data.groups)) throw new Error("runs-service /v1/stats/costs returned no groups array");
-        return buildUsageBreakdown(data.groups as Parameters<typeof buildUsageBreakdown>[0]);
+        const { breakdown, unplacedAbsorbedCents } = buildUsageBreakdown(
+          data.groups as Parameters<typeof buildUsageBreakdown>[0],
+          { absorbed, billing },
+        );
+        if (/[1-9]/.test(unplacedAbsorbedCents.billed) || /[1-9]/.test(unplacedAbsorbedCents.setAside)) {
+          console.error(
+            `[features-service] usage: org ${req.orgId} absorbed no-campaign spend exceeds its classified no-campaign spend (unplaced billed=${unplacedAbsorbedCents.billed} setAside=${unplacedAbsorbedCents.setAside} cents); it reads in account_adjustments`,
+          );
+        }
+        return breakdown;
       },
     });
     return sendSnapshotJson(res, payload);
