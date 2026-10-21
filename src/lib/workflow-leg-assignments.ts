@@ -33,6 +33,8 @@
 import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { db } from "../db/index.js";
+import type { DynastyMerges } from "./dynasty-merges.js";
+import { fetchDynastyMerges } from "./public-stats-clients.js";
 import { workflowLegAssignmentChanges, workflowLegAssignments } from "../db/schema.js";
 
 export const LEG_ASSIGNMENT_STATES = ["active", "deprecated"] as const;
@@ -149,8 +151,26 @@ export async function listLegAssignments(filter: { featureSlug?: string; legKey?
 
 /** The assignments of ONE (channel, leg), keyed by dynasty — what a leg-keyed projection reads. */
 export async function fetchLegAssignments(featureSlug: string, legKey: string): Promise<Map<string, LegAssignmentRow>> {
-  const rows = await listLegAssignments({ featureSlug, legKey });
-  return new Map(rows.map((r) => [r.workflowDynastySlug, r]));
+  const [rows, merges] = await Promise.all([listLegAssignments({ featureSlug, legKey }), fetchDynastyMerges(featureSlug)]);
+  return poolLegAssignments(rows, merges);
+}
+
+/**
+ * PURE. The leg's assignments as STATS read them (`lib/dynasty-merges.ts`): an absorbed dynasty is no row of its own, it
+ * counts inside its survivor. The survivor's own row stands; a survivor with no row on the leg takes its absorbed
+ * members' (active first), so a merge never makes a pipe lose its workflow. No merge = byte-identical.
+ */
+export function poolLegAssignments(rows: readonly LegAssignmentRow[], merges: DynastyMerges): Map<string, LegAssignmentRow> {
+  const out = new Map<string, LegAssignmentRow>();
+  for (const r of rows) if (!merges.has(r.workflowDynastySlug)) out.set(r.workflowDynastySlug, r);
+  const borrowed = rows
+    .filter((r) => merges.has(r.workflowDynastySlug))
+    .sort((a, b) => (a.state === "active" ? 0 : 1) - (b.state === "active" ? 0 : 1) || a.workflowDynastySlug.localeCompare(b.workflowDynastySlug));
+  for (const r of borrowed) {
+    const survivor = merges.get(r.workflowDynastySlug)!;
+    if (!out.has(survivor)) out.set(survivor, { ...r, workflowDynastySlug: survivor });
+  }
+  return out;
 }
 
 /** The history of one (channel, leg, dynasty), oldest first. */

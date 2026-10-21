@@ -24,7 +24,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { pipeLegKeyOf, servedLegKeyOf } from "./funnel-legs.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
-import { executableDynasties, fetchPublicWorkflows } from "./public-stats-clients.js";
+import { executableDynasties, fetchStatedPublicWorkflows } from "./public-stats-clients.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 import { listLegAssignments, setLegAssignment, type LegAssignmentRow } from "./workflow-leg-assignments.js";
 
@@ -218,7 +218,7 @@ export async function resolveOneLegPerWorkflow(opts: { apply: boolean; decidedBy
   };
   const features = [...new Set(active.map((r) => r.featureSlug))];
   const [workflows, defsByFeature, livePipes] = await Promise.all([
-    fetchPublicWorkflows(features.join(","), "all", true),
+    fetchStatedPublicWorkflows(features.join(","), "all", true),
     Promise.all([...new Set(multi.map((r) => r.featureSlug))].map(async (f) => [f, await fetchWorkflowDefinitions(f)] as const)),
     fetchLivePipes(),
   ]);

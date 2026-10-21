@@ -29,7 +29,9 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { isVendorPricing, type Pricing } from "./pricing.js";
 import { campaignScopeIds, type CampaignFilter } from "./campaign-scope.js";
 import { pipeRunsScope } from "./pipe-spend-attribution.js";
-import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { featureSlugsParam, runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
+import { sumOverMembers } from "./dynasty-merges.js";
+import { fetchDynastyMerges } from "./public-stats-clients.js";
 
 /**
  * How many `campaignIds` CHUNKS of a campaign IDENTITY are read at once. Since runs-service v0.47.7 a
@@ -186,6 +188,25 @@ export async function fetchBrandCommittedSpendByDay(
   // Only the runs started at or after this instant — the maturity cutoff, when the caller wants the
   // maturing campaigns' own recent spend (`lib/roi-maturity.ts`). Omitted → the whole history.
   startedAfter?: string,
+): Promise<Map<string, number>> {
+  if (!workflowDynastySlug) return fetchBrandCommittedSpendByDayFor(brandId, campaignScope, featureScope, headers, pricing, undefined, startedAfter);
+  // runs-service resolves the dynasty itself and cannot see a merge (lib/dynasty-merges.ts): one read per member, summed.
+  return sumOverMembers(
+    workflowDynastySlug,
+    await fetchDynastyMerges(featureSlugsParam(featureScope)),
+    (member) => fetchBrandCommittedSpendByDayFor(brandId, campaignScope, featureScope, headers, pricing, member, startedAfter),
+    (a, b) => a + b,
+  );
+}
+
+async function fetchBrandCommittedSpendByDayFor(
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureScope: FeatureScope,
+  headers: { orgId: string },
+  pricing: Pricing,
+  workflowDynastySlug: string | undefined,
+  startedAfter: string | undefined,
 ): Promise<Map<string, number>> {
   // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
   const pipe = pipeRunsScope(campaignScope);

@@ -25,7 +25,9 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignScopeIds } from "./campaign-scope.js";
 import { pipeRunsScope } from "./pipe-spend-attribution.js";
-import { runsFeatureSlugsParam } from "./feature-scope.js";
+import { featureSlugsParam, runsFeatureSlugsParam } from "./feature-scope.js";
+import { sumOverMembers } from "./dynasty-merges.js";
+import { fetchDynastyMerges } from "./public-stats-clients.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST, SPEND_BY_DAY_MEMBER_CONCURRENCY } from "./brand-spend-by-day-client.js";
 import type { DatedSpendReader, VendorSpendDay } from "./actual-cost-history.js";
 
@@ -101,6 +103,25 @@ function merge(prev: VendorSpendDay | undefined, next: VendorSpendDay): VendorSp
 export async function fetchBrandVendorSpendByDay(
   ...[brandId, campaignScope, featureScope, headers, , workflowDynastySlug, startedAfter]: Parameters<DatedSpendReader>
 ): Promise<Map<string, VendorSpendDay>> {
+  if (!workflowDynastySlug) return fetchBrandVendorSpendByDayFor(brandId, campaignScope, featureScope, headers.orgId, undefined, startedAfter);
+  // runs-service resolves the dynasty itself and cannot see a merge (lib/dynasty-merges.ts): one read per member, summed.
+  return sumOverMembers(
+    workflowDynastySlug,
+    await fetchDynastyMerges(featureSlugsParam(featureScope)),
+    (member) => fetchBrandVendorSpendByDayFor(brandId, campaignScope, featureScope, headers.orgId, member, startedAfter),
+    merge,
+  );
+}
+
+async function fetchBrandVendorSpendByDayFor(
+  brandId: string,
+  campaignScope: Parameters<DatedSpendReader>[1],
+  featureScope: Parameters<DatedSpendReader>[2],
+  orgId: string,
+  workflowDynastySlug: string | undefined,
+  startedAfter: string | undefined,
+): Promise<Map<string, VendorSpendDay>> {
+  const headers = { orgId };
   // A pipe of a sales funnel campaign reads its OWN spend (lib/pipe-spend-attribution.ts); else unchanged.
   const pipe = pipeRunsScope(campaignScope);
   const members = campaignScopeIds(pipe.campaignScope);
@@ -133,13 +154,16 @@ export async function fetchDynastyVendorSpendByDay(
   // LEG scope, as on the billed twin: absent → the whole fleet (byte-identical), empty → nothing spent.
   campaignIds?: string[],
 ): Promise<Map<string, VendorSpendDay>> {
-  if (campaignIds === undefined) return fetchDynastyVendorChunk(featureSlug, workflowDynastySlug, undefined);
-  const byDay = new Map<string, VendorSpendDay>();
-  for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-    const part = await fetchDynastyVendorChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
-    for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
-  }
-  return byDay;
+  // runs-service resolves the dynasty itself and cannot see a merge (lib/dynasty-merges.ts): one read per member, summed.
+  return sumOverMembers(workflowDynastySlug, await fetchDynastyMerges(featureSlug), async (member) => {
+    if (campaignIds === undefined) return fetchDynastyVendorChunk(featureSlug, member, undefined);
+    const byDay = new Map<string, VendorSpendDay>();
+    for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+      const part = await fetchDynastyVendorChunk(featureSlug, member, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
+      for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
+    }
+    return byDay;
+  }, merge);
 }
 
 async function fetchDynastyVendorChunk(

@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+// Merged dynasties (lib/dynasty-merges.ts) are read off the workflow catalogue; this suite mocks one producer only.
+vi.mock("./public-stats-clients.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchDynastyMerges: vi.fn(async () => new Map()),
+}));
 import { fetchBrandVendorSpendByDay } from "./vendor-spend-by-day-client.js";
 
 process.env.RUNS_SERVICE_URL = "http://runs:3000";
