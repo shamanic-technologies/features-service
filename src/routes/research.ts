@@ -306,7 +306,7 @@ async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] 
       headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
     });
     if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown; statusInDynasty?: unknown }> }> };
+    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown; statusInDynasty?: unknown; copiedFrom?: unknown }> }> };
     if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
     return body.dynasties.map((d) => {
       if (typeof d.slug !== "string" || typeof d.name !== "string") throw new Error("content-generation-service template-dynasties: a dynasty without slug or name");
@@ -317,12 +317,13 @@ async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] 
           // A version's status IN this dynasty (head = its own, older = deprecated); `status` is the template's own,
           // active when it heads a dynasty on another pipe. Before content-generation served it: the template's own.
           const st = v.statusInDynasty !== undefined ? v.statusInDynasty : v.status;
-          return [{ type: v.type, status: st === "active" || st === "deprecated" ? (st as TemplateStatus) : null }];
+          return [{ type: v.type, status: st === "active" || st === "deprecated" ? (st as TemplateStatus) : null, copiedFrom: typeof v.copiedFrom === "string" && v.copiedFrom ? v.copiedFrom : null }];
         });
       const versions = ordered.map((v) => v.type);
       return {
         ...dynastyStatusOf(d.status, ordered),
         versionStatuses: Object.fromEntries(ordered.map((v) => [v.type, v.status])),
+        copiedFrom: Object.fromEntries(ordered.flatMap((v) => (v.copiedFrom ? [[v.type, v.copiedFrom]] : []))),
         slug: d.slug,
         name: d.name,
         description: typeof d.description === "string" ? d.description : "",
