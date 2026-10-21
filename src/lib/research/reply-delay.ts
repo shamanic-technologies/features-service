@@ -91,6 +91,21 @@ export function assertReplyDelayCoherent(m: ReplyDelayDistribution): void {
   if (p.p50 !== m.medianMs) throw new Error(`reply-delay: p50 ${p.p50} != median ${m.medianMs}`);
 }
 
+/**
+ * PURE. The share of the sample in its first 24 hours as a claim that holds: the Wilson 95% range of k of n, and the
+ * low end floored to a multiple of 5 ("at least 30%"). The headline states the floor, never the point estimate.
+ */
+export function firstDayClaim(k: number, total: number): { lowPct: number; highPct: number; floorPct: number } {
+  const z = 1.96;
+  const phat = k / total;
+  const denom = 1 + (z * z) / total;
+  const centre = (phat + (z * z) / (2 * total)) / denom;
+  const half = (z * Math.sqrt((phat * (1 - phat)) / total + (z * z) / (4 * total * total))) / denom;
+  const low = Math.max(0, centre - half);
+  const high = Math.min(1, centre + half);
+  return { lowPct: Math.round(low * 100), highPct: Math.round(high * 100), floorPct: Math.floor((low * 100) / 5) * 5 };
+}
+
 /** The outcome section the study sits in: every pipe whose leg ends on a positive reply. */
 export const POSITIVE_REPLY_OUTCOME: ResearchOutcomeEntry = {
   id: POSITIVE_REPLY_OUTCOME_ID,
@@ -193,8 +208,12 @@ export function replyDelayStudy(read: ReplyDelayRead | null, minSample: number):
   // The shape, read off the served numbers only.
   const conclusion: string[] = [];
   const firstDay = m.distribution.filter((b) => b.toMs !== null && b.toMs <= DAY).at(-1);
-  if (firstDay) {
-    conclusion.push(`${shareText(firstDay.cumulativeCount, N)} of first positive replies arrive within the first day after the first message (${n(firstDay.cumulativeCount)} of ${n(N)}).`);
+  const sameDay = firstDay ? firstDayClaim(firstDay.cumulativeCount, N) : null;
+  if (firstDay && sameDay) {
+    conclusion.push(
+      `${shareText(firstDay.cumulativeCount, N)} of first positive replies arrive within 24 hours of the first message (${n(firstDay.cumulativeCount)} of ${n(N)}). ` +
+        `With ${n(N)} replies the true share sits between ${sameDay.lowPct}% and ${sameDay.highPct}% (95% range), so at least ${sameDay.floorPct}% holds.`,
+    );
   }
   conclusion.push(`Half arrive within ${delayText(median)}, 3 in 4 within ${delayText(p.p75)}, and 1 in 10 takes longer than ${delayText(p.p90)}.`);
   const later = m.distribution.filter((b) => b.fromMs >= DAY && b.count > 0);
@@ -211,13 +230,23 @@ export function replyDelayStudy(read: ReplyDelayRead | null, minSample: number):
     status: learning ? "not_enough_data" : "measured",
     headline: learning
       ? `Learning: ${repliesText(N)} so far, the figure needs ${n(minSample)}.`
-      : headlineFor(`Half of first positive replies arrive within ${delayText(median)} of the first message.`, "signal"),
+      : sameDay && sameDay.floorPct > 0
+        ? `At least ${sameDay.floorPct}% of first positive replies arrive within 24 hours of the first message.`
+        : headlineFor(`Half of first positive replies arrive within ${delayText(median)} of the first message.`, "signal"),
     winner: null,
     crowned: false,
     verdict: learning
       ? { kind: "noise", reason: `Learning: ${repliesText(N)} of the ${n(minSample)} a typical delay needs.` }
-      : { kind: "signal", reason: `A measurement on ${repliesText(N)}, not a comparison: nothing to beat.` },
-    result: { display: delayText(median), unit: "median time to a first positive reply", sample },
+      : sameDay && sameDay.floorPct > 0
+        ? {
+            kind: "conclusion",
+            reason: `${shareText(firstDay!.cumulativeCount, N)} within 24 hours on ${repliesText(N)}; the low end of the 95% range is ${sameDay.lowPct}%, so "at least ${sameDay.floorPct}%" holds. The exact share and the median stay signals.`,
+          }
+        : { kind: "signal", reason: `A measurement on ${repliesText(N)}, not a comparison: nothing to beat.` },
+    result:
+      sameDay && firstDay && !learning
+        ? { display: shareText(firstDay.cumulativeCount, N), unit: "of first positive replies within 24 hours of the first message", sample }
+        : { display: delayText(median), unit: "median time to a first positive reply", sample },
     charts,
     delay: { sampleSize: N, stats },
     conclusion,
