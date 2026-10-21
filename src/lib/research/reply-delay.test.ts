@@ -73,6 +73,8 @@ describe("replyDelayStudy (TTFPR-RESEARCH-STUDY-1021)", () => {
     expect(s.status).toBe("measured");
     expect(s.outcome).toBe("positive-reply");
     expect(s.pipe).toBeNull();
+    // today's dashboard crashes on a topic it has no look for: `delay` only once it reads it
+    expect(s.topic).toBe("conversion");
     expect(s.headline).toBe("Half of first positive replies arrive within 3.5 days of the first message. A signal to confirm, not yet a conclusion.");
     expect(s.result).toEqual({ display: "3.5 days", unit: "median time to a first positive reply", sample: "20 positive replies · 3 campaigns · every client, since the first message" });
     const [chart] = s.charts;
