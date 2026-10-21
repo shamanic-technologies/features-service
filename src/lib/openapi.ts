@@ -511,7 +511,7 @@ const topPersonSchema = z.object({
 });
 
 const revenueOrganizationSchema = z.object({
-  organizationKey: z.string().describe("The row's identity: `org:<orgId>`, or `lead:<leadId>` for a lead with no company (a row of its own). Joins GET /offers/{offerId}/deals-value?columns=company_lifecycle `organizations[]` (each organisation's lifecycle rung)."),
+  organizationKey: z.string().describe("The row's identity: `org:<orgId>`, or `lead:<leadId>` for a lead with no company (a row of its own). Joins GET /offers/{offerId}/deals-value?columns=company_lifecycle `organizations[]` (each organisation's lifecycle rung). On GET /offers/{offerId}/revenue the list holds EVERY organisation that read places on a rung: one the engine would not list (worth $0 here, e.g. a company-less signup) is a row at $0 with no tags, after the valued rows."),
   orgId: z.string().nullable(),
   orgName: z.string().nullable(),
   orgLogoUrl: z.string().nullable(),

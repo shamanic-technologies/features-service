@@ -242,6 +242,47 @@ export interface OrganizationRow {
 export const organizationKeyOf = (p: { orgId: string | null; leadId: string }): string =>
   p.orgId != null ? `org:${p.orgId}` : `lead:${p.leadId}`;
 
+/**
+ * THE COMPANIES PAGE LISTS EVERY ORGANISATION ON A LIFECYCLE RUNG (owner 2026-10-21, DEALS-LIFECYCLE-1021): the
+ * engine lists an organisation worth something, or a company we reached; a company-less person who reached a rung
+ * (signed up, paid) while worth $0 to this read (an outcome no priced cause covers, or never emailed) was absent,
+ * so the page's tab said 69 signups and listed 1. Appends one $0 row per `listed` key the engine left out, built
+ * from the same people (most valuable member = first by lead id), after every listed row; the headline, the time
+ * series and every total are untouched (a $0 row adds nothing). Mutates `organizations` in place.
+ */
+export function appendListedOrganizations(
+  organizations: OrganizationRow[],
+  persons: readonly EnginePerson[],
+  listed: ReadonlySet<string>,
+): number {
+  const present = new Set(organizations.map((o) => o.organizationKey));
+  const byKey = new Map<string, EnginePerson[]>();
+  for (const p of persons) {
+    const key = organizationKeyOf(p);
+    if (!listed.has(key) || present.has(key)) continue;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(p);
+    else byKey.set(key, [p]);
+  }
+  const keys = [...byKey.keys()].sort();
+  for (const key of keys) {
+    const members = [...byKey.get(key)!].sort((a, b) => (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0));
+    const top = members[0];
+    organizations.push({
+      organizationKey: key,
+      orgId: top.orgId,
+      orgName: top.orgName,
+      orgLogoUrl: top.orgLogoUrl,
+      orgDomain: members.find((m) => m.orgDomain)?.orgDomain ?? null,
+      topPerson: { firstName: top.firstName, lastName: top.lastName, photoUrl: top.photoUrl },
+      tags: [],
+      expectedRevenueUsd: 0,
+      mostAdvancedDate: null,
+    });
+  }
+  return keys.length;
+}
+
 export interface LeadRow {
   leadId: string;
   firstName: string | null;
