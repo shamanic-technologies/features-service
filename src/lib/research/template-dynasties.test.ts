@@ -212,12 +212,13 @@ describe("template dynasties on the Research pages", () => {
 
   it("a template that wrote for one workflow alone reads that workflow's return exactly; every version too", () => {
     const c = catalogWith(new Map([["azalea", 3.25]]), "azalea");
-    expect(c.workflows[0]!.roi).toMatchObject({ value: 3.25, display: "3.25x", basis: "measured", source: "workflow" });
+    expect(c.workflows[0]!.roiDetail).toMatchObject({ value: 3.25, display: "3.25x", basis: "measured", source: "workflow" });
     const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
-    expect(page.roi).toMatchObject({ value: 3.25, basis: "measured", source: "workflows_written_for", spendCovered: 1 });
-    expect(page.versions.find((v) => v.key === "blind-discovery-email-v40")!.roi).toMatchObject({ value: 3.25, basis: "measured" });
+    expect(page.roiDetail).toMatchObject({ value: 3.25, basis: "measured", source: "workflows_written_for", spendCovered: 1 });
+    expect([page.roi, c.workflows[0]!.roi]).toEqual(["3.25x", "3.25x"]);
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v40")!.roiDetail).toMatchObject({ value: 3.25, basis: "measured" });
     // v47 never wrote: its dynasty's return, marked expected.
-    expect(page.versions.find((v) => v.key === "blind-discovery-email-v47")!.roi).toMatchObject({ value: 3.25, basis: "expected", source: "dynasty" });
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v47")!.roiDetail).toMatchObject({ value: 3.25, basis: "expected", source: "dynasty" });
     expect([page.status, page.statusSource, page.statusUnavailableReason]).toEqual(["active", "all_versions_deprecated", null]);
     expect(page.versions.map((v) => v.status)).toEqual(["deprecated", "deprecated", "active"]);
   });
@@ -231,18 +232,18 @@ describe("template dynasties on the Research pages", () => {
     const ps = [pb("azalea-v1", "blind-discovery-email-v40", 200, 4), pb("azalea-v1", "cold-email-v35", 200, 4), pb("lily-v1", "blind-discovery-email-v40", 100, 2)];
     const c = catalogWith(new Map([["azalea", 2], ["lily", 5]]), "azalea", cs, ps);
     const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
-    expect(page.roi.value).toBeCloseTo((2 * 200 + 5 * 100) / 300, 9);
+    expect(page.roiDetail.value).toBeCloseTo((2 * 200 + 5 * 100) / 300, 9);
   });
 
   it("never blank: unmeasured templates read the workflows writing with them now, else the pipe's money workflow, marked expected", () => {
     const c = catalogWith(new Map([["azalea", 4]]), "azalea");
     // Pain Question never wrote; azalea writes with its head now.
-    expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roi).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
+    expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
     const none = catalogWith(new Map([["azalea", null], ["rose", 1.5]]), "rose");
-    expect(none.templates.find((t) => t.key === "cold-reply-free-offer-blind")!.roi).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
-    expect(none.workflows[0]!.roi).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
+    expect(none.templates.find((t) => t.key === "cold-reply-free-offer-blind")!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
+    expect(none.workflows[0]!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
     const empty = catalogWith(new Map([["azalea", null]]), null);
-    expect(empty.templates.find((t) => t.key === "cold-email-v35")!.roi).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
+    expect(empty.templates.find((t) => t.key === "cold-email-v35")!.roiDetail).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
     expect(empty.templates.find((t) => t.key === "cold-email-v35")!.statusUnavailableReason).toBe("no_dynasty");
   });
 });
