@@ -740,3 +740,25 @@ export const generationSequenceCopy = pgTable(
     index("idx_generation_sequence_copy_org_lead").on(t.orgId, t.leadId),
   ],
 );
+
+/**
+ * RESEARCH-NICHE-1021: how specific each client's B2B niche is, per (org, brand, offer) (`offerId` '' = a campaign stating
+ * no offer). Judged once by Jev on what the client sells and who its audiences target (`judgedState`), re-judged only
+ * when that text changes (`stateHash`). Read by the Research niche study (`lib/research/niche-grades.ts`).
+ */
+export const nicheGrades = pgTable(
+  "niche_grades",
+  {
+    orgId: text("org_id").notNull(),
+    brandId: text("brand_id").notNull(),
+    offerId: text("offer_id").notNull().default(""),
+    grade: text("grade").notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    probabilities: jsonb("probabilities").notNull(),
+    model: text("model").notNull(),
+    judgedState: jsonb("judged_state").notNull(),
+    stateHash: text("state_hash").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "niche_grades_pk", columns: [t.orgId, t.brandId, t.offerId] })],
+);

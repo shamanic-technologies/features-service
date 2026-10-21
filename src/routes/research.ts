@@ -61,6 +61,8 @@ import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
 import { fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
 import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
+import { readNicheGrades } from "../lib/research/niche-grades.js";
+import { nicheStudies } from "../lib/research/niche.js";
 
 const router = Router();
 
@@ -182,7 +184,7 @@ interface ColdEmailPipeRead {
   cutoffIso: string | null;
   persons: FleetPersonBucket[];
   split: { screened: boolean; signal: "positiveReply" | "clicked" | "other"; cutoffDay: string | null };
-  campaigns: Array<{ campaignId: string; orgId: string }>;
+  campaigns: Array<{ campaignId: string; orgId: string; brandId: string | null; offerId: string | null }>;
   /** Dynasty → workflow-service's name. */
   names: Map<string, string>;
 }
@@ -239,7 +241,7 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<C
     campaignIds,
     cutoffIso: ev.cutoffIso,
     persons,
-    campaigns: ev.campaigns.map((c) => ({ campaignId: c.campaignId, orgId: c.orgId })),
+    campaigns: ev.campaigns.map((c) => ({ campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId ?? null })),
     names: new Map(ev.workflows.filter((w) => w.workflowDynastyName).map((w) => [w.workflowDynastySlug, w.workflowDynastyName])),
     split: { screened, signal: rule.outcomeSignal === "positiveReply" ? "positiveReply" : rule.outcomeSignal === "clicked" ? "clicked" : "other", cutoffDay: ev.cutoffIso ? ev.cutoffIso.slice(0, 10) : null },
   };
@@ -539,7 +541,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   // ONE read of lead-service's meeting attribution, shared by the meeting-cost and country studies.
   const attribution = readMeetingAttribution();
   attribution.catch(() => undefined);
-  const [sends, jev, replies, gens, reportingBrands, volume, replyDelay, countries] = await Promise.all([
+  const [sends, jev, replies, gens, reportingBrands, volume, replyDelay, countries, niche] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
     readReplyAuthors(),
@@ -558,7 +560,21 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       return null;
     }),
     countryStudiesOf(reply, visit, ruleNote(reply.input, visit.input), readBookedAfterReply(attribution)),
+    // Each client's niche grade (RESEARCH-NICHE-1021): judged once by Jev, stored; unreadable = the studies say so.
+    readNicheGrades([...reply.campaigns, ...visit.campaigns]).catch((err): null => {
+      console.error("[features-service] research: the clients' niche grades could not be read this time (the studies say so):", err);
+      return null;
+    }),
   ]);
+  const nicheNote = ruleNote(reply.input, visit.input);
+  const niche_ = nicheStudies({
+    reply: { terms: termsOf(POSITIVE_REPLY_PIPE, reply.input, nicheNote), legKey: reply.input.legKey, cells: reply.input.cells, persons: reply.persons, split: reply.split },
+    visit: { terms: termsOf(WEBSITE_VISIT_PIPE, visit.input, nicheNote), legKey: visit.input.legKey, cells: visit.input.cells, persons: visit.persons, split: visit.split },
+    grades: niche,
+    ...(basis === "user"
+      ? { meetings: { brands: reportingBrands, outcomesRequired: legMaturity("start_to_meeting_booked").outcomesRequired, note: nicheNote } }
+      : {}),
+  });
   const workflowsWithPeople = new Set(
     [reply, visit].flatMap((r) => workflowBuckets(r.input).filter((b) => b.figures.contacted > 0).map((b) => b.key)),
   ).size;
@@ -570,6 +586,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     sends,
     generationStudies: gens.studies,
     countryStudies: countries,
+    nicheStudies: niche_,
     volume: volume ? { ...volume, workflows: workflowsWithPeople, noRunStart } : null,
     reportingBrands,
     meetingOutcomeRequired: legMaturity("start_to_meeting_booked").outcomesRequired,

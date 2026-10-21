@@ -79,6 +79,8 @@ export interface ResearchInput {
   generationStudies: ResearchStudy[];
   /** Per prospect country (RESEARCH-COUNTRY-1021, `lib/research/countries.ts`); absent = not built (tests). */
   countryStudies?: ResearchStudy[];
+  /** "Do clients with a very specific B2B niche convert better?" (RESEARCH-NICHE-1021, `lib/research/niche.ts`); absent = not asked. */
+  nicheStudies?: ResearchStudy[];
   /** The page-wide counts (`routes/research-sends.ts` `readVolume` + the person cell's undated people); null = unreadable. */
   volume: { emails: number; orgs: number; workflows: number; linkedEmails: number; byMonth: Array<{ month: string; emails: number }>; excludedEmails: number; noRunStart: number } | null;
   /** The typed judgment section's inputs (each part null when its producer could not be read). */
@@ -295,6 +297,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   }
   studies.push(...input.generationStudies);
   studies.push(...(input.countryStudies ?? []));
+  studies.push(...(input.nicheStudies ?? []));
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
   // a one-off hand-checked benchmark, committed (IMAGE-JUDGE-STUDY-1021): the same on both bases, it prices nothing
