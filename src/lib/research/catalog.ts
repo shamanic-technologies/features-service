@@ -8,11 +8,14 @@ import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
 import { modelRowAliases, type DynastyWriter, type ModelAliasReason, type ModelIdRow, type WriterReason } from "./writers.js";
+import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex, type TemplateDynastyReason } from "./template-dynasties.js";
 
 export interface CatalogRef {
   key: string;
   label: string;
   linked: boolean;
+  /** On a template ref that names a dynasty: the version actually meant (absent when the ref names the page itself). */
+  version?: { key: string; label: string } | null;
 }
 
 export interface CatalogFigures {
@@ -73,12 +76,45 @@ export interface CatalogWorkflow extends CatalogFigures {
   runs: Array<{ when: string; version: string; status: string; duration: string | null; cost: string | null }>;
 }
 
-export interface CatalogTemplate extends CatalogFigures {
+/** A template page's dynasty, as content-generation-service states it (TPL-DYNASTY-1021-FS2). */
+export interface CatalogTemplateDynasty {
+  slug: string;
+  name: string;
+  /** The customer-facing one-sentence description. */
+  description: string;
+  /** Internal signature (staff). */
+  signature: string | null;
+  /** `blind` (the brand stays private) or `named`. */
+  identity: string;
+  /** The version workflows write with now. */
+  head: { key: string; label: string } | null;
+}
+
+/** One version of a dynasty, its share of the dynasty's figures read on the dynasty's basis (the versions add up to it). */
+export interface CatalogTemplateVersion extends CatalogFigures {
   key: string;
   label: string;
+  head: boolean;
   hasText: boolean;
+}
+
+/** Why a template page is a version on its own. */
+export type CatalogTemplateStandaloneReason = "no_dynasty_on_pipe" | TemplateDynastyReason;
+
+export interface CatalogTemplate extends CatalogFigures {
+  /** The dynasty's slug; a version on its own keeps its template id. */
+  key: string;
+  /** The dynasty's name; a version on its own reads its version label. */
+  label: string;
+  /** The text shown: the head's on a dynasty (`/internal/research/templates` serves it under this key). */
+  hasText: boolean;
+  dynasty: CatalogTemplateDynasty | null;
+  /** Null on a dynasty; why this page is one version on its own otherwise. */
+  standaloneReason: CatalogTemplateStandaloneReason | null;
+  /** Every version of the dynasty, oldest first (empty on a version on its own). */
+  versions: CatalogTemplateVersion[];
   workflows: Array<{ key: string; label: string }>;
-  runs: Array<{ when: string; model: CatalogRef | null; workflow: { key: string; label: string } | null; version: string | null; tokens: string | null }>;
+  runs: Array<{ when: string; model: CatalogRef | null; workflow: { key: string; label: string } | null; version: string | null; templateVersion: string | null; tokens: string | null }>;
 }
 
 export interface CatalogModel extends CatalogFigures {
@@ -175,6 +211,10 @@ export interface PipeCatalogInput {
   /** Version slug → its dynasty. */
   dynastyOf: (slug: string) => string;
   workflowRuns: readonly WorkflowRun[];
+  /** The pipe's template dynasties: `templates` are keyed on them (generationBuckets). Absent = every version on its own. */
+  templateDynasties?: TemplateDynastyIndex;
+  /** Per template version, its share of its bar on the bar's basis (generationBuckets `tplVersions`). */
+  templateVersions?: readonly ResearchBucket[];
   generationRuns: readonly GenerationRun[];
   templateTexts: ReadonlySet<string>;
   /**
@@ -226,9 +266,13 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     if (!main.template && last.template) nowTemplates.add(last.template);
     if (!main.model && last.model) nowModels.set(modelKey(last.model.label), last.model.label);
   }
+  const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
+  // Every dynasty of the pipe has its page, empty until one of its versions writes.
+  for (const d of dyn.dynasties) nowTemplates.add(d.slug);
   const tplHave = new Set(p.templates.map((r) => r.key));
   const mdHave = new Set(p.models.map((r) => r.key));
-  const allTemplates = [...p.templates, ...[...nowTemplates].filter((t) => !tplHave.has(t)).map((t) => emptyBucket(t, templateLabel(t)))];
+  const nowTemplateKeys = new Set([...nowTemplates].map((t) => dyn.keyOf(t)));
+  const allTemplates = [...p.templates, ...[...nowTemplateKeys].filter((t) => !tplHave.has(t)).map((t) => emptyBucket(t, dyn.labelOf(t)))];
   const allModels = [...p.models, ...[...nowModels].filter(([k]) => !mdHave.has(k)).map(([k, label]) => emptyBucket(k, label))];
   const wfRows = catalogOrder(allWorkflows);
   const tplRows = catalogOrder(allTemplates);
@@ -244,7 +288,13 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     const key = modelKey(label);
     return { key, label, linked: mdKeys.has(key) };
   };
-  const tplRef = (id: string | null): CatalogRef | null => (id ? { key: id, label: templateLabel(id), linked: tplKeys.has(id) } : null);
+  const tplRef = (id: string | null): CatalogRef | null => {
+    if (!id) return null;
+    const key = dyn.keyOf(id);
+    const ref: CatalogRef = { key, label: dyn.labelOf(key), linked: tplKeys.has(key) };
+    return id === key ? ref : { ...ref, version: { key: id, label: templateLabel(id) } };
+  };
+  const versionBars = new Map((p.templateVersions ?? []).map((v) => [v.key, v]));
   const resolvedModelRef = (m: { label: string } | null): CatalogRef | null => (m ? { key: modelKey(m.label), label: m.label, linked: mdKeys.has(modelKey(m.label)) } : null);
   const wfRef = (slug: string | null) => {
     if (!slug) return null;
@@ -300,17 +350,40 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
         .map((x) => ({ when: whenText(x.startedAt), version: versionText(x.workflowSlug), status: x.status, duration: durationText(x.startedAt, x.completedAt), cost: x.costUsd && x.costUsd > 0 ? usd(x.costUsd) : null })),
     };
   });
-  const templates: CatalogTemplate[] = tplRows.map((r, i) => ({
+  const templates: CatalogTemplate[] = tplRows.map((r, i) => {
+    const d = dyn.dynastyOf(r.key);
+    return {
     key: r.key,
     label: r.label,
-    hasText: p.templateTexts.has(r.key),
+    hasText: p.templateTexts.has(d?.head ?? r.key),
+    dynasty: d
+      ? { slug: d.slug, name: d.name, description: d.description, signature: d.signature, identity: d.identity, head: d.head ? { key: d.head, label: templateLabel(d.head) } : null }
+      : null,
+    standaloneReason: d ? null : (dyn.unavailableReason ?? "no_dynasty_on_pipe"),
+    versions: d
+      ? d.versions.map((v) => ({
+          key: v,
+          label: templateLabel(v),
+          head: v === d.head,
+          hasText: p.templateTexts.has(v),
+          ...figures(p.terms, versionBars.get(v) ?? emptyBucket(v, templateLabel(v)), null),
+        }))
+      : [],
     ...figures(p.terms, r, rankOf(r, i)),
     workflows: workflows.filter((w) => w.template?.key === r.key || w.writesWithNow?.template?.key === r.key || w.wroteWith?.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
-      .filter((x) => x.promptType === r.key)
+      .filter((x) => x.promptType !== null && dyn.keyOf(x.promptType) === r.key)
       .slice(0, RUNS_SHOWN)
-      .map((x) => ({ when: whenText(x.createdAt), model: modelRef(x.model), workflow: wfRef(x.workflowSlug), version: x.workflowSlug ? versionText(x.workflowSlug) : null, tokens: null })),
-  }));
+      .map((x) => ({
+        when: whenText(x.createdAt),
+        model: modelRef(x.model),
+        workflow: wfRef(x.workflowSlug),
+        version: x.workflowSlug ? versionText(x.workflowSlug) : null,
+        templateVersion: x.promptType,
+        tokens: null,
+      })),
+    };
+  });
   const models: CatalogModel[] = mdRows.map((r, i) => ({
     key: r.key,
     label: r.label,
