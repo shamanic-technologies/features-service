@@ -67062,11 +67062,12 @@
                                   "enum": [
                                     "workflow",
                                     "own_outcomes",
+                                    "pipe_templates",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
@@ -67910,11 +67911,12 @@
                                   "enum": [
                                     "workflow",
                                     "own_outcomes",
+                                    "pipe_templates",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
@@ -67999,11 +68001,12 @@
                                         "enum": [
                                           "workflow",
                                           "own_outcomes",
+                                          "pipe_templates",
                                           "writes_with_now",
                                           "dynasty",
                                           "pipe_best_workflow"
                                         ],
-                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                       },
                                       "spendCovered": {
                                         "type": "number",
