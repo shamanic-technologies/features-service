@@ -381,7 +381,8 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     if (!id) return null;
     const key = dyn.keyOf(id);
     const ref: CatalogRef = { key, label: dyn.labelOf(key), linked: tplKeys.has(key) };
-    return id === key ? ref : { ...ref, version: { key: id, label: templateLabel(id) } };
+    const v = dyn.versionOf(id);
+    return v === key ? ref : { ...ref, version: { key: v, label: templateLabel(v) } };
   };
   const versionBars = new Map((p.templateVersions ?? []).map((v) => [v.key, v]));
   const resolvedModelRef = (m: { label: string } | null): CatalogRef | null => (m ? { key: modelKey(m.label), label: m.label, linked: mdKeys.has(modelKey(m.label)) } : null);
@@ -495,7 +496,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
         model: modelRef(x.model),
         workflow: wfRef(x.workflowSlug),
         version: x.workflowSlug ? versionText(x.workflowSlug) : null,
-        templateVersion: x.promptType,
+        templateVersion: x.promptType && dyn.versionOf(x.promptType),
         tokens: null,
       })),
     };

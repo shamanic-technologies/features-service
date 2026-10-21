@@ -200,7 +200,7 @@ export function generationBuckets(input: GenerationsInput) {
   const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
   const tpl = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.keyOf(b.generation.promptType) : null), dyn.labelOf);
   const basisOfBar = new Map(tpl.rows.map((r) => [r.key, r.basis]));
-  const versions = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel, (v) => basisOfBar.get(dyn.keyOf(v)));
+  const versions = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.versionOf(b.generation.promptType) : null), templateLabel, (v) => basisOfBar.get(dyn.keyOf(v)));
   return {
     llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut },
     tpl,
