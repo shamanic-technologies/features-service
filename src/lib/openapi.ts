@@ -8388,7 +8388,7 @@ const researchCatalogPipeSchema = z.object({
     label: z.string(),
     name: z.string().nullable(),
     runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."),
-    roi: researchCatalogRoi,
+    roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
     model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
     template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
     wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
@@ -8438,9 +8438,9 @@ const researchCatalogPipeSchema = z.object({
       status: researchTemplateStatus.nullable().describe("The DYNASTY's status (the Active / Deprecated tabs): content-generation-service's own when served, else deprecated exactly when every version is (owner 2026-10-21). Null with `statusUnavailableReason`."),
       statusSource: z.enum(["content_generation", "all_versions_deprecated"]).nullable().describe("`content_generation` = the dynasty status content-generation-service serves; `all_versions_deprecated` = the owner rule on the version statuses it serves."),
       statusUnavailableReason: z.enum(["no_dynasty", "status_not_stated"]).nullable(),
-      roi: researchCatalogRoi,
+      roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
       versions: z
-        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("content-generation-service's status of this version (only the head is active)."), roi: researchCatalogRoi, ...researchCatalogFigures }))
+        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("The version's status IN this dynasty (content-generation-service `statusInDynasty`: the head its own, every older version deprecated)."), roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi, ...researchCatalogFigures }))
         .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
       ...researchCatalogFigures,
       workflows: z.array(z.object({ key: z.string(), label: z.string() })),
