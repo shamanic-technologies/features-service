@@ -41,7 +41,7 @@ const person = (org: string, country: string | null, contacted: number, replies:
   country,
 });
 
-const half = (spentUsd: number, contacted: number, outcomes: number) => ({ figures: { spentUsd, contacted, outcomes }, months: { "2026-08": { spentUsd, contacted: 0, outcomes: 0 } }, strata: {} });
+const half = (spentUsd: number, contacted: number, outcomes: number) => ({ figures: { spentUsd, contacted, outcomes }, months: { "2026-08": { spentUsd, contacted: 0, outcomes: 0 } }, strata: { "o1|2026-08": { spentUsd, contacted: 0, outcomes: 0 } } });
 
 function build(persons: FleetPersonBucket[], excluded: string[] = []) {
   const contacted = persons.reduce((a, p) => a + p.contacted, 0);
@@ -66,12 +66,23 @@ describe("country studies", () => {
   it("states whether the US is the best market, by how much, on the verdict rule", () => {
     const [rate, roi] = build([person("o1", "United States", 2000, 40), person("o1", "France", 1000, 10)]);
     const us = rate!.conclusion[0]!;
-    expect(us).toMatch(/^Is the United States the best market\? Yes:/);
+    expect(us).toMatch(/^Is the United States the best market\? Not proven: the United States is ahead of every other country together, but the gap is noise so far\./);
     expect(us).toContain("United States: 2.00% (40 positive replies · 2,000 people emailed, mature)");
     expect(us).toContain("2.00x the positive reply rate of every other country together: 1.00% (10 positive replies · 1,000 people emailed)");
     // spend shares out on people: same price per person, so the US reply is half the price
     expect(roi!.winner).toBe("United States");
     expect(roi!.conclusion[0]).toContain("costs 0.50x what it costs in every other country together");
+  });
+
+  it("Yes only on a conclusion, never because the US is the only country big enough to judge", () => {
+    const [yes] = build([person("o1", "United States", 20000, 400), person("o1", "France", 10000, 50)]);
+    expect(yes!.verdict.kind).toBe("conclusion");
+    expect(yes!.conclusion[0]).toMatch(/^Is the United States the best market\? Yes\./);
+    // prod 2026-10-21, website visits: the US alone reaches the bar, and does WORSE than the rest together
+    const [behind] = build([person("o1", "United States", 1532, 18), ...["Austria", "Belgium", "India", "United Kingdom"].map((c) => person("o1", c, 155, 2)), person("o1", "Canada", 0, 1)]);
+    expect(behind!.winner).toBe("United States");
+    expect(behind!.conclusion[0]).toMatch(/^Is the United States the best market\? Not proven: the United States is behind every other country together, but the gap is noise so far\./);
+    expect(behind!.verdict.reason).toContain("against Every other country");
   });
 
   it("says No when another country with enough replies beats the US", () => {
