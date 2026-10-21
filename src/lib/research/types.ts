@@ -7,7 +7,7 @@
 import type { VerdictKind } from "./verdict.js";
 
 export type ResearchPipeId = "cold-email-positive-reply" | "cold-email-website-visit" | "meeting-booking";
-export type ResearchOutcomeId = "meeting" | "judgment";
+export type ResearchOutcomeId = "meeting" | "judgment" | "positive-reply";
 export type ResearchTopic =
   | "llm"
   | "cost"
@@ -22,7 +22,9 @@ export type ResearchTopic =
   | "weekday"
   | "hour"
   | "judgment"
-  | "launch";
+  | "launch"
+  /** How long an outcome takes to arrive (TTFPR-RESEARCH-STUDY-1021). */
+  | "delay";
 export type ResearchGoal = "roi" | "rate";
 
 export interface ResearchPoint {
@@ -45,6 +47,11 @@ export interface ResearchChart {
   lowerIsBetter: boolean;
   points: ResearchPoint[];
   cumulative?: { title: string; points: ResearchPoint[] };
+  /**
+   * On a distribution chart (TTFPR-RESEARCH-STUDY-1021): the cumulative curve over the same buckets as `points`, one
+   * point per bucket in the same order, `value` = the % of the sample arrived by the END of that bucket (the last = 100).
+   */
+  curve?: { title: string; points: ResearchPoint[] };
   note?: string;
 }
 
@@ -62,6 +69,11 @@ export interface ResearchStudy {
   verdict: { kind: VerdictKind; reason: string };
   result: { display: string; unit: string; sample: string } | null;
   charts: ResearchChart[];
+  /**
+   * On a delay study (TTFPR-RESEARCH-STUDY-1021): the sample and the tiles the page prints, in order p10, p25, median,
+   * p75, p90, average; `ms` the figure, `display` it in human units (minutes, hours under a day, then days).
+   */
+  delay?: { sampleSize: number; stats: Array<{ key: string; label: string; ms: number; display: string }> };
   conclusion: string[];
 }
 
@@ -76,6 +88,10 @@ export interface ResearchPipeEntry {
 export interface ResearchOutcomeEntry {
   id: ResearchOutcomeId;
   outcome: string;
+  /** The step the outcome is (catalogue key); absent on a section that is no step (Jev, the meeting cost section). */
+  step?: string;
+  /** The page's pipes that land on it. */
+  pipes?: ResearchPipeId[];
   description: string;
   population: string;
 }

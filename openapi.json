@@ -32197,7 +32197,8 @@
             "type": "string",
             "enum": [
               "meeting",
-              "judgment"
+              "judgment",
+              "positive-reply"
             ],
             "description": "Set exactly when `pipe` is null."
           },
@@ -32299,7 +32300,7 @@
                     "properties": {
                       "key": {
                         "type": "string",
-                        "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                        "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                       },
                       "label": {
                         "type": "string"
@@ -32346,7 +32347,7 @@
                         "properties": {
                           "key": {
                             "type": "string",
-                            "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                            "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                           },
                           "label": {
                             "type": "string"
@@ -32387,6 +32388,60 @@
                   ],
                   "description": "On a months chart: the average since inception at the end of each month."
                 },
+                "curve": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "display": {
+                            "type": "string",
+                            "description": "The value as the page prints it."
+                          },
+                          "note": {
+                            "type": "string",
+                            "description": "The counts behind the value."
+                          },
+                          "thin": {
+                            "type": "boolean",
+                            "description": "LEARNING under the maturity rule (historical field name)."
+                          },
+                          "partial": {
+                            "type": "boolean",
+                            "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value",
+                          "display",
+                          "note",
+                          "thin"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "points"
+                  ],
+                  "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
+                },
                 "note": {
                   "type": "string"
                 }
@@ -32398,6 +32453,58 @@
                 "points"
               ]
             }
+          },
+          "delay": {
+            "type": "object",
+            "properties": {
+              "sampleSize": {
+                "type": "integer",
+                "description": "The positive replies behind the figures."
+              },
+              "stats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "p10",
+                        "p25",
+                        "median",
+                        "p75",
+                        "p90",
+                        "average"
+                      ]
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "In words, e.g. \"Half replied within\"."
+                    },
+                    "ms": {
+                      "type": "number",
+                      "description": "The delay in milliseconds, lead-service's figure."
+                    },
+                    "display": {
+                      "type": "string",
+                      "description": "The delay in human units: minutes under an hour, hours under a day, then days."
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "label",
+                    "ms",
+                    "display"
+                  ]
+                },
+                "description": "The tiles in order p10, p25, median, p75, p90, average."
+              }
+            },
+            "required": [
+              "sampleSize",
+              "stats"
+            ],
+            "description": "On a delay study only (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): lead-service's time from the first message to the first positive reply, fleet-wide since inception, with its percentiles."
           },
           "conclusion": {
             "type": "array",
@@ -32641,6 +32748,17 @@
                 },
                 "outcome": {
                   "type": "string"
+                },
+                "step": {
+                  "type": "string",
+                  "description": "The catalogue step the outcome is (`conversation` on `positive-reply`); absent on a section that is no step."
+                },
+                "pipes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The page's pipes that land on it."
                 },
                 "description": {
                   "type": "string"
@@ -66783,7 +66901,7 @@
                                       "properties": {
                                         "key": {
                                           "type": "string",
-                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                         },
                                         "label": {
                                           "type": "string"
@@ -66830,7 +66948,7 @@
                                           "properties": {
                                             "key": {
                                               "type": "string",
-                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                             },
                                             "label": {
                                               "type": "string"
@@ -66870,6 +66988,60 @@
                                       "points"
                                     ],
                                     "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "curve": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                   },
                                   "note": {
                                     "type": "string"
@@ -67015,7 +67187,7 @@
                                       "properties": {
                                         "key": {
                                           "type": "string",
-                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                         },
                                         "label": {
                                           "type": "string"
@@ -67062,7 +67234,7 @@
                                           "properties": {
                                             "key": {
                                               "type": "string",
-                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                             },
                                             "label": {
                                               "type": "string"
@@ -67102,6 +67274,60 @@
                                       "points"
                                     ],
                                     "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "curve": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                   },
                                   "note": {
                                     "type": "string"
@@ -67316,7 +67542,7 @@
                                       "properties": {
                                         "key": {
                                           "type": "string",
-                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                          "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                         },
                                         "label": {
                                           "type": "string"
@@ -67363,7 +67589,7 @@
                                           "properties": {
                                             "key": {
                                               "type": "string",
-                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug."
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
                                             },
                                             "label": {
                                               "type": "string"
@@ -67403,6 +67629,60 @@
                                       "points"
                                     ],
                                     "description": "On a months chart: the average since inception at the end of each month."
+                                  },
+                                  "curve": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                   },
                                   "note": {
                                     "type": "string"

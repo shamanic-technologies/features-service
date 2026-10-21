@@ -8084,7 +8084,7 @@ registry.registerPath({
 // ── GET /internal/research[/conclusions|/studies] (LIVE-RESEARCH-1018) ───────────────────
 
 const researchPointSchema = z.object({
-  key: z.string().optional().describe("On a bar that opens a catalogue page: the workflow dynasty slug."),
+  key: z.string().optional().describe("On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."),
   label: z.string(),
   value: z.number(),
   display: z.string().describe("The value as the page prints it."),
@@ -8098,6 +8098,12 @@ const researchChartSchema = z.object({
   lowerIsBetter: z.boolean(),
   points: z.array(researchPointSchema),
   cumulative: z.object({ title: z.string(), points: z.array(researchPointSchema) }).optional().describe("On a months chart: the average since inception at the end of each month."),
+  curve: z
+    .object({ title: z.string(), points: z.array(researchPointSchema) })
+    .optional()
+    .describe(
+      "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart.",
+    ),
   note: z.string().optional(),
 });
 const researchVerdictSchema = z.object({
@@ -8110,7 +8116,7 @@ const researchStudySchema = registry.register(
   z.object({
     id: z.string().describe("Stable study id, e.g. `cold-email-website-visit-workflow-roi`."),
     pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]).nullable().describe("The pipe (leg x channel) the study belongs to; null on an outcome study."),
-    outcome: z.enum(["meeting", "judgment"]).optional().describe("Set exactly when `pipe` is null."),
+    outcome: z.enum(["meeting", "judgment", "positive-reply"]).optional().describe("Set exactly when `pipe` is null."),
     topic: z.string(),
     goal: z.enum(["roi", "rate"]),
     question: z.string(),
@@ -8121,6 +8127,22 @@ const researchStudySchema = registry.register(
     verdict: researchVerdictSchema,
     result: researchResultSchema.nullable(),
     charts: z.array(researchChartSchema),
+    delay: z
+      .object({
+        sampleSize: z.number().int().describe("The positive replies behind the figures."),
+        stats: z
+          .array(
+            z.object({
+              key: z.enum(["p10", "p25", "median", "p75", "p90", "average"]),
+              label: z.string().describe("In words, e.g. \"Half replied within\"."),
+              ms: z.number().describe("The delay in milliseconds, lead-service's figure."),
+              display: z.string().describe("The delay in human units: minutes under an hour, hours under a day, then days."),
+            }),
+          )
+          .describe("The tiles in order p10, p25, median, p75, p90, average."),
+      })
+      .optional()
+      .describe("On a delay study only (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): lead-service's time from the first message to the first positive reply, fleet-wide since inception, with its percentiles."),
     conclusion: z.array(z.string()),
   }),
 );
@@ -8158,7 +8180,16 @@ const researchFileSchema = registry.register(
       note: z.string(),
     }),
     pipes: z.array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() })),
-    outcomes: z.array(z.object({ id: z.string(), outcome: z.string(), description: z.string(), population: z.string() })),
+    outcomes: z.array(
+      z.object({
+        id: z.string(),
+        outcome: z.string(),
+        step: z.string().optional().describe("The catalogue step the outcome is (`conversation` on `positive-reply`); absent on a section that is no step."),
+        pipes: z.array(z.string()).optional().describe("The page's pipes that land on it."),
+        description: z.string(),
+        population: z.string(),
+      }),
+    ),
     studies: z.array(researchStudySchema),
     unavailable: z.array(z.object({ id: z.string(), reason: z.string() })).describe("Every study id the page shows that this service does not answer yet, with what it waits for."),
   }),
