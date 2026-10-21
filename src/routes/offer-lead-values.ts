@@ -4,6 +4,8 @@
  *
  *   GET /offers/:offerId/deals-value?brandId=      — `/brands/:brandId/deals-value`, at the offer grain
  *   GET /offers/:offerId/contacted-value?brandId=  — `/brands/:brandId/contacted-value`, at the offer grain
+ *   GET /offers/:offerId/deals-value?brandId=&columns=lifecycle[&campaignId=] — the board on the LIFECYCLE ladder
+ *       (`computeOfferDealsLifecycle`); without `columns` (or `columns=standing`) the standing body, byte-unchanged.
  *
  * Same semantics, same pricing and same body as the brand reads; what narrows is WHO: only the leads
  * served on the offer's campaigns (every channel), read the way `/offers/:offerId/revenue` reads them,
@@ -41,6 +43,16 @@ import {
 import { computeBrandDealsValue } from "./deals-value.js";
 import { priceContactedLeads, type ContactedValueResult } from "../lib/contacted-value.js";
 import type { DealsValueResult } from "../lib/deals-value.js";
+import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
+import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
+import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
+import {
+  BOARD_RUNG_KEYS,
+  priceLifecycleColumns,
+  type BoardRungKey,
+  type DealsLifecycleResult,
+  type LifecycleBoardRow,
+} from "../lib/deals-lifecycle.js";
 
 const router = Router();
 
@@ -111,6 +123,9 @@ export async function computeOfferContactedValue(
 }
 
 function offerError(res: import("express").Response, error: unknown, what: string) {
+  if (error instanceof CampaignNotOnOfferError) {
+    return res.status(404).json({ error: error.message, reason: "campaign_not_on_offer", offerId: error.offerId, campaignId: error.campaignId });
+  }
   if (error instanceof OfferHasNoChannelsError) {
     return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });
   }
@@ -121,12 +136,106 @@ function offerError(res: import("express").Response, error: unknown, what: strin
   return res.status(502).json({ error: `Failed to compute offer ${what}` });
 }
 
+/**
+ * The LIFECYCLE board (owner 2026-10-21, DEALS-LIFECYCLE-1021; `lib/deals-lifecycle.ts`): one column per rung of the
+ * lifecycle ladder, membership = lead-service's Unibox `lifecycle` (read), INTERSECTED with the scope's lead
+ * population (the offer's campaigns, or one campaign of it), priced on the same engine as the standing board.
+ */
+export async function computeOfferDealsLifecycle(
+  brandId: string,
+  headers: DownstreamHeaders,
+  pre: Parameters<typeof loadBrandPricedPopulation>[2],
+  campaignIds: string[],
+  offerId: string,
+): Promise<DealsLifecycleResult> {
+  const [population, uniboxRows, brandCell] = await Promise.all([
+    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: ALL_OUTCOME_CAUSES, campaignIds, offerId }),
+    fetchUniboxLifecycleRows(brandId, BOARD_RUNG_KEYS, headers),
+    // Soft, exactly like the offer's contacted-value read: unreadable → the seeded entry benchmark, said so per card.
+    getBrandContactedValue(brandId, headers).catch((err: Error) => {
+      console.warn(`[features-service] offer deals lifecycle (brand ${brandId}): brand entry rates unreadable — contacted cards on the default entry rate: ${err.message}`);
+      return null;
+    }),
+  ]);
+  const contacted = priceContactedLeads({
+    paths: population.paths,
+    persons: population.persons,
+    lifetimeRevenueUsd: population.lifetimeRevenueUsd,
+    entryRatesFrom: brandCell === null || brandCell.unmeasuredReason !== null ? null : brandCell.workflows,
+  });
+  let statedWonAmountUsdByEmail: Map<string, number> | null = null;
+  if (population.observed) {
+    statedWonAmountUsdByEmail = new Map();
+    for (const [email, f] of population.observed.byEmail) {
+      if ("closeWin" in f.reached && f.valueUsd !== null) statedWonAmountUsdByEmail.set(email, f.valueUsd);
+    }
+  }
+  const rungs = new Set<string>(BOARD_RUNG_KEYS);
+  const rows: LifecycleBoardRow[] = uniboxRows
+    .filter((r) => rungs.has(r.rung))
+    .map((r) => ({ humanId: r.humanId, companyKey: r.companyKey, relationKey: r.relationKey, leadIds: r.leadIds, rung: r.rung as BoardRungKey }));
+  return priceLifecycleColumns({
+    rows,
+    persons: population.persons,
+    paths: population.paths,
+    lifetimeRevenueUsd: population.lifetimeRevenueUsd,
+    lifetimeRevenueSource: priceOnDeclaredFunnel(pre.declared).economics.lifetimeRevenueSource ?? null,
+    contactedValueByLead: new Map(contacted.leads.map((l) => [l.leadId, l.expectedValueUsd] as const)),
+    statedWonAmountUsdByEmail,
+    pricedCauses: ALL_OUTCOME_CAUSES,
+  });
+}
+
+class CampaignNotOnOfferError extends Error {
+  constructor(readonly offerId: string, readonly campaignId: string) {
+    super(`Campaign ${campaignId} does not sell offer ${offerId}`);
+  }
+}
+
+/**
+ * `?campaignId=` on the lifecycle board: a pipe campaign of the offer, or a sales funnel campaign of it (campaign-
+ * service's, folding its unit campaigns). Either way only the offer's own campaigns; anything else is a named 404.
+ */
+async function campaignScope(offerId: string, brandId: string, campaignId: string, offerCampaignIds: string[], headers: DownstreamHeaders): Promise<string[]> {
+  if (offerCampaignIds.includes(campaignId)) return [campaignId];
+  const funnels = await fetchSalesFunnelCampaigns(brandId, offerId, headers);
+  const offerSet = new Set(offerCampaignIds);
+  const units = funnels.find((f) => f.id === campaignId)?.units.map((u) => u.campaignId).filter((id) => offerSet.has(id)) ?? [];
+  if (units.length === 0) throw new CampaignNotOnOfferError(offerId, campaignId);
+  return [...new Set(units)].sort();
+}
+
 router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
+  const columns = req.query.columns === undefined ? "standing" : req.query.columns;
+  if (columns !== "standing" && columns !== "lifecycle") {
+    return res.status(400).json({ error: "columns must be one of: standing, lifecycle" });
+  }
+  const rawCampaignId = typeof req.query.campaignId === "string" ? req.query.campaignId.trim() : "";
+  if (req.query.campaignId !== undefined && (columns !== "lifecycle" || rawCampaignId === "")) {
+    return res.status(400).json({ error: "campaignId is a non-empty id, read only with columns=lifecycle" });
+  }
   try {
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { offerId, brandId, headers, channels, campaignIds, featureSlugs } = resolved;
     const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);
+    if (columns === "lifecycle") {
+      const scoped = rawCampaignId ? await campaignScope(offerId, brandId, rawCampaignId, campaignIds, headers) : campaignIds;
+      const result = await servedCached<DealsLifecycleResult>({
+        view: "offer-deals-lifecycle",
+        scopeKey: buildScopeKey(offerId, {
+          orgId: headers.orgId,
+          brandId,
+          channels: featureSlugs.join("+"),
+          campaigns: campaignSetKey(scoped),
+          ...keyParts,
+          m: "deals-lifecycle-v1",
+        }),
+        orgId: headers.orgId,
+        compute: () => computeOfferDealsLifecycle(brandId, headers, pre, scoped, offerId),
+      });
+      return res.json({ offerId, brandId, campaignId: rawCampaignId || null, ...result });
+    }
     const result = await servedCached<DealsValueResult>({
       view: "offer-deals-value",
       scopeKey: buildScopeKey(offerId, {
