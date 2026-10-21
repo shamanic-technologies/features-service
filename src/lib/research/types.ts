@@ -23,9 +23,7 @@ export type ResearchTopic =
   | "hour"
   | "judgment"
   | "launch"
-  /** The dashboard's "Conversion over time"; the delay study rides it until the dashboard reads `delay`. */
-  | "conversion"
-  /** How long an outcome takes to arrive (TTFPR-RESEARCH-STUDY-1021; not served until the dashboard reads it). */
+  /** How long an outcome takes to arrive (TTFPR-RESEARCH-STUDY-1021; the dashboard reads it since distribute.you #5587). */
   | "delay";
 export type ResearchGoal = "roi" | "rate";
 

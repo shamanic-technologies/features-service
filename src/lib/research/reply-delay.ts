@@ -102,8 +102,7 @@ const base = {
   id: REPLY_DELAY_STUDY_ID,
   pipe: null,
   outcome: POSITIVE_REPLY_OUTCOME_ID,
-  // `conversion` until the dashboard reads `delay` (its TOPIC_LOOK has no fallback: an unknown topic crashes the page).
-  topic: "conversion" as const,
+  topic: "delay" as const,
   goal: "rate" as const,
   question: QUESTION,
 };
