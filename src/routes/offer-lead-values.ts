@@ -224,7 +224,7 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
           channels: featureSlugs.join("+"),
           campaigns: campaignSetKey(scoped),
           ...keyParts,
-          m: "deals-lifecycle-v2",
+          m: "deals-lifecycle-v3",
         }),
         orgId: headers.orgId,
         compute: () => computeOfferDealsLifecycle(brandId, headers, pre, scoped, offerId),
