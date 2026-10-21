@@ -31,7 +31,7 @@ import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG
 import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js";
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
-import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
+import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
 import {
   dynastyLegKeyOf,
   dynastyStatusOf,
@@ -352,8 +352,9 @@ interface CatalogGen {
   modelLabel: (id: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
   templateVersions: ResearchBucket[];
-  templateSpendByVersion: Map<string, Map<string, number>>;
-  templateVersionSpendByVersion: Map<string, Map<string, number>>;
+  templateFiguresByVersion: Map<string, Map<string, VersionShare>>;
+  templateVersionFiguresByVersion: Map<string, Map<string, VersionShare>>;
+  workflowVersionTotals: Map<string, VersionShare>;
 }
 
 const NO_GEN: CatalogGen = {
@@ -362,8 +363,9 @@ const NO_GEN: CatalogGen = {
   modelLabel: (id) => id,
   mainOf: () => ({ model: null, template: null }),
   templateVersions: [],
-  templateSpendByVersion: new Map(),
-  templateVersionSpendByVersion: new Map(),
+  templateFiguresByVersion: new Map(),
+  templateVersionFiguresByVersion: new Map(),
+  workflowVersionTotals: new Map(),
 };
 
 /** PURE. The model and template (dynasty, else version) most of a dynasty's people (people emailed) were written with. */
@@ -415,8 +417,9 @@ async function generationInputs(
       modelLabel: g.modelLabel,
       mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf),
       templateVersions: g.tplVersions,
-      templateSpendByVersion: g.tplSpendByVersion,
-      templateVersionSpendByVersion: g.tplVersionSpendByVersion,
+      templateFiguresByVersion: g.tplFiguresByVersion,
+      templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
+      workflowVersionTotals: g.workflowVersionTotals,
     };
   };
   return {
@@ -689,10 +692,17 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       lastWriterOf,
       servedModels,
       workflowReturns: ranking
-        ? { roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])), moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null }
+        ? {
+            roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
+            moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
+            // A ranking cell persisted before TPL-ROI-OWN-1022 carries no terms: unknown until its next rebuild.
+            pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
+            billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
+          }
         : undefined,
-      templateSpendByVersion: g.templateSpendByVersion,
-      templateVersionSpendByVersion: g.templateVersionSpendByVersion,
+      templateFiguresByVersion: g.templateFiguresByVersion,
+      templateVersionFiguresByVersion: g.templateVersionFiguresByVersion,
+      workflowVersionTotals: g.workflowVersionTotals,
     });
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),

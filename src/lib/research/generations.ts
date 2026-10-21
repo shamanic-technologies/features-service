@@ -52,23 +52,44 @@ function bucketsBy(
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, groupOf);
   const { groups } = groupCells(cells, groupOfSplitSlug);
   const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs, forceBasis: basisOf?.(g) }));
-  return { rows, leftOut, spendByVersion: spendByVersionOf(cells) };
+  return { rows, leftOut, figuresByVersion: figuresByVersionOf(cells) };
+}
+
+/** What a page's people cost and produced under one workflow VERSION, all to date (the ranking's lifetime basis). */
+export interface VersionShare {
+  spentUsd: number;
+  outcomes: number;
 }
 
 /**
- * Per group, the spend (all to date, the ranking's lifetime basis) its people cost under each workflow VERSION: the
- * weights a template's return is read on (`lib/research/catalog.ts`, TPL-DYNASTY-ROWS-1021-FS).
+ * Per group, what its people cost and produced under each workflow VERSION: the template's OWN share of each workflow's
+ * pipeline and billed spend its return is read on (`lib/research/catalog.ts`, TPL-ROI-OWN-1022).
  */
-function spendByVersionOf(cells: readonly SlugCell[]): Map<string, Map<string, number>> {
-  const out = new Map<string, Map<string, number>>();
+function figuresByVersionOf(cells: readonly SlugCell[]): Map<string, Map<string, VersionShare>> {
+  const out = new Map<string, Map<string, VersionShare>>();
   for (const c of cells) {
     const tab = c.slug.indexOf("\t");
     if (tab < 0) continue;
     const version = c.slug.slice(0, tab);
     const g = c.slug.slice(tab + 1);
-    const m = out.get(g) ?? new Map<string, number>();
+    const m = out.get(g) ?? new Map<string, VersionShare>();
     out.set(g, m);
-    m.set(version, (m.get(version) ?? 0) + c.flash.figures.spentUsd);
+    const f = m.get(version) ?? { spentUsd: 0, outcomes: 0 };
+    f.spentUsd += c.flash.figures.spentUsd;
+    f.outcomes += c.flash.figures.outcomes;
+    m.set(version, f);
+  }
+  return out;
+}
+
+/** Per workflow VERSION, everything it cost and produced to date (every person, written-with on record or not). */
+function versionTotalsOf(cells: readonly SlugCell[]): Map<string, VersionShare> {
+  const out = new Map<string, VersionShare>();
+  for (const c of cells) {
+    const f = out.get(c.slug) ?? { spentUsd: 0, outcomes: 0 };
+    f.spentUsd += c.flash.figures.spentUsd;
+    f.outcomes += c.flash.figures.outcomes;
+    out.set(c.slug, f);
   }
   return out;
 }
@@ -205,9 +226,11 @@ export function generationBuckets(input: GenerationsInput) {
     llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut },
     tpl,
     tplVersions: versions.rows,
-    /** Template bar key (dynasty, else version) / template version → workflow version → spend of its people. */
-    tplSpendByVersion: tpl.spendByVersion,
-    tplVersionSpendByVersion: versions.spendByVersion,
+    /** Template bar key (dynasty, else version) / template version → workflow version → what its people cost and produced. */
+    tplFiguresByVersion: tpl.figuresByVersion,
+    tplVersionFiguresByVersion: versions.figuresByVersion,
+    /** Workflow version → everything it cost and produced (the whole of which a template's people are a share). */
+    workflowVersionTotals: versionTotalsOf(input.cells),
     modelLabel,
   };
 }

@@ -18,6 +18,8 @@ function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
     contacted: 720,
     spentUsd: 60,
     roiMultiple: null,
+    pipelineUsd: null,
+    billedSpendUsd: null,
     goesFirst: true,
     moneyGoesHere: true,
     explorePriceUsd: null,

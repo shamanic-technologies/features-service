@@ -138,6 +138,8 @@ const row = (slug: string, cost: { spentUsd: number; contacted: number; outcomes
   contacted: cost.contacted,
   spentUsd: cost.spentUsd,
   roiMultiple: null,
+  pipelineUsd: null,
+  billedSpendUsd: null,
   goesFirst: false,
   moneyGoesHere: false,
   explorePriceUsd: null,
