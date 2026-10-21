@@ -403,7 +403,7 @@ const SALES_MILESTONES: readonly FunnelMilestone[] = [
  *
  *   sales_meetings_from_conversation  reply = r2m·m2c   meeting = m2c   attended = m_att   closeWin = 1
  *   sales_meetings_from_website       visit = orP(v2c, v2m·m2c)   meeting = m2c   attended = m_att
- *   website_purchases                 visit = orP(v2c, v2m·m2c)
+ *   website_purchases                 visit = orP(v2c, v2m·m2c)   signup = s2pc
  *   form_magnet                       visit = v2fs·fs2pc          formSubmitted = fs2pc
  *
  * The first three are TODAY'S expressions, written out per funnel rather than changed — deliberately.
@@ -483,8 +483,14 @@ const FUNNEL_LADDERS: Record<SalesFunnelKey, (e: SalesEconomics) => LadderRung[]
     { tag: "meetingAttended", signal: "meetingAttended", pClose: attendedClose(e) },
     CLOSE_WIN,
   ],
+  // The self-serve funnel's middle rung: a lead who CREATED AN ACCOUNT stands on Signup, an OBSERVED
+  // POSITION priced on the brand's own signup→paid rate, so it EXTINGUISHES the click route (the visit was
+  // forecasting exactly this signup), as `form_magnet`'s form does. Before 2026-10-21 no path scored it,
+  // so a signed-up lead was worth 0 while one who only clicked was worth the visit (DEALS-RUNG-VALUE-1021:
+  // the Deals board's Signed up column read $0.005 a card beside Engaged's $0.58).
   website_purchases: (e) => [
     { tag: "visit", signal: "clicked", pClose: clickCloseViaMeeting(e), engagementRoute: true },
+    { tag: "signup", signal: "signup", pClose: declaredRate(e.signupToPaidClientPct) },
     CLOSE_WIN,
   ],
   form_magnet: (e) => {
@@ -545,6 +551,7 @@ const salesFunnel: FunnelDefinition = {
     "clicked",
     "positiveReply",
     "formSubmission",
+    "signup",
     "meeting",
     "meetingAttended",
     "closeWin",
@@ -607,9 +614,8 @@ const salesFunnel: FunnelDefinition = {
  * showing up, so it survived only folded into the booked→paid rate. A human states it now, so it is a
  * leg like any other: a rung a lead can stand on, and a step a lead can be declared DEAD at.
  * `formSubmission` is the MIDDLE rung of the form-magnet funnel and is priced by that funnel's own
- * ladder (`FUNNEL_LADDERS`), off the brand's declared form→paid rate. `signup` is a leg of the
- * website-purchase funnel and no path scores it today (it stays a per-lead display outcome); if one is
- * ever added it prices exactly the brands whose funnel contains it, with no further change here.
+ * ladder (`FUNNEL_LADDERS`), off the brand's declared form→paid rate. `signup` is the MIDDLE rung of
+ * the website-purchase funnel, priced by that funnel's ladder off the brand's signup→paid rate (2026-10-21).
  *
  * Both signals are attributed on the OVERVIEW read alone (lead-service's conversion tracker is fetched
  * there), so a lean `?groupBy=` group reports the rung as unreached rather than as worth nothing —
