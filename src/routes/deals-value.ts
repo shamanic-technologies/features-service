@@ -8,6 +8,7 @@
  * (`loadBrandPricedPopulation`, shared with contacted-value), so an Interested card reads the same
  * number the engine prices that person at (on every outcome cause — see computeBrandDealsValue).
  */
+import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -101,6 +102,7 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
     if (error instanceof BrandPricesDifferentlyError) {
       return res.status(409).json({ error: error.message, reason: "brand_channels_price_differently", brandId });
     }
+    if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     console.error(`[features-service] Brand deals value error:`, error);
     return res.status(502).json({ error: "Failed to compute brand deals value" });
   }

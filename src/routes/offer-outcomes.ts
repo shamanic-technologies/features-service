@@ -10,6 +10,7 @@
  * read per (leg × channel) gives the money. Everything is combined HERE — a browser summing funnel
  * rungs would count a lead reached through two funnels twice.
  */
+import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { applyDisqualifiedMarks, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { Router } from "express";
@@ -45,7 +46,7 @@ import type { StepEvidence } from "../lib/funnel-steps.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 import type { ColdLeadsRead } from "../lib/step-outcomes-client.js";
 import { buildOfferPipeline, explainStepValue, offerStepSets, stepConversion } from "../lib/offer-pipeline-explained.js";
-import { contactedPricingSoft } from "./contacted-value.js";
+import { contactedPricingOf } from "./contacted-value.js";
 import { offerRevenueJson } from "./offer-economics.js";
 import { getBrandEffectiveRates, type BrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { withExpectedConversions } from "../lib/expected-conversion.js";
@@ -196,7 +197,9 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         const groupCampaignIds = [...new Set(partition.groups.flatMap((g) => g.campaignIds))].sort();
         const needDates = partition.groups.some((g) => maturityDaysForLeg(g.legKey) > 0);
         const internalCampaignIds = partition.groups.filter((g) => g.fromStep !== null).flatMap((g) => g.campaignIds);
-        const contactedPricingPromise = contactedPricingSoft(brandId, headers);
+        const contactedPricingPromise = contactedPricingOf(brandId, headers);
+        // Awaited later and LOUD: never an unhandled rejection while an earlier await throws.
+        contactedPricingPromise.catch(() => {});
         const headlinePromise = headlinePipelineSoft({
           offerId,
           brandId,
@@ -312,6 +315,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
     if (error instanceof OfferHasNoChannelsError) {
       return res.status(404).json({ error: error.message, reason: "offer_has_no_channels", offerId: error.offerId });
     }
+    if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     console.error("[features-service] Offer outcomes error:", error);
     res.status(502).json({ error: "Failed to compute offer outcomes" });
   }

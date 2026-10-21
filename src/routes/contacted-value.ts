@@ -26,6 +26,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadsForRevenue } from "../lib/leads-client.js";
 import { singleCampaignId } from "../lib/campaign-scope.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import { ContactedValueUnavailableError, contactedValueUnavailableBody, readOrUnavailable } from "../lib/contacted-value-unavailable.js";
 import { fetchObservedStepFacts, type ObservedStepFacts } from "../lib/observed-steps.js";
 import { fetchQualifications } from "../lib/qualifications-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
@@ -116,7 +117,10 @@ export async function loadBrandPricedPopulation(
   // The same per-campaign narrowing the revenue engine applies to its two campaign-keyed overlays.
   const campaignId = singleCampaignId(opts.campaignIds);
   const [timestamps, observed, quals, signupEmails, formEmails, disqualified] = await Promise.all([
-    soft("event timestamps", fetchEventTimestamps(brandId, campaignId, emails, headers)),
+    // LOUD (lib/contacted-value-unavailable.ts): undated contacted leads read as expired, a silent $0.
+    readOrUnavailable(brandId, "send_dates_unreadable", "event timestamps (priced population)", () =>
+      fetchEventTimestamps(brandId, campaignId, emails, headers),
+    ),
     soft("observed step statements", fetchObservedStepFacts(brandId, pricedCauses)),
     soft("legacy qualifications", fetchQualifications(brandId, campaignId, emails, headers)),
     soft("signup attribution", fetchConversionEmails(brandId, "signup")),
@@ -324,7 +328,7 @@ export function pageContactedValue(result: ContactedValueResult, page: PageQuery
 
 /**
  * The brand's contacted-value figure through its ONE Gold cell — shared by this route and by every
- * pipeline read (`contactedPricingSoft`), so the Contacted column and the pipeline can never be priced
+ * pipeline read (`contactedPricingOf`), so the Contacted column and the pipeline can never be priced
  * off two different entry rates.
  */
 export async function getBrandContactedValue(brandId: string, headers: DownstreamHeaders): Promise<ContactedValueResult> {
@@ -352,19 +356,21 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
  * entry rates of the brand's contacted-value cell (cost per contact ÷ the serving workflow's cost per
  * outcome), the seeded entry benchmark for a group with no measured rate (owner 2026-10-11/2026-10-21: an
  * expected figure is never blank, and the Deals board and the pipeline value a contacted lead the SAME way),
- * and the 30-day last-send expiry. An unreadable or unmeasured cell leaves every group on the benchmark,
- * with a loud log, exactly as the Deals board prices it.
+ * and the 30-day last-send expiry. An UNMEASURED cell leaves every group on the benchmark (a stated answer); an
+ * UNREADABLE one is retried once, then throws `ContactedValueUnavailableError` (2026-10-21: never a silent
+ * degrade, `lib/contacted-value-unavailable.ts`).
  */
-export async function contactedPricingSoft(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing> {
+export async function contactedPricingOf(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing> {
   let entryRatePctByGroup: ContactedPricing["entryRatePctByGroup"] = {};
-  try {
-    const result = await getBrandContactedValue(brandId, headers);
-    if (result.unmeasuredReason === null) entryRatePctByGroup = contactedEntryRatesByGroup(result.workflows);
-  } catch (err) {
-    console.warn(
-      `[features-service] contacted-lead pricing unreadable for brand ${brandId} — contacted leads on the seeded entry rate: ${(err as Error).message}`,
-    );
-  }
+  const result = await readOrUnavailable(brandId, "contacted_pricing_unreadable", "contacted-lead pricing cell", () =>
+    getBrandContactedValue(brandId, headers).catch((err) => {
+      // A STATED answer, not a failed read: the brand runs no channel, or prices on several funnels, so the
+      // cell has no measured rate to give and every group stays on the seeded benchmark.
+      if (err instanceof BrandHasNoChannelsError || err instanceof BrandPricesDifferentlyError) return null;
+      throw err;
+    }),
+  );
+  if (result !== null && result.unmeasuredReason === null) entryRatePctByGroup = contactedEntryRatesByGroup(result.workflows);
   return {
     entryRatePctByGroup,
     defaultEntryRatePct: DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL,
@@ -388,6 +394,7 @@ router.get("/brands/:brandId/contacted-value", apiKeyAuth, async (rawReq, res) =
     if (error instanceof BrandPricesDifferentlyError) {
       return res.status(409).json({ error: error.message, reason: "brand_channels_price_differently", brandId });
     }
+    if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     console.error(`[features-service] Brand contacted value error:`, error);
     return res.status(502).json({ error: "Failed to compute brand contacted value" });
   }

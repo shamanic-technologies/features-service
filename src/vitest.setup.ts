@@ -186,3 +186,20 @@ vi.mock("./lib/org-members.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/org-members.js")>()),
   loadOrgMemberKeys: vi.fn(async () => new Set<string>()),
 }));
+
+/**
+ * Suite-wide default: the two reads a contacted lead's value rests on (lib/contacted-value-unavailable.ts) are LOUD in
+ * production (retry once, then `ContactedValueUnavailableError`, a 503). Route fixtures were written when both
+ * degraded softly and most answer neither email-gateway `/orgs/status` nor a full contacted-value cell, so here an
+ * unreadable send-date read is `null` (undated) and an unreadable pricing cell is "unmeasured" (seeded benchmark),
+ * the pre-2026-10-21 behaviour. `contacted-value-unavailable.test.ts` uses the real module.
+ */
+vi.mock("./lib/contacted-value-unavailable.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./lib/contacted-value-unavailable.js")>();
+  return {
+    ...real,
+    readOrUnavailable: vi.fn(async (_brandId: string, _reason: string, _what: string, read: () => Promise<unknown>) =>
+      read().catch(() => null),
+    ),
+  };
+});

@@ -11,7 +11,7 @@
  * funnels, tout pipes) », one pipeline figure everywhere): the causes the offer revenue read prices by default (an
  * outcome our pipes caused; one that came on its own is `not_ours`, worth 0), and the same contacted pricing.
  *
- *   - Contacted: the pipeline's `contactedLeadValue` on the pipeline's `contactedPricingSoft` (P(entry step |
+ *   - Contacted: the pipeline's `contactedLeadValue` on the pipeline's `contactedPricingOf` (P(entry step |
  *     contacted, campaign × workflow) × the value at that step, expiring 30 days after the last send; a group with
  *     no measured entry rate on the seeded benchmark, `entryRateSource: "default_entry"`, never blank). A lead the
  *     engine already sees engaged is priced as an engaged lead; a bounced / unsubscribed one is 0 `cannot_convert`.
@@ -157,7 +157,7 @@ export function priceLifecycleColumns(input: {
   paths: ResolvedPath[];
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueSource: OfferLifetimeRevenueSource | null;
-  /** The pipeline's own contacted pricing (`contactedPricingSoft`): measured group rates, else the seeded default. */
+  /** The pipeline's own contacted pricing (`contactedPricingOf`): measured group rates, else the seeded default. */
   contactedPricing: ContactedPricing;
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
   pricedCauses: readonly string[];
