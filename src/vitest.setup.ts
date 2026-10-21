@@ -176,3 +176,13 @@ vi.mock("./lib/meeting-reporting-client.js", async (importOriginal) => ({
   getMeetingReporting: vi.fn(async () => ({ reports: () => true, reportingBrandIds: [] })),
   rememberMeetingReporting: vi.fn(),
 }));
+
+/**
+ * Suite-wide default: the org has NO team member (lib/org-members.ts reads client-service, which no route fixture
+ * answers), so every fixture lead stays a lead. `org-members.test.ts` and the team cases of `leads-client.test.ts`
+ * use the real module or their own return.
+ */
+vi.mock("./lib/org-members.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/org-members.js")>()),
+  loadOrgMemberKeys: vi.fn(async () => new Set<string>()),
+}));
