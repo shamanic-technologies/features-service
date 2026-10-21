@@ -4,7 +4,7 @@ import { CODED_STEP_LIFECYCLE_RUNGS, LIFECYCLE_RUNGS, isStepLifecycleRung, lifec
 
 describe("lifecycle ladder (owner 2026-10-17)", () => {
   it("is the owner's ladder, lowest rung first", () => {
-    expect(LIFECYCLE_RUNGS.map((r) => r.label)).toEqual(["Lead found", "Contacted", "Engaged", "Signup / Form submitted", "Meeting booked", "Meeting attended", "Paid client"]);
+    expect(LIFECYCLE_RUNGS.map((r) => r.label)).toEqual(["Lead found", "Contacted", "Engaged", "Signed up", "Meeting booked", "Meeting attended", "Paid client"]);
     expect(LIFECYCLE_RUNGS.map((r) => r.rank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
