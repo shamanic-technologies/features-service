@@ -89,7 +89,9 @@ export interface CatalogWorkflow extends CatalogFigures {
   name: string | null;
   /** A run may still pick it on this pipe (assigned active AND executable). */
   runnable: boolean;
-  roi: CatalogRoi;
+  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
+  roi: string | null;
+  roiDetail: CatalogRoi;
   /** What most of its people's sequences were written with (= `wroteWithMost`, kept for the readers typed on it). */
   model: CatalogRef | null;
   template: CatalogRef | null;
@@ -123,7 +125,9 @@ export interface CatalogTemplateVersion extends CatalogFigures {
   hasText: boolean;
   /** content-generation-service's status of this version (null = not stated). */
   status: TemplateStatus | null;
-  roi: CatalogRoi;
+  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
+  roi: string | null;
+  roiDetail: CatalogRoi;
 }
 
 /** Why a template page is a version on its own. */
@@ -146,7 +150,9 @@ export interface CatalogTemplate extends CatalogFigures {
   status: TemplateStatus | null;
   statusSource: TemplateDynastyStatusSource | null;
   statusUnavailableReason: "no_dynasty" | "status_not_stated" | null;
-  roi: CatalogRoi;
+  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
+  roi: string | null;
+  roiDetail: CatalogRoi;
   /** Every version of the dynasty, oldest first (empty on a version on its own). */
   versions: CatalogTemplateVersion[];
   workflows: Array<{ key: string; label: string }>;
@@ -276,6 +282,7 @@ export interface PipeCatalogInput {
 }
 
 const roiText = (v: number) => `${v.toFixed(2)}x`;
+const roiFields = (r: CatalogRoi) => ({ roi: r.display, roiDetail: r });
 const NO_ROI: CatalogRoi = { value: null, display: null, basis: null, source: null, spendCovered: null, unavailableReason: "no_return_on_pipe" };
 const roiOfValue = (value: number, basis: "measured" | "expected", source: CatalogRoi["source"], spendCovered: number | null = null): CatalogRoi => ({
   value,
@@ -424,7 +431,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       label: r.label,
       name: p.nameOf(r.key) ?? pageNames.get(r.key) ?? null,
       runnable: runnableKeys.has(r.key),
-      roi: workflowRoi(r.key),
+      ...roiFields(workflowRoi(r.key)),
       model: most.model,
       template: most.template,
       wroteWithMost: most,
@@ -441,7 +448,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   });
   // What a template is expected to return before it wrote for a workflow stating one: the workflows writing with it now.
   const nowRoiOf = (key: string): CatalogRoi | null => {
-    const vs = workflows.filter((w) => w.writesWithNow?.template?.key === key && w.roi.basis === "measured" && w.roi.value != null).map((w) => w.roi.value!);
+    const vs = workflows.filter((w) => w.writesWithNow?.template?.key === key && w.roiDetail.basis === "measured" && w.roiDetail.value != null).map((w) => w.roiDetail.value!);
     return vs.length ? roiOfValue(vs.reduce((a, b) => a + b, 0) / vs.length, "expected", "writes_with_now") : null;
   };
   const templateRoi = (key: string): CatalogRoi => {
@@ -466,7 +473,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     status: d?.status ?? null,
     statusSource: d?.statusSource ?? null,
     statusUnavailableReason: !d ? "no_dynasty" : d.status === null ? "status_not_stated" : null,
-    roi,
+    ...roiFields(roi),
     versions: d
       ? d.versions.map((v) => ({
           key: v,
@@ -474,7 +481,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
           head: v === d.head,
           hasText: p.templateTexts.has(v),
           status: d.versionStatuses?.[v] ?? null,
-          roi: versionRoi(v),
+          ...roiFields(versionRoi(v)),
           ...figures(p.terms, versionBars.get(v) ?? emptyBucket(v, templateLabel(v)), null),
         }))
       : [],

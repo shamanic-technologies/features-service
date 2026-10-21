@@ -67020,6 +67020,11 @@
                               "description": "A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."
                             },
                             "roi": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."
+                            },
+                            "roiDetail": {
                               "type": "object",
                               "properties": {
                                 "value": {
@@ -67729,6 +67734,7 @@
                             "name",
                             "runnable",
                             "roi",
+                            "roiDetail",
                             "model",
                             "template",
                             "wroteWithMost",
@@ -67854,6 +67860,11 @@
                               ]
                             },
                             "roi": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."
+                            },
+                            "roiDetail": {
                               "type": "object",
                               "properties": {
                                 "value": {
@@ -67935,9 +67946,14 @@
                                       "active",
                                       "deprecated"
                                     ],
-                                    "description": "content-generation-service's status of this version (only the head is active)."
+                                    "description": "The version's status IN this dynasty (content-generation-service `statusInDynasty`: the head its own, every older version deprecated)."
                                   },
                                   "roi": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."
+                                  },
+                                  "roiDetail": {
                                     "type": "object",
                                     "properties": {
                                       "value": {
@@ -68215,6 +68231,7 @@
                                   "hasText",
                                   "status",
                                   "roi",
+                                  "roiDetail",
                                   "rank",
                                   "emails",
                                   "emailsNoun",
@@ -68556,6 +68573,7 @@
                             "statusSource",
                             "statusUnavailableReason",
                             "roi",
+                            "roiDetail",
                             "versions",
                             "rank",
                             "emails",

@@ -306,13 +306,19 @@ async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] 
       headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
     });
     if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown }> }> };
+    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown; statusInDynasty?: unknown }> }> };
     if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
     return body.dynasties.map((d) => {
       if (typeof d.slug !== "string" || typeof d.name !== "string") throw new Error("content-generation-service template-dynasties: a dynasty without slug or name");
       const ordered = [...(d.versions ?? [])]
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-        .flatMap((v) => (typeof v.type === "string" ? [{ type: v.type, status: v.status === "active" || v.status === "deprecated" ? (v.status as TemplateStatus) : null }] : []));
+        .flatMap((v) => {
+          if (typeof v.type !== "string") return [];
+          // A version's status IN this dynasty (head = its own, older = deprecated); `status` is the template's own,
+          // active when it heads a dynasty on another pipe. Before content-generation served it: the template's own.
+          const st = v.statusInDynasty !== undefined ? v.statusInDynasty : v.status;
+          return [{ type: v.type, status: st === "active" || st === "deprecated" ? (st as TemplateStatus) : null }];
+        });
       const versions = ordered.map((v) => v.type);
       return {
         ...dynastyStatusOf(d.status, ordered),
