@@ -8368,12 +8368,27 @@ const researchCatalogFigures = {
   sample: z.string(),
   charts: z.array(researchChartSchema),
 };
+const researchCatalogRoi = z
+  .object({
+    value: z.number().nullable().describe("The multiple: 3.2 = $3.20 of pipeline per $1 billed."),
+    display: z.string().nullable().describe("Printed (`3.20x`)."),
+    basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."),
+    source: z
+      .enum(["workflow", "workflows_written_for", "writes_with_now", "dynasty", "pipe_best_workflow"])
+      .nullable()
+      .describe("measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."),
+    spendCovered: z.number().nullable().describe("On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."),
+    unavailableReason: z.enum(["no_return_on_pipe"]).nullable().describe("Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."),
+  })
+  .describe("Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured.");
+const researchTemplateStatus = z.enum(["active", "deprecated"]);
 const researchCatalogPipeSchema = z.object({
   workflows: z.array(z.object({
     key: z.string(),
     label: z.string(),
     name: z.string().nullable(),
     runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."),
+    roi: researchCatalogRoi,
     model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
     template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
     wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
@@ -8420,8 +8435,12 @@ const researchCatalogPipeSchema = z.object({
         .enum(["no_dynasty_on_pipe", "template_dynasties_unreadable"])
         .nullable()
         .describe("Null on a dynasty. Why this page is one version on its own: no dynasty of the pipe lists it, or the dynasties could not be read this build."),
+      status: researchTemplateStatus.nullable().describe("The DYNASTY's status (the Active / Deprecated tabs): content-generation-service's own when served, else deprecated exactly when every version is (owner 2026-10-21). Null with `statusUnavailableReason`."),
+      statusSource: z.enum(["content_generation", "all_versions_deprecated"]).nullable().describe("`content_generation` = the dynasty status content-generation-service serves; `all_versions_deprecated` = the owner rule on the version statuses it serves."),
+      statusUnavailableReason: z.enum(["no_dynasty", "status_not_stated"]).nullable(),
+      roi: researchCatalogRoi,
       versions: z
-        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), ...researchCatalogFigures }))
+        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("content-generation-service's status of this version (only the head is active)."), roi: researchCatalogRoi, ...researchCatalogFigures }))
         .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
       ...researchCatalogFigures,
       workflows: z.array(z.object({ key: z.string(), label: z.string() })),

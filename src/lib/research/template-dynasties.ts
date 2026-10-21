@@ -18,6 +18,31 @@ export interface TemplateDynasty {
   head: string | null;
   /** Version template ids, oldest first. */
   versions: string[];
+  /**
+   * The dynasty's status (TPL-DYNASTY-ROWS-1021-FS). content-generation-service's own when it serves one
+   * (`statusSource: content_generation`); until then the owner rule (2026-10-21) on the version statuses it serves:
+   * deprecated exactly when every version is (`all_versions_deprecated`). Null when neither is stated.
+   */
+  status: TemplateStatus | null;
+  statusSource: TemplateDynastyStatusSource | null;
+  /** Version template id → content-generation-service's status of that version (null = not stated). */
+  versionStatuses: Readonly<Record<string, TemplateStatus | null>>;
+}
+
+export type TemplateStatus = "active" | "deprecated";
+export type TemplateDynastyStatusSource = "content_generation" | "all_versions_deprecated";
+
+/**
+ * PURE. A dynasty's status: content-generation-service's when served, else deprecated exactly when every version is
+ * (owner 2026-10-21: only the head is Active; a dynasty is Deprecated exactly when all its versions are).
+ */
+export function dynastyStatusOf(
+  served: unknown,
+  versions: ReadonlyArray<{ status: TemplateStatus | null }>,
+): { status: TemplateStatus | null; statusSource: TemplateDynastyStatusSource | null } {
+  if (served === "active" || served === "deprecated") return { status: served, statusSource: "content_generation" };
+  if (!versions.length || versions.some((v) => v.status === null)) return { status: null, statusSource: null };
+  return { status: versions.every((v) => v.status === "deprecated") ? "deprecated" : "active", statusSource: "all_versions_deprecated" };
 }
 
 /** Why a pipe's template bars carry no dynasty. */

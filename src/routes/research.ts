@@ -34,10 +34,12 @@ import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, 
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
 import {
   dynastyLegKeyOf,
+  dynastyStatusOf,
   templateDynastyIndex,
   type TemplateDynasty,
   type TemplateDynastyIndex,
   type TemplateDynastyReason,
+  type TemplateStatus,
 } from "../lib/research/template-dynasties.js";
 import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
@@ -304,14 +306,17 @@ async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] 
       headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
     });
     if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const body = (await res.json()) as { dynasties?: Array<Partial<TemplateDynasty> & { versions?: Array<{ type?: string; position?: number }> }> };
+    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown }> }> };
     if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
     return body.dynasties.map((d) => {
       if (typeof d.slug !== "string" || typeof d.name !== "string") throw new Error("content-generation-service template-dynasties: a dynasty without slug or name");
-      const versions = [...(d.versions ?? [])]
+      const ordered = [...(d.versions ?? [])]
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-        .flatMap((v) => (typeof v.type === "string" ? [v.type] : []));
+        .flatMap((v) => (typeof v.type === "string" ? [{ type: v.type, status: v.status === "active" || v.status === "deprecated" ? (v.status as TemplateStatus) : null }] : []));
+      const versions = ordered.map((v) => v.type);
       return {
+        ...dynastyStatusOf(d.status, ordered),
+        versionStatuses: Object.fromEntries(ordered.map((v) => [v.type, v.status])),
         slug: d.slug,
         name: d.name,
         description: typeof d.description === "string" ? d.description : "",
@@ -340,9 +345,19 @@ interface CatalogGen {
   modelLabel: (id: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
   templateVersions: ResearchBucket[];
+  templateSpendByVersion: Map<string, Map<string, number>>;
+  templateVersionSpendByVersion: Map<string, Map<string, number>>;
 }
 
-const NO_GEN: CatalogGen = { templates: [], models: [], modelLabel: (id) => id, mainOf: () => ({ model: null, template: null }), templateVersions: [] };
+const NO_GEN: CatalogGen = {
+  templates: [],
+  models: [],
+  modelLabel: (id) => id,
+  mainOf: () => ({ model: null, template: null }),
+  templateVersions: [],
+  templateSpendByVersion: new Map(),
+  templateVersionSpendByVersion: new Map(),
+};
 
 /** PURE. The model and template (dynasty, else version) most of a dynasty's people (people emailed) were written with. */
 function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: ReadonlyMap<string, string>, screened: boolean, templateKeyOf: (id: string) => string) {
@@ -393,6 +408,8 @@ async function generationInputs(
       modelLabel: g.modelLabel,
       mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf),
       templateVersions: g.tplVersions,
+      templateSpendByVersion: g.tplSpendByVersion,
+      templateVersionSpendByVersion: g.tplVersionSpendByVersion,
     };
   };
   return {
@@ -664,6 +681,11 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       writerOf,
       lastWriterOf,
       servedModels,
+      workflowReturns: ranking
+        ? { roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])), moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null }
+        : undefined,
+      templateSpendByVersion: g.templateSpendByVersion,
+      templateVersionSpendByVersion: g.templateVersionSpendByVersion,
     });
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),
