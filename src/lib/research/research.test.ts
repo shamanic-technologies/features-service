@@ -106,8 +106,8 @@ describe("slug cells", () => {
       flash: { costGroups: [{ dimensions: { workflowSlug: "a-v1" }, totalCostInUsdCents: "10000", runCount: 3 }], emailStats: new Map([["a-v1", { recipientsContacted: 300, recipientsRepliesPositive: 3 }]]) },
       mature: { costGroups: [{ dimensions: { workflowSlug: "a-v1" }, totalCostInUsdCents: "8000", runCount: 2 }], emailStats: new Map([["a-v1", { recipientsContacted: 200, recipientsRepliesPositive: 2 }]]) },
       persons: [
-        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-09-10", contacted: 200, clicked: 0, positiveReplies: 2, screenedContacted: 0, humanClicked: 0, generation: null },
-        { orgId: "o1", campaignId: "c1", workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0, generation: null },
+        { orgId: "o1", brandId: "b1", campaignId: "c1", country: null, workflowSlug: "a-v1", servedDay: "2026-09-10", contacted: 200, clicked: 0, positiveReplies: 2, screenedContacted: 0, humanClicked: 0, generation: null },
+        { orgId: "o1", brandId: "b1", campaignId: "c1", country: null, workflowSlug: "a-v1", servedDay: "2026-10-01", contacted: 100, clicked: 0, positiveReplies: 1, screenedContacted: 0, humanClicked: 0, generation: null },
       ],
       spend: [
         { workflowSlug: "a-v1", orgId: "o1", month: "2026-09", beforeCutoff: true, spentUsd: 80 },
@@ -400,7 +400,7 @@ import { generationStudies } from "./generations.js";
 describe("what wrote the emails", () => {
   const gen = (model: string, promptType: string, layout = "double_line_breaks") => ({ model, promptType, layout, opening: "greeting", dash: "none" });
   const pb = (slug: string, model: string, tpl: string, contacted: number, replies: number, org = "o1") => ({
-    orgId: org, campaignId: "c1", workflowSlug: slug, servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: gen(model, tpl),
+    orgId: org, brandId: "b1", campaignId: "c1", country: null, workflowSlug: slug, servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: gen(model, tpl),
   });
   const cells: SlugCell[] = [{ slug: "wf-v1", flash: half(300, 300, 6), mature: half(300, 300, 6) }];
   const persons = [pb("wf-v1", "gemini-3.5-flash", "cold-email-v35", 200, 5), pb("wf-v1", "gemini-3.1-pro-preview", "cold-email-v35", 100, 1)];
