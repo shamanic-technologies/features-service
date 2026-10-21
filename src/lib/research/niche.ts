@@ -60,11 +60,17 @@ function methodLines(grades: NicheGradesRead): string[] {
   return out;
 }
 
-/** PURE. "Narrow niche (3): Doc Dinners, Legistai, Aireena." per grade, most clients first within the page's grade order. */
-function clientLines(clients: readonly GradedClient[]): string[] {
+/**
+ * PURE. "Narrow niche (3): Aireena, Doc Dinners, Legistai." per grade: the clients who emailed somebody on THIS pipe (the
+ * count the grade line states). One brand run by several accounts is named once, with how many.
+ */
+function clientLines(clients: readonly GradedClient[], onPipe: ReadonlySet<string>): string[] {
   return NICHE_GRADES.flatMap((g) => {
-    const names = clients.filter((c) => c.grade === g).map((c) => c.label).sort((a, b) => a.localeCompare(b));
-    return names.length ? [`${NICHE_LABEL[g]} (${n(names.length)}): ${names.join(", ")}.`] : [];
+    const of = clients.filter((c) => c.grade === g && onPipe.has(c.key));
+    const byLabel = new Map<string, number>();
+    for (const c of of) byLabel.set(c.label, (byLabel.get(c.label) ?? 0) + 1);
+    const names = [...byLabel].sort(([a], [b]) => a.localeCompare(b)).map(([l, k]) => (k > 1 ? `${l} (${k} accounts)` : l));
+    return names.length ? [`${NICHE_LABEL[g]} (${n(of.length)}): ${names.join(", ")}.`] : [];
   });
 }
 
@@ -82,18 +88,20 @@ function clientRates(input: NichePipeInput, byCampaign: ReadonlyMap<string, Grad
   return by;
 }
 
-/** PURE. The answer line: narrow against broad on the rate, in words. */
+/** PURE. The answer line: narrow against the broadest grade that emailed somebody (broad, else focused), in words. */
 function answerLine(t: PipeTerms, rows: readonly ResearchBucket[], what: "rate" | "cost"): string | null {
-  const get = (g: NicheGrade) => rows.find((r) => r.key === g);
+  const get = (g: NicheGrade) => rows.find((r) => r.key === g && r.figures.contacted > 0);
   const narrow = get("narrow");
   const broad = get("broad") ?? get("focused");
-  if (!narrow || !broad || narrow.figures.contacted <= 0 || broad.figures.contacted <= 0) return null;
+  if (!narrow || !broad) return null;
   if (what === "rate") {
     const a = rateOf(narrow.figures)!;
     const b = rateOf(broad.figures)!;
-    if (b === 0) return `${NICHE_LABEL.narrow} clients: ${pctText(a)} ${t.noun} rate, ${broad.label}: none yet.`;
+    const other = broad.key === "broad" ? get("focused") : undefined;
+    const also = other ? ` (${other.label.toLowerCase()}: ${pctText(rateOf(other.figures)!)})` : "";
+    if (b === 0) return `${NICHE_LABEL.narrow} clients get ${pctText(a)} ${t.nounPlural} per ${t.exposureNounOne}; ${broad.label.toLowerCase()} ones got none yet${also}.`;
     const x = a / b;
-    return `${NICHE_LABEL.narrow} clients get ${pctText(a)} ${t.nounPlural} per ${t.exposureNounOne} against ${pctText(b)} for ${broad.label.toLowerCase()} ones: ${x.toFixed(2)}x, so a narrower niche ${x > 1 ? "converted better" : "did not convert better"} here.`;
+    return `${NICHE_LABEL.narrow} clients get ${pctText(a)} ${t.nounPlural} per ${t.exposureNounOne} against ${pctText(b)} for ${broad.label.toLowerCase()} ones${also}: ${x.toFixed(2)}x, so a narrower niche ${x > 1 ? "converted better" : "did not convert better"} here.`;
   }
   const ca = narrow.figures.outcomes > 0 && narrow.figures.spentUsd > 0 ? narrow.figures.spentUsd / narrow.figures.outcomes : null;
   const cb = broad.figures.outcomes > 0 && broad.figures.spentUsd > 0 ? broad.figures.spentUsd / broad.figures.outcomes : null;
@@ -120,7 +128,8 @@ function pipeStudies(input: NichePipeInput, grades: NicheGradesRead): ResearchSt
   const { groups } = groupCells(cells, groupOfSplitSlug);
   const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: labelOfGrade(g), legKey: input.legKey, cells: cs }));
   const perClient = clientRates(input, grades.byCampaign);
-  const lines = [...methodLines(grades), ...clientLines(grades.clients)];
+  const onPipe = new Set([...perClient].filter(([, c]) => c.contacted > 0).map(([k]) => k));
+  const lines = [...methodLines(grades), ...clientLines(grades.clients, onPipe)];
   if (leftOut.contacted >= 1) lines.push(`${n(Math.round(leftOut.contacted))} ${t.exposureNoun} by ungraded clients (ours, or not graded yet) are left out.`);
   const [roi, rate] = dimensionStudies(t, rows, { topic: "niche", dimNoun: "niche grade", keyed: false, extraLines: lines });
   const grade = gradeLines(t, rows, perClient);
