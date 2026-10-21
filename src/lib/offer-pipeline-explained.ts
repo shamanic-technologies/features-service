@@ -95,7 +95,7 @@ import { priceOnDeclaredFunnel } from "./offer-pricing.js";
 import {
   computeRevenue,
   contactedExpired,
-  contactedGroupKey,
+  contactedEntryRatesOf,
   CONTACTED_VALUE_EXPIRY_DAYS,
   dedupPersonsByLead,
   expectedValueOfPerson,
@@ -1167,8 +1167,7 @@ function buildExclusiveLadder(input: {
       const route = CONTACTED_ROUTE[path.signal];
       if (!path.engagementRoute || !route) continue;
       const rates = valued.map((p) => {
-        const key = contactedGroupKey(p.campaignId, p.workflowSlug);
-        const r = key === null ? undefined : pricing.entryRatePctByGroup[key]?.[path.signal];
+        const r = contactedEntryRatesOf(p, pricing)?.rates[path.signal];
         return typeof r === "number" && Number.isFinite(r) ? r : 0;
       });
       routes.push({

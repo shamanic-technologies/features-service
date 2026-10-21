@@ -24,7 +24,7 @@ const half = (spentUsd: number, contacted: number, outcomes: number) => ({
 // One workflow version that wrote for both clients: 1,000 people, 30 positive replies, $300.
 const cells: SlugCell[] = [{ slug: "azalea-v1", flash: half(300, 1000, 30), mature: half(300, 1000, 30) }];
 const pb = (orgId: string, campaignId: string, contacted: number, replies: number) => ({
-  orgId, campaignId, workflowSlug: "azalea-v1", servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: null,
+  orgId, brandId: "b1", country: null, campaignId, workflowSlug: "azalea-v1", servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: null,
 });
 const client = (key: string, brandId: string, label: string, grade: GradedClient["grade"]): GradedClient => ({ key, orgId: key, brandId, offerId: "", label, grade, confidence: 0.9 });
 const narrow = client("o1", "b1", "Doc Dinners", "narrow");

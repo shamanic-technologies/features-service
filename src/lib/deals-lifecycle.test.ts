@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BOARD_RUNG_KEYS, priceLifecycleColumns, type LifecycleBoardRow } from "./deals-lifecycle.js";
-import { expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
+import { contactedExpiryCutoffIso, contactedLeadValue, expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
 import { LIFECYCLE_RUNGS } from "./lifecycle-ladder.js";
 
 // LTR $1,000. A website visit is worth $100, a positive reply $400, a booked meeting $500, a sale $1,000.
@@ -79,10 +79,14 @@ const run = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}) =>
     paths: PATHS,
     lifetimeRevenueUsd: LTR,
     lifetimeRevenueSource: "fleet_median",
-    contactedValueByLead: new Map<string, number | null>([["c-measured", 12.5], ["c-default", null], ["c-expired", 0]]),
+    // The pipeline's contacted pricing: camp-1 × wf-1 measured (2.5% reply ⇒ $10), every other group on the default.
+    contactedPricing: {
+      entryRatePctByGroup: { "camp-1|wf-1": { positiveReply: 2.5 } },
+      defaultEntryRatePct: { positiveReply: 1, clicked: 2 },
+      lastSentOnOrAfter: contactedExpiryCutoffIso(NOW),
+    },
     statedWonAmountUsdByEmail: new Map([["w-stated@x.com", 4900]]),
     pricedCauses: ["outreach", "other", "unstated"],
-    now: NOW,
     ...over,
   });
 const rung = (r: ReturnType<typeof run>, key: string) => r.rungs.find((x) => x.key === key)!;
@@ -110,14 +114,14 @@ describe("priceLifecycleColumns (DEALS-LIFECYCLE-1021)", () => {
   });
 
   it("Contacted: the measured contacted value, else the seeded entry benchmark (said), 0 when expired or bounced", () => {
-    expect(card(r, "contacted", "h-c1")).toMatchObject({ valueUsd: 12.5, entryRateSource: "measured", zeroValueReason: null });
+    expect(card(r, "contacted", "h-c1")).toMatchObject({ valueUsd: 10, entryRateSource: "measured", zeroValueReason: null });
     // 1% reply × $400, 2% click × $100, combined as independent shots at one $1,000 close.
     const expected = 1000 * (1 - (1 - 4 / 1000) * (1 - 2 / 1000));
     expect(card(r, "contacted", "h-c2").valueUsd).toBeCloseTo(expected, 6);
     expect(card(r, "contacted", "h-c2").entryRateSource).toBe("default_entry");
     expect(card(r, "contacted", "h-c3")).toMatchObject({ valueUsd: 0, zeroValueReason: "expired" });
     expect(card(r, "contacted", "h-c4")).toMatchObject({ valueUsd: 0, zeroValueReason: "cannot_convert" });
-    expect(rung(r, "contacted").valueUsd).toBeCloseTo(12.5 + expected, 6);
+    expect(rung(r, "contacted").valueUsd).toBeCloseTo(10 + expected, 6);
     expect(rung(r, "contacted").assumptions).toEqual([
       { input: "lifetime_revenue", source: "fleet_median" },
       { input: "entry_rate", source: "default_entry" },
@@ -163,5 +167,32 @@ describe("priceLifecycleColumns (DEALS-LIFECYCLE-1021)", () => {
     expect(res.totalUsd).toBeNull();
     expect(res.rungs.every((x) => x.valueUsd === null)).toBe(true);
     expect(rung(res, "engaged").cardCount).toBe(2);
+  });
+});
+
+describe("ONE pipeline basis (owner 2026-10-21): the board prices what the pipeline prices", () => {
+  it("a rung reached but not caused by our pipes is 0 `not_ours`; a sale not ours adds no won value", () => {
+    const persons = [
+      person("e-other", "org-X", { positiveReply: true }, { unpricedSignals: ["positiveReply"] }),
+      person("w-other", "org-Y", { closeWin: true }, { unpricedSignals: ["closeWin"] }),
+    ];
+    const r = run({
+      persons,
+      rows: [row("h-eo", "engaged", ["e-other"]), row("h-wo", "paid_client", ["w-other"])],
+    });
+    expect(card(r, "engaged", "h-eo")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
+    expect(card(r, "paid_client", "h-wo")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
+    expect(r.wonUsd).toBe(0);
+  });
+
+  it("Contacted rides the pipeline's own function: a lead with no group rate takes the default, none at all ⇒ 0", () => {
+    const pricing = {
+      entryRatePctByGroup: {},
+      defaultEntryRatePct: { positiveReply: 1, clicked: 2 },
+      lastSentOnOrAfter: contactedExpiryCutoffIso(NOW),
+    };
+    const p = person("c-unattributed", "org-Z", {}, { campaignId: null, workflowSlug: null });
+    expect(contactedLeadValue(p, PATHS, LTR, pricing)).toBeCloseTo(1000 * (1 - (1 - 4 / 1000) * (1 - 2 / 1000)), 6);
+    expect(contactedLeadValue(p, PATHS, LTR, { ...pricing, defaultEntryRatePct: undefined })).toBe(0);
   });
 });

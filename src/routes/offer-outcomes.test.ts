@@ -59,7 +59,7 @@ const lead = (leadId: string, campaignId: string, signals: Record<string, boolea
 
 describe("GET /offers/:offerId/outcomes", () => {
   beforeEach(() => {
-    vi.mocked(contactedPricingSoft).mockResolvedValue(null);
+    vi.mocked(contactedPricingSoft).mockResolvedValue({ entryRatePctByGroup: {}, lastSentOnOrAfter: "2026-01-01T00:00:00.000Z" });
     vi.mocked(offerRevenueJson).mockResolvedValue(new SnapshotJson(JSON.stringify({ headline: { totalPipelineUsd: 0 } })));
     vi.mocked(fetchBrandCampaignRows).mockResolvedValue([
       { id: "c1", offerId: "offer-1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", funnelKey: "sales_meetings_from_conversation" },

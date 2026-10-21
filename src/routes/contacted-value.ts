@@ -49,6 +49,7 @@ import {
   contactedEntryLegs,
   contactedEntryRatesByGroup,
   contactedGroupsOf,
+  DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL,
   type ContactedGroupInput,
   type ContactedRoutePrice,
   type ContactedValueResult,
@@ -349,23 +350,26 @@ export async function getBrandContactedValue(brandId: string, headers: Downstrea
 /**
  * How a pipeline read prices this brand's contacted-but-not-engaged leads: the per-(campaign × workflow)
  * entry rates of the brand's contacted-value cell (cost per contact ÷ the serving workflow's cost per
- * outcome) and the 30-day last-send expiry. FAIL-SOFT with a loud log, like every other per-lead enrichment of the
- * pipeline: unreadable → null → those leads carry nothing, never a guessed rate.
+ * outcome), the seeded entry benchmark for a group with no measured rate (owner 2026-10-11/2026-10-21: an
+ * expected figure is never blank, and the Deals board and the pipeline value a contacted lead the SAME way),
+ * and the 30-day last-send expiry. An unreadable or unmeasured cell leaves every group on the benchmark,
+ * with a loud log, exactly as the Deals board prices it.
  */
-export async function contactedPricingSoft(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing | null> {
+export async function contactedPricingSoft(brandId: string, headers: DownstreamHeaders): Promise<ContactedPricing> {
+  let entryRatePctByGroup: ContactedPricing["entryRatePctByGroup"] = {};
   try {
     const result = await getBrandContactedValue(brandId, headers);
-    if (result.unmeasuredReason !== null) return null;
-    return {
-      entryRatePctByGroup: contactedEntryRatesByGroup(result.workflows),
-      lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()),
-    };
+    if (result.unmeasuredReason === null) entryRatePctByGroup = contactedEntryRatesByGroup(result.workflows);
   } catch (err) {
     console.warn(
-      `[features-service] contacted-lead pricing unreadable for brand ${brandId} — contacted leads add nothing to this pipeline: ${(err as Error).message}`,
+      `[features-service] contacted-lead pricing unreadable for brand ${brandId} — contacted leads on the seeded entry rate: ${(err as Error).message}`,
     );
-    return null;
   }
+  return {
+    entryRatePctByGroup,
+    defaultEntryRatePct: DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL,
+    lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()),
+  };
 }
 
 router.get("/brands/:brandId/contacted-value", apiKeyAuth, async (rawReq, res) => {

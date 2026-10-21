@@ -25016,7 +25016,7 @@
                     "expected_value",
                     "won_value"
                   ],
-                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on every cause — the column is a SUBSET of the all-cause pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
+                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on the pipeline's causes (what our pipes caused) — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale, else the brand's lifetime revenue per client."
                 },
                 "leadCount": {
                   "type": "number",
@@ -25144,7 +25144,7 @@
                     "expected_value",
                     "won_value"
                   ],
-                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on every cause — the column is a SUBSET of the all-cause pipeline. `won_value` (Won): the amount a human stated on the sale (whoever caused it), else the brand's lifetime revenue per client."
+                  "description": "`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on the pipeline's causes (what our pipes caused) — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale, else the brand's lifetime revenue per client."
                 },
                 "leadCount": {
                   "type": "number",
@@ -25319,7 +25319,7 @@
                     "expected_value",
                     "won_value"
                   ],
-                  "description": "`contacted_expected_value`: P(entry step | contacted) × the value at that step (the contacted-value model, expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (every cause; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."
+                  "description": "`contacted_expected_value`: P(entry step | contacted) × the value at that step (the pipeline's own contacted pricing: the measured group rate, else the seeded entry benchmark; expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (on the pipeline's causes: what our pipes caused; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."
                 },
                 "valueUsd": {
                   "type": "number",
@@ -25396,11 +25396,12 @@
                         "enum": [
                           "ruled_out",
                           "step_not_priced",
+                          "not_ours",
                           "expired",
                           "cannot_convert",
                           "not_sent"
                         ],
-                        "description": "Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
+                        "description": "Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
                       },
                       "valueSource": {
                         "type": "string",
@@ -42677,7 +42678,7 @@
     "/brands/{brandId}/deals-value": {
       "get": {
         "summary": "The dollar value of each Deals-board column (lead-service standing), per column and per card",
-        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on every outcome cause, company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on the pipeline's causes (what our pipes caused), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
         "tags": [
           "Stats"
         ],

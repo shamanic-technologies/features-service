@@ -24,7 +24,7 @@ const half = (spentUsd: number, contacted: number, outcomes: number) => ({
 });
 const gen = (promptType: string) => ({ model: "gemini-3.5-flash", promptType, layout: "double_line_breaks", opening: "greeting", dash: "none" });
 const pb = (slug: string, tpl: string, contacted: number, replies: number) => ({
-  orgId: "o1", campaignId: "c1", workflowSlug: slug, servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: gen(tpl),
+  orgId: "o1", brandId: "b1", campaignId: "c1", country: null, workflowSlug: slug, servedDay: "2026-09-10", contacted, clicked: 0, positiveReplies: replies, screenedContacted: 0, humanClicked: 0, generation: gen(tpl),
 });
 
 const BLIND_FREE_OFFER: TemplateDynasty = {

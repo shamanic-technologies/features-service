@@ -56,8 +56,20 @@ import {
   type EnginePerson,
   type ResolvedPath,
 } from "./revenue-engine.js";
+import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
 
 export { ENGAGED_SIGNALS };
+
+/**
+ * The seeded cold-email entry rates (`DEFAULT_ENTRY_RATE_PCT`), keyed by the engine signal of each entry route:
+ * what a contacted lead whose (campaign × workflow) group has no measured rate is priced on, by EVERY read
+ * (`ContactedPricing.defaultEntryRatePct`; owner 2026-10-11 « quitte à poser une hypothèse », 2026-10-21 one
+ * pipeline figure everywhere).
+ */
+export const DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL: Readonly<Record<string, number>> = {
+  ...(DEFAULT_ENTRY_RATE_PCT.conversation !== undefined ? { positiveReply: DEFAULT_ENTRY_RATE_PCT.conversation } : {}),
+  ...(DEFAULT_ENTRY_RATE_PCT.website_visit !== undefined ? { clicked: DEFAULT_ENTRY_RATE_PCT.website_visit } : {}),
+};
 
 /** The funnel step each entry route lands on, in the catalogue's own wording. */
 const ROUTE_STEP: Record<string, string> = {

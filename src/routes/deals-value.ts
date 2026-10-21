@@ -15,7 +15,7 @@ import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { resolveBrandChannels, brandFeatureSlugs, BrandHasNoChannelsError } from "../lib/brand-channels.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { fetchLeadIdsByStanding } from "../lib/leads-client.js";
-import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
+import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { loadBrandPricedPopulation, BrandPricesDifferentlyError, type BrandPricingPre } from "./contacted-value.js";
 import { priceDealsColumns, type DealsValueResult } from "../lib/deals-value.js";
 
@@ -35,15 +35,14 @@ export async function computeBrandDealsValue(
   /** The offer whose Disqualified marks apply (its own or brand-wide); omitted → every mark of the brand. */
   offerId?: string,
 ): Promise<DealsValueResult> {
-  // A DEALS board shows what each deal is worth to the customer, whoever caused it — so both columns
-  // are priced on EVERY cause state (the engine basis `/revenue?cause=outreach,other,unstated` serves),
-  // never on the pipeline's "our outreach only" default. Measured in prod 2026-09-26 (Doc Dinners): on
-  // the default, 45 of 54 Interested cards read $0 because their meetings came through the CRM.
+  // ONE pipeline figure everywhere (owner 2026-10-21, « On fait tout (toute campaign, tout sales funnels, tout
+  // pipes) »; supersedes the 2026-09-26 every-cause board): both columns are priced on the pipeline's own default
+  // causes (`DEFAULT_PRICED_CAUSES`, what our pipes caused); a deal that came on its own adds nothing.
   // "Disqualified" is lead-service's MARK beside the standing (v0.83.59), not a standing: a marked person
   // can still stand Interested. The population carries the mark (read once, by the loader, the offer's
   // when offer-scoped), so the card reads $0 `ruled_out` exactly as the pipeline prices that person.
   const [population, interested, won] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: ALL_OUTCOME_CAUSES, campaignIds, offerId }),
+    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: DEFAULT_PRICED_CAUSES, campaignIds, offerId }),
     fetchLeadIdsByStanding(brandId, "sales_interest", headers),
     fetchLeadIdsByStanding(brandId, "customer", headers),
   ]);
@@ -70,7 +69,7 @@ export async function computeBrandDealsValue(
     lifetimeRevenueUsd: population.lifetimeRevenueUsd,
     members: { sales_interest: scoped(interested), customer: scoped(won) },
     statedWonAmountUsdByEmail,
-    pricedCauses: ALL_OUTCOME_CAUSES,
+    pricedCauses: DEFAULT_PRICED_CAUSES,
   });
 }
 
@@ -89,7 +88,7 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
         channels: brandFeatureSlugs(channels).join("+"),
         decl: declared.map((f) => f.funnelKey).sort().join("+") || "none",
         econ: pricedFingerprint(priced),
-        m: "deals-value-v4",
+        m: "deals-value-v5",
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, { channels, declared }),
