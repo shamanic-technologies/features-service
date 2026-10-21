@@ -53,10 +53,11 @@ export interface CatalogRoi {
   basis: "measured" | "expected" | null;
   /**
    * measured: `workflow` (the ranking row), `own_outcomes` (a template: its own outcomes' pipeline ÷ its own billed spend).
-   * expected: `writes_with_now` (the workflows writing with it now that produced an outcome), `dynasty` (a version reads
-   * its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return).
+   * expected: `pipe_templates` (a template: every template of the pipe pooled, own pipeline ÷ own billed), `writes_with_now`
+   * (the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's),
+   * `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return).
    */
-  source: "workflow" | "own_outcomes" | "writes_with_now" | "dynasty" | "pipe_best_workflow" | null;
+  source: "workflow" | "own_outcomes" | "pipe_templates" | "writes_with_now" | "dynasty" | "pipe_best_workflow" | null;
   /** On `own_outcomes`: the share of its spend whose workflow states its pipeline and billed spend (1 = all of it). */
   spendCovered: number | null;
   unavailableReason: "no_return_on_pipe" | null;
@@ -508,9 +509,25 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   };
   const ownRoi = (figs: ReadonlyMap<string, VersionShare> | undefined) =>
     ownTemplateRoi(figs, p.dynastyOf, p.workflowVersionTotals, p.workflowReturns?.pipelineOf, p.workflowReturns?.billedOf);
+  // What a template on this pipe returns, every template pooled (each one's own pipeline ÷ own billed spend, the ones
+  // that earned nothing included): the honest expectation for a template that has not earned one of its own. A
+  // workflow's return carries its contacted people's value, which no template without an outcome has shown it earns.
+  const pooledTemplateRoi = (() => {
+    const pooled = new Map<string, VersionShare>();
+    for (const figs of p.templateFiguresByVersion?.values() ?? []) {
+      for (const [slug, f] of figs) {
+        const t = pooled.get(slug) ?? { spentUsd: 0, outcomes: 0 };
+        t.spentUsd += f.spentUsd;
+        t.outcomes += f.outcomes;
+        pooled.set(slug, t);
+      }
+    }
+    const m = ownRoi(pooled);
+    return m && m.value > 0 ? roiOfValue(m.value, "expected", "pipe_templates") : null;
+  })();
   const templateRoi = (key: string): CatalogRoi => {
     const m = ownRoi(p.templateFiguresByVersion?.get(key));
-    return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (nowRoiOf(key) ?? pipeRoi);
+    return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (pooledTemplateRoi ?? nowRoiOf(key) ?? pipeRoi);
   };
   const templates: CatalogTemplate[] = tplRows.map((r, i) => {
     const d = dyn.dynastyOf(r.key);

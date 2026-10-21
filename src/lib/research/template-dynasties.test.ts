@@ -268,12 +268,20 @@ describe("template dynasties on the Research pages", () => {
     expect(v41.roiDetail).toMatchObject({ basis: "expected", source: "dynasty" });
   });
 
-  it("never blank: unmeasured templates read the workflows writing with them now, else the pipe's money workflow, marked expected; never an expected 0", () => {
-    const c = catalogWith(azalea(2000, 500), "azalea");
-    // Pain Question never wrote; azalea writes with its head now.
-    expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
+  it("never blank: unmeasured templates read every template of the pipe pooled, else the workflows writing with them now, else the pipe's money workflow, marked expected; never an expected 0", () => {
+    // Pain Question never wrote. Every template pooled: 9 replies, $500 billed, the whole pipeline $1,000 = 2x.
+    const c = catalogWith(new Map([["azalea", { pipeline: 1000, billed: 500 }], ["rose", { pipeline: 2600, billed: 100 }]]), "rose");
+    expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 2, basis: "expected", source: "pipe_templates" });
+    // No template earned anything: the workflows writing with it now (azalea, which produced an outcome).
+    const noReply = [pb("azalea-v1", "blind-discovery-email-v40", 400, 0), pb("azalea-v2", "blind-discovery-email-v41", 200, 0)];
+    const noCells: SlugCell[] = [
+      { slug: "azalea-v1", flash: half(400, 400, 0), mature: half(300, 300, 0) },
+      { slug: "azalea-v2", flash: half(100, 200, 0), mature: half(100, 200, 0) },
+    ];
+    const now = catalogWith(azalea(2000, 500), "azalea", noCells, noReply);
+    expect(now.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
     // A workflow with no outcome states no evidence about a template it writes with: the pipe's figure instead.
-    const noOutcome = catalogWith(new Map([["azalea", { pipeline: 2000, billed: 500 }], ["rose", { pipeline: 150, billed: 100 }]]), "rose", cells, persons, 0);
+    const noOutcome = catalogWith(new Map([["azalea", { pipeline: 2000, billed: 500 }], ["rose", { pipeline: 150, billed: 100 }]]), "rose", noCells, noReply, 0);
     expect(noOutcome.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
     const none = catalogWith(new Map([["azalea", { pipeline: null, billed: null }], ["rose", { pipeline: 150, billed: 100 }]]), "rose");
     expect(none.templates.find((t) => t.key === "cold-reply-free-offer-blind")!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });

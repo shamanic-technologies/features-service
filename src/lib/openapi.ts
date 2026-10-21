@@ -8377,9 +8377,9 @@ const researchCatalogRoi = z
     display: z.string().nullable().describe("Printed (`3.20x`)."),
     basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."),
     source: z
-      .enum(["workflow", "own_outcomes", "writes_with_now", "dynasty", "pipe_best_workflow"])
+      .enum(["workflow", "own_outcomes", "pipe_templates", "writes_with_now", "dynasty", "pipe_best_workflow"])
       .nullable()
-      .describe("measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."),
+      .describe("measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."),
     spendCovered: z.number().nullable().describe("On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."),
     unavailableReason: z.enum(["no_return_on_pipe"]).nullable().describe("Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."),
   })
