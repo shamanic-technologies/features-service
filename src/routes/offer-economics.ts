@@ -69,6 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
@@ -338,6 +339,15 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
     }),
     orgId: headers.orgId,
     compute: async () => {
+      // The Companies page's tabs (`?columns=company_lifecycle`) and this list are ONE set: every organisation that
+      // cell places on a rung is a row here (`appendListedOrganizations`). Started now, awaited after the engine.
+      // Soft, loudly: an unreadable cell must not take the offer's money down; its own read fails on the page.
+      const listedOrganizationKeys = offerCompanyLifecycleCached({ offerId, brandId, headers, campaignIds, featureSlugs })
+        .then(keysOnARung)
+        .catch((err: Error) => {
+          console.error(`[features-service] offer revenue (offer ${offerId}, brand ${brandId}): company lifecycle unreadable, organizations on a rung but worth $0 are NOT listed: ${err.message}`);
+          return null;
+        });
       // ONE engine pass over the offer's whole evidence set — see the additive/non-additive note in
       // this file's header for why this is a single pass rather than N results combined.
       const body = await computeFeatureRevenue(
@@ -358,6 +368,8 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
         undefined,
         // Today's spend counts the brand's own campaign-less work too (what the credit was charged).
         true,
+        undefined,
+        listedOrganizationKeys,
       );
       const window = windowDays
         ? await computeRevenueWindow({

@@ -114,6 +114,8 @@ interface Fixture {
   /** email-gateway day series, per campaign id. */
   daysByCampaign?: Record<string, Record<string, { contacted: number; opened: number; clicked: number }>>;
   audiences?: Array<Record<string, unknown>>;
+  /** lead-service Unibox rows: each row's leads and its lifecycle rung. */
+  unibox?: Array<{ leadIds: string[]; rung: string }>;
 }
 
 /**
@@ -193,6 +195,15 @@ function mockFetch(fixture: Fixture): void {
       return json({ groups });
     }
 
+    if (path.endsWith("/orgs/leads/unibox")) {
+      const rungs = (q.get("lifecycle") ?? "").split(",");
+      return json({
+        rows: (fixture.unibox ?? [])
+          .filter((r) => rungs.includes(r.rung))
+          .map((r) => ({ humanId: `h-${r.leadIds[0]}`, companyKey: "", relationKey: null, leadIds: r.leadIds, lifecycle: { key: r.rung } })),
+        nextCursor: null,
+      });
+    }
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
       return json({ leads: only ? fixture.leads.filter((l) => l.campaignId === only) : fixture.leads });
@@ -254,6 +265,44 @@ const TWO_CHANNELS: Fixture = {
   costByCampaign: { c1: 3000, c2: 2000, c9: 7000 },
   leads: [replyLead("c1", "l1"), replyLead("c2", "l2")],
 };
+
+describe("GET /offers/:offerId/revenue — the Companies page lists every organisation on a lifecycle rung (DEALS-LIFECYCLE-1021)", () => {
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockImplementation(
+      (async (args: { where: unknown }) => FEATURE_ROW(String((args as never as { where: { right?: string } }).where?.right ?? PITCH))) as never,
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a company-less person who signed up, worth $0 here and never emailed, is a row; the tab counts are the rows", async () => {
+    // A signup with no company and no send: the engine alone lists nobody for it.
+    const signup = { ...replyLead("c1", "s1"), contacted: false, sent: false, delivered: false, replied: false, replyClassification: null, lead: { firstName: "S", lastName: "U", photoUrl: null, organization: null } };
+    const silent = { ...signup, leadId: "s2", email: "s2@x.com" }; // company-less, on no rung: not listed
+    const fixture: Fixture = {
+      ...TWO_CHANNELS,
+      leads: [replyLead("c1", "l1"), replyLead("c2", "l2"), signup, silent],
+      unibox: [{ leadIds: ["l1"], rung: "engaged" }, { leadIds: ["l2"], rung: "engaged" }, { leadIds: ["s1"], rung: "signup_or_form" }],
+    };
+    mockFetch(fixture);
+    const res = await request(app).get(`/offers/${OFFER}/revenue?brandId=b1`).set(AUTH);
+    expect(res.status).toBe(200);
+    const rows = res.body.organizations as Array<{ organizationKey: string; expectedRevenueUsd: number }>;
+    const row = rows.find((o) => o.organizationKey === "lead:s1");
+    expect(row).toMatchObject({ orgId: null, expectedRevenueUsd: 0, topPerson: { firstName: "S", lastName: "U", photoUrl: null } });
+    expect(rows.some((o) => o.organizationKey === "lead:s2")).toBe(false);
+    // The headline does not move: a $0 row adds nothing.
+    expect(res.body.headline.totalPipelineUsd).toBeCloseTo(240, 6);
+
+    mockFetch(fixture);
+    const tabs = await request(app).get(`/offers/${OFFER}/deals-value?brandId=b1&columns=company_lifecycle`).set(AUTH);
+    expect(tabs.status).toBe(200);
+    const keys = new Set(rows.map((o) => o.organizationKey));
+    for (const rung of tabs.body.rungs as Array<{ key: string; organizationCount: number }>) {
+      const onRung = (tabs.body.organizations as Array<{ organizationKey: string; lifecycle: { key: string } | null }>).filter((o) => o.lifecycle?.key === rung.key);
+      expect(onRung.filter((o) => keys.has(o.organizationKey)).length).toBe(rung.organizationCount);
+    }
+  });
+});
 
 describe("GET /offers/:offerId/revenue — an offer's money, across every channel it sells through", () => {
   beforeEach(() => {
