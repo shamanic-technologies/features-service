@@ -84,23 +84,28 @@ export async function fetchReplyDelayDistribution(campaignIds: string[]): Promis
   const pct = raw?.percentilesMs as Record<string, unknown> | undefined;
   if (!pct || typeof pct !== "object") throw new Error("reply-latency: percentilesMs missing (lead-service older than TTFPR-DISTRIBUTION-1021)");
   if (!Array.isArray(raw?.distribution)) throw new Error("reply-latency: distribution missing (lead-service older than TTFPR-DISTRIBUTION-1021)");
+  if (!Array.isArray(raw?.dailyDistribution)) throw new Error("reply-latency: dailyDistribution missing (lead-service older than TTFPR-DAY-BINS-1021)");
   const num = (v: unknown, what: string): number | null => {
     if (v === null) return null;
     if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`reply-latency: ${what} is not a number`);
     return v;
   };
-  const distribution: ReplyDelayBucket[] = (raw.distribution as Record<string, unknown>[]).map((b, i) => {
-    if (typeof b.key !== "string" || typeof b.label !== "string") throw new Error(`reply-latency: bucket ${i} has no key/label`);
-    const fromMs = num(b.fromMs, `bucket ${b.key} fromMs`);
-    const count = num(b.count, `bucket ${b.key} count`);
-    const cumulativeCount = num(b.cumulativeCount, `bucket ${b.key} cumulativeCount`);
-    if (fromMs === null || count === null || cumulativeCount === null) throw new Error(`reply-latency: bucket ${b.key} has a null bound or count`);
-    return { key: b.key, label: b.label, fromMs, toMs: num(b.toMs, `bucket ${b.key} toMs`), count, cumulativeCount };
-  });
+  const bucketsOf = (list: unknown, what: string): ReplyDelayBucket[] =>
+    (list as Record<string, unknown>[]).map((b, i) => {
+      if (typeof b.key !== "string" || typeof b.label !== "string") throw new Error(`reply-latency: ${what} ${i} has no key/label`);
+      const fromMs = num(b.fromMs, `${what} ${b.key} fromMs`);
+      const count = num(b.count, `${what} ${b.key} count`);
+      const cumulativeCount = num(b.cumulativeCount, `${what} ${b.key} cumulativeCount`);
+      if (fromMs === null || count === null || cumulativeCount === null) throw new Error(`reply-latency: ${what} ${b.key} has a null bound or count`);
+      return { key: b.key, label: b.label, fromMs, toMs: num(b.toMs, `${what} ${b.key} toMs`), count, cumulativeCount };
+    });
+  const distribution = bucketsOf(raw.distribution, "bucket");
+  const dailyDistribution = bucketsOf(raw.dailyDistribution, "day bin");
   const out: ReplyDelayDistribution = {
     ...base,
     percentilesMs: { p10: num(pct.p10, "p10"), p25: num(pct.p25, "p25"), p50: num(pct.p50, "p50"), p75: num(pct.p75, "p75"), p90: num(pct.p90, "p90") },
     distribution,
+    dailyDistribution,
   };
   assertReplyDelayCoherent(out);
   return out;

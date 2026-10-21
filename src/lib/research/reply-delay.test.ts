@@ -29,6 +29,17 @@ const buckets = (counts: Record<string, number>): ReplyDelayBucket[] => {
   });
 };
 
+const dayBins = (counts: Record<number, number>): ReplyDelayBucket[] => {
+  let run = 0;
+  return Array.from({ length: 22 }, (_, i) => {
+    const count = counts[i + 1] ?? 0;
+    run += count;
+    return i < 21
+      ? { key: `day_${i + 1}`, label: `Day ${i + 1}`, fromMs: i * D, toMs: (i + 1) * D, count, cumulativeCount: run }
+      : { key: "day_21_plus", label: "21 days or more", fromMs: 21 * D, toMs: null, count, cumulativeCount: run };
+  });
+};
+
 // 20 replies: 4 within an hour, 2 at 1-3h, 2 at 12-24h (8 in the first day), 6 at 3-5 days, 4 at 7-10 days, 2 at 30-60 days.
 const SMALL: ReplyDelayDistribution = {
   sampleSize: 20,
@@ -36,6 +47,8 @@ const SMALL: ReplyDelayDistribution = {
   averageMs: 7.25 * D,
   percentilesMs: { p10: 30 * 60_000, p25: 2 * H, p50: 3.5 * D, p75: 8 * D, p90: 9.5 * D },
   distribution: buckets({ lt_1h: 4, "1h_3h": 2, "12h_1d": 2, "3d_5d": 6, "7d_10d": 4, "30d_60d": 2 }),
+  // Same 20 people per day: 8 on day 1, 6 on day 4, 4 on day 8, 2 past 21 days.
+  dailyDistribution: dayBins({ 1: 8, 4: 6, 8: 4, 22: 2 }),
 };
 
 describe("delayText (human units)", () => {
@@ -58,7 +71,7 @@ describe("replyDelayStudy (TTFPR-RESEARCH-STUDY-1021)", () => {
   });
 
   it("empty sample: not_enough_data with a reason, no chart, no tiles", () => {
-    const empty: ReplyDelayDistribution = { sampleSize: 0, medianMs: null, averageMs: null, percentilesMs: { p10: null, p25: null, p50: null, p75: null, p90: null }, distribution: [] };
+    const empty: ReplyDelayDistribution = { sampleSize: 0, medianMs: null, averageMs: null, percentilesMs: { p10: null, p25: null, p50: null, p75: null, p90: null }, distribution: [], dailyDistribution: [] };
     const s = replyDelayStudy({ metric: empty, campaigns: 150 }, 10);
     expect(s.status).toBe("not_enough_data");
     expect(s.verdict.kind).toBe("noise");
@@ -102,18 +115,37 @@ describe("replyDelayStudy (TTFPR-RESEARCH-STUDY-1021)", () => {
     ]);
   });
 
+  it("per-day histogram (TTFPR-DAY-BINS-1021): charts[1], 22 bars Day 1 .. Day 21 then 21+ days, % of the sample, no curve", () => {
+    const s = replyDelayStudy({ metric: SMALL, campaigns: 3 }, 10);
+    expect(s.charts).toHaveLength(2);
+    const day = s.charts[1]!;
+    expect(day.kind).toBe("bars");
+    expect(day.title).toBe("First positive replies by day after the first message (% of replies)");
+    expect(day.curve).toBeUndefined();
+    expect(day.points.map((p) => p.label)).toEqual([...Array.from({ length: 21 }, (_, i) => `Day ${i + 1}`), "21 days or more"]);
+    expect(day.points[0]).toMatchObject({ key: "day_1", value: 40, display: "40% (8)", note: "8 of 20 positive replies", thin: false });
+    expect(day.points[3]).toMatchObject({ value: 30, display: "30% (6)" });
+    expect(day.points.at(-1)).toMatchObject({ key: "day_21_plus", value: 10, display: "10% (2)" });
+    expect(day.points.reduce((a, p) => a + p.value, 0)).toBeCloseTo(100, 6);
+    expect(s.charts[0]!.curve).toBeDefined();
+  });
+
   it("under the sample bar: figures served marked Learning, never a verdict", () => {
     const s = replyDelayStudy({ metric: SMALL, campaigns: 3 }, 25);
     expect(s.status).toBe("not_enough_data");
     expect(s.verdict.kind).toBe("noise");
     expect(s.headline).toBe("Learning: 20 positive replies so far, the figure needs 25.");
     expect(s.charts[0]!.points.every((p) => p.thin)).toBe(true);
+    expect(s.charts[1]!.points.every((p) => p.thin)).toBe(true);
   });
 });
 
 describe("assertReplyDelayCoherent", () => {
   it("refuses buckets that do not sum to the sample", () => {
     expect(() => assertReplyDelayCoherent({ ...SMALL, sampleSize: 21 })).toThrow(/sum to 20/);
+  });
+  it("refuses day bins that do not sum to the sample", () => {
+    expect(() => assertReplyDelayCoherent({ ...SMALL, dailyDistribution: dayBins({ 1: 8 }) })).toThrow(/day bins sum to 8/);
   });
   it("refuses unordered percentiles", () => {
     expect(() => assertReplyDelayCoherent({ ...SMALL, percentilesMs: { ...SMALL.percentilesMs, p25: 4 * D } })).toThrow(/not ordered/);
