@@ -878,8 +878,10 @@ export function expectedValueOfPerson(
   person: EnginePerson,
   paths: ResolvedPath[],
   closeValueUsd: number,
+  /** The pipeline's contacted pricing: a person with no priced step is then worth what the pipeline says it is. */
+  contacted: ContactedPricing | null = null,
 ): number {
-  return evForPerson(person, paths, [], closeValueUsd).ev;
+  return evForPerson(person, paths, [], closeValueUsd, contacted).ev;
 }
 
 export function computeRevenue(

@@ -196,3 +196,13 @@ describe("ONE pipeline basis (owner 2026-10-21): the board prices what the pipel
     expect(contactedLeadValue(p, PATHS, LTR, { ...pricing, defaultEntryRatePct: undefined })).toBe(0);
   });
 });
+
+describe("a rung lead-service places further along than the engine sees: the pipeline's own value", () => {
+  it("an Engaged card whose person has no priced step yet is worth its contacted value, as in the pipeline", () => {
+    const p = person("e-contacted-only", "org-Q", {}, { campaignId: "camp-unpriced" });
+    const r = run({ persons: [p], rows: [row("h-eq", "engaged", ["e-contacted-only"])] });
+    const expected = 1000 * (1 - (1 - 4 / 1000) * (1 - 2 / 1000)); // the seeded default entry, reply + click
+    expect(card(r, "engaged", "h-eq").valueUsd).toBeCloseTo(expected, 6);
+    expect(card(r, "engaged", "h-eq").zeroValueReason).toBeNull();
+  });
+});
