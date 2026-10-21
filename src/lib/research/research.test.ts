@@ -216,9 +216,10 @@ describe("assembleResearch", () => {
     const served = new Set(file.studies.map((s) => s.id));
     const waiting = new Set(file.unavailable.map((u) => u.id));
     for (const id of PAGE_IDS) expect(served.has(id) !== waiting.has(id), id).toBe(true);
-    // Beyond the page's ids, only the two articles over time per pipe (MB-INDEX-PIPES-1018), served live.
+    // Beyond the page's ids, only the two articles over time per pipe (MB-INDEX-PIPES-1018), served live, and the
+    // screenshot-vs-description benchmark (IMAGE-JUDGE-STUDY-1021).
     const extra = [...served].filter((id) => !PAGE_IDS.includes(id)).sort();
-    expect(extra).toEqual(OVER_TIME_IDS);
+    expect(extra).toEqual([...OVER_TIME_IDS, "jev-screenshot-vs-description"].sort());
     expect(served.size - extra.length + waiting.size).toBe(PAGE_IDS.length);
     expect(UNAVAILABLE.length).toBeGreaterThanOrEqual(waiting.size);
   });
