@@ -6,6 +6,10 @@
  *   GET /offers/:offerId/contacted-value?brandId=  — `/brands/:brandId/contacted-value`, at the offer grain
  *   GET /offers/:offerId/deals-value?brandId=&columns=lifecycle[&campaignId=] — the board on the LIFECYCLE ladder
  *       (`computeOfferDealsLifecycle`); without `columns` (or `columns=standing`) the standing body, byte-unchanged.
+ *   GET /offers/:offerId/deals-value?brandId=&columns=company_lifecycle — each organisation's lifecycle rung (the
+ *       highest rung of its people) and how many stand on each rung, for the Companies page
+ *       (`computeOfferCompanyLifecycle`, `lib/company-lifecycle.ts`). A mode of this route so the gateway's existing
+ *       passthrough reaches it.
  *
  * Same semantics, same pricing and same body as the brand reads; what narrows is WHO: only the leads
  * served on the offer's campaigns (every channel), read the way `/offers/:offerId/revenue` reads them,
@@ -44,7 +48,10 @@ import { computeBrandDealsValue } from "./deals-value.js";
 import { priceContactedLeads, type ContactedValueResult } from "../lib/contacted-value.js";
 import type { DealsValueResult } from "../lib/deals-value.js";
 import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
-import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
+import { fetchLeadsForRevenue, fetchUniboxLifecycleRows } from "../lib/leads-client.js";
+import { dedupPersonsByLead } from "../lib/revenue-engine.js";
+import { LIFECYCLE_RUNGS } from "../lib/lifecycle-ladder.js";
+import { companyLifecycles, type CompanyLifecycleResult } from "../lib/company-lifecycle.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
 import {
   BOARD_RUNG_KEYS,
@@ -186,6 +193,26 @@ export async function computeOfferDealsLifecycle(
   });
 }
 
+/**
+ * Each organisation's lifecycle rung for the offer (`lib/company-lifecycle.ts`): the offer's lead population (the
+ * read `/offers/:offerId/revenue` groups its organisations on) and lead-service's Unibox lifecycle on EVERY rung, Lead
+ * found included. Nothing is priced. Both reads fail loud: a missing page would mis-rank an organisation.
+ */
+export async function computeOfferCompanyLifecycle(
+  brandId: string,
+  headers: DownstreamHeaders,
+  campaignIds: string[],
+): Promise<CompanyLifecycleResult> {
+  const [persons, rows] = await Promise.all([
+    fetchLeadsForRevenue(brandId, campaignIds, headers),
+    fetchUniboxLifecycleRows(brandId, LIFECYCLE_RUNGS.map((r) => r.key), headers),
+  ]);
+  return companyLifecycles({
+    persons: dedupPersonsByLead(persons).map((p) => ({ leadId: p.leadId, orgId: p.orgId })),
+    rows: rows.map((r) => ({ leadIds: r.leadIds, rung: r.rung })),
+  });
+}
+
 class CampaignNotOnOfferError extends Error {
   constructor(readonly offerId: string, readonly campaignId: string) {
     super(`Campaign ${campaignId} does not sell offer ${offerId}`);
@@ -207,8 +234,8 @@ async function campaignScope(offerId: string, brandId: string, campaignId: strin
 
 router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
   const columns = req.query.columns === undefined ? "standing" : req.query.columns;
-  if (columns !== "standing" && columns !== "lifecycle") {
-    return res.status(400).json({ error: "columns must be one of: standing, lifecycle" });
+  if (columns !== "standing" && columns !== "lifecycle" && columns !== "company_lifecycle") {
+    return res.status(400).json({ error: "columns must be one of: standing, lifecycle, company_lifecycle" });
   }
   const rawCampaignId = typeof req.query.campaignId === "string" ? req.query.campaignId.trim() : "";
   if (req.query.campaignId !== undefined && (columns !== "lifecycle" || rawCampaignId === "")) {
@@ -218,6 +245,23 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
     const resolved = await resolveRequest(req as never);
     if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
     const { offerId, brandId, headers, channels, campaignIds, featureSlugs } = resolved;
+    if (columns === "company_lifecycle") {
+      // Nothing is priced, so no pricing read; the brand must still be the caller's.
+      await assertBrandHeld(brandId, headers);
+      const result = await servedCached<CompanyLifecycleResult>({
+        view: "offer-company-lifecycle",
+        scopeKey: buildScopeKey(offerId, {
+          orgId: headers.orgId,
+          brandId,
+          channels: featureSlugs.join("+"),
+          campaigns: campaignSetKey(campaignIds),
+          m: "company-lifecycle-v1",
+        }),
+        orgId: headers.orgId,
+        compute: () => computeOfferCompanyLifecycle(brandId, headers, campaignIds),
+      });
+      return res.json({ offerId, brandId, ...result });
+    }
     const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);
     if (columns === "lifecycle") {
       const scoped = rawCampaignId ? await campaignScope(offerId, brandId, rawCampaignId, campaignIds, headers) : campaignIds;
