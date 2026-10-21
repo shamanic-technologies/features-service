@@ -14,6 +14,7 @@ import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
 import { followupStudies, opensStudies, timingStudy, type LegSpendSplit, type OpensArm, type SendGroup } from "./sends.js";
 import { JUDGMENT_OUTCOME, jevStudies, type JevInput } from "./jev.js";
 import { imageJudgeStudy } from "./image-judge.js";
+import { imageJudgeRivalsStudy } from "./image-judge-rivals.js";
 import { bestWorkflowByMonth, clientMedianByMonth, overTimeStudies, type BestPoint, type MedianPoint } from "./pipe-series.js";
 import { dayText, monthLabel } from "./format.js";
 import { TIME_TO_REPLY_MIN_SAMPLE } from "../campaign-next-steps.js";
@@ -295,6 +296,8 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
   // a one-off hand-checked benchmark, committed (IMAGE-JUDGE-STUDY-1021): the same on both bases, it prices nothing
   studies.push(imageJudgeStudy());
+  // its sibling (IMAGE-JUDGE-RIVALS-STUDY-1021): which model reads the screenshot best, and at what price
+  studies.push(imageJudgeRivalsStudy());
 
   const iso = input.now.toISOString();
   const cutoffs = [input.reply.cutoffDay, input.visit.cutoffDay].filter((c): c is string => c !== null).sort();
