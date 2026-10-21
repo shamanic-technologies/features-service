@@ -220,6 +220,12 @@ export interface TopPerson {
 }
 
 export interface OrganizationRow {
+  /**
+   * The row's identity: `org:<orgId>`, or `lead:<leadId>` for a lead with no company (a row of its own). The same
+   * key the lifecycle read uses (`/offers/:offerId/deals-value?columns=company_lifecycle`), so a reader can join
+   * them on every row, the company-less ones included.
+   */
+  organizationKey: string;
   orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
@@ -231,6 +237,10 @@ export interface OrganizationRow {
   /** Most-advanced (max) event date for the org. Null when no event date is known. */
   mostAdvancedDate: string | null;
 }
+
+/** An organisation row's identity (`OrganizationRow.organizationKey`): its company, else the lead alone. */
+export const organizationKeyOf = (p: { orgId: string | null; leadId: string }): string =>
+  p.orgId != null ? `org:${p.orgId}` : `lead:${p.leadId}`;
 
 export interface LeadRow {
   leadId: string;
@@ -924,7 +934,7 @@ export function computeRevenue(
   // over its members (1 org = 1 client = 1 LTR).
   const byOrg = new Map<string, PersonEv[]>();
   for (const entry of scored) {
-    const key = entry.person.orgId ?? `lead:${entry.person.leadId}`;
+    const key = organizationKeyOf(entry.person);
     const bucket = byOrg.get(key);
     if (bucket) bucket.push(entry);
     else byOrg.set(key, [entry]);
@@ -932,7 +942,7 @@ export function computeRevenue(
 
   interface OrgAgg { row: OrganizationRow; ev: number; birthDate: string | null; }
   const orgAggs: OrgAgg[] = [];
-  for (const unordered of byOrg.values()) {
+  for (const [organizationKey, unordered] of byOrg) {
     // An organisation's figures must not depend on the ORDER its leads arrived in (a full walk and a
     // live copy serve the same rows in different orders — lead-copy.ts): members are taken by lead
     // id, so the identity tie-break and the first-known domain are stable, and the tags are stated in
@@ -954,6 +964,7 @@ export function computeRevenue(
     tags.sort((x, y) => (stageRank.get(x) ?? -1) - (stageRank.get(y) ?? -1));
     orgAggs.push({
       row: {
+        organizationKey,
         orgId: top.person.orgId,
         orgName: top.person.orgName,
         orgLogoUrl: top.person.orgLogoUrl,
