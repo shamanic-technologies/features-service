@@ -259,7 +259,8 @@ export async function readNicheGrades(campaigns: readonly NicheCampaign[], deps:
   const offersPerBrand = new Map<string, number>();
   for (const g of ok) offersPerBrand.set(`${g.p.orgId}|${g.p.brandId}`, (offersPerBrand.get(`${g.p.orgId}|${g.p.brandId}`) ?? 0) + 1);
   const clients: GradedClient[] = ok.map((g) => {
-    const name = brands.get(g.p.brandId)?.name ?? g.p.brandId;
+    // A brand brand-service names nothing reads by its domain, never by its id.
+    const name = brands.get(g.p.brandId)?.name ?? brands.get(g.p.brandId)?.domain ?? "Unnamed brand";
     const several = (offersPerBrand.get(`${g.p.orgId}|${g.p.brandId}`) ?? 0) > 1;
     return {
       key: pairKey(g.p.orgId, g.p.brandId, g.p.offerId),
