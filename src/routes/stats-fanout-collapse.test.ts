@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import express from "express";
 import request from "supertest";
 
+// Merged dynasties (lib/dynasty-merges.ts) are read off the workflow catalogue; this suite mocks one producer only.
+vi.mock("../lib/public-stats-clients.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchDynastyMerges: vi.fn(async () => new Map()),
+}));
+
 vi.stubEnv("FEATURES_SERVICE_API_KEY", "test-key");
 // Exercise the live-compute path: the Gold snapshot cache would serve one test's body to the next
 // test reading the same scope key (same convention as stats.test.ts).

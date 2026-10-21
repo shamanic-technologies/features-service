@@ -22,6 +22,8 @@ import { fetchCampaignFamiliesSoft } from "../lib/campaign-identity-client.js";
 import { resolveOfferCampaignIds, OfferHasNoCampaignsError } from "../lib/offer-scope.js";
 import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } from "../lib/campaign-identity.js";
 import { runsFeatureSlugsParam } from "../lib/feature-scope.js";
+import { dynastyMembers, NO_MERGES, pooledDynastyOf } from "../lib/dynasty-merges.js";
+import { fetchDynastyMerges } from "../lib/public-stats-clients.js";
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -1179,6 +1181,24 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       : null;
     const offerMembers = offerCampaignIds ? new Set(offerCampaignIds) : null;
 
+    // MERGED DYNASTIES POOL (lib/dynasty-merges.ts, TPL-DYNASTY-1021-FS): the producers group and filter by the dynasty
+    // workflow-service STATED on each run, so an absorbed dynasty answers as its own group. Its groups are folded onto
+    // the survivor, and a read narrowed to a dynasty holding absorbed members is fanned out grouped by dynasty and
+    // folded back into the flat body (the identity fold's mechanism).
+    const dynastyMerges = groupBy === "workflowDynastySlug" || filters.workflowDynastySlug
+      ? await fetchDynastyMerges(featureSlug)
+      : NO_MERGES;
+    const pooledDynastyFilter = filters.workflowDynastySlug && dynastyMembers(pooledDynastyOf(filters.workflowDynastySlug, dynastyMerges), dynastyMerges).length > 1
+      ? pooledDynastyOf(filters.workflowDynastySlug, dynastyMerges)
+      : null;
+    if (pooledDynastyFilter && (groupBy || offerMembers || (requestedIdentity && requestedIdentity.campaignIds.length > 1))) {
+      return res.status(400).json({
+        error: `workflow dynasty ${filters.workflowDynastySlug} pools merged dynasties; narrow it without groupBy, offerId or a multi-row campaign`,
+        reason: "merged_dynasty_not_combinable",
+      });
+    }
+    const dynastyMergesKey = dynastyMerges.size > 0 ? [...dynastyMerges].map(([a, b]) => `${a}>${b}`).sort().join(",") : undefined;
+
     // Served through the Gold snapshot cache (O(1) read; the 10-source fan-out recomputes a viewed
     // cell off the request path ~per TTL). Scope key spans org + every query param that changes the
     // body — with the campaign REPLACED by its identity, so every member of one family shares one
@@ -1195,6 +1215,8 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         // brand-wide one would share a cell. Absent → dropped by buildScopeKey → key unchanged.
         offerId,
         pricing,
+        // Pooling moves the figures, so a merge (or un-merge) is another cell. Absent when nothing is merged.
+        dynastyMerges: dynastyMergesKey,
       }),
       orgId,
       compute: async () => {
@@ -1216,7 +1238,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       : identityKeyOfCampaign;
     const scopeTotalKey = offerMembers ? OFFER_TOTAL_KEY : requestedIdentity?.key;
     const foldScopeIntoTotal = foldSingleIntoTotal || Boolean(offerMembers);
-    const fanOutGroupBy: GroupByDimension | null = foldScopeIntoTotal ? "campaignId" : groupBy;
+    const fanOutGroupBy: GroupByDimension | null = foldScopeIntoTotal ? "campaignId" : pooledDynastyFilter ? "workflowDynastySlug" : groupBy;
     // The campaign-groupable sources drop the campaign filter (the family narrows them locally) and
     // gain the brand. The sources that cannot group by campaign keep the caller's filters untouched,
     // so their scope is unchanged.
@@ -1225,6 +1247,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       fanOutFilters.brandId = identityBrandId!;
       delete fanOutFilters.campaignId;
     }
+    if (pooledDynastyFilter) delete fanOutFilters.workflowDynastySlug;
 
     // Scope the fan-out to the sources this feature actually renders (its outputs + charts).
     // A feature never waits on a stat family it doesn't declare — e.g. a cold-email feature
@@ -1296,6 +1319,12 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     };
     const scopeMap = <T>(m: Map<string, T>, add: (a: T, b: T) => T): Map<string, T> => {
       if (foldScopeIntoTotal) return asTotal(foldMapByIdentity(m, scopeKeyOfCampaign, add));
+      if (pooledDynastyFilter) {
+        const folded = foldMapByIdentity(m, (d) => (pooledDynastyOf(d, dynastyMerges) === pooledDynastyFilter ? "__dynasty__" : `outside-dynasty:${d}`), add);
+        const entry = folded.get("__dynasty__");
+        return new Map(entry === undefined ? [] : [["__total__", entry]]);
+      }
+      if (groupBy === "workflowDynastySlug" && dynastyMerges.size > 0) return foldMapByIdentity(m, (d) => pooledDynastyOf(d, dynastyMerges), add);
       return groupBy === "campaignId" ? foldMapByIdentity(m, identityKeyOfCampaign, add) : m;
     };
     const emailStatsMap = scopeMap(rawEmailStatsMap, addRawStats);
