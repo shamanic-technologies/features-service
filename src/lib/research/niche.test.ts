@@ -96,6 +96,26 @@ describe("niche studies", () => {
     expect(m.charts[0]!.points).toEqual([expect.objectContaining({ label: "Narrow niche", display: "0.50%", thin: true })]);
   });
 
+  it("lists only the clients who emailed on the pipe, one brand named once, and answers against focused when no broad client emailed", () => {
+    const twin = { ...broad, key: "o4", orgId: "o4", grade: "focused" as const, label: "PressBeat" };
+    const twin2 = { ...twin, key: "o5", orgId: "o5" };
+    const idle = { ...narrow, key: "o6", orgId: "o6", label: "Idle Co" };
+    const g: NicheGradesRead = {
+      byCampaign: new Map([["c1", narrow], ["c4", twin], ["c5", twin2], ["c6", idle]]),
+      clients: [narrow, twin, twin2, idle, broad],
+      excludedOurs: 0,
+      unjudged: { count: 0, lastReason: null },
+    };
+    const ps = [pb("o1", "c1", 400, 24), pb("o4", "c4", 300, 3), pb("o5", "c5", 300, 3)];
+    const rate = nicheStudies(input({ grades: g, reply: { ...pipe("cold-email-positive-reply"), persons: ps } })).find((s) => s.id === "cold-email-positive-reply-niche-rate")!;
+    const text = rate.conclusion.join(" ");
+    expect(text).toContain("Narrow niche (1): Doc Dinners.");
+    expect(text).toContain("Focused (2): PressBeat (2 accounts).");
+    expect(text).not.toContain("Idle Co");
+    expect(text).not.toContain("Pocket CMO");
+    expect(rate.conclusion[0]).toContain("against 1.00% for focused ones: 6.00x");
+  });
+
   it("says so when the grades cannot be read, never a figure", () => {
     const studies = nicheStudies(input({ grades: null }));
     expect(studies).toHaveLength(4);
