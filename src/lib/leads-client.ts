@@ -505,3 +505,68 @@ export async function fetchServedPersonRows(
     };
   });
 }
+
+/** One Unibox row's lifecycle, as the lifecycle Deals board needs it (lead-service `GET /orgs/leads/unibox`). */
+export interface UniboxLifecycleRow {
+  humanId: string;
+  companyKey: string;
+  relationKey: string | null;
+  leadIds: string[];
+  /** lead-service's served lifecycle rung key (the highest rung ever reached). */
+  rung: string;
+}
+
+const UNIBOX_PAGE_SIZE = 200;
+const MAX_UNIBOX_PAGES = 500;
+
+/**
+ * Every Unibox row of the brand standing on one of `rungs` (lead-service's `?lifecycle=` filter: the person's
+ * LIFECYCLE is lead-service's, read, never re-derived here). Walked in pages of 200 (its maximum), fail loud: a
+ * missing page would price a column short.
+ */
+export async function fetchUniboxLifecycleRows(
+  brandId: string,
+  rungs: readonly string[],
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<UniboxLifecycleRow[]> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const base = new URLSearchParams({ brandId, lifecycle: rungs.join(","), limit: String(UNIBOX_PAGE_SIZE) });
+  const out: UniboxLifecycleRow[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_UNIBOX_PAGES) throw new Error(`lead-service /orgs/leads/unibox walk exceeded ${MAX_UNIBOX_PAGES} pages (brand ${brandId})`);
+    const params = new URLSearchParams(base);
+    if (cursor !== null) params.set("cursor", cursor);
+    const response = await fetchWithRetry(`${url}/orgs/leads/unibox?${params}`, { headers: reqHeaders }, { timeoutMs: LEAD_PAGE_TIMEOUT_MS });
+    if (!response.ok) throw new Error(`lead-service /orgs/leads/unibox failed (${response.status}): ${await response.text()}`);
+    const data = (await response.json()) as {
+      rows?: Array<{ humanId?: unknown; companyKey?: unknown; relationKey?: unknown; leadIds?: unknown; lifecycle?: { key?: unknown } | null }>;
+      nextCursor?: string | null;
+    };
+    if (!Array.isArray(data.rows)) throw new Error(`lead-service /orgs/leads/unibox returned no rows array (brand ${brandId})`);
+    for (const r of data.rows) {
+      const rung = r.lifecycle && typeof r.lifecycle.key === "string" ? r.lifecycle.key : null;
+      if (typeof r.humanId !== "string" || rung === null) {
+        throw new Error(`lead-service /orgs/leads/unibox row without humanId or lifecycle under a lifecycle filter (brand ${brandId}): ${JSON.stringify(r).slice(0, 200)}`);
+      }
+      out.push({
+        humanId: r.humanId,
+        companyKey: typeof r.companyKey === "string" ? r.companyKey : "",
+        relationKey: typeof r.relationKey === "string" ? r.relationKey : null,
+        leadIds: Array.isArray(r.leadIds) ? r.leadIds.filter((id): id is string => typeof id === "string" && id !== "") : [],
+        rung,
+      });
+    }
+    const next = data.nextCursor ?? null;
+    if (next === null) return out;
+    if (seen.has(next)) throw new Error(`lead-service /orgs/leads/unibox returned a repeating cursor (brand ${brandId})`);
+    seen.add(next);
+    cursor = next;
+  }
+}
