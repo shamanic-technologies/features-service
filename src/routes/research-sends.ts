@@ -281,15 +281,47 @@ export async function readJevInputs(): Promise<Omit<JevInput, "costBasis" | "rea
  * after a positive reply to our outreach, by month, and what it was charged on cold email and meeting booking, by month.
  * Null when either read fails (logged): the study says so.
  */
-export async function readReportingBrands(): Promise<ReportingBrand[] | null> {
+/** lead-service's meeting attribution, as the Research build reads it (once per build). */
+export interface MeetingAttributionRead {
+  body: { attributedMeetings: Array<{ conversionEventId: string; orgId?: string; brandId: string; leadId?: string | null; event: string; occurredAt: string | null; positiveReply: unknown }> };
+  reporting: ReturnType<typeof meetingReportingOf>;
+}
+
+/** ONE read of lead-service's meeting attribution for the build; throws when unreadable. */
+export async function readMeetingAttribution(): Promise<MeetingAttributionRead> {
+  const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, { headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY ?? "" } }, { timeoutMs: 120_000 });
+  if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const body = (await res.json()) as MeetingAttributionRead["body"];
+  if (!Array.isArray(body.attributedMeetings)) throw new Error("lead-service meeting-attribution: no attributedMeetings");
+  // WHO a meeting figure is measured on is ONE rule (`lib/meeting-population.ts`, MEETING-POPULATION-1018).
+  const reporting = meetingReportingOf(body);
+  rememberMeetingReporting(reporting);
+  return { body, reporting };
+}
+
+/**
+ * RESEARCH-COUNTRY-1021: the brands that report meetings, and every person lead-service attributes a meeting BOOKED after
+ * one of their positive replies (`${orgId}|${brandId}|${leadId}`). Null when unreadable (the study says so).
+ */
+export async function readBookedAfterReply(read: Promise<MeetingAttributionRead>): Promise<{ reportingBrandIds: Set<string>; booked: Set<string> } | null> {
   try {
-    const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, { headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY ?? "" } }, { timeoutMs: 120_000 });
-    if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const body = (await res.json()) as { attributedMeetings?: Array<{ conversionEventId: string; brandId: string; event: string; occurredAt: string | null; positiveReply: unknown }> };
-    if (!Array.isArray(body.attributedMeetings)) throw new Error("lead-service meeting-attribution: no attributedMeetings");
-    // WHO a meeting figure is measured on is ONE rule (`lib/meeting-population.ts`, MEETING-POPULATION-1018).
-    const reporting = meetingReportingOf(body);
-    rememberMeetingReporting(reporting);
+    const { body, reporting } = await read;
+    const reportingBrandIds = new Set(reporting.reportingBrandIds);
+    const booked = new Set<string>();
+    for (const m of body.attributedMeetings) {
+      if (m.event !== "meeting_booked" || !m.positiveReply || !m.leadId || !m.orgId || !reportingBrandIds.has(m.brandId)) continue;
+      booked.add(`${m.orgId}|${m.brandId}|${m.leadId}`);
+    }
+    return { reportingBrandIds, booked };
+  } catch (err) {
+    console.error("[features-service] research country meetings: lead-service meeting attribution unreadable, its study states it:", err);
+    return null;
+  }
+}
+
+export async function readReportingBrands(read: Promise<MeetingAttributionRead> = readMeetingAttribution()): Promise<ReportingBrand[] | null> {
+  try {
+    const { body, reporting } = await read;
     const brands = new Map<string, ReportingBrand>(reporting.reportingBrandIds.map((id) => [id, { brandId: id, meetingsByMonth: {}, spendByMonth: {} }]));
     const seen = new Set<string>();
     for (const m of body.attributedMeetings) {

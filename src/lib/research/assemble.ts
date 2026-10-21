@@ -77,6 +77,8 @@ export interface ResearchInput {
   meetingOutcomeRequired?: number;
   /** The studies of what wrote the emails (LLM, template, naming, first-email shape), written by `lib/research/generations.ts`. */
   generationStudies: ResearchStudy[];
+  /** Per prospect country (RESEARCH-COUNTRY-1021, `lib/research/countries.ts`); absent = not built (tests). */
+  countryStudies?: ResearchStudy[];
   /** "Do clients with a very specific B2B niche convert better?" (RESEARCH-NICHE-1021, `lib/research/niche.ts`); absent = not asked. */
   nicheStudies?: ResearchStudy[];
   /** The page-wide counts (`routes/research-sends.ts` `readVolume` + the person cell's undated people); null = unreadable. */
@@ -294,6 +296,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     if (input.sends.opens && input.reply.cutoffDay) studies.push(...opensStudies(termsOf(POSITIVE_REPLY_PIPE, input.reply, note), input.sends.opens, input.reply.cutoffDay));
   }
   studies.push(...input.generationStudies);
+  studies.push(...(input.countryStudies ?? []));
   studies.push(...(input.nicheStudies ?? []));
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));

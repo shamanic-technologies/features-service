@@ -92,6 +92,8 @@ interface LeadRow {
     // + Apollo seniority band. Null when unknown; never synthesized.
     currentTitle?: string | null;
     seniority?: string | null;
+    /** The PERSON's own country (never the company's). Null when unknown; absent on a producer predating it. */
+    country?: string | null;
     organization?: LeadOrganization | null;
   } | null;
 }
@@ -411,6 +413,7 @@ export async function fetchLeadsForRevenue(
       orgEmployeeCount: org?.estimatedNumEmployees ?? null,
       orgCity: org?.city ?? null,
       orgCountry: org?.country ?? null,
+      ...(row.lead?.country !== undefined ? { leadCountry: row.lead.country ?? null } : {}),
       signals,
       // The CRM reply carries its own date (the form's); the email-gateway overlay merges its reply
       // date over it, earliest wins (`applySignalOverlays`).
