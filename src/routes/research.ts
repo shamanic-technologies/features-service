@@ -56,7 +56,11 @@ import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
-import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
+import { readBookedAfterReply, readGenerationRuns, readJevInputs, readLegSpendTotal, readMeetingAttribution, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
+import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
+import { fetchOrgUserEmails } from "../lib/accounts-client.js";
+import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
+import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
 
 const router = Router();
 
@@ -421,6 +425,67 @@ async function sendsInputs(reply: { campaignIds: string[]; cutoffIso: string | n
  * channel -> first positive reply, since inception) over EVERY org's campaigns whose leg ends on a positive reply
  * (`isReplyPipe`, the campaign page's own test), as ONE group so its percentiles are the fleet's. Fails loud.
  */
+/**
+ * The orgs the country study leaves out (RESEARCH-COUNTRY-1021: our own and staff test accounts): every org of the two
+ * cold email legs whose every member is staff (`isStaffOnlyOrg`, billing-service's `staff_test_org` rule). Throws when a
+ * member list cannot be read (the study then says it is not readable, never counts a staff org as a client).
+ */
+async function readOurOrgIds(orgIds: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  await mapWithConcurrency([...new Set(orgIds)], 6, async (orgId) => {
+    if (isStaffOnlyOrg(await fetchOrgUserEmails(orgId))) out.add(orgId);
+  });
+  return out;
+}
+
+/** Every country study (two per cold email pipe + meetings), or each one saying it is not readable. */
+async function countryStudiesOf(reply: ColdEmailPipeRead, visit: ColdEmailPipeRead, note: string, booked: Promise<{ reportingBrandIds: Set<string>; booked: Set<string> } | null>): Promise<ResearchStudy[]> {
+  try {
+    const [ours, replierCountries, meetings] = await Promise.all([
+      readOurOrgIds([...reply.campaigns, ...visit.campaigns].map((c) => c.orgId)),
+      fetchFleetReplierCountries(COLD_EMAIL),
+      booked,
+    ]);
+    const pipe = (id: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead) =>
+      countryStudies({ terms: termsOf(id, r.input, note), legKey: r.input.legKey, cells: r.input.cells, persons: r.persons, split: r.split, excludedOrgIds: ours });
+    const repliers = [...replierCountries].map(([k, country]) => {
+      const [orgId = "", brandId = "", leadId = ""] = k.split("|");
+      return { orgId, brandId, leadId, country };
+    });
+    return [
+      ...pipe(POSITIVE_REPLY_PIPE, reply),
+      ...pipe(WEBSITE_VISIT_PIPE, visit),
+      countryMeetingStudy({ repliers, reportingBrandIds: meetings?.reportingBrandIds ?? null, booked: meetings?.booked ?? new Set(), excludedOrgIds: ours }),
+    ];
+  } catch (err) {
+    console.error("[features-service] research: the country studies could not be built this time:", err);
+    const reason = "The accounts or the fleet person cell could not be read this time; the study comes back on the next refresh.";
+    const no = (id: string, pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE | null, goal: "rate" | "roi", question: string): ResearchStudy => ({
+      id,
+      pipe,
+      ...(pipe ? {} : { outcome: "meeting" as const }),
+      topic: "country",
+      goal,
+      question,
+      status: "not_enough_data",
+      headline: "Not readable right now.",
+      winner: null,
+      crowned: false,
+      verdict: { kind: "noise", reason },
+      result: null,
+      charts: [],
+      conclusion: [reason],
+    });
+    return [
+      no(`${POSITIVE_REPLY_PIPE}-country-rate`, POSITIVE_REPLY_PIPE, "rate", "Which prospect country gets the most positive replies?"),
+      no(`${POSITIVE_REPLY_PIPE}-country-roi`, POSITIVE_REPLY_PIPE, "roi", "Which prospect country gets the cheapest positive reply?"),
+      no(`${WEBSITE_VISIT_PIPE}-country-rate`, WEBSITE_VISIT_PIPE, "rate", "Which prospect country gets the most website visits?"),
+      no(`${WEBSITE_VISIT_PIPE}-country-roi`, WEBSITE_VISIT_PIPE, "roi", "Which prospect country gets the cheapest website visit?"),
+      no("meeting-country-rate", null, "rate", "Which prospect country books the most meetings after a positive reply?"),
+    ];
+  }
+}
+
 async function readReplyDelay(): Promise<ReplyDelayRead> {
   const rows = await fetchFleetCampaignRows();
   const ids = [
@@ -471,7 +536,10 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
           (d) => meetingRanking.rows.find((r) => r.workflowDynastySlug === d)?.workflowDynastyName ?? d,
         )
       : null;
-  const [sends, jev, replies, gens, reportingBrands, volume, replyDelay] = await Promise.all([
+  // ONE read of lead-service's meeting attribution, shared by the meeting-cost and country studies.
+  const attribution = readMeetingAttribution();
+  attribution.catch(() => undefined);
+  const [sends, jev, replies, gens, reportingBrands, volume, replyDelay, countries] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
     readReplyAuthors(),
@@ -480,7 +548,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       console.error("[features-service] research: the studies of what wrote the emails could not be built this time:", err);
       return { studies: [], reply: NO_GEN, visit: NO_GEN, templateTexts: new Map() };
     }),
-    basis === "user" ? readReportingBrands() : Promise.resolve(null),
+    basis === "user" ? readReportingBrands(attribution) : Promise.resolve(null),
     readVolume(reply, visit).catch((err) => {
       console.error("[features-service] research: page-wide counts unreadable this time:", err);
       return null;
@@ -489,6 +557,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       console.error("[features-service] research: time to a first positive reply unreadable this time (the study says so):", err);
       return null;
     }),
+    countryStudiesOf(reply, visit, ruleNote(reply.input, visit.input), readBookedAfterReply(attribution)),
   ]);
   const workflowsWithPeople = new Set(
     [reply, visit].flatMap((r) => workflowBuckets(r.input).filter((b) => b.figures.contacted > 0).map((b) => b.key)),
@@ -500,6 +569,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     replyDelay,
     sends,
     generationStudies: gens.studies,
+    countryStudies: countries,
     volume: volume ? { ...volume, workflows: workflowsWithPeople, noRunStart } : null,
     reportingBrands,
     meetingOutcomeRequired: legMaturity("start_to_meeting_booked").outcomesRequired,

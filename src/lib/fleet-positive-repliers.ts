@@ -55,6 +55,12 @@ interface PairPopulation {
    * own transport, human-judged clicks] (the last two: `lib/screened-visits.ts`).
    */
   buckets: Map<string, Bucket>;
+  /**
+   * Every person of the pair who replied positively (credited, like the buckets), with their OWN country (`""` = not on
+   * record): `leadId` -> country. Read by the Research country study's meeting rate (RESEARCH-COUNTRY-1021), which joins
+   * lead-service's attributed meetings on the person. Absent on a cell stored before it (read as none).
+   */
+  repliers?: Map<string, string>;
 }
 
 interface FleetCell {
@@ -68,6 +74,10 @@ type Bucket = [number, number, number, number, number];
 
 /** What wrote a person's sequence, as one bucket-key part (`""` = not on record). */
 const GEN_SEP = "\u001f";
+/** A person's own country as one bucket-key part (`""` = not on record): trimmed, the producer's spelling kept. */
+export function countryKeyPart(country: string | null | undefined): string {
+  return typeof country === "string" ? country.replace(/[\t\u001f]/g, " ").trim() : "";
+}
 export function generationKeyPart(g: GenerationClass | undefined): string {
   return g ? [g.model, g.promptType ?? "", g.layout ?? "", g.opening ?? "", g.dash ?? ""].join(GEN_SEP) : "";
 }
@@ -84,6 +94,7 @@ function generationOfKeyPart(part: string): GenerationClass | null {
  */
 export function bucketPopulation(persons: readonly EnginePerson[], generationOf?: ReadonlyMap<string, GenerationClass>): PairPopulation {
   const buckets = new Map<string, Bucket>();
+  const repliers = new Map<string, string>();
   for (const p of persons) {
     // Only what the person's row EARNED lands in its (campaign, workflow) bucket (lib/serving-row-credit.ts).
     const contacted = creditedSignal(p, "contacted");
@@ -94,8 +105,13 @@ export function bucketPopulation(persons: readonly EnginePerson[], generationOf?
     if (!contacted && !clicked && !replied && !screened && !human) continue;
     const day = p.servedAt ? p.servedAt.slice(0, 10) : "";
     const gen = generationOf && p.campaignId ? generationKeyPart(generationOf.get(`${p.campaignId}|${p.leadId}`)) : "";
-    // A person no generation names keeps the three-part key (the v4 spelling), so a bucket without one reads the same.
-    const key = [p.campaignId ?? "", p.workflowSlug ?? "", day, ...(gen ? [gen] : [])].join(BUCKET_SEP);
+    // The person's own country is a fifth part (RESEARCH-COUNTRY-1021). Trailing empty parts are dropped, so a person
+    // with neither keeps the three-part key (the v4 spelling) and every older reader reads the same bucket.
+    const country = countryKeyPart(p.leadCountry);
+    const parts = [p.campaignId ?? "", p.workflowSlug ?? "", day, gen, country];
+    while (parts.length > 3 && parts[parts.length - 1] === "") parts.pop();
+    const key = parts.join(BUCKET_SEP);
+    if (replied) repliers.set(p.leadId, country);
     const b = buckets.get(key) ?? [0, 0, 0, 0, 0];
     if (contacted) b[0] += 1;
     if (clicked) b[1] += 1;
@@ -104,12 +120,12 @@ export function bucketPopulation(persons: readonly EnginePerson[], generationOf?
     if (human) b[4] += 1;
     buckets.set(key, b);
   }
-  return { serveDatesStated: serveDatesStated(persons), buckets };
+  return { serveDatesStated: serveDatesStated(persons), buckets, repliers };
 }
 
-function splitBucketKey(key: string): { campaignId: string; slug: string; day: string; gen: string } {
-  const [campaignId = "", slug = "", day = "", gen = ""] = key.split(BUCKET_SEP);
-  return { campaignId, slug, day, gen };
+function splitBucketKey(key: string): { campaignId: string; slug: string; day: string; gen: string; country: string } {
+  const [campaignId = "", slug = "", day = "", gen = "", country = ""] = key.split(BUCKET_SEP);
+  return { campaignId, slug, day, gen, country };
 }
 
 const cells = new Map<string, FleetCell>();
@@ -156,16 +172,18 @@ const claimLostAt = new Map<string, number>();
 export function encodeCell(cell: FleetCell): string {
   return JSON.stringify({
     computedAt: cell.computedAt,
-    byPair: [...cell.byPair].map(([key, pair]) => [key, pair.serveDatesStated, [...pair.buckets]]),
+    byPair: [...cell.byPair].map(([key, pair]) => [key, pair.serveDatesStated, [...pair.buckets], [...(pair.repliers ?? [])]]),
   });
 }
 
 /** EXPORTED FOR TESTS. The inverse of {@link encodeCell}. */
 export function decodeCell(text: string): FleetCell {
-  const raw = JSON.parse(text) as { computedAt: number; byPair: [string, boolean, [string, Bucket][]][] };
+  const raw = JSON.parse(text) as { computedAt: number; byPair: [string, boolean, [string, Bucket][], [string, string][]?][] };
   return {
     computedAt: raw.computedAt,
-    byPair: new Map(raw.byPair.map(([key, serveDatesStated, buckets]) => [key, { serveDatesStated, buckets: new Map(buckets) }])),
+    byPair: new Map(
+      raw.byPair.map(([key, serveDatesStated, buckets, repliers]) => [key, { serveDatesStated, buckets: new Map(buckets), ...(repliers ? { repliers: new Map(repliers) } : {}) }]),
+    ),
   };
 }
 
@@ -405,6 +423,7 @@ export async function fetchFleetEngagementByBrand(featureSlug: string): Promise<
 /** One bucket of the fleet person cell, with the org that holds it (`fetchFleetPersonBuckets`). */
 export interface FleetPersonBucket {
   orgId: string;
+  brandId: string;
   campaignId: string;
   workflowSlug: string;
   /** `YYYY-MM-DD` of the serve; `""` = never served. */
@@ -416,6 +435,8 @@ export interface FleetPersonBucket {
   humanClicked: number;
   /** What wrote the person's sequence; null = not on record (or a cell built before v5). */
   generation: GenerationClass | null;
+  /** The person's own country (lead-service's spelling); null = not on record (or a cell built before it). */
+  country: string | null;
 }
 
 /**
@@ -429,11 +450,40 @@ export async function fetchFleetPersonBuckets(featureSlug: string, campaignIds: 
   const out: FleetPersonBucket[] = [];
   for (const [key, pair] of cell.byPair) {
     const orgId = key.slice(0, key.indexOf(":"));
+    const brandId = key.slice(key.indexOf(":") + 1);
     for (const [bucketKey, [c, k, r, sc, hk]] of pair.buckets) {
-      const { campaignId, slug, day, gen } = splitBucketKey(bucketKey);
+      const { campaignId, slug, day, gen, country } = splitBucketKey(bucketKey);
       if (!slug || !campaignId || !campaignIds.has(campaignId)) continue;
-      out.push({ orgId, campaignId, workflowSlug: slug, servedDay: day, contacted: c, clicked: k, positiveReplies: r, screenedContacted: sc ?? 0, humanClicked: hk ?? 0, generation: generationOfKeyPart(gen) });
+      out.push({
+        orgId,
+        brandId,
+        campaignId,
+        workflowSlug: slug,
+        servedDay: day,
+        contacted: c,
+        clicked: k,
+        positiveReplies: r,
+        screenedContacted: sc ?? 0,
+        humanClicked: hk ?? 0,
+        generation: generationOfKeyPart(gen),
+        country: country || null,
+      });
     }
+  }
+  return out;
+}
+
+/**
+ * THE FLEET'S POSITIVE REPLIERS WITH THEIR OWN COUNTRY (RESEARCH-COUNTRY-1021): `${orgId}|${brandId}|${leadId}` -> country
+ * (null = not on record), every pair of the cell. A cell stored before the field holds none (an empty map).
+ */
+export async function fetchFleetReplierCountries(featureSlug: string): Promise<Map<string, string | null>> {
+  const cell = await getCell(featureSlug);
+  const out = new Map<string, string | null>();
+  for (const [key, pair] of cell.byPair) {
+    const orgId = key.slice(0, key.indexOf(":"));
+    const brandId = key.slice(key.indexOf(":") + 1);
+    for (const [leadId, country] of pair.repliers ?? []) out.set(`${orgId}|${brandId}|${leadId}`, country || null);
   }
   return out;
 }

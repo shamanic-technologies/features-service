@@ -113,6 +113,12 @@ export interface EnginePerson {
   orgCity: string | null;
   /** Company country. Null when unknown. */
   orgCountry: string | null;
+  /**
+   * The PERSON's own country (lead-service's lead country, not the company's), filed on the fleet person cell for the
+   * Research country study (RESEARCH-COUNTRY-1021). Null when unknown; ABSENT on a producer predating the field. The
+   * engine ignores it.
+   */
+  leadCountry?: string | null;
   /** Recipient email — used by the route to join per-event timestamps; ignored by the engine. */
   email?: string | null;
   /**
@@ -592,6 +598,7 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
     // Person firmographics: first non-null across the lead's campaign rows (never overwrite a known value).
     if (existing.title == null && row.title != null) existing.title = row.title;
     if (existing.seniority == null && row.seniority != null) existing.seniority = row.seniority;
+    if (existing.leadCountry == null && row.leadCountry != null) existing.leadCountry = row.leadCountry;
   }
   return [...byLead.values()];
 }

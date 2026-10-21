@@ -24,7 +24,9 @@ export type ResearchTopic =
   | "judgment"
   | "launch"
   /** How long an outcome takes to arrive (TTFPR-RESEARCH-STUDY-1021; the dashboard reads it since distribute.you #5587). */
-  | "delay";
+  | "delay"
+  /** Per prospect country (RESEARCH-COUNTRY-1021; the dashboard reads it once distribute.you ships the topic). */
+  | "country";
 export type ResearchGoal = "roi" | "rate";
 
 export interface ResearchPoint {
