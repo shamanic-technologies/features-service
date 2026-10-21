@@ -6,6 +6,12 @@
  * named, its ordered versions and its head (the version workflows write with). A Research template bar and page is a
  * DYNASTY: every version's people, outcomes and spend pool into it (the same pooling as a workflow dynasty). A version
  * no dynasty of the pipe lists stays on its own bar, keyed on its own id, `dynasty: null`.
+ *
+ * One template, one dynasty (TPL-DYNASTY-ONE-HOME-1021-FS, owner 2026-10-21): content-generation-service split every
+ * template two dynasties shared, the original stays in one, the other holds a COPY at the same position and states it
+ * on the version (`copiedFrom`). The emails the copy's pipe wrote before the split carry the ORIGINAL's name, so on a
+ * pipe a template a dynasty of that pipe lists as a version's `copiedFrom` counts for that dynasty and that version.
+ * A template the pipe's dynasties list directly always wins over a copy's origin.
  */
 import { templateLabel } from "./format.js";
 
@@ -27,6 +33,8 @@ export interface TemplateDynasty {
   statusSource: TemplateDynastyStatusSource | null;
   /** Version template id → content-generation-service's status of that version (null = not stated). */
   versionStatuses: Readonly<Record<string, TemplateStatus | null>>;
+  /** Version template id → the original template it is a copy of (content-generation `copiedFrom`); absent = none. */
+  copiedFrom?: Readonly<Record<string, string>>;
 }
 
 export type TemplateStatus = "active" | "deprecated";
@@ -55,8 +63,10 @@ export interface TemplateDynastyIndex {
   labelOf: (key: string) => string;
   /** Bar key → its dynasty (null = a version on its own). */
   dynastyOf: (key: string) => TemplateDynasty | null;
-  /** Template id → the dynasty listing it (null = on its own). */
+  /** Template id → the dynasty listing it, or listing a copy of it (null = on its own). */
   dynastyOfVersion: (templateId: string) => TemplateDynasty | null;
+  /** Template id → the version it counts for: itself, else the copy of it a dynasty of the pipe lists. */
+  versionOf: (templateId: string) => string;
   dynasties: readonly TemplateDynasty[];
   /** Set when the dynasties could not be read: every version is its own bar then. */
   unavailableReason: TemplateDynastyReason | null;
@@ -76,11 +86,20 @@ export function templateDynastyIndex(read: readonly TemplateDynasty[] | Template
   const bySlug = new Map(dynasties.map((d) => [d.slug, d]));
   const byVersion = new Map<string, TemplateDynasty>();
   for (const d of dynasties) for (const v of d.versions) if (!byVersion.has(v)) byVersion.set(v, d);
+  // An original a version of the pipe was copied from counts for that copy (unless the pipe lists the original itself).
+  const copyOf = new Map<string, string>();
+  for (const d of dynasties)
+    for (const v of d.versions) {
+      const from = d.copiedFrom?.[v];
+      if (from && !byVersion.has(from) && !copyOf.has(from)) copyOf.set(from, v);
+    }
+  const versionOf = (id: string) => copyOf.get(id) ?? id;
   return {
-    keyOf: (id) => byVersion.get(id)?.slug ?? id,
+    keyOf: (id) => byVersion.get(versionOf(id))?.slug ?? id,
     labelOf: (key) => bySlug.get(key)?.name ?? templateLabel(key),
     dynastyOf: (key) => bySlug.get(key) ?? null,
-    dynastyOfVersion: (id) => byVersion.get(id) ?? null,
+    dynastyOfVersion: (id) => byVersion.get(versionOf(id)) ?? null,
+    versionOf,
     dynasties,
     unavailableReason: typeof read === "string" ? read : null,
   };

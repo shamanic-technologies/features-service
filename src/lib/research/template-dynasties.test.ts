@@ -246,4 +246,38 @@ describe("template dynasties on the Research pages", () => {
     expect(empty.templates.find((t) => t.key === "cold-email-v35")!.roiDetail).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
     expect(empty.templates.find((t) => t.key === "cold-email-v35")!.statusUnavailableReason).toBe("no_dynasty");
   });
+
+  it("TPL-DYNASTY-ONE-HOME-1021-FS: a generation under an original template counts for the dynasty of the pipe listing its copy", () => {
+    // content-generation split cold-email-v35: this pipe's dynasty now holds the copy, past emails still carry the original.
+    const CLICK: TemplateDynasty = {
+      slug: "cold-click-website-click-named",
+      name: "Website Click",
+      description: "Clicks.",
+      signature: null,
+      identity: "named",
+      head: "cold-email-website-visit-v35",
+      versions: ["cold-email-website-visit-v35"],
+      status: "active",
+      statusSource: "content_generation",
+      versionStatuses: { "cold-email-website-visit-v35": "active" },
+      copiedFrom: { "cold-email-website-visit-v35": "cold-email-v35" },
+    };
+    const dyn = templateDynastyIndex([CLICK]);
+    expect([dyn.keyOf("cold-email-v35"), dyn.versionOf("cold-email-v35"), dyn.dynastyOfVersion("cold-email-v35")?.slug]).toEqual([
+      "cold-click-website-click-named",
+      "cold-email-website-visit-v35",
+      "cold-click-website-click-named",
+    ]);
+    const g = generationBuckets(input([CLICK]));
+    expect(g.tpl.rows.map((r) => r.key)).not.toContain("cold-email-v35");
+    const bar = g.tpl.rows.find((r) => r.key === "cold-click-website-click-named")!;
+    const copy = g.tplVersions.find((v) => v.key === "cold-email-website-visit-v35")!;
+    // Exactly what the original's own bar read before the split.
+    const before = generationBuckets(input([])).tpl.rows.find((r) => r.key === "cold-email-v35")!;
+    expect([bar.basis, bar.figures]).toEqual([before.basis, before.figures]);
+    expect(copy.figures).toEqual(bar.figures);
+    // A pipe listing the original itself keeps it as is (the conversation pipe is untouched).
+    const both = templateDynastyIndex([CLICK, { ...PAIN_QUESTION, versions: ["cold-email-v35"], versionStatuses: { "cold-email-v35": "active" } }]);
+    expect([both.keyOf("cold-email-v35"), both.versionOf("cold-email-v35")]).toEqual(["cold-reply-pain-question-blind", "cold-email-v35"]);
+  });
 });
