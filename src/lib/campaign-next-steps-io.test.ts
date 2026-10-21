@@ -71,6 +71,10 @@ describe("fetchReplyDelayDistribution (TTFPR-RESEARCH-STUDY-1021)", () => {
       { key: "1h_3h", label: "1 to 3 hours", fromMs: H, toMs: 3 * H, count: 2, cumulativeCount: 2 },
       { key: "3h_6h", label: "3 to 6 hours", fromMs: 3 * H, toMs: null, count: 1, cumulativeCount: 3 },
     ],
+    dailyDistribution: [
+      { key: "day_1", label: "Day 1", fromMs: 0, toMs: 24 * H, count: 3, cumulativeCount: 3 },
+      { key: "day_21_plus", label: "21 days or more", fromMs: 21 * 24 * H, toMs: null, count: 0, cumulativeCount: 3 },
+    ],
   };
 
   it("reads lead-service's percentiles and buckets by its own names, as ONE fleet group", async () => {
@@ -83,6 +87,12 @@ describe("fetchReplyDelayDistribution (TTFPR-RESEARCH-STUDY-1021)", () => {
   it("fails loud on a lead-service without the distribution fields", async () => {
     fetchWithRetry.mockResolvedValue(json({ groups: [{ key: "fleet", campaignIds: ["a"], timeToFirstPositiveReply: { sampleSize: 3, medianMs: 1, averageMs: 1 } }] }));
     await expect(fetchReplyDelayDistribution(["a"])).rejects.toThrow(/percentilesMs missing/);
+  });
+
+  it("fails loud on a lead-service without the per-day bins (TTFPR-DAY-BINS-1021)", async () => {
+    const { dailyDistribution: _omit, ...older } = metric;
+    fetchWithRetry.mockResolvedValue(json({ groups: [{ key: "fleet", campaignIds: ["a"], timeToFirstPositiveReply: older }] }));
+    await expect(fetchReplyDelayDistribution(["a"])).rejects.toThrow(/dailyDistribution missing/);
   });
 
   it("fails loud on buckets that do not add up to the sample", async () => {

@@ -38,6 +38,8 @@ export interface ReplyDelayDistribution {
   averageMs: number | null;
   percentilesMs: { p10: number | null; p25: number | null; p50: number | null; p75: number | null; p90: number | null };
   distribution: ReplyDelayBucket[];
+  /** The same sample per day after the first message (TTFPR-DAY-BINS-1021): Day 1 (under 24 h) .. Day 21, then 21+ days. */
+  dailyDistribution: ReplyDelayBucket[];
 }
 
 export interface ReplyDelayRead {
@@ -74,12 +76,14 @@ const repliesText = (v: number): string => `${n(v)} ${v === 1 ? "positive reply"
  */
 export function assertReplyDelayCoherent(m: ReplyDelayDistribution): void {
   if (m.sampleSize === 0) return;
-  let running = 0;
-  for (const b of m.distribution) {
-    running += b.count;
-    if (b.cumulativeCount !== running) throw new Error(`reply-delay: bucket ${b.key} running count ${b.cumulativeCount} != ${running}`);
+  for (const [what, list] of [["bucket", m.distribution], ["day bin", m.dailyDistribution]] as const) {
+    let running = 0;
+    for (const b of list) {
+      running += b.count;
+      if (b.cumulativeCount !== running) throw new Error(`reply-delay: ${what} ${b.key} running count ${b.cumulativeCount} != ${running}`);
+    }
+    if (running !== m.sampleSize) throw new Error(`reply-delay: ${what}s sum to ${running}, sample is ${m.sampleSize}`);
   }
-  if (running !== m.sampleSize) throw new Error(`reply-delay: buckets sum to ${running}, sample is ${m.sampleSize}`);
   const p = m.percentilesMs;
   const ordered = [p.p10, p.p25, p.p50, p.p75, p.p90];
   if (ordered.some((v) => v === null) || m.medianMs === null || m.averageMs === null) throw new Error("reply-delay: a percentile, the median or the average is null on a non-empty sample");
@@ -151,6 +155,14 @@ export function replyDelayStudy(read: ReplyDelayRead | null, minSample: number):
     note: `${n(b.cumulativeCount)} of ${repliesText(N)}`,
     thin: learning,
   }));
+  const byDay: ResearchPoint[] = m.dailyDistribution.map((b) => ({
+    key: b.key,
+    label: b.label,
+    value: sharePct(b.count, N),
+    display: `${shareText(b.count, N)} (${n(b.count)})`,
+    note: `${n(b.count)} of ${repliesText(N)}`,
+    thin: learning,
+  }));
   const charts: ResearchChart[] = [
     {
       kind: "bars",
@@ -159,6 +171,13 @@ export function replyDelayStudy(read: ReplyDelayRead | null, minSample: number):
       points: histogram,
       curve: { title: "Share of first positive replies arrived by then (%)", points: curve },
       note: "The delay runs from the first message we sent a person, on any channel, to their first positive reply after it. People who never replied positively are not counted.",
+    },
+    {
+      kind: "bars",
+      title: "First positive replies by day after the first message (% of replies)",
+      lowerIsBetter: false,
+      points: byDay,
+      note: "Day 1 is the first 24 hours after the first message, Day 2 the next 24 hours, and so on. The last bar counts every reply after 21 days.",
     },
   ];
 

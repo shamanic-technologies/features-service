@@ -374,7 +374,7 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
     ),
   ];
   if (ids.length === 0) {
-    return { campaigns: 0, metric: { sampleSize: 0, medianMs: null, averageMs: null, percentilesMs: { p10: null, p25: null, p50: null, p75: null, p90: null }, distribution: [] } };
+    return { campaigns: 0, metric: { sampleSize: 0, medianMs: null, averageMs: null, percentilesMs: { p10: null, p25: null, p50: null, p75: null, p90: null }, distribution: [], dailyDistribution: [] } };
   }
   return { campaigns: ids.length, metric: await fetchReplyDelayDistribution(ids) };
 }
