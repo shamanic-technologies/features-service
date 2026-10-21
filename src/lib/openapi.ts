@@ -3794,17 +3794,72 @@ const offerDealsValueResponseRef = registry.register(
   }),
 );
 
+const lifecycleCardSchema = z.object({
+  humanId: z.string().describe("lead-service's Unibox row: the person (with `companyKey`, the row's identity)."),
+  companyKey: z.string(),
+  relationKey: z.string().nullable(),
+  leadIds: z.array(z.string()).describe("The row's leads this scope holds (the ones priced)."),
+  valueUsd: z.number().nullable().describe("What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."),
+  zeroValueReason: z.enum(["ruled_out", "step_not_priced", "expired", "cannot_convert", "not_sent"]).nullable().describe("Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."),
+  valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."),
+  entryRateSource: z.enum(["measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
+});
+const offerDealsLifecycleResponseRef = registry.register(
+  "OfferDealsLifecycleResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    campaignId: z.string().nullable().describe("The `campaignId` the board was narrowed to; null = the whole offer."),
+    columns: z.literal("lifecycle"),
+    lifetimeRevenueUsd: z.number().nullable(),
+    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
+    pricedCauses: z.array(z.string()).describe("Every cause (`outreach`, `other`, `unstated`): a deal's value to the customer, not our share."),
+    unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Set only when the offer prices on nothing: every value is then null (people still listed)."),
+    totalUsd: z.number().nullable().describe("Σ `rungs[].valueUsd`, exactly."),
+    expectedPipelineUsd: z.number().nullable().describe("Σ of every rung but Paid client: the expected pipeline (the board's title)."),
+    wonUsd: z.number().nullable().describe("The Paid client rung's value. `expectedPipelineUsd + wonUsd = totalUsd`."),
+    outOfScopeCardCount: z.number().describe("Unibox rows on a board rung none of whose leads this scope served (not on this board)."),
+    rungs: z.array(z.object({
+      key: z.enum(["contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."),
+      rank: z.number(),
+      label: z.string(),
+      valueKind: z.enum(["contacted_expected_value", "expected_value", "won_value"]).describe("`contacted_expected_value`: P(entry step | contacted) × the value at that step (the contacted-value model, expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (every cause; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."),
+      valueUsd: z.number().nullable().describe("Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."),
+      expected: z.boolean().describe("True unless every card is a human-stated sale: the figure is an expectation."),
+      assumptions: z.array(z.object({ input: z.enum(["lifetime_revenue", "entry_rate"]), source: z.string() })).describe("What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."),
+      cardCount: z.number(),
+      leadCount: z.number(),
+      organizationCount: z.number(),
+      cards: z.array(lifecycleCardSchema).describe("One card per Unibox row on the rung, ordered by humanId then companyKey."),
+    })).describe("Every board rung, ladder order, always all six."),
+  }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/offers/{offerId}/deals-value",
-  summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through)",
+  summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through); `columns=lifecycle` = one column per lifecycle rung",
   description:
-    "GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.",
+    "Default (`columns` omitted or `standing`): GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.\n\n" +
+    "`columns=lifecycle` (DEALS-LIFECYCLE-1021) answers OfferDealsLifecycleResponse: one column per rung of the lifecycle ladder (Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client). WHO stands on a rung is lead-service's Unibox `lifecycle` (GET /orgs/leads/unibox?lifecycle=), read, intersected with the scope's lead population; WHAT they are worth is the same engine as the standing board: Contacted = the contacted-value model (seeded entry benchmark when no rate is measured, said per card), Engaged..Meeting attended = the engine's expected value per person, Paid client = the stated sale else the lifetime revenue. `campaignId` narrows to one pipe campaign of the offer or one sales funnel campaign of it (its units); any other id is 404 `campaign_not_on_offer`.",
   tags: ["Stats"],
-  request: { headers: identityHeaders, params: z.object({ offerId: z.string() }), query: z.object(offerGrainLeadValueQuery) },
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      ...offerGrainLeadValueQuery,
+      columns: z.enum(["standing", "lifecycle"]).optional().describe("Which board: `standing` (default, lead-service standings) or `lifecycle` (the lifecycle ladder)."),
+      campaignId: z.string().optional().describe("`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it."),
+    }),
+  },
   responses: {
-    200: { description: "The offer's Deals column values", content: { "application/json": { schema: offerDealsValueResponseRef } } },
+    200: {
+      description: "The offer's Deals column values: OfferDealsValueResponse (standing) or OfferDealsLifecycleResponse (`columns=lifecycle`)",
+      content: { "application/json": { schema: z.union([offerDealsValueResponseRef, offerDealsLifecycleResponseRef]) } },
+    },
     ...offerLeadValueErrors,
+    400: { description: "Missing brandId, an invalid pricing or columns value, or campaignId without columns=lifecycle", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "reason='offer_has_no_channels' (no campaign sells the offer), or reason='campaign_not_on_offer' (the campaignId is none of the offer's)", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

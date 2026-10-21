@@ -25207,6 +25207,252 @@
           "offerId"
         ]
       },
+      "OfferDealsLifecycleResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "campaignId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The `campaignId` the board was narrowed to; null = the whole offer."
+          },
+          "columns": {
+            "type": "string",
+            "enum": [
+              "lifecycle"
+            ]
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true
+          },
+          "lifetimeRevenueSource": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "offer_stated",
+              "fleet_median"
+            ]
+          },
+          "pricedCauses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every cause (`outreach`, `other`, `unstated`): a deal's value to the customer, not our share."
+          },
+          "unvaluedReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_economics",
+              "no_client_value"
+            ],
+            "description": "Set only when the offer prices on nothing: every value is then null (people still listed)."
+          },
+          "totalUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Σ `rungs[].valueUsd`, exactly."
+          },
+          "expectedPipelineUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Σ of every rung but Paid client: the expected pipeline (the board's title)."
+          },
+          "wonUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The Paid client rung's value. `expectedPipelineUsd + wonUsd = totalUsd`."
+          },
+          "outOfScopeCardCount": {
+            "type": "number",
+            "description": "Unibox rows on a board rung none of whose leads this scope served (not on this board)."
+          },
+          "rungs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "contacted",
+                    "engaged",
+                    "signup_or_form",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "paid_client"
+                  ],
+                  "description": "The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."
+                },
+                "rank": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "valueKind": {
+                  "type": "string",
+                  "enum": [
+                    "contacted_expected_value",
+                    "expected_value",
+                    "won_value"
+                  ],
+                  "description": "`contacted_expected_value`: P(entry step | contacted) × the value at that step (the contacted-value model, expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (every cause; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."
+                },
+                "valueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."
+                },
+                "expected": {
+                  "type": "boolean",
+                  "description": "True unless every card is a human-stated sale: the figure is an expectation."
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "input": {
+                        "type": "string",
+                        "enum": [
+                          "lifetime_revenue",
+                          "entry_rate"
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "input",
+                      "source"
+                    ]
+                  },
+                  "description": "What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."
+                },
+                "cardCount": {
+                  "type": "number"
+                },
+                "leadCount": {
+                  "type": "number"
+                },
+                "organizationCount": {
+                  "type": "number"
+                },
+                "cards": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "humanId": {
+                        "type": "string",
+                        "description": "lead-service's Unibox row: the person (with `companyKey`, the row's identity)."
+                      },
+                      "companyKey": {
+                        "type": "string"
+                      },
+                      "relationKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "leadIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The row's leads this scope holds (the ones priced)."
+                      },
+                      "valueUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."
+                      },
+                      "zeroValueReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "ruled_out",
+                          "step_not_priced",
+                          "expired",
+                          "cannot_convert",
+                          "not_sent"
+                        ],
+                        "description": "Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
+                      },
+                      "valueSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "stated_amount",
+                          "lifetime_revenue"
+                        ],
+                        "description": "Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."
+                      },
+                      "entryRateSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "measured",
+                          "default_entry"
+                        ],
+                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
+                      }
+                    },
+                    "required": [
+                      "humanId",
+                      "companyKey",
+                      "relationKey",
+                      "leadIds",
+                      "valueUsd",
+                      "zeroValueReason",
+                      "valueSource",
+                      "entryRateSource"
+                    ]
+                  },
+                  "description": "One card per Unibox row on the rung, ordered by humanId then companyKey."
+                }
+              },
+              "required": [
+                "key",
+                "rank",
+                "label",
+                "valueKind",
+                "valueUsd",
+                "expected",
+                "assumptions",
+                "cardCount",
+                "leadCount",
+                "organizationCount",
+                "cards"
+              ]
+            },
+            "description": "Every board rung, ladder order, always all six."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "campaignId",
+          "columns",
+          "lifetimeRevenueUsd",
+          "lifetimeRevenueSource",
+          "pricedCauses",
+          "unvaluedReason",
+          "totalUsd",
+          "expectedPipelineUsd",
+          "wonUsd",
+          "outOfScopeCardCount",
+          "rungs"
+        ]
+      },
       "OfferContactedValueResponse": {
         "type": "object",
         "properties": {
@@ -42400,8 +42646,8 @@
     },
     "/offers/{offerId}/deals-value": {
       "get": {
-        "summary": "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through)",
-        "description": "GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.",
+        "summary": "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through); `columns=lifecycle` = one column per lifecycle rung",
+        "description": "Default (`columns` omitted or `standing`): GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.\n\n`columns=lifecycle` (DEALS-LIFECYCLE-1021) answers OfferDealsLifecycleResponse: one column per rung of the lifecycle ladder (Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client). WHO stands on a rung is lead-service's Unibox `lifecycle` (GET /orgs/leads/unibox?lifecycle=), read, intersected with the scope's lead population; WHAT they are worth is the same engine as the standing board: Contacted = the contacted-value model (seeded entry benchmark when no rate is measured, said per card), Engaged..Meeting attended = the engine's expected value per person, Paid client = the stated sale else the lifetime revenue. `campaignId` narrows to one pipe campaign of the offer or one sales funnel campaign of it (its units); any other id is 404 `campaign_not_on_offer`.",
         "tags": [
           "Stats"
         ],
@@ -42436,6 +42682,30 @@
             "required": false,
             "description": "Accepted and validated like every offer read. No figure here is a cost, so it moves nothing.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "standing",
+                "lifecycle"
+              ],
+              "description": "Which board: `standing` (default, lead-service standings) or `lifecycle` (the lifecycle ladder)."
+            },
+            "required": false,
+            "description": "Which board: `standing` (default, lead-service standings) or `lifecycle` (the lifecycle ladder).",
+            "name": "columns",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it."
+            },
+            "required": false,
+            "description": "`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it.",
+            "name": "campaignId",
             "in": "query"
           },
           {
@@ -42484,17 +42754,24 @@
         ],
         "responses": {
           "200": {
-            "description": "The offer's Deals column values",
+            "description": "The offer's Deals column values: OfferDealsValueResponse (standing) or OfferDealsLifecycleResponse (`columns=lifecycle`)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OfferDealsValueResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OfferDealsValueResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OfferDealsLifecycleResponse"
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Missing brandId, an invalid pricing value, or invalid paging parameters",
+            "description": "Missing brandId, an invalid pricing or columns value, or campaignId without columns=lifecycle",
             "content": {
               "application/json": {
                 "schema": {
@@ -42512,7 +42789,7 @@
             }
           },
           "404": {
-            "description": "No campaign of this brand sells this offer through any channel (reason: offer_has_no_channels) — never the brand's numbers under the offer's label",
+            "description": "reason='offer_has_no_channels' (no campaign sells the offer), or reason='campaign_not_on_offer' (the campaignId is none of the offer's)",
             "content": {
               "application/json": {
                 "schema": {
