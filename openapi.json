@@ -67018,6 +67018,64 @@
                               "type": "boolean",
                               "description": "A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."
                             },
+                            "roi": {
+                              "type": "object",
+                              "properties": {
+                                "value": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The multiple: 3.2 = $3.20 of pipeline per $1 billed."
+                                },
+                                "display": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Printed (`3.20x`)."
+                                },
+                                "basis": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "measured",
+                                    "expected"
+                                  ],
+                                  "description": "`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "workflow",
+                                    "workflows_written_for",
+                                    "writes_with_now",
+                                    "dynasty",
+                                    "pipe_best_workflow"
+                                  ],
+                                  "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                },
+                                "spendCovered": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                },
+                                "unavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_return_on_pipe"
+                                  ],
+                                  "description": "Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."
+                                }
+                              },
+                              "required": [
+                                "value",
+                                "display",
+                                "basis",
+                                "source",
+                                "spendCovered",
+                                "unavailableReason"
+                              ],
+                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
+                            },
                             "model": {
                               "type": "object",
                               "nullable": true,
@@ -67669,6 +67727,7 @@
                             "label",
                             "name",
                             "runnable",
+                            "roi",
                             "model",
                             "template",
                             "wroteWithMost",
@@ -67767,6 +67826,90 @@
                               ],
                               "description": "Null on a dynasty. Why this page is one version on its own: no dynasty of the pipe lists it, or the dynasties could not be read this build."
                             },
+                            "status": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "active",
+                                "deprecated"
+                              ],
+                              "description": "The DYNASTY's status (the Active / Deprecated tabs): content-generation-service's own when served, else deprecated exactly when every version is (owner 2026-10-21). Null with `statusUnavailableReason`."
+                            },
+                            "statusSource": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "content_generation",
+                                "all_versions_deprecated"
+                              ],
+                              "description": "`content_generation` = the dynasty status content-generation-service serves; `all_versions_deprecated` = the owner rule on the version statuses it serves."
+                            },
+                            "statusUnavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_dynasty",
+                                "status_not_stated"
+                              ]
+                            },
+                            "roi": {
+                              "type": "object",
+                              "properties": {
+                                "value": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The multiple: 3.2 = $3.20 of pipeline per $1 billed."
+                                },
+                                "display": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Printed (`3.20x`)."
+                                },
+                                "basis": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "measured",
+                                    "expected"
+                                  ],
+                                  "description": "`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "workflow",
+                                    "workflows_written_for",
+                                    "writes_with_now",
+                                    "dynasty",
+                                    "pipe_best_workflow"
+                                  ],
+                                  "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                },
+                                "spendCovered": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                },
+                                "unavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_return_on_pipe"
+                                  ],
+                                  "description": "Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."
+                                }
+                              },
+                              "required": [
+                                "value",
+                                "display",
+                                "basis",
+                                "source",
+                                "spendCovered",
+                                "unavailableReason"
+                              ],
+                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
+                            },
                             "versions": {
                               "type": "array",
                               "items": {
@@ -67783,6 +67926,73 @@
                                   },
                                   "hasText": {
                                     "type": "boolean"
+                                  },
+                                  "status": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "active",
+                                      "deprecated"
+                                    ],
+                                    "description": "content-generation-service's status of this version (only the head is active)."
+                                  },
+                                  "roi": {
+                                    "type": "object",
+                                    "properties": {
+                                      "value": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The multiple: 3.2 = $3.20 of pipeline per $1 billed."
+                                      },
+                                      "display": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "Printed (`3.20x`)."
+                                      },
+                                      "basis": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "measured",
+                                          "expected"
+                                        ],
+                                        "description": "`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "workflow",
+                                          "workflows_written_for",
+                                          "writes_with_now",
+                                          "dynasty",
+                                          "pipe_best_workflow"
+                                        ],
+                                        "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                      },
+                                      "spendCovered": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                      },
+                                      "unavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_return_on_pipe"
+                                        ],
+                                        "description": "Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."
+                                      }
+                                    },
+                                    "required": [
+                                      "value",
+                                      "display",
+                                      "basis",
+                                      "source",
+                                      "spendCovered",
+                                      "unavailableReason"
+                                    ],
+                                    "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
                                   },
                                   "rank": {
                                     "type": "integer",
@@ -68002,6 +68212,8 @@
                                   "label",
                                   "head",
                                   "hasText",
+                                  "status",
+                                  "roi",
                                   "rank",
                                   "emails",
                                   "emailsNoun",
@@ -68339,6 +68551,10 @@
                             "hasText",
                             "dynasty",
                             "standaloneReason",
+                            "status",
+                            "statusSource",
+                            "statusUnavailableReason",
+                            "roi",
                             "versions",
                             "rank",
                             "emails",

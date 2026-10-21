@@ -3,7 +3,7 @@ vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
 import { generationBuckets, generationStudies, type GenerationsInput } from "./generations.js";
 import { pipeCatalog } from "./catalog.js";
-import { dynastyLegKeyOf, templateDynastyIndex, type TemplateDynasty } from "./template-dynasties.js";
+import { dynastyLegKeyOf, dynastyStatusOf, templateDynastyIndex, type TemplateDynasty } from "./template-dynasties.js";
 
 // TPL-DYNASTY-1021-FS2: a Research template page is a template DYNASTY, its versions pooled.
 
@@ -35,8 +35,11 @@ const BLIND_FREE_OFFER: TemplateDynasty = {
   identity: "blind",
   head: "blind-discovery-email-v47",
   versions: ["blind-discovery-email-v40", "blind-discovery-email-v41", "blind-discovery-email-v47"],
+  status: "active",
+  statusSource: "all_versions_deprecated",
+  versionStatuses: { "blind-discovery-email-v40": "deprecated", "blind-discovery-email-v41": "deprecated", "blind-discovery-email-v47": "active" },
 };
-const PAIN_QUESTION: TemplateDynasty = { slug: "cold-reply-pain-question-blind", name: "Pain Question", description: "Asks.", signature: null, identity: "blind", head: "blind-discovery-email-v4", versions: ["blind-discovery-email-v4"] };
+const PAIN_QUESTION: TemplateDynasty = { slug: "cold-reply-pain-question-blind", name: "Pain Question", description: "Asks.", signature: null, identity: "blind", head: "blind-discovery-email-v4", versions: ["blind-discovery-email-v4"], status: "deprecated", statusSource: "all_versions_deprecated", versionStatuses: { "blind-discovery-email-v4": "deprecated" } };
 
 // Two workflow versions; v40 and v41 (one dynasty) and cold-email-v35 (no dynasty) wrote their people.
 const cells: SlugCell[] = [
@@ -172,5 +175,74 @@ describe("template dynasties on the Research pages", () => {
       writerOf: "workflow_definitions_unreadable",
     });
     expect(new Set(c.templates.map((t) => t.standaloneReason))).toEqual(new Set(["template_dynasties_unreadable"]));
+  });
+
+  // TPL-DYNASTY-ROWS-1021-FS: ROI and status on every template row and version.
+  it("a dynasty's status is content-generation-service's when served, else deprecated exactly when every version is", () => {
+    expect(dynastyStatusOf("deprecated", [{ status: "active" }])).toEqual({ status: "deprecated", statusSource: "content_generation" });
+    expect(dynastyStatusOf(undefined, [{ status: "deprecated" }, { status: "active" }])).toEqual({ status: "active", statusSource: "all_versions_deprecated" });
+    expect(dynastyStatusOf(undefined, [{ status: "deprecated" }, { status: "deprecated" }])).toEqual({ status: "deprecated", statusSource: "all_versions_deprecated" });
+    expect(dynastyStatusOf(undefined, [{ status: "deprecated" }, { status: null }])).toEqual({ status: null, statusSource: null });
+    expect(dynastyStatusOf(undefined, [])).toEqual({ status: null, statusSource: null });
+  });
+
+  const catalogWith = (roi: Map<string, number | null>, moneyGoesHere: string | null, cs: SlugCell[] = cells, ps = persons) => {
+    const g = generationBuckets({ ...input([BLIND_FREE_OFFER, PAIN_QUESTION]), cells: cs, persons: ps });
+    return pipeCatalog({
+      terms,
+      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 400, contacted: 500, outcomes: 7 }, learning: false, months: null, strata: null }],
+      templates: g.tpl.rows,
+      templateVersions: g.tplVersions,
+      templateDynasties: templateDynastyIndex([BLIND_FREE_OFFER, PAIN_QUESTION]),
+      models: [],
+      nameOf: () => null,
+      mainOf: () => ({ model: null, template: null }),
+      modelLabel: (id) => id,
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: null,
+      writerOf: () => ({ ok: true, workflowSlug: "azalea-v2", version: 2, template: "blind-discovery-email-v4", modelAlias: "pro", model: null }),
+      workflowReturns: { roiOf: roi, moneyGoesHere },
+      templateSpendByVersion: g.tplSpendByVersion,
+      templateVersionSpendByVersion: g.tplVersionSpendByVersion,
+    });
+  };
+
+  it("a template that wrote for one workflow alone reads that workflow's return exactly; every version too", () => {
+    const c = catalogWith(new Map([["azalea", 3.25]]), "azalea");
+    expect(c.workflows[0]!.roi).toMatchObject({ value: 3.25, display: "3.25x", basis: "measured", source: "workflow" });
+    const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
+    expect(page.roi).toMatchObject({ value: 3.25, basis: "measured", source: "workflows_written_for", spendCovered: 1 });
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v40")!.roi).toMatchObject({ value: 3.25, basis: "measured" });
+    // v47 never wrote: its dynasty's return, marked expected.
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v47")!.roi).toMatchObject({ value: 3.25, basis: "expected", source: "dynasty" });
+    expect([page.status, page.statusSource, page.statusUnavailableReason]).toEqual(["active", "all_versions_deprecated", null]);
+    expect(page.versions.map((v) => v.status)).toEqual(["deprecated", "deprecated", "active"]);
+  });
+
+  it("a template that wrote for several workflows reads their returns weighted by what its people cost under each", () => {
+    // azalea-v1 and lily-v1 both wrote with v40: $200 (half of azalea-v1's $400 on 200 of 400 people) and $100.
+    const cs: SlugCell[] = [
+      { slug: "azalea-v1", flash: half(400, 400, 8), mature: half(300, 300, 6) },
+      { slug: "lily-v1", flash: half(100, 100, 2), mature: half(100, 100, 2) },
+    ];
+    const ps = [pb("azalea-v1", "blind-discovery-email-v40", 200, 4), pb("azalea-v1", "cold-email-v35", 200, 4), pb("lily-v1", "blind-discovery-email-v40", 100, 2)];
+    const c = catalogWith(new Map([["azalea", 2], ["lily", 5]]), "azalea", cs, ps);
+    const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
+    expect(page.roi.value).toBeCloseTo((2 * 200 + 5 * 100) / 300, 9);
+  });
+
+  it("never blank: unmeasured templates read the workflows writing with them now, else the pipe's money workflow, marked expected", () => {
+    const c = catalogWith(new Map([["azalea", 4]]), "azalea");
+    // Pain Question never wrote; azalea writes with its head now.
+    expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roi).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
+    const none = catalogWith(new Map([["azalea", null], ["rose", 1.5]]), "rose");
+    expect(none.templates.find((t) => t.key === "cold-reply-free-offer-blind")!.roi).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
+    expect(none.workflows[0]!.roi).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
+    const empty = catalogWith(new Map([["azalea", null]]), null);
+    expect(empty.templates.find((t) => t.key === "cold-email-v35")!.roi).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
+    expect(empty.templates.find((t) => t.key === "cold-email-v35")!.statusUnavailableReason).toBe("no_dynasty");
   });
 });

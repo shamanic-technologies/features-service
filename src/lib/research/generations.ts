@@ -52,7 +52,25 @@ function bucketsBy(
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, groupOf);
   const { groups } = groupCells(cells, groupOfSplitSlug);
   const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs, forceBasis: basisOf?.(g) }));
-  return { rows, leftOut };
+  return { rows, leftOut, spendByVersion: spendByVersionOf(cells) };
+}
+
+/**
+ * Per group, the spend (all to date, the ranking's lifetime basis) its people cost under each workflow VERSION: the
+ * weights a template's return is read on (`lib/research/catalog.ts`, TPL-DYNASTY-ROWS-1021-FS).
+ */
+function spendByVersionOf(cells: readonly SlugCell[]): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const c of cells) {
+    const tab = c.slug.indexOf("\t");
+    if (tab < 0) continue;
+    const version = c.slug.slice(0, tab);
+    const g = c.slug.slice(tab + 1);
+    const m = out.get(g) ?? new Map<string, number>();
+    out.set(g, m);
+    m.set(version, (m.get(version) ?? 0) + c.flash.figures.spentUsd);
+  }
+  return out;
 }
 
 const leftOutLine = (t: PipeTerms, l: { contacted: number }, what: string) =>
@@ -182,8 +200,16 @@ export function generationBuckets(input: GenerationsInput) {
   const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
   const tpl = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.keyOf(b.generation.promptType) : null), dyn.labelOf);
   const basisOfBar = new Map(tpl.rows.map((r) => [r.key, r.basis]));
-  const tplVersions = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel, (v) => basisOfBar.get(dyn.keyOf(v))).rows;
-  return { llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut }, tpl, tplVersions, modelLabel };
+  const versions = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel, (v) => basisOfBar.get(dyn.keyOf(v)));
+  return {
+    llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut },
+    tpl,
+    tplVersions: versions.rows,
+    /** Template bar key (dynasty, else version) / template version → workflow version → spend of its people. */
+    tplSpendByVersion: tpl.spendByVersion,
+    tplVersionSpendByVersion: versions.spendByVersion,
+    modelLabel,
+  };
 }
 
 /** PURE. Every study of what wrote the emails, for one pipe. */
