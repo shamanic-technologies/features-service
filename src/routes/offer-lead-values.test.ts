@@ -95,6 +95,15 @@ vi.mock("../lib/leads-client.js", async (orig) => ({
   fetchLeadIdsByStanding: vi.fn(async (_b: string, standing: string) =>
     new Set(standing === "sales_interest" ? ["int-a", "int-b"] : []),
   ),
+  // lead-service's Unibox lifecycle: the two repliers Engaged, every contacted-only lead Contacted.
+  fetchUniboxLifecycleRows: vi.fn(async () =>
+    ROWS.map((r) => ({ humanId: `h-${r.leadId}`, companyKey: "", relationKey: null, leadIds: [r.leadId], rung: r.positiveReply ? "engaged" : "contacted" })),
+  ),
+}));
+vi.mock("../lib/sales-funnel-campaigns-client.js", () => ({
+  fetchSalesFunnelCampaigns: vi.fn(async () => [
+    { id: "funnel-a", brandId: "brand-1", offerId: "offer-a", salesFunnelId: "x", salesFunnelName: "X", status: "ongoing", stopReason: null, createdAt: OLD, units: [{ campaignId: "camp-a2", pipeId: "p", featureSlug: "sales-cold-email-outreach", legKey: "start_to_website_visit", status: "ongoing" }] },
+  ]),
 }));
 vi.mock("../lib/email-status-client.js", () => ({ fetchEventTimestamps: vi.fn(async () => null) }));
 vi.mock("../lib/observed-steps.js", () => ({ fetchObservedStepFacts: vi.fn(async () => null) }));
@@ -201,6 +210,60 @@ describe("GET /offers/:offerId/deals-value", () => {
   it("brandId is required, pricing is validated", async () => {
     expect((await get("/offers/offer-a/deals-value")).status).toBe(400);
     expect((await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=x")).status).toBe(400);
+  });
+});
+
+describe("GET /offers/:offerId/deals-value?columns=lifecycle (DEALS-LIFECYCLE-1021)", () => {
+  type Rung = { key: string; valueUsd: number; cardCount: number; cards: Array<{ humanId: string; valueUsd: number }> };
+  it("prices every lifecycle rung of the offer's people; the rungs sum to the total; an empty rung is 0", async () => {
+    const res = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle");
+    expect(res.status).toBe(200);
+    expect(res.body.columns).toBe("lifecycle");
+    expect(res.body.campaignId).toBeNull();
+    const rungs = res.body.rungs as Rung[];
+    expect(rungs.map((r) => r.key)).toEqual(["contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]);
+    const by = (k: string) => rungs.find((r) => r.key === k)!;
+    expect(by("engaged").cards.map((c) => c.humanId)).toEqual(["h-int-a"]);
+    expect(by("contacted").cardCount).toBe(20);
+    expect(by("paid_client").valueUsd).toBe(0);
+    expect(by("signup_or_form").valueUsd).toBe(0);
+    expect(rungs.reduce((s, r) => s + r.valueUsd, 0)).toBeCloseTo(res.body.totalUsd, 6);
+    expect(by("contacted").valueUsd).toBeGreaterThan(0);
+    // Engaged = the standing board's Interested value, same engine, same people.
+    const standing = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net");
+    expect(by("engaged").valueUsd).toBeCloseTo(column(standing.body, "sales_interest").valueUsd!, 6);
+    // Contacted = the offer's contacted value (same model, same rates).
+    const contacted = await get("/offers/offer-a/contacted-value?brandId=brand-1&pricing=net");
+    expect(by("contacted").valueUsd).toBeCloseTo(contacted.body.totalExpectedValueUsd, 6);
+  });
+
+  it("campaignId narrows to one pipe campaign, or to a sales funnel campaign's units; any other id is a named 404", async () => {
+    const one = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=lifecycle&campaignId=camp-a1");
+    expect(one.status).toBe(200);
+    const cardsOf = (b: { rungs: Rung[] }) => b.rungs.flatMap((r) => r.cards.map((c) => c.humanId));
+    expect(cardsOf(one.body)).toContain("h-int-a");
+    expect(cardsOf(one.body).some((h) => h === "h-ca-0")).toBe(false); // ca-0 is on camp-a2
+    const funnel = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=lifecycle&campaignId=funnel-a");
+    expect(funnel.status).toBe(200);
+    expect(cardsOf(funnel.body)).toContain("h-ca-0");
+    expect(cardsOf(funnel.body)).not.toContain("h-int-a");
+    const foreign = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=lifecycle&campaignId=camp-b1");
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.reason).toBe("campaign_not_on_offer");
+  });
+
+  it("refuses an unknown columns value, and campaignId without columns=lifecycle", async () => {
+    expect((await get("/offers/offer-a/deals-value?brandId=brand-1&columns=x")).status).toBe(400);
+    expect((await get("/offers/offer-a/deals-value?brandId=brand-1&campaignId=camp-a1")).status).toBe(400);
+  });
+
+  it("the standing body is byte-unchanged without columns (and with columns=standing)", async () => {
+    const [a, b] = await Promise.all([
+      get("/offers/offer-a/deals-value?brandId=brand-1"),
+      get("/offers/offer-a/deals-value?brandId=brand-1&columns=standing"),
+    ]);
+    expect(a.body).toEqual(b.body);
+    expect(a.body.columns.map((c: { standing: string }) => c.standing)).toContain("sales_interest");
   });
 });
 
