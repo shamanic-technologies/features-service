@@ -2,6 +2,7 @@ import type { EnginePerson } from "./revenue-engine.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
+import { isMemberAddress, loadOrgMemberKeys } from "./org-members.js";
 import { fingerprintScopeKey, liveLeadCopyRequested, readLeadCopy, registerEmailFingerprints, type CompactLeadRow } from "./lead-copy.js";
 
 /**
@@ -335,6 +336,10 @@ export async function fetchLeadsForRevenue(
   // An interactive view (servedCached) reads a LIVE COPY patched through lead-service's change feed
   // instead of re-walking the whole population (lib/lead-copy.ts, features-service#1045); every
   // other caller keeps the walk. Both return the same compact rows for the same scope.
+  // The org's own TEAM is never a lead of its brands (TEAM-OUT-OF-UNIBOX-1017, `org-members.ts`): read beside the
+  // leads, FAIL LOUD (an empty set would price the team as leads again).
+  const membersPromise = loadOrgMemberKeys(headers.orgId);
+  membersPromise.catch(() => undefined);
   let allRows: LeadRow[];
   if (liveLeadCopyRequested()) {
     const copyRows = await readLeadCopy(`${headers.orgId}|${url}|${scopeParams}`, (since) =>
@@ -345,7 +350,9 @@ export async function fetchLeadsForRevenue(
   } else {
     allRows = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
   }
-  const rows = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
+  const members = await membersPromise;
+  const scoped = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
+  const rows = members.size === 0 ? scoped : scoped.filter((row) => !isMemberAddress(row.email, members));
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;
     // A lead whose email BOUNCED, or who UNSUBSCRIBED, can never convert — no forward expected revenue
