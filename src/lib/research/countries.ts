@@ -118,14 +118,45 @@ function usLine(t: PipeTerms, rows: readonly ResearchBucket[], goal: ResearchGoa
   const usArm = arm(US_LABEL, us.figures);
   const restArm = arm("Every other country", rest.figures);
   const v = compareVerdict({ a: usBetter ? usArm : restArm, b: usBetter ? restArm : usArm, goal, comparisons: 1, strata, noun: t.noun, nouns: t.nounPlural });
-  const best = leader ? (leader.label === US_LABEL ? "Yes" : "No") : "Not measurable yet";
-  const bestText = leader ? (leader.label === US_LABEL ? `the United States is the best country with enough ${t.nounPlural} to judge` : `${leader.label} beats it (${valueText(t, leader.figures, goal)}, ${counts(t, leader.figures)})`) : `no country has enough ${t.nounPlural} to judge yet`;
+  // "Yes" only on a CONCLUSION that the US beats every other country together; a country with enough outcomes beating
+  // it, or the rest beating it on a conclusion, is "No"; anything else is "Not proven" (never a Yes because the US is the
+  // only country with enough outcomes to be judged on its own).
+  const otherLeader = leader && leader.label !== US_LABEL ? leader : null;
+  const best = otherLeader
+    ? `No: ${otherLeader.label} beats it (${valueText(t, otherLeader.figures, goal)}, ${counts(t, otherLeader.figures)})`
+    : v.kind === "conclusion"
+      ? usBetter
+        ? "Yes"
+        : "No: every other country together does better"
+      : `Not proven: the United States is ${usBetter ? "ahead of" : "behind"} every other country together, but the gap is ${v.kind === "signal" ? "a signal to confirm" : "noise so far"}`;
   // One ratio, read the same way whichever side leads: above 1 the US does better on a rate, costs more on a price.
   const how = goal === "rate" ? `${(usV / restV).toFixed(2)}x the ${t.noun} rate of ${restText}` : `a ${t.noun} costs ${(usV / restV).toFixed(2)}x what it costs in ${restText}`;
   return {
-    line: `Is the United States the best market? ${best}: ${bestText}. ${usText}, ${how}. ${v.kind === "conclusion" ? "That gap is a conclusion" : v.kind === "signal" ? "That gap is a signal to confirm" : "That gap is noise so far"}: ${v.reason}`,
+    line: `Is the United States the best market? ${best}. ${usText}, ${how}. ${v.reason}`,
     verdict: v,
   };
+}
+
+/** The leader against every other country pooled, on the page's verdict rule. */
+function leaderVerdict(t: PipeTerms, rows: readonly ResearchBucket[], leader: ResearchBucket, goal: ResearchGoal, comparisons: number): Verdict {
+  const others = rows.filter((r) => r !== leader);
+  const figures = { spentUsd: 0, contacted: 0, outcomes: 0 };
+  let strata: Record<string, StratumCounts> | null = {};
+  for (const r of others) {
+    figures.spentUsd += r.figures.spentUsd;
+    figures.contacted += r.figures.contacted;
+    figures.outcomes += r.figures.outcomes;
+    if (!r.strata) strata = null;
+    else if (strata) for (const [k, x] of Object.entries(r.strata)) {
+      const tt = (strata[k] ??= { exposure: 0, outcomes: 0, spend: 0 });
+      tt.exposure += x.exposure;
+      tt.outcomes += x.outcomes;
+      tt.spend += x.spend;
+    }
+  }
+  const OTHERS = "Every other country";
+  const both: Strata | null = leader.strata && strata ? { [leader.label]: leader.strata, [OTHERS]: strata } : null;
+  return compareVerdict({ a: arm(leader.label, leader.figures), b: others.length ? arm(OTHERS, figures) : null, goal, comparisons, strata: both, noun: t.noun, nouns: t.nounPlural });
 }
 
 /** PURE. The two country studies of one cold email pipe (rate, cost). */
@@ -138,7 +169,6 @@ export function countryStudies(input: CountryPipeInput): ResearchStudy[] {
     const sorted = goal === "rate" ? drawnSorted(rows) : pricedSorted(rows);
     const eligible = sorted.filter(crownable);
     const leader = eligible[0];
-    const runner = eligible[1] ?? sorted.find((r) => r !== leader);
     const chart: ResearchChart = {
       kind: "bars",
       title: goal === "rate" ? rateTitle(t) : costTitle(t),
@@ -169,8 +199,10 @@ export function countryStudies(input: CountryPipeInput): ResearchStudy[] {
       charts: [chart],
       conclusion: lines,
     };
+    // The leader against every other country together (a 14-person runner-up is no comparison), Bonferroni over the
+    // countries that could have led.
     const v: Verdict = leader
-      ? compareVerdict({ a: arm(leader.label, leader.figures), b: runner ? arm(runner.label, runner.figures) : null, goal, comparisons: Math.max(1, sorted.length - 1), strata, noun: t.noun, nouns: t.nounPlural })
+      ? leaderVerdict(t, rows, leader, goal, Math.max(1, eligible.length))
       : { kind: "noise", reason: `No country reaches ${MIN_OUTCOMES} ${t.nounPlural} outside Learning yet.` };
     out.push(judge(base, v));
   }
@@ -230,7 +262,6 @@ export function countryMeetingStudy(input: CountryMeetingInput): ResearchStudy {
   const ok = (r: (typeof rows)[number]) => r.booked >= MIN_OUTCOMES;
   const eligible = rows.filter(ok);
   const leader = eligible[0];
-  const runner = eligible[1] ?? rows.find((r) => r !== leader);
   const pts: ResearchPoint[] = rows.map((r) => ({
     label: r.label,
     value: Number(r.rate.toFixed(2)),
@@ -248,7 +279,15 @@ export function countryMeetingStudy(input: CountryMeetingInput): ResearchStudy {
     const a = { label: US_LABEL, outcomes: usRow.booked, exposure: usRow.people, spend: 0 };
     const b = { label: "Every other country", outcomes: rest.booked, exposure: rest.people, spend: 0 };
     const v = compareVerdict({ a: usBetter ? a : b, b: usBetter ? b : a, goal: "rate", comparisons: 1, strata: null, noun: "meeting", nouns: "meetings", per });
-    usText = `Is the United States the best market? ${leader ? (leader.label === US_LABEL ? "Yes" : "No") : "Not measurable yet"}: United States ${usRow.rate.toFixed(0)}% (${meetings(usRow.booked)} of ${people(usRow.people)}) against every other country together ${restRate.toFixed(0)}% (${meetings(rest.booked)} of ${people(rest.people)}). ${v.kind === "noise" ? "Noise so far" : v.kind === "signal" ? "A signal to confirm" : "A conclusion"}: ${v.reason}`;
+    const otherLeader = leader && leader.label !== US_LABEL ? leader : null;
+    const answer = otherLeader
+      ? `No: ${otherLeader.label} beats it`
+      : v.kind === "conclusion"
+        ? usBetter
+          ? "Yes"
+          : "No: every other country together does better"
+        : `Not proven: the gap is ${v.kind === "signal" ? "a signal to confirm" : "noise so far"}`;
+    usText = `Is the United States the best market? ${answer}. United States ${usRow.rate.toFixed(0)}% (${meetings(usRow.booked)} of ${people(usRow.people)}) against every other country together ${restRate.toFixed(0)}% (${meetings(rest.booked)} of ${people(rest.people)}). ${v.reason}`;
   }
   const study = {
     ...base,
@@ -274,7 +313,11 @@ export function countryMeetingStudy(input: CountryMeetingInput): ResearchStudy {
     ],
   };
   const v: Verdict = leader
-    ? compareVerdict({ a: { label: leader.label, outcomes: leader.booked, exposure: leader.people, spend: 0 }, b: runner ? { label: runner.label, outcomes: runner.booked, exposure: runner.people, spend: 0 } : null, goal: "rate", comparisons: Math.max(1, rows.length - 1), strata: null, noun: "meeting", nouns: "meetings", per })
+    ? (() => {
+        const others = rows.filter((r) => r !== leader).reduce((x, r) => ({ people: x.people + r.people, booked: x.booked + r.booked }), { people: 0, booked: 0 });
+        const b = others.people > 0 ? { label: "Every other country", outcomes: others.booked, exposure: others.people, spend: 0 } : null;
+        return compareVerdict({ a: { label: leader.label, outcomes: leader.booked, exposure: leader.people, spend: 0 }, b, goal: "rate", comparisons: Math.max(1, eligible.length), strata: null, noun: "meeting", nouns: "meetings", per });
+      })()
     : { kind: "noise", reason: `No country has ${MIN_OUTCOMES} meetings booked after a positive reply yet.` };
   return judge(study, v);
 }
