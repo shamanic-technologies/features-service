@@ -177,7 +177,7 @@ const NO_JEV = { judgments: null, judgmentOrgs: 0, screens: null, screenOrgs: 0,
 describe("assembleResearch", () => {
   const rampart = row("rampart", { spentUsd: 127.1, contacted: 720, outcomes: 15 }, true);
   const acamar = row("acamar", { spentUsd: 18.26, contacted: 108, outcomes: 1 }, false);
-  const file = assembleResearch({
+  const input: Parameters<typeof assembleResearch>[0] = {
     costBasis: "user",
     now: new Date("2026-10-18T15:00:00Z"),
     unpricedBilledUsd: 0,
@@ -198,6 +198,18 @@ describe("assembleResearch", () => {
     generationStudies: [],
     volume: { emails: 145000, orgs: 31, workflows: 71, linkedEmails: 4185, byMonth: [{ month: "2026-09", emails: 43197 }], excludedEmails: 10590, noRunStart: 2248 },
     jev: NO_JEV,
+  };
+  const file = assembleResearch(input);
+
+  it("TTFPR-RESEARCH-STUDY-1021: the delay study and its Positive reply outcome are served only once read; an unreadable read says so", () => {
+    expect(file.studies.some((st) => st.id === "positive-reply-delay")).toBe(false);
+    expect(file.outcomes.some((o) => o.id === "positive-reply")).toBe(false);
+    const read = assembleResearch({ ...input, replyDelay: null });
+    const st = read.studies.find((x) => x.id === "positive-reply-delay")!;
+    expect(st.outcome).toBe("positive-reply");
+    expect(st.status).toBe("not_enough_data");
+    expect(st.headline).toBe("Not readable right now.");
+    expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "conversation", pipes: ["cold-email-positive-reply"] });
   });
 
   it("every one of today's 45 study ids is served or listed unavailable, never both, never neither", () => {

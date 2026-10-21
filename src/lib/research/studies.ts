@@ -15,7 +15,7 @@
  */
 import { MONTHS, monthLabel, n, pctText, usd } from "./format.js";
 import { compareVerdict, headlineFor, likeForLike, MIN_OUTCOMES, poissonInterval, sharedPairs, type Arm, type Strata, type StratumCounts, type Verdict } from "./verdict.js";
-import type { ResearchChart, ResearchGoal, ResearchPipeId, ResearchPoint, ResearchStudy, ResearchTopic } from "./types.js";
+import type { ResearchOutcomeId, ResearchChart, ResearchGoal, ResearchPipeId, ResearchPoint, ResearchStudy, ResearchTopic } from "./types.js";
 
 /** What one pipe buys, in words. */
 export interface PipeTerms {
@@ -326,7 +326,7 @@ export function costOverTimeStudy(t: PipeTerms, months: readonly BucketMonth[] |
 export function notMeasuredStudy(input: {
   id: string;
   pipe: ResearchPipeId | null;
-  outcome?: "meeting" | "judgment";
+  outcome?: ResearchOutcomeId;
   topic: ResearchTopic;
   goal: ResearchGoal;
   question: string;

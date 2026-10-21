@@ -15,6 +15,8 @@ import { followupStudies, opensStudies, timingStudy, type LegSpendSplit, type Op
 import { JUDGMENT_OUTCOME, jevStudies, type JevInput } from "./jev.js";
 import { bestWorkflowByMonth, clientMedianByMonth, overTimeStudies, type BestPoint, type MedianPoint } from "./pipe-series.js";
 import { dayText, monthLabel } from "./format.js";
+import { TIME_TO_REPLY_MIN_SAMPLE } from "../campaign-next-steps.js";
+import { POSITIVE_REPLY_OUTCOME, replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
 
 export const POSITIVE_REPLY_PIPE = "cold-email-positive-reply" as const;
 export const WEBSITE_VISIT_PIPE = "cold-email-website-visit" as const;
@@ -77,6 +79,11 @@ export interface ResearchInput {
   volume: { emails: number; orgs: number; workflows: number; linkedEmails: number; byMonth: Array<{ month: string; emails: number }>; excludedEmails: number; noRunStart: number } | null;
   /** The typed judgment section's inputs (each part null when its producer could not be read). */
   jev: Omit<JevInput, "costBasis" | "readOn">;
+  /**
+   * "How long before a first positive reply?" (TTFPR-RESEARCH-STUDY-1021): lead-service's fleet figure over every
+   * reply-pipe campaign; null = unreadable this build (the study says so); undefined = not asked (no study).
+   */
+  replyDelay?: ReplyDelayRead | null;
 }
 
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
@@ -283,6 +290,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     if (input.sends.opens && input.reply.cutoffDay) studies.push(...opensStudies(termsOf(POSITIVE_REPLY_PIPE, input.reply, note), input.sends.opens, input.reply.cutoffDay));
   }
   studies.push(...input.generationStudies);
+  if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
 
   const iso = input.now.toISOString();
@@ -328,6 +336,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
     ],
     outcomes: [
+      ...(input.replyDelay !== undefined ? [POSITIVE_REPLY_OUTCOME] : []),
       JUDGMENT_OUTCOME,
       {
         id: "meeting",

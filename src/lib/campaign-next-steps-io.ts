@@ -4,6 +4,7 @@
  * the route turns a failure into a named null, never a zero.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { assertReplyDelayCoherent, type ReplyDelayBucket, type ReplyDelayDistribution } from "./research/reply-delay.js";
 import { parseEmailSendQueue, parseScheduledFollowups, type EmailSendQueue, type LatencyMetric, type ScheduledFollowups } from "./campaign-next-steps.js";
 
 function instantlyBase(): { url: string; key: string } {
@@ -53,6 +54,55 @@ export async function fetchReplyLatencyByCampaignGroups(groups: Record<string, s
   if (!Array.isArray(data.groups)) throw new Error("lead-service reply-latency/grouped returned no groups array");
   const out: Record<string, LatencyMetric> = {};
   for (const g of data.groups as Record<string, unknown>[]) out[String(g.key)] = readMetric(g.timeToFirstPositiveReply);
+  return out;
+}
+
+/**
+ * The same figure's SHAPE over one group of campaign ids (TTFPR-DISTRIBUTION-1021, the Research study "How long before
+ * a first positive reply?"): sample, median, average, p10..p90 and the people per delay bucket with the running count,
+ * read by lead-service's own names. Fails LOUD on a missing field (an older lead-service build) or an incoherent figure
+ * (`assertReplyDelayCoherent`); never a partial distribution. ≤500 ids, lead-service's per-group cap: one group cannot
+ * be split (percentiles do not add up across groups).
+ */
+export async function fetchReplyDelayDistribution(campaignIds: string[]): Promise<ReplyDelayDistribution> {
+  if (campaignIds.length > 500) throw new Error(`reply-delay: ${campaignIds.length} campaign ids exceed lead-service's 500 per group`);
+  const url = process.env.LEAD_SERVICE_URL;
+  const key = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !key) throw new Error("LEAD_SERVICE_URL / LEAD_SERVICE_API_KEY not configured");
+  const res = await fetchWithRetry(`${url}/internal/reply-latency/grouped`, {
+    method: "POST",
+    headers: { "x-api-key": key, "content-type": "application/json" },
+    body: JSON.stringify({ groups: { fleet: { campaignIds } } }),
+  });
+  if (!res.ok) throw new Error(`lead-service /internal/reply-latency/grouped failed (${res.status}): ${await res.text()}`);
+  const data = (await res.json()) as { groups?: unknown };
+  if (!Array.isArray(data.groups)) throw new Error("lead-service reply-latency/grouped returned no groups array");
+  const g = (data.groups as Record<string, unknown>[]).find((x) => x.key === "fleet");
+  if (!g) throw new Error("lead-service reply-latency/grouped returned no fleet group");
+  const raw = g.timeToFirstPositiveReply as Record<string, unknown> | null;
+  const base = readMetric(raw);
+  const pct = raw?.percentilesMs as Record<string, unknown> | undefined;
+  if (!pct || typeof pct !== "object") throw new Error("reply-latency: percentilesMs missing (lead-service older than TTFPR-DISTRIBUTION-1021)");
+  if (!Array.isArray(raw?.distribution)) throw new Error("reply-latency: distribution missing (lead-service older than TTFPR-DISTRIBUTION-1021)");
+  const num = (v: unknown, what: string): number | null => {
+    if (v === null) return null;
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`reply-latency: ${what} is not a number`);
+    return v;
+  };
+  const distribution: ReplyDelayBucket[] = (raw.distribution as Record<string, unknown>[]).map((b, i) => {
+    if (typeof b.key !== "string" || typeof b.label !== "string") throw new Error(`reply-latency: bucket ${i} has no key/label`);
+    const fromMs = num(b.fromMs, `bucket ${b.key} fromMs`);
+    const count = num(b.count, `bucket ${b.key} count`);
+    const cumulativeCount = num(b.cumulativeCount, `bucket ${b.key} cumulativeCount`);
+    if (fromMs === null || count === null || cumulativeCount === null) throw new Error(`reply-latency: bucket ${b.key} has a null bound or count`);
+    return { key: b.key, label: b.label, fromMs, toMs: num(b.toMs, `bucket ${b.key} toMs`), count, cumulativeCount };
+  });
+  const out: ReplyDelayDistribution = {
+    ...base,
+    percentilesMs: { p10: num(pct.p10, "p10"), p25: num(pct.p25, "p25"), p50: num(pct.p50, "p50"), p75: num(pct.p75, "p75"), p90: num(pct.p90, "p90") },
+    distribution,
+  };
+  assertReplyDelayCoherent(out);
   return out;
 }
 
