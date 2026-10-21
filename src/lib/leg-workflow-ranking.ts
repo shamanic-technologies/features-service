@@ -49,6 +49,9 @@ export interface LegWorkflowRankingRow {
   spentUsd: number;
   /** Lifetime on the leg: pipeline ÷ billed spend. Null when either is absent. */
   roiMultiple: number | null;
+  /** The two terms of `roiMultiple`: the fleet pipeline (USD) and what clients were billed (USD) on the leg, lifetime. Null = unknown. */
+  pipelineUsd: number | null;
+  billedSpendUsd: number | null;
   /** Rank 1 when it is selectable: the first workflow the fleet order puts forward. */
   goesFirst: boolean;
   /** The best mature workflow (rule 1). Exactly one row, or none when nothing selectable is mature. */
@@ -102,6 +105,8 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       contacted: half.contacted,
       spentUsd: half.spentUsd,
       roiMultiple: pipeline != null && billed != null && billed > 0 ? pipeline / billed : null,
+      pipelineUsd: pipeline,
+      billedSpendUsd: billed,
     });
   }
 

@@ -5652,6 +5652,8 @@ const legWorkflowRankingRowSchema = z.object({
   contacted: z.number(),
   spentUsd: z.number(),
   roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
+  pipelineUsd: z.number().nullable().optional().describe("The numerator of `roiMultiple`: the fleet pipeline (USD) for the workflow on the leg, lifetime. Null = unknown."),
+  billedSpendUsd: z.number().nullable().optional().describe("The denominator of `roiMultiple`: what clients were billed (USD, net) for the workflow on the leg, lifetime. Null = unknown."),
   goesFirst: z.boolean().describe("Rank 1, when selectable."),
   moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
   explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
@@ -8357,7 +8359,8 @@ const researchRefSchema = z.object({
     .describe("On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."),
 });
 const researchCatalogFigures = {
-  rank: z.number().int().nullable().describe("Its place in the study's ROI order; null with no priced outcome yet."),
+  rank: z.number().int().nullable().describe("Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."),
+  rankBasis: z.enum(["cost_per_outcome"]).describe("What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."),
   emails: z.string().describe("People reached, printed."),
   emailsNoun: z.string(),
   outcomes: z.string(),
@@ -8374,13 +8377,13 @@ const researchCatalogRoi = z
     display: z.string().nullable().describe("Printed (`3.20x`)."),
     basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."),
     source: z
-      .enum(["workflow", "workflows_written_for", "writes_with_now", "dynasty", "pipe_best_workflow"])
+      .enum(["workflow", "own_outcomes", "writes_with_now", "dynasty", "pipe_best_workflow"])
       .nullable()
-      .describe("measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."),
-    spendCovered: z.number().nullable().describe("On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."),
+      .describe("measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."),
+    spendCovered: z.number().nullable().describe("On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."),
     unavailableReason: z.enum(["no_return_on_pipe"]).nullable().describe("Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."),
   })
-  .describe("Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured.");
+  .describe("Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured.");
 const researchTemplateStatus = z.enum(["active", "deprecated"]);
 const researchCatalogPipeSchema = z.object({
   workflows: z.array(z.object({
