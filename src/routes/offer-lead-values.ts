@@ -8,7 +8,7 @@
  *       (`computeOfferDealsLifecycle`); without `columns` (or `columns=standing`) the standing body, byte-unchanged.
  *   GET /offers/:offerId/deals-value?brandId=&columns=company_lifecycle — each organisation's lifecycle rung (the
  *       highest rung of its people) and how many stand on each rung, for the Companies page
- *       (`computeOfferCompanyLifecycle`, `lib/company-lifecycle.ts`). A mode of this route so the gateway's existing
+ *       (`lib/company-lifecycle-io.ts`, the cell `/offers/:offerId/revenue` lists its organisations from). A mode of this route so the gateway's existing
  *       passthrough reaches it.
  *
  * Same semantics, same pricing and same body as the brand reads; what narrows is WHO: only the leads
@@ -30,7 +30,6 @@
  * An offer no campaign sells is 404 `offer_has_no_channels`, never the brand's numbers. `?pricing=` is
  * accepted and validated like every offer read (no figure here is a cost, so it moves nothing).
  */
-import { createHash } from "node:crypto";
 import { Router } from "express";
 import { apiKeyAuth } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -48,10 +47,8 @@ import { computeBrandDealsValue } from "./deals-value.js";
 import { priceContactedLeads, type ContactedValueResult } from "../lib/contacted-value.js";
 import type { DealsValueResult } from "../lib/deals-value.js";
 import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
-import { fetchLeadsForRevenue, fetchUniboxLifecycleRows } from "../lib/leads-client.js";
-import { dedupPersonsByLead } from "../lib/revenue-engine.js";
-import { LIFECYCLE_RUNGS } from "../lib/lifecycle-ladder.js";
-import { companyLifecycles, type CompanyLifecycleResult } from "../lib/company-lifecycle.js";
+import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
+import { campaignSetKey, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
 import {
   BOARD_RUNG_KEYS,
@@ -62,14 +59,6 @@ import {
 } from "../lib/deals-lifecycle.js";
 
 const router = Router();
-
-/**
- * The offer's campaign SET in the key (a newly launched campaign moves every figure while no other key
- * part does), hashed: an offer can carry hundreds of campaigns and the key sits in a btree index.
- */
-function campaignSetKey(campaignIds: string[]): string {
-  return createHash("sha1").update(campaignIds.join("+")).digest("hex").slice(0, 12);
-}
 
 /** Why the brand's entry rates could not be borrowed (every lead then reads unpriced, as in the pipeline). */
 export type BrandEntryRatesUnavailableReason =
@@ -193,26 +182,6 @@ export async function computeOfferDealsLifecycle(
   });
 }
 
-/**
- * Each organisation's lifecycle rung for the offer (`lib/company-lifecycle.ts`): the offer's lead population (the
- * read `/offers/:offerId/revenue` groups its organisations on) and lead-service's Unibox lifecycle on EVERY rung, Lead
- * found included. Nothing is priced. Both reads fail loud: a missing page would mis-rank an organisation.
- */
-export async function computeOfferCompanyLifecycle(
-  brandId: string,
-  headers: DownstreamHeaders,
-  campaignIds: string[],
-): Promise<CompanyLifecycleResult> {
-  const [persons, rows] = await Promise.all([
-    fetchLeadsForRevenue(brandId, campaignIds, headers),
-    fetchUniboxLifecycleRows(brandId, LIFECYCLE_RUNGS.map((r) => r.key), headers),
-  ]);
-  return companyLifecycles({
-    persons: dedupPersonsByLead(persons).map((p) => ({ leadId: p.leadId, orgId: p.orgId })),
-    rows: rows.map((r) => ({ leadIds: r.leadIds, rung: r.rung })),
-  });
-}
-
 class CampaignNotOnOfferError extends Error {
   constructor(readonly offerId: string, readonly campaignId: string) {
     super(`Campaign ${campaignId} does not sell offer ${offerId}`);
@@ -248,18 +217,7 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
     if (columns === "company_lifecycle") {
       // Nothing is priced, so no pricing read; the brand must still be the caller's.
       await assertBrandHeld(brandId, headers);
-      const result = await servedCached<CompanyLifecycleResult>({
-        view: "offer-company-lifecycle",
-        scopeKey: buildScopeKey(offerId, {
-          orgId: headers.orgId,
-          brandId,
-          channels: featureSlugs.join("+"),
-          campaigns: campaignSetKey(campaignIds),
-          m: "company-lifecycle-v1",
-        }),
-        orgId: headers.orgId,
-        compute: () => computeOfferCompanyLifecycle(brandId, headers, campaignIds),
-      });
+      const result = await offerCompanyLifecycleCached({ offerId, brandId, headers, campaignIds, featureSlugs });
       return res.json({ offerId, brandId, ...result });
     }
     const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);

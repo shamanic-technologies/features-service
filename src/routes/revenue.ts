@@ -55,6 +55,7 @@ import { fetchQualifications } from "../lib/qualifications-client.js";
 import { observedCostPerOutcome, flooredCostPerOutcome, derivedCostPerOutcome } from "../lib/cost-engine.js";
 import {
   computeRevenue,
+  appendListedOrganizations,
   dedupPersonsByLead,
   buildContactedSeries,
   buildSignalSeries,
@@ -1504,6 +1505,10 @@ export async function computeFeatureRevenue(
   // 2026-10-09): each person is priced on the offer of the campaign that reached them. Used only where
   // the scope's own economics are null; omitted → byte-identical.
   perOfferPricing?: readonly OfferPricing[] | null,
+  // THE OFFER GRAIN ONLY (the Companies page): every organisation key the offer's company-lifecycle cell places on
+  // a rung, listed at $0 when the engine left it out (`appendListedOrganizations`). Null → nothing appended
+  // (unreadable cell, said loudly by the caller). Omitted → byte-identical.
+  listedOrganizationKeys?: Promise<ReadonlySet<string> | null>,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -2004,6 +2009,10 @@ export async function computeFeatureRevenue(
   // reply) as independent probabilities of one close (`undefined` keeps the wall-clock `now`).
   const contactedPricing = await contactedPricingPromise;
   const result = computeRevenue(paths, persons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing);
+  if (listedOrganizationKeys) {
+    const listed = await listedOrganizationKeys;
+    if (listed) appendListedOrganizations(result.organizations, persons, listed);
+  }
   // THE MATURE COHORT (`lib/roi-maturity.ts`): the same engine over the leads first contacted before the
   // cutoff (undated leads stay in), priced on the same paths — the pipeline the ratios divide. Only when
   // something in scope is maturing; otherwise the cohort IS the scope and the one pass answers both.
