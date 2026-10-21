@@ -267,6 +267,55 @@ describe("GET /offers/:offerId/deals-value?columns=lifecycle (DEALS-LIFECYCLE-10
   });
 });
 
+describe("the board never serves a Contacted value it could not compute (2026-10-21, fail loud)", () => {
+  it("send dates unreadable twice: 503 contacted_value_unavailable with the reason, never a $0 Contacted column", async () => {
+    const real = await vi.importActual<typeof import("../lib/contacted-value-unavailable.js")>("../lib/contacted-value-unavailable.js");
+    const { readOrUnavailable } = await import("../lib/contacted-value-unavailable.js");
+    vi.mocked(readOrUnavailable).mockImplementation(real.readOrUnavailable);
+    const { fetchEventTimestamps } = await import("../lib/email-status-client.js");
+    let calls = 0;
+    vi.mocked(fetchEventTimestamps).mockImplementation(async () => {
+      calls += 1;
+      throw new Error("email-gateway /orgs/status failed (504): upstream timeout");
+    });
+    try {
+      const res = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle");
+      expect(res.status).toBe(503);
+      expect(res.body.reason).toBe("contacted_value_unavailable");
+      expect(["send_dates_unreadable", "contacted_pricing_unreadable"]).toContain(res.body.detail);
+      expect(res.body.rungs).toBeUndefined();
+      expect(calls).toBeGreaterThanOrEqual(2); // retried once before giving up
+    } finally {
+      vi.mocked(fetchEventTimestamps).mockImplementation(async () => null as never);
+      vi.mocked(readOrUnavailable).mockImplementation(async (_b, _r, _w, read) => read().catch(() => null) as never);
+    }
+  });
+
+  it("a send-date read that fails once and then answers is served normally (the retry)", async () => {
+    const real = await vi.importActual<typeof import("../lib/contacted-value-unavailable.js")>("../lib/contacted-value-unavailable.js");
+    const { readOrUnavailable } = await import("../lib/contacted-value-unavailable.js");
+    vi.mocked(readOrUnavailable).mockImplementation(real.readOrUnavailable);
+    const { fetchEventTimestamps } = await import("../lib/email-status-client.js");
+    const failed = new Set<string>();
+    vi.mocked(fetchEventTimestamps).mockImplementation(async (brandId, campaignId) => {
+      const key = `${brandId}|${campaignId ?? ""}`;
+      if (!failed.has(key)) {
+        failed.add(key);
+        throw new Error("email-gateway /orgs/status failed (504)");
+      }
+      return null as never;
+    });
+    try {
+      const res = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle");
+      expect(res.status).toBe(200);
+      expect(res.body.rungs.find((r: { key: string }) => r.key === "contacted").valueUsd).toBeGreaterThan(0);
+    } finally {
+      vi.mocked(fetchEventTimestamps).mockImplementation(async () => null as never);
+      vi.mocked(readOrUnavailable).mockImplementation(async (_b, _r, _w, read) => read().catch(() => null) as never);
+    }
+  });
+});
+
 describe("GET /offers/:offerId/deals-value?columns=company_lifecycle (DEALS-LIFECYCLE-1021, Companies page)", () => {
   it("serves each organisation of the offer at its highest rung, and the per-rung counts partition them", async () => {
     const res = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=company_lifecycle");

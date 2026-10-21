@@ -27,7 +27,7 @@ vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: []
 // (owner 2026-10-21) does not blur the 4/7 mature share this suite pins.
 vi.mock("./contacted-value.js", async (orig) => ({
   ...(await orig<typeof import("./contacted-value.js")>()),
-  contactedPricingSoft: vi.fn(async () => ({ entryRatePctByGroup: {}, lastSentOnOrAfter: "1970-01-01T00:00:00.000Z" })),
+  contactedPricingOf: vi.fn(async () => ({ entryRatePctByGroup: {}, lastSentOnOrAfter: "1970-01-01T00:00:00.000Z" })),
 }));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({

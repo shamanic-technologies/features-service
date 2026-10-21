@@ -312,6 +312,33 @@ describe("GET /offers/:offerId/revenue — an offer's money, across every channe
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("send dates unreadable: a named 503 (contacted value unavailable), never a pipeline without its Contacted value, never a crash", async () => {
+    const real = await vi.importActual<typeof import("../lib/contacted-value-unavailable.js")>("../lib/contacted-value-unavailable.js");
+    const mod = await import("../lib/contacted-value-unavailable.js");
+    vi.mocked(mod.readOrUnavailable).mockImplementation(real.readOrUnavailable);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      mockFetch(TWO_CHANNELS);
+      const fixtureFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        if (url.includes("/orgs/status")) return new Response("simulated gateway timeout", { status: 504 });
+        return fixtureFetch(input, init);
+      });
+      const res = await request(app).get(`/offers/${OFFER}/revenue?brandId=b1`).set(AUTH);
+      expect(res.status).toBe(503);
+      expect(res.body.reason).toBe("contacted_value_unavailable");
+      expect(res.body.headline).toBeUndefined();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      vi.mocked(mod.readOrUnavailable).mockImplementation(async (_b, _r, _w, read) => read().catch(() => null) as never);
+    }
+  });
+
   it("accounts for BOTH channels, and carries each one's own answer beside the total", async () => {
     mockFetch(TWO_CHANNELS);
     const res = await request(app).get(`/offers/${OFFER}/revenue?brandId=b1`).set(AUTH);

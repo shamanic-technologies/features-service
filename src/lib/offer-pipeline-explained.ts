@@ -669,7 +669,7 @@ export function buildOfferPipelineAndFamilies(input: {
   sets: OfferStepSets;
   /** The priced causes (`?cause=`, default our outreach): a cold lead is listed only when its interest was one. */
   pricedCauses?: readonly OutcomeCause[];
-  /** How the pipeline prices a contacted-only lead (the revenue read's own `contactedPricingSoft`); null = at 0. */
+  /** How the pipeline prices a contacted-only lead (the revenue read's own `contactedPricingOf`); null = at 0. */
   contactedPricing?: ContactedPricing | null;
   /** The offer revenue read's `headline.totalPipelineUsd`, to reconcile the exclusive total against; null = unread. */
   headlinePipelineUsd?: number | null;

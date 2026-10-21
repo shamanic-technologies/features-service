@@ -30,6 +30,7 @@
  * An offer no campaign sells is 404 `offer_has_no_channels`, never the brand's numbers. `?pricing=` is
  * accepted and validated like every offer read (no figure here is a cost, so it moves nothing).
  */
+import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { Router } from "express";
 import { apiKeyAuth } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -39,7 +40,7 @@ import { OfferHasNoChannelsError, type OfferChannel } from "../lib/offer-channel
 import { resolveRequest, resolveOfferFunnel, OfferChannelsPriceDifferentlyError } from "./offer-economics.js";
 import {
   getBrandContactedValue,
-  contactedPricingSoft,
+  contactedPricingOf,
   loadBrandPricedPopulation,
   parseContactedValuePage,
   pageContactedValue,
@@ -101,7 +102,7 @@ export async function computeOfferContactedValue(
 ): Promise<OfferContactedValueResult> {
   const [population, brandCell] = await Promise.all([
     loadBrandPricedPopulation(brandId, headers, pre, { campaignIds, offerId }),
-    // Soft, exactly like the pipeline's own read of this cell (`contactedPricingSoft`): unreadable →
+    // Soft, exactly like the pipeline's own read of this cell (`contactedPricingOf`): unreadable →
     // no rate, which is what the offer's pipeline prices these leads on too.
     getBrandContactedValue(brandId, headers).catch((err: Error) => {
       console.warn(`[features-service] offer contacted value (brand ${brandId}): brand entry rates unreadable — every lead unpriced: ${err.message}`);
@@ -129,6 +130,7 @@ function offerError(res: import("express").Response, error: unknown, what: strin
   if (error instanceof OfferChannelsPriceDifferentlyError) {
     return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", offerId: error.offerId });
   }
+  if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
   console.error(`[features-service] Offer ${what} error:`, error);
   return res.status(502).json({ error: `Failed to compute offer ${what}` });
 }
@@ -146,11 +148,11 @@ export async function computeOfferDealsLifecycle(
   offerId: string,
 ): Promise<DealsLifecycleResult> {
   // The PIPELINE's basis (owner 2026-10-21, one pipeline figure everywhere): the causes the offer revenue read prices
-  // by default (`DEFAULT_PRICED_CAUSES`: what our pipes caused) and its own contacted pricing (`contactedPricingSoft`).
+  // by default (`DEFAULT_PRICED_CAUSES`: what our pipes caused) and its own contacted pricing (`contactedPricingOf`).
   const [population, uniboxRows, contactedPricing] = await Promise.all([
     loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: DEFAULT_PRICED_CAUSES, campaignIds, offerId }),
     fetchUniboxLifecycleRows(brandId, BOARD_RUNG_KEYS, headers),
-    contactedPricingSoft(brandId, headers),
+    contactedPricingOf(brandId, headers),
   ]);
   let statedWonAmountUsdByEmail: Map<string, number> | null = null;
   if (population.observed) {

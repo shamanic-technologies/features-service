@@ -24,7 +24,7 @@ vi.mock("../lib/runs-cost-client.js", async (orig) => ({ ...(await orig<typeof i
 vi.mock("../lib/scope-maturity.js", async (orig) => ({ ...(await orig<typeof import("../lib/scope-maturity.js")>()), fetchSpendSplit: vi.fn() }));
 // The exclusive ladder's two reconciliation reads (the offer revenue headline, the contacted pricing).
 vi.mock("./offer-economics.js", async (orig) => ({ ...(await orig<typeof import("./offer-economics.js")>()), offerRevenueJson: vi.fn() }));
-vi.mock("./contacted-value.js", async (orig) => ({ ...(await orig<typeof import("./contacted-value.js")>()), contactedPricingSoft: vi.fn() }));
+vi.mock("./contacted-value.js", async (orig) => ({ ...(await orig<typeof import("./contacted-value.js")>()), contactedPricingOf: vi.fn() }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.FEATURES_SERVICE_DATABASE_URL = "postgres://fake:5432/test";
@@ -43,7 +43,7 @@ const { fetchRunsCostCents, fetchMatureSpendCents } = await import("../lib/runs-
 const { fetchFollowupActedLeads } = await import("../lib/followup-actions-client.js");
 const { fetchSpendSplit } = await import("../lib/scope-maturity.js");
 const { offerRevenueJson } = await import("./offer-economics.js");
-const { contactedPricingSoft } = await import("./contacted-value.js");
+const { contactedPricingOf } = await import("./contacted-value.js");
 const { SnapshotJson } = await import("../lib/view-cache.js");
 const app = (await import("../index.js")).default;
 const AUTH = { "x-api-key": "test-key", "x-org-id": "0e9a0000-0000-4000-8000-000000000001", "x-user-id": "05e40000-0000-4000-8000-000000000001", "x-run-id": "07a00000-0000-4000-8000-000000000001" };
@@ -59,7 +59,7 @@ const lead = (leadId: string, campaignId: string, signals: Record<string, boolea
 
 describe("GET /offers/:offerId/outcomes", () => {
   beforeEach(() => {
-    vi.mocked(contactedPricingSoft).mockResolvedValue({ entryRatePctByGroup: {}, lastSentOnOrAfter: "2026-01-01T00:00:00.000Z" });
+    vi.mocked(contactedPricingOf).mockResolvedValue({ entryRatePctByGroup: {}, lastSentOnOrAfter: "2026-01-01T00:00:00.000Z" });
     vi.mocked(offerRevenueJson).mockResolvedValue(new SnapshotJson(JSON.stringify({ headline: { totalPipelineUsd: 0 } })));
     vi.mocked(fetchBrandCampaignRows).mockResolvedValue([
       { id: "c1", offerId: "offer-1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", funnelKey: "sales_meetings_from_conversation" },

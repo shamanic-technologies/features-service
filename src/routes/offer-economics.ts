@@ -68,6 +68,7 @@
  * prevent. So the channel list is resolved here and the breakdown ships in the SAME response as the
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
+import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
@@ -255,6 +256,7 @@ router.get("/offers/:offerId/revenue", apiKeyAuth, async (req, res) => {
     if (error instanceof OfferChannelsPriceDifferentlyError) {
       return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", offerId: error.offerId });
     }
+    if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     console.error("[features-service] Offer revenue error:", error);
     res.status(502).json({ error: "Failed to compute offer revenue" });
   }

@@ -73,7 +73,7 @@
 import { asServingRowEarned, creditServingRows } from "./serving-row-credit.js";
 import { fetchServingRowJourneys } from "./serving-row-journeys.js";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "./disqualification-marks.js";
-import { contactedPricingSoft } from "../routes/contacted-value.js";
+import { contactedPricingOf } from "../routes/contacted-value.js";
 import type { ContactedPricing, TimeSeriesPoint } from "./revenue-engine.js";
 import { restrictPathsToDeclaredLegs, type getFunnel } from "./funnel-registry.js";
 import type { PipelineUnpricedReason, PricedEconomics } from "./offer-priced-economics.js";
@@ -87,6 +87,7 @@ import { fetchRunsCostCentsByWorkflowSlug, fetchMatureSpendCents, type RunsCostC
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { buildMaturityPlan, matureCohortPersons, scopePredicate, type MaturityPlan } from "./roi-maturity.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
+import { readOrUnavailable } from "./contacted-value-unavailable.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
 import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "./outcome-cause.js";
 import { fetchQualifications } from "./qualifications-client.js";
@@ -481,7 +482,7 @@ export async function computeWorkflowRevenueGroups(input: {
     fetchServingRowJourneys(brandId, headers),
     maturityPromise,
     // The brand read's own contacted-lead pricing, so a workflow row prices a contacted lead the same.
-    contactedPricingSoft(brandId, headers),
+    contactedPricingOf(brandId, headers),
     splitPromise,
   ]);
 
@@ -492,10 +493,10 @@ export async function computeWorkflowRevenueGroups(input: {
   // lead-service's Disqualified mark, brand-wide (the brand read applies the same set): FAIL LOUD.
   const disqualifiedRead = deferLoud(fetchDisqualifiedLeadIds(brandId, null, headers));
   const [timestamps, observed, quals] = await Promise.all([
-    fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
-      console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
-      return null;
-    }),
+    // LOUD, as the brand read (lib/contacted-value-unavailable.ts): dateless contacted leads read as expired.
+    readOrUnavailable(brandId, "send_dates_unreadable", "event timestamps (workflow revenue)", () =>
+      fetchEventTimestamps(brandId, campaignId, emails, headers),
+    ),
     fetchObservedStepFacts(brandId, causes).catch((err) => {
       console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
       return null;

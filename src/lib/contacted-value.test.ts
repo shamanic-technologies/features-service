@@ -9,7 +9,7 @@ import {
 import { computeRevenue, type ContactedPricing, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
 import type { ContactedValueResult } from "./contacted-value.js";
 
-/** The pricing a pipeline read takes off this result (what `contactedPricingSoft` hands the engine). */
+/** The pricing a pipeline read takes off this result (what `contactedPricingOf` hands the engine). */
 function contactedPricingOf(r: ContactedValueResult): ContactedPricing {
   return { entryRatePctByGroup: contactedEntryRatesByGroup(r.workflows), lastSentOnOrAfter: r.lastSentOnOrAfter };
 }
