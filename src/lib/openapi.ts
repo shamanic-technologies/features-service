@@ -8346,7 +8346,16 @@ registry.registerPath({
   },
 });
 
-const researchRefSchema = z.object({ key: z.string(), label: z.string(), linked: z.boolean().describe("The referenced page exists in this pipe.") });
+const researchRefSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  linked: z.boolean().describe("The referenced page exists in this pipe."),
+  version: z
+    .object({ key: z.string(), label: z.string() })
+    .nullable()
+    .optional()
+    .describe("On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."),
+});
 const researchCatalogFigures = {
   rank: z.number().int().nullable().describe("Its place in the study's ROI order; null with no priced outcome yet."),
   emails: z.string().describe("People reached, printed."),
@@ -8391,7 +8400,34 @@ const researchCatalogPipeSchema = z.object({
       .describe("What wrote its figures, on EVERY row, deprecated workflows included (a deprecated workflow has no `writesWithNow`). Each part links to its own page."),
     wroteWithUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_writing_step", "no_workflow_definition"]).nullable(),
     ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
-  templates: z.array(z.object({ key: z.string(), label: z.string(), hasText: z.boolean(), ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
+  templates: z
+    .array(z.object({
+      key: z.string().describe("The template dynasty's slug (`cold-reply-free-offer-blind`); a version on its own keeps its template id."),
+      label: z.string().describe("The dynasty's name (`Blind Free Offer`); a version on its own reads its version label."),
+      hasText: z.boolean().describe("`/internal/research/templates` serves a text under `key`: the head's on a dynasty."),
+      dynasty: z
+        .object({
+          slug: z.string(),
+          name: z.string(),
+          description: z.string().describe("content-generation-service's customer-facing one-sentence description."),
+          signature: z.string().nullable().describe("Internal signature (staff)."),
+          identity: z.string().describe("`blind` (the brand stays private) or `named`."),
+          head: z.object({ key: z.string(), label: z.string() }).nullable().describe("The version workflows write with now."),
+        })
+        .nullable()
+        .describe("The template dynasty this page is (content-generation-service `/internal/template-dynasties`, its pipe's); null on a version no dynasty of the pipe lists."),
+      standaloneReason: z
+        .enum(["no_dynasty_on_pipe", "template_dynasties_unreadable"])
+        .nullable()
+        .describe("Null on a dynasty. Why this page is one version on its own: no dynasty of the pipe lists it, or the dynasties could not be read this build."),
+      versions: z
+        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), ...researchCatalogFigures }))
+        .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
+      ...researchCatalogFigures,
+      workflows: z.array(z.object({ key: z.string(), label: z.string() })),
+      runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), templateVersion: z.string().nullable().describe("The template version the sequence was written with."), tokens: z.string().nullable() })),
+    }))
+    .describe("One page per template DYNASTY of the pipe (TPL-DYNASTY-1021-FS2), its figures pooled over every version (every dynasty of the pipe has a page, zero figures until a version writes); a version no dynasty lists keeps its own page. The template study bars are the same buckets."),
   models: z.array(z.object({
     key: z.string(),
     label: z.string(),

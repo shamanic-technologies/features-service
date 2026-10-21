@@ -67031,6 +67031,23 @@
                                 "linked": {
                                   "type": "boolean",
                                   "description": "The referenced page exists in this pipe."
+                                },
+                                "version": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label"
+                                  ],
+                                  "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                 }
                               },
                               "required": [
@@ -67053,6 +67070,23 @@
                                 "linked": {
                                   "type": "boolean",
                                   "description": "The referenced page exists in this pipe."
+                                },
+                                "version": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label"
+                                  ],
+                                  "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                 }
                               },
                               "required": [
@@ -67078,6 +67112,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67099,6 +67150,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67135,6 +67203,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67156,6 +67241,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67205,6 +67307,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67235,6 +67354,23 @@
                                     "linked": {
                                       "type": "boolean",
                                       "description": "The referenced page exists in this pipe."
+                                    },
+                                    "version": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                     }
                                   },
                                   "required": [
@@ -67560,13 +67696,325 @@
                           "type": "object",
                           "properties": {
                             "key": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "The template dynasty's slug (`cold-reply-free-offer-blind`); a version on its own keeps its template id."
                             },
                             "label": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "The dynasty's name (`Blind Free Offer`); a version on its own reads its version label."
                             },
                             "hasText": {
-                              "type": "boolean"
+                              "type": "boolean",
+                              "description": "`/internal/research/templates` serves a text under `key`: the head's on a dynasty."
+                            },
+                            "dynasty": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "description": "content-generation-service's customer-facing one-sentence description."
+                                },
+                                "signature": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Internal signature (staff)."
+                                },
+                                "identity": {
+                                  "type": "string",
+                                  "description": "`blind` (the brand stays private) or `named`."
+                                },
+                                "head": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label"
+                                  ],
+                                  "description": "The version workflows write with now."
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "name",
+                                "description",
+                                "signature",
+                                "identity",
+                                "head"
+                              ],
+                              "description": "The template dynasty this page is (content-generation-service `/internal/template-dynasties`, its pipe's); null on a version no dynasty of the pipe lists."
+                            },
+                            "standaloneReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_dynasty_on_pipe",
+                                "template_dynasties_unreadable"
+                              ],
+                              "description": "Null on a dynasty. Why this page is one version on its own: no dynasty of the pipe lists it, or the dynasties could not be read this build."
+                            },
+                            "versions": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "head": {
+                                    "type": "boolean"
+                                  },
+                                  "hasText": {
+                                    "type": "boolean"
+                                  },
+                                  "rank": {
+                                    "type": "integer",
+                                    "nullable": true,
+                                    "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                                  },
+                                  "emails": {
+                                    "type": "string",
+                                    "description": "People reached, printed."
+                                  },
+                                  "emailsNoun": {
+                                    "type": "string"
+                                  },
+                                  "outcomes": {
+                                    "type": "string"
+                                  },
+                                  "spend": {
+                                    "type": "string"
+                                  },
+                                  "cost": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "rate": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "thin": {
+                                    "type": "boolean",
+                                    "description": "Learning under the maturity rule."
+                                  },
+                                  "sample": {
+                                    "type": "string"
+                                  },
+                                  "charts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "bars",
+                                            "months"
+                                          ]
+                                        },
+                                        "title": {
+                                          "type": "string"
+                                        },
+                                        "lowerIsBetter": {
+                                          "type": "boolean"
+                                        },
+                                        "points": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "key": {
+                                                "type": "string",
+                                                "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                              },
+                                              "label": {
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "type": "number"
+                                              },
+                                              "display": {
+                                                "type": "string",
+                                                "description": "The value as the page prints it."
+                                              },
+                                              "note": {
+                                                "type": "string",
+                                                "description": "The counts behind the value."
+                                              },
+                                              "thin": {
+                                                "type": "boolean",
+                                                "description": "LEARNING under the maturity rule (historical field name)."
+                                              },
+                                              "partial": {
+                                                "type": "boolean",
+                                                "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                              }
+                                            },
+                                            "required": [
+                                              "label",
+                                              "value",
+                                              "display",
+                                              "note",
+                                              "thin"
+                                            ]
+                                          }
+                                        },
+                                        "cumulative": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "On a months chart: the average since inception at the end of each month."
+                                        },
+                                        "curve": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
+                                        },
+                                        "note": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "title",
+                                        "lowerIsBetter",
+                                        "points"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label",
+                                  "head",
+                                  "hasText",
+                                  "rank",
+                                  "emails",
+                                  "emailsNoun",
+                                  "outcomes",
+                                  "spend",
+                                  "cost",
+                                  "rate",
+                                  "thin",
+                                  "sample",
+                                  "charts"
+                                ]
+                              },
+                              "description": "Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."
                             },
                             "rank": {
                               "type": "integer",
@@ -67819,6 +68267,23 @@
                                       "linked": {
                                         "type": "boolean",
                                         "description": "The referenced page exists in this pipe."
+                                      },
+                                      "version": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label"
+                                        ],
+                                        "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                       }
                                     },
                                     "required": [
@@ -67847,6 +68312,11 @@
                                     "type": "string",
                                     "nullable": true
                                   },
+                                  "templateVersion": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "The template version the sequence was written with."
+                                  },
                                   "tokens": {
                                     "type": "string",
                                     "nullable": true
@@ -67857,6 +68327,7 @@
                                   "model",
                                   "workflow",
                                   "version",
+                                  "templateVersion",
                                   "tokens"
                                 ]
                               }
@@ -67866,6 +68337,9 @@
                             "key",
                             "label",
                             "hasText",
+                            "dynasty",
+                            "standaloneReason",
+                            "versions",
                             "rank",
                             "emails",
                             "emailsNoun",
@@ -67879,7 +68353,8 @@
                             "workflows",
                             "runs"
                           ]
-                        }
+                        },
+                        "description": "One page per template DYNASTY of the pipe (TPL-DYNASTY-1021-FS2), its figures pooled over every version (every dynasty of the pipe has a page, zero figures until a version writes); a version no dynasty lists keeps its own page. The template study bars are the same buckets."
                       },
                       "models": {
                         "type": "array",
@@ -68190,6 +68665,23 @@
                                       "linked": {
                                         "type": "boolean",
                                         "description": "The referenced page exists in this pipe."
+                                      },
+                                      "version": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "properties": {
+                                          "key": {
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "key",
+                                          "label"
+                                        ],
+                                        "description": "On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."
                                       }
                                     },
                                     "required": [
