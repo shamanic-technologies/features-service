@@ -45,6 +45,10 @@ import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries } from "../lib/fleet-index-store.js";
 import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResearchPoints, meetingSeriesOf } from "../lib/research/pipe-series.js";
+import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
+import { isReplyPipe } from "../lib/campaign-next-steps.js";
+import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
+import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
 import { readGenerationRuns, readJevInputs, readLegSpendTotal, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 
 const router = Router();
@@ -354,6 +358,27 @@ async function sendsInputs(reply: { campaignIds: string[]; cutoffIso: string | n
   return { reply: { groups: rg, spend: rs }, visit: { groups: vg, spend: vs }, opens };
 }
 
+/**
+ * "How long before a first positive reply?" (TTFPR-RESEARCH-STUDY-1021): lead-service's one figure (first message, any
+ * channel -> first positive reply, since inception) over EVERY org's campaigns whose leg ends on a positive reply
+ * (`isReplyPipe`, the campaign page's own test), as ONE group so its percentiles are the fleet's. Fails loud.
+ */
+async function readReplyDelay(): Promise<ReplyDelayRead> {
+  const rows = await fetchFleetCampaignRows();
+  const ids = [
+    ...new Set(
+      rows.flatMap((raw) => {
+        const c = raw as { id?: unknown; legKey?: unknown };
+        return typeof c.id === "string" && typeof c.legKey === "string" && isReplyPipe(c.legKey) ? [c.id] : [];
+      }),
+    ),
+  ];
+  if (ids.length === 0) {
+    return { campaigns: 0, metric: { sampleSize: 0, medianMs: null, averageMs: null, percentilesMs: { p10: null, p25: null, p50: null, p75: null, p90: null }, distribution: [] } };
+  }
+  return { campaigns: ids.length, metric: await fetchReplyDelayDistribution(ids) };
+}
+
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
@@ -383,7 +408,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
           (d) => meetingRanking.rows.find((r) => r.workflowDynastySlug === d)?.workflowDynastyName ?? d,
         )
       : null;
-  const [sends, jev, replies, gens, reportingBrands, volume] = await Promise.all([
+  const [sends, jev, replies, gens, reportingBrands, volume, replyDelay] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
     readJevInputs(),
     readReplyAuthors(),
@@ -397,6 +422,10 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       console.error("[features-service] research: page-wide counts unreadable this time:", err);
       return null;
     }),
+    readReplyDelay().catch((err): null => {
+      console.error("[features-service] research: time to a first positive reply unreadable this time (the study says so):", err);
+      return null;
+    }),
   ]);
   const workflowsWithPeople = new Set(
     [reply, visit].flatMap((r) => workflowBuckets(r.input).filter((b) => b.figures.contacted > 0).map((b) => b.key)),
@@ -405,6 +434,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     [reply, visit].reduce((a, r) => a + r.persons.filter((b) => !b.servedDay).reduce((x, b) => x + (r.split.screened ? b.screenedContacted : b.contacted), 0), 0),
   );
   const file = assembleResearch({
+    replyDelay,
     sends,
     generationStudies: gens.studies,
     volume: volume ? { ...volume, workflows: workflowsWithPeople, noRunStart } : null,
