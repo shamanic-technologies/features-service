@@ -39,6 +39,7 @@ import { OfferHasNoChannelsError, type OfferChannel } from "../lib/offer-channel
 import { resolveRequest, resolveOfferFunnel, OfferChannelsPriceDifferentlyError } from "./offer-economics.js";
 import {
   getBrandContactedValue,
+  contactedPricingSoft,
   loadBrandPricedPopulation,
   parseContactedValuePage,
   pageContactedValue,
@@ -46,7 +47,7 @@ import {
 import { computeBrandDealsValue } from "./deals-value.js";
 import { priceContactedLeads, type ContactedValueResult } from "../lib/contacted-value.js";
 import type { DealsValueResult } from "../lib/deals-value.js";
-import { ALL_OUTCOME_CAUSES } from "../lib/outcome-cause.js";
+import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
 import { campaignSetKey, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
@@ -144,21 +145,13 @@ export async function computeOfferDealsLifecycle(
   campaignIds: string[],
   offerId: string,
 ): Promise<DealsLifecycleResult> {
-  const [population, uniboxRows, brandCell] = await Promise.all([
-    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: ALL_OUTCOME_CAUSES, campaignIds, offerId }),
+  // The PIPELINE's basis (owner 2026-10-21, one pipeline figure everywhere): the causes the offer revenue read prices
+  // by default (`DEFAULT_PRICED_CAUSES`: what our pipes caused) and its own contacted pricing (`contactedPricingSoft`).
+  const [population, uniboxRows, contactedPricing] = await Promise.all([
+    loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: DEFAULT_PRICED_CAUSES, campaignIds, offerId }),
     fetchUniboxLifecycleRows(brandId, BOARD_RUNG_KEYS, headers),
-    // Soft, exactly like the offer's contacted-value read: unreadable → the seeded entry benchmark, said so per card.
-    getBrandContactedValue(brandId, headers).catch((err: Error) => {
-      console.warn(`[features-service] offer deals lifecycle (brand ${brandId}): brand entry rates unreadable — contacted cards on the default entry rate: ${err.message}`);
-      return null;
-    }),
+    contactedPricingSoft(brandId, headers),
   ]);
-  const contacted = priceContactedLeads({
-    paths: population.paths,
-    persons: population.persons,
-    lifetimeRevenueUsd: population.lifetimeRevenueUsd,
-    entryRatesFrom: brandCell === null || brandCell.unmeasuredReason !== null ? null : brandCell.workflows,
-  });
   let statedWonAmountUsdByEmail: Map<string, number> | null = null;
   if (population.observed) {
     statedWonAmountUsdByEmail = new Map();
@@ -176,9 +169,9 @@ export async function computeOfferDealsLifecycle(
     paths: population.paths,
     lifetimeRevenueUsd: population.lifetimeRevenueUsd,
     lifetimeRevenueSource: priceOnDeclaredFunnel(pre.declared).economics.lifetimeRevenueSource ?? null,
-    contactedValueByLead: new Map(contacted.leads.map((l) => [l.leadId, l.expectedValueUsd] as const)),
+    contactedPricing,
     statedWonAmountUsdByEmail,
-    pricedCauses: ALL_OUTCOME_CAUSES,
+    pricedCauses: DEFAULT_PRICED_CAUSES,
   });
 }
 
@@ -231,7 +224,7 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
           channels: featureSlugs.join("+"),
           campaigns: campaignSetKey(scoped),
           ...keyParts,
-          m: "deals-lifecycle-v1",
+          m: "deals-lifecycle-v2",
         }),
         orgId: headers.orgId,
         compute: () => computeOfferDealsLifecycle(brandId, headers, pre, scoped, offerId),
@@ -246,7 +239,7 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
         channels: featureSlugs.join("+"),
         campaigns: campaignSetKey(campaignIds),
         ...keyParts,
-        m: "deals-value-v4",
+        m: "deals-value-v5",
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, pre, campaignIds, offerId),

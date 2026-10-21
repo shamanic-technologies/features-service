@@ -22,6 +22,13 @@ vi.mock("../db/index.js", () => ({
   sql: {},
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
+// The cohort split below is asserted on the OUTCOME leads' value: contacted-only leads carry nothing here (no
+// measured entry rate, and no seeded default), so the default entry benchmark every pipeline read now applies
+// (owner 2026-10-21) does not blur the 4/7 mature share this suite pins.
+vi.mock("./contacted-value.js", async (orig) => ({
+  ...(await orig<typeof import("./contacted-value.js")>()),
+  contactedPricingSoft: vi.fn(async () => ({ entryRatePctByGroup: {}, lastSentOnOrAfter: "1970-01-01T00:00:00.000Z" })),
+}));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },
