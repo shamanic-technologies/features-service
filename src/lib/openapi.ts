@@ -511,6 +511,7 @@ const topPersonSchema = z.object({
 });
 
 const revenueOrganizationSchema = z.object({
+  organizationKey: z.string().describe("The row's identity: `org:<orgId>`, or `lead:<leadId>` for a lead with no company (a row of its own). Joins GET /offers/{offerId}/deals-value?columns=company_lifecycle `organizations[]` (each organisation's lifecycle rung)."),
   orgId: z.string().nullable(),
   orgName: z.string().nullable(),
   orgLogoUrl: z.string().nullable(),
@@ -3835,27 +3836,55 @@ const offerDealsLifecycleResponseRef = registry.register(
   }),
 );
 
+const companyLifecycleRungSchema = z.object({
+  key: z.enum(["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`)."),
+  rank: z.number().describe("1 = Lead found … 7 = Paid client."),
+  label: z.string(),
+});
+const offerCompanyLifecycleResponseRef = registry.register(
+  "OfferCompanyLifecycleResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    columns: z.literal("company_lifecycle"),
+    organizationCount: z.number().describe("Organisations listed: every company of the offer's lead population (grouped exactly as GET /offers/{offerId}/revenue groups its `organizations[]`), plus each company-less lead that stands on a rung (a row of its own, as on the revenue read)."),
+    withoutCompanyCount: z.number().describe("Of `organizationCount`, company-less leads."),
+    noRungOrganizationCount: z.number().describe("Organisations none of whose people stands on a rung (their `lifecycle` is null)."),
+    rungs: z.array(companyLifecycleRungSchema.extend({
+      organizationCount: z.number().describe("Organisations whose HIGHEST rung is this one. Each counts once: Σ rungs[].organizationCount + noRungOrganizationCount = organizationCount. (The lifecycle Deals board counts an organisation on every rung one of its people stands on, so its counts can exceed these.)"),
+      withoutCompanyCount: z.number().describe("Of them, company-less leads."),
+    })).describe("Every rung of the ladder, in order, always all seven (0 when nobody stands there)."),
+    organizations: z.array(z.object({
+      organizationKey: z.string().describe("`org:<orgId>`, or `lead:<leadId>` for a company-less lead: the join key of GET /offers/{offerId}/revenue `organizations[].organizationKey`."),
+      orgId: z.string().nullable().describe("The company (the revenue read's `organizations[].orgId`); null for a company-less lead."),
+      lifecycle: companyLifecycleRungSchema.nullable().describe("The highest rung any of the organisation's people reached, a person's rung being lead-service's served Unibox `lifecycle` (read, never re-derived). Null = none of them stands on a rung."),
+    })).describe("One row per organisation, highest rung first, then organizationKey."),
+    outOfScopeRowCount: z.number().describe("Unibox rows on a rung none of whose leads the offer served (the brand's people, not this offer's)."),
+  }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/offers/{offerId}/deals-value",
   summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through); `columns=lifecycle` = one column per lifecycle rung",
   description:
     "Default (`columns` omitted or `standing`): GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.\n\n" +
-    "`columns=lifecycle` (DEALS-LIFECYCLE-1021) answers OfferDealsLifecycleResponse: one column per rung of the lifecycle ladder (Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client). WHO stands on a rung is lead-service's Unibox `lifecycle` (GET /orgs/leads/unibox?lifecycle=), read, intersected with the scope's lead population; WHAT they are worth is the same engine as the standing board: Contacted = the contacted-value model (seeded entry benchmark when no rate is measured, said per card), Engaged..Meeting attended = the engine's expected value per person, Paid client = the stated sale else the lifetime revenue. `campaignId` narrows to one pipe campaign of the offer or one sales funnel campaign of it (its units); any other id is 404 `campaign_not_on_offer`.",
+    "`columns=lifecycle` (DEALS-LIFECYCLE-1021) answers OfferDealsLifecycleResponse: one column per rung of the lifecycle ladder (Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client). WHO stands on a rung is lead-service's Unibox `lifecycle` (GET /orgs/leads/unibox?lifecycle=), read, intersected with the scope's lead population; WHAT they are worth is the same engine as the standing board: Contacted = the contacted-value model (seeded entry benchmark when no rate is measured, said per card), Engaged..Meeting attended = the engine's expected value per person, Paid client = the stated sale else the lifetime revenue. `campaignId` narrows to one pipe campaign of the offer or one sales funnel campaign of it (its units); any other id is 404 `campaign_not_on_offer`.\n\n" +
+    "`columns=company_lifecycle` (DEALS-LIFECYCLE-1021, the Companies page) answers OfferCompanyLifecycleResponse: each organisation the offer reached with its lifecycle rung (the highest rung any of its people reached, lead-service's Unibox `lifecycle` on every rung, Lead found included) and, per rung, how many organisations stand on it (each once, on its highest rung). Nothing is priced. `organizations[].organizationKey` joins GET /offers/{offerId}/revenue's `organizations[].organizationKey`.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ offerId: z.string() }),
     query: z.object({
       ...offerGrainLeadValueQuery,
-      columns: z.enum(["standing", "lifecycle"]).optional().describe("Which board: `standing` (default, lead-service standings) or `lifecycle` (the lifecycle ladder)."),
+      columns: z.enum(["standing", "lifecycle", "company_lifecycle"]).optional().describe("Which body: `standing` (default, lead-service standings), `lifecycle` (the board on the lifecycle ladder) or `company_lifecycle` (each organisation's rung and the per-rung counts)."),
       campaignId: z.string().optional().describe("`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it."),
     }),
   },
   responses: {
     200: {
-      description: "The offer's Deals column values: OfferDealsValueResponse (standing) or OfferDealsLifecycleResponse (`columns=lifecycle`)",
-      content: { "application/json": { schema: z.union([offerDealsValueResponseRef, offerDealsLifecycleResponseRef]) } },
+      description: "The offer's Deals column values: OfferDealsValueResponse (standing), OfferDealsLifecycleResponse (`columns=lifecycle`) or OfferCompanyLifecycleResponse (`columns=company_lifecycle`)",
+      content: { "application/json": { schema: z.union([offerDealsValueResponseRef, offerDealsLifecycleResponseRef, offerCompanyLifecycleResponseRef]) } },
     },
     ...offerLeadValueErrors,
     400: { description: "Missing brandId, an invalid pricing or columns value, or campaignId without columns=lifecycle", content: { "application/json": { schema: errorResponse } } },

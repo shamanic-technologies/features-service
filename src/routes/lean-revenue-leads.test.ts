@@ -267,8 +267,9 @@ describe("a revenue read answers about money — ?leads= decides how much of a p
     // The whole point, stated as an inequality rather than a fixed number: on the default read the
     // people are a MINORITY of the payload, and on the hydrated one they are the payload.
     expect(leanLeads).toBeLessThan(bytes(lean.body) / 2);
-    // (The fixed-size expected-return block rides every body; it is money, not people, and not what this weighs.)
-    expect(fullLeads).toBeGreaterThan(bytes({ ...full.body, expectedReturn: undefined }) / 2);
+    // (The fixed-size expected-return block rides every body; it is money, not people, and not what this weighs.
+    // `organizations[]` is the same people grouped per company, served identically on both reads: not weighed either.)
+    expect(fullLeads).toBeGreaterThan(bytes({ ...full.body, expectedReturn: undefined, organizations: undefined }) / 2);
     expect(leanLeads).toBeLessThan(fullLeads / 5);
   });
 
