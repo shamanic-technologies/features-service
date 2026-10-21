@@ -166,7 +166,9 @@ export function priceLifecycleColumns(input: {
   const cutoff = pricing.lastSentOnOrAfter;
 
   const engagedValue = (p: EnginePerson): PersonValue => {
-    const v = expectedValueOfPerson(p, input.paths, ltr!);
+    // The pipeline's own value of the person, contacted pricing included: someone lead-service places further along
+    // than the engine sees them (no priced step yet) is worth exactly what the pipeline prices them at.
+    const v = expectedValueOfPerson(p, input.paths, ltr!, pricing);
     const zero: LifecycleCardZeroReason | null =
       v !== 0 ? null : isRuledOut(p) ? "ruled_out" : reachedNotOurs(p) ? "not_ours" : "step_not_priced";
     return { v, zero, source: null, entry: null };
