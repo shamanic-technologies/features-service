@@ -7,16 +7,19 @@
  * ever reached), read, never recomputed here from raw signals. WHAT each person is worth is priced here, on the
  * byte-same engine the standing-keyed board (`lib/deals-value.ts`) and the pipeline use:
  *
- *   - Contacted: the contacted-value model (`priceContactedLeads`, P(entry step | contacted, campaign × workflow) ×
- *     the value at that step, expiring 30 days after the last send). A lead whose group has no measured entry rate
- *     takes the seeded cold-email entry benchmark (`DEFAULT_ENTRY_RATE_PCT`) through the SAME engine function, and
- *     says so (`entryRateSource: "default_entry"`): never blank. A lead the engine already sees engaged is priced
- *     as an engaged lead (its value, not a guess); a bounced / unsubscribed one is 0 `cannot_convert`.
+ * Every value is priced on the PIPELINE's own basis (owner 2026-10-21: « On fait tout (toute campaign, tout sales
+ * funnels, tout pipes) », one pipeline figure everywhere): the causes the offer revenue read prices by default (an
+ * outcome our pipes caused; one that came on its own is `not_ours`, worth 0), and the same contacted pricing.
+ *
+ *   - Contacted: the pipeline's `contactedLeadValue` on the pipeline's `contactedPricingSoft` (P(entry step |
+ *     contacted, campaign × workflow) × the value at that step, expiring 30 days after the last send; a group with
+ *     no measured entry rate on the seeded benchmark, `entryRateSource: "default_entry"`, never blank). A lead the
+ *     engine already sees engaged is priced as an engaged lead; a bounced / unsubscribed one is 0 `cannot_convert`.
  *   - Engaged, Signed up, Meeting booked, Meeting attended: the engine's own expected value of the person
- *     (`expectedValueOfPerson`, every outcome cause: a deal's value to the customer, not our share). An observed
- *     rung REPLACES the forecast pointing at it, exactly as the pipeline prices it. 0 says why (`zeroValueReason`).
+ *     (`expectedValueOfPerson`). An observed rung REPLACES the forecast pointing at it, exactly as the pipeline
+ *     prices it. 0 says why (`zeroValueReason`).
  *   - Paid client: what was won: the amount a human STATED on the sale, else the offer's lifetime revenue per client
- *     (`valueSource`).
+ *     (`valueSource`); a sale none of our pipes caused is 0 `not_ours`.
  *
  * A card is one Unibox row (a person at a company); its value is the MAX over its leads held by this population. A
  * rung's value is company-level, the pipeline's rule: one organisation = one client = the MAX over its members on
@@ -29,17 +32,16 @@
  */
 import { LIFECYCLE_RUNGS, type LifecycleRungKey } from "./lifecycle-ladder.js";
 import {
+  contactedEntryRatesOf,
   contactedExpired,
-  contactedExpiryCutoffIso,
-  contactedGroupKey,
   contactedLeadValue,
   ENGAGED_SIGNALS,
   expectedValueOfPerson,
   isRuledOut,
+  type ContactedPricing,
   type EnginePerson,
   type ResolvedPath,
 } from "./revenue-engine.js";
-import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
 import type { OfferLifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 
 /** The rungs the Deals board draws, in ladder order (Lead found is not on the board). */
@@ -64,6 +66,11 @@ export type LifecycleCardZeroReason =
   | "step_not_priced"
   /** Contacted, nothing sent for 30 days: a contacted lead's value expires. */
   | "expired"
+  /**
+   * What it reached was not caused by any of our pipes (its cause is not priced: `other`, or undecided), so it
+   * adds nothing to the pipeline, the read every other figure states (owner 2026-10-21: one pipeline figure).
+   */
+  | "not_ours"
   /** Bounced or unsubscribed: it cannot convert. */
   | "cannot_convert"
   /** lead-service places it on Contacted, but no send reached our records yet. */
@@ -129,11 +136,9 @@ export interface DealsLifecycleResult {
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;
 const orgKey = (p: EnginePerson): string => (p.orgId ? `org:${p.orgId}` : `lead:${p.leadId}`);
 
-/** The seeded cold-email entry rates, keyed by the engine signal of each entry route. */
-const DEFAULT_ENTRY_RATES_BY_SIGNAL: Readonly<Record<string, number>> = {
-  ...(DEFAULT_ENTRY_RATE_PCT.conversation !== undefined ? { positiveReply: DEFAULT_ENTRY_RATE_PCT.conversation } : {}),
-  ...(DEFAULT_ENTRY_RATE_PCT.website_visit !== undefined ? { clicked: DEFAULT_ENTRY_RATE_PCT.website_visit } : {}),
-};
+/** A rung this person reached whose cause is not priced (`unpricedSignals`): reached, but not ours. */
+const reachedNotOurs = (p: EnginePerson): boolean =>
+  (p.unpricedSignals ?? []).some((s) => p.signals[s]);
 
 interface PersonValue {
   v: number;
@@ -149,24 +154,30 @@ export function priceLifecycleColumns(input: {
   paths: ResolvedPath[];
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueSource: OfferLifetimeRevenueSource | null;
-  /** The contacted-value model's per-lead value (`priceContactedLeads(...).leads`); null value = no measured rate. */
-  contactedValueByLead: ReadonlyMap<string, number | null>;
+  /** The pipeline's own contacted pricing (`contactedPricingSoft`): measured group rates, else the seeded default. */
+  contactedPricing: ContactedPricing;
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
   pricedCauses: readonly string[];
-  now?: Date;
 }): DealsLifecycleResult {
   const ltr = input.lifetimeRevenueUsd;
   const unvaluedReason = ltr === null ? "no_economics" : !(ltr > 0) ? "no_client_value" : null;
   const byLead = new Map(input.persons.map((p) => [p.leadId, p] as const));
-  const cutoff = contactedExpiryCutoffIso(input.now ?? new Date());
+  const pricing = input.contactedPricing;
+  const cutoff = pricing.lastSentOnOrAfter;
 
   const engagedValue = (p: EnginePerson): PersonValue => {
     const v = expectedValueOfPerson(p, input.paths, ltr!);
-    return { v, zero: v === 0 ? (isRuledOut(p) ? "ruled_out" : "step_not_priced") : null, source: null, entry: null };
+    const zero: LifecycleCardZeroReason | null =
+      v !== 0 ? null : isRuledOut(p) ? "ruled_out" : reachedNotOurs(p) ? "not_ours" : "step_not_priced";
+    return { v, zero, source: null, entry: null };
   };
 
   const valueOf = (p: EnginePerson, rung: BoardRungKey): PersonValue => {
     if (rung === "paid_client") {
+      // A sale none of our pipes caused is the customer's, never our pipeline nor our won value.
+      if (p.signals.closeWin && (p.unpricedSignals ?? []).includes("closeWin")) {
+        return { v: 0, zero: "not_ours", source: null, entry: null };
+      }
       const email = p.email?.trim().toLowerCase() ?? null;
       const stated = email ? (input.statedWonAmountUsdByEmail?.get(email) ?? null) : null;
       return stated !== null
@@ -179,18 +190,12 @@ export function priceLifecycleColumns(input: {
     if (p.signals.bounced || p.signals.unsubscribed) return { v: 0, zero: "cannot_convert", source: null, entry: null };
     if (!p.signals.contacted) return { v: 0, zero: "not_sent", source: null, entry: null };
     if (isRuledOut(p)) return { v: 0, zero: "ruled_out", source: null, entry: null };
-    if (contactedExpired(p, cutoff)) return { v: 0, zero: "expired", source: null, entry: "measured" };
-    const measured = input.contactedValueByLead.get(p.leadId);
-    if (typeof measured === "number") return { v: measured, zero: measured === 0 ? "step_not_priced" : null, source: null, entry: "measured" };
-    // No measured entry rate for its campaign × workflow: the seeded cold-email benchmark, through the SAME
-    // engine function (a group key it is certain to find).
-    const key = contactedGroupKey(p.campaignId, p.workflowSlug) ?? "unattributed|unattributed";
-    const [campaignId, workflowSlug] = key.split("|");
-    const v = contactedLeadValue({ ...p, campaignId, workflowSlug }, input.paths, ltr!, {
-      entryRatePctByGroup: { [key]: DEFAULT_ENTRY_RATES_BY_SIGNAL },
-      lastSentOnOrAfter: cutoff,
-    });
-    return { v, zero: v === 0 ? "step_not_priced" : null, source: null, entry: "default_entry" };
+    const entry = contactedEntryRatesOf(p, pricing);
+    if (contactedExpired(p, cutoff)) return { v: 0, zero: "expired", source: null, entry: entry?.source ?? null };
+    if (!entry) return { v: 0, zero: "step_not_priced", source: null, entry: null };
+    // The byte-same function and pricing the pipeline values this lead with.
+    const v = contactedLeadValue(p, input.paths, ltr!, pricing);
+    return { v, zero: v === 0 ? "step_not_priced" : null, source: null, entry: entry.source };
   };
 
   const ltrAssumption: LifecycleAssumption[] = input.lifetimeRevenueSource
