@@ -15,7 +15,7 @@ const ECONOMICS = {
 /** The funnels whose ladders together walk every rate of `ECONOMICS` (a read walking no funnel prices nothing). */
 const ALL_MEETING_AND_PURCHASE: SalesFunnelKey[] = ["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases"];
 /** Canonical funnel order of the five legs, so a multi-funnel read (emitted first-seen) can be compared. */
-const LEG_ORDER = ["visit", "reply", "meeting", "meetingAttended", "closeWin"];
+const LEG_ORDER = ["visit", "reply", "signup", "meeting", "meetingAttended", "closeWin"];
 const inLegOrder = <T extends { tag: string }>(paths: T[]): T[] => [...paths].sort((a, b) => LEG_ORDER.indexOf(a.tag) - LEG_ORDER.indexOf(b.tag));
 
 describe("sales funnel — legs, milestones, and the declared-set restriction", () => {
@@ -23,9 +23,9 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
   const paths = funnel.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: ALL_MEETING_AND_PURCHASE });
   const byTag = Object.fromEntries(paths.map((p) => [p.tag, p]));
 
-  it("emits ONLY the five funnel legs — no delivery stage is a path", () => {
-    expect(paths).toHaveLength(5);
-    expect(inLegOrder(paths).map((p) => p.tag)).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
+  it("emits ONLY the six funnel legs — no delivery stage is a path", () => {
+    expect(paths).toHaveLength(6);
+    expect(inLegOrder(paths).map((p) => p.tag)).toEqual(["visit", "reply", "signup", "meeting", "meetingAttended", "closeWin"]);
   });
 
   it("a read walking NO funnel prices nothing — never a route-agnostic stand-in ladder", () => {
@@ -87,6 +87,30 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
   });
 });
 
+describe("website_purchases — a SIGNUP is a priced rung, worth more than the visit before it (DEALS-RUNG-VALUE-1021)", () => {
+  const funnel = getFunnel("sales-cold-email-outreach")!;
+  const paths = funnel.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: ["website_purchases"] });
+  const byTag = Object.fromEntries(paths.map((p) => [p.tag, p]));
+
+  it("signup EV = LTR × signup→paid, an observed POSITION (not an engagement route)", () => {
+    expect(paths.map((p) => p.tag)).toEqual(["visit", "signup", "closeWin"]);
+    expect(byTag.signup.signal).toBe("signup");
+    expect(byTag.signup.expectedRevenueUsd).toBeCloseTo(100, 6); // 1000 × 0.10
+    expect(byTag.signup.engagementRoute).toBeUndefined();
+  });
+
+  it("monotonic up the self-serve funnel: visit < signup < closeWin", () => {
+    expect(byTag.visit.expectedRevenueUsd).toBeLessThan(byTag.signup.expectedRevenueUsd);
+    expect(byTag.signup.expectedRevenueUsd).toBeLessThan(byTag.closeWin.expectedRevenueUsd);
+  });
+
+  it("a funnel without a signup step never prices one", () => {
+    for (const key of ["sales_meetings_from_conversation", "sales_from_website", "form_magnet"] as const) {
+      expect(funnel.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: [key] }).map((p) => p.tag)).not.toContain("signup");
+    }
+  });
+});
+
 describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry value", () => {
   const funnel = getFunnel("sales-cold-email-outreach")!;
   const paths = inLegOrder(funnel.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: ALL_MEETING_AND_PURCHASE }));
@@ -101,15 +125,15 @@ describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry va
   });
 
   it("the visit-led self-serve funnels buy a visit and the paid client, not a meeting", () => {
-    expect(tagsFor(["website_purchases"])).toEqual(["visit", "closeWin"]);
+    expect(tagsFor(["website_purchases"])).toEqual(["visit", "signup", "closeWin"]);
     expect(tagsFor(["form_magnet"])).toEqual(["visit", "closeWin"]);
   });
 
   it("several declared funnels are priced on the UNION of their legs", () => {
     // The conversation funnel brings the reply (and the meeting); the purchase funnel brings the visit.
-    expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
+    expect(tagsFor(["sales_meetings_from_conversation", "website_purchases"])).toEqual(["visit", "reply", "signup", "meeting", "meetingAttended", "closeWin"]);
     // Two visit-led self-serve funnels union to a set that still buys neither a reply nor a meeting.
-    expect(tagsFor(["website_purchases", "form_magnet"])).toEqual(["visit", "closeWin"]);
+    expect(tagsFor(["website_purchases", "form_magnet"])).toEqual(["visit", "signup", "closeWin"]);
   });
 
   it("every funnel terminates in a paid client, so closeWin is always a leg", () => {
@@ -123,7 +147,7 @@ describe("restrictPathsToDeclaredLegs — only a declared funnel's legs carry va
 
   it("NO declaration ⇒ the restriction is a pass-through, and the ladder itself prices nothing (no priced funnel)", () => {
     // The restriction narrows paths it is handed; with no key it narrows nothing.
-    expect(tagsFor([])).toEqual(["visit", "reply", "meeting", "meetingAttended", "closeWin"]);
+    expect(tagsFor([])).toEqual(["visit", "reply", "signup", "meeting", "meetingAttended", "closeWin"]);
     // But a read walking no funnel is never handed paths: its ladder is empty (economics null upstream,
     // `no_priced_funnel`), never an invented route-agnostic one.
     expect(restrictPathsToDeclaredLegs(funnel.resolvePaths({ economics: ECONOMICS }), [])).toEqual([]);
