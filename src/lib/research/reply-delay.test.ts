@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReplyDelayCoherent, delayText, replyDelayStudy, type ReplyDelayBucket, type ReplyDelayDistribution } from "./reply-delay.js";
+import { assertReplyDelayCoherent, firstDayClaim, delayText, replyDelayStudy, type ReplyDelayBucket, type ReplyDelayDistribution } from "./reply-delay.js";
 
 const H = 3_600_000;
 const D = 24 * H;
@@ -87,8 +87,9 @@ describe("replyDelayStudy (TTFPR-RESEARCH-STUDY-1021)", () => {
     expect(s.outcome).toBe("positive-reply");
     expect(s.pipe).toBeNull();
     expect(s.topic).toBe("delay");
-    expect(s.headline).toBe("Half of first positive replies arrive within 3.5 days of the first message. A signal to confirm, not yet a conclusion.");
-    expect(s.result).toEqual({ display: "3.5 days", unit: "median time to a first positive reply", sample: "20 positive replies · 3 campaigns · every client, since the first message" });
+    expect(s.headline).toBe("At least 20% of first positive replies arrive within 24 hours of the first message.");
+    expect(s.verdict.kind).toBe("conclusion");
+    expect(s.result).toEqual({ display: "40%", unit: "of first positive replies within 24 hours of the first message", sample: "20 positive replies · 3 campaigns · every client, since the first message" });
     const [chart] = s.charts;
     expect(chart!.kind).toBe("bars");
     expect(chart!.points).toHaveLength(15);
@@ -108,7 +109,7 @@ describe("replyDelayStudy (TTFPR-RESEARCH-STUDY-1021)", () => {
       ],
     });
     expect(s.conclusion).toEqual([
-      "40% of first positive replies arrive within the first day after the first message (8 of 20).",
+      "40% of first positive replies arrive within 24 hours of the first message (8 of 20). With 20 replies the true share sits between 22% and 61% (95% range), so at least 20% holds.",
       "Half arrive within 3.5 days, 3 in 4 within 8 days, and 1 in 10 takes longer than 9.5 days.",
       "After the first day, the largest group arrives 3 to 5 days after the first message: 6 replies, 30% of all.",
       "The average (7.3 days) sits above the median (3.5 days): a tail of late replies pulls it up, so the median is the typical wait.",
@@ -152,5 +153,13 @@ describe("assertReplyDelayCoherent", () => {
   });
   it("refuses a p50 that is not the median", () => {
     expect(() => assertReplyDelayCoherent({ ...SMALL, medianMs: 3 * D })).toThrow(/p50/);
+  });
+});
+
+describe("firstDayClaim (TTFPR-BLOG-1021)", () => {
+  it("states the floor of the Wilson 95% range, never the point estimate (prod 2026-10-21: 25 of 59)", () => {
+    expect(firstDayClaim(25, 59)).toEqual({ lowPct: 31, highPct: 55, floorPct: 30 });
+    expect(firstDayClaim(8, 20)).toEqual({ lowPct: 22, highPct: 61, floorPct: 20 });
+    expect(firstDayClaim(0, 12).floorPct).toBe(0);
   });
 });
