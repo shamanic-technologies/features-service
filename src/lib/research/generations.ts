@@ -16,6 +16,7 @@ import { modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { namingOf, namingStudies, NAMING_LABEL } from "./naming.js";
 import type { ResearchChart, ResearchStudy } from "./types.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
+import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex } from "./template-dynasties.js";
 
 export interface ModelName {
   label: string;
@@ -34,16 +35,23 @@ export interface GenerationsInput {
   templateTexts: ReadonlyMap<string, string>;
   /** Ask the naming question (the positive reply pipe only: a website visit needs the name and the link). */
   naming: boolean;
+  /** The pipe's template dynasties (content-generation-service): a template bar is a dynasty, its versions pooled. */
+  templateDynasties?: TemplateDynastyIndex;
 }
 
 const LAYOUT: Record<string, string> = { one_block: "One block", single_line_breaks: "Single line breaks", double_line_breaks: "Double line breaks" };
 const OPENING: Record<string, string> = { greeting: "Greeting + first name", first_name_alone: "First name alone", no_greeting: "No greeting" };
 const DASH: Record<string, string> = { em: "Em dash", en: "En dash", both: "Both dashes", none: "No dash" };
 
-function bucketsBy(input: GenerationsInput, groupOf: (b: FleetPersonBucket) => string | null, label: (g: string) => string) {
+function bucketsBy(
+  input: GenerationsInput,
+  groupOf: (b: FleetPersonBucket) => string | null,
+  label: (g: string) => string,
+  basisOf?: (g: string) => "mature" | "flash" | undefined,
+) {
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, groupOf);
   const { groups } = groupCells(cells, groupOfSplitSlug);
-  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs }));
+  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs, forceBasis: basisOf?.(g) }));
   return { rows, leftOut };
 }
 
@@ -163,12 +171,19 @@ function shapeStudy(input: GenerationsInput, dim: "layout" | "opening" | "dash")
   return { ...base, headline: w ? headlineFor(headline, v.kind) : headline, crowned: v.kind === "conclusion", verdict: { kind: v.kind, reason: v.reason } };
 }
 
-/** PURE. The model bars (one per model NAME: two ids naming one model are one bar) and the template bars of one pipe. */
+/**
+ * PURE. The model bars (one per model NAME: two ids naming one model are one bar), the template bars of one pipe (one
+ * per template DYNASTY, its versions pooled; a version no dynasty lists is its own bar) and, per version, its share of
+ * its bar read on the bar's own basis (so a dynasty's versions add up to it exactly).
+ */
 export function generationBuckets(input: GenerationsInput) {
   const modelLabel = (id: string) => input.models.get(id)?.label ?? id;
+  const dyn = input.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
-  const tpl = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel);
-  return { llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut }, tpl, modelLabel };
+  const tpl = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.keyOf(b.generation.promptType) : null), dyn.labelOf);
+  const basisOfBar = new Map(tpl.rows.map((r) => [r.key, r.basis]));
+  const tplVersions = bucketsBy(input, (b) => b.generation?.promptType ?? null, templateLabel, (v) => basisOfBar.get(dyn.keyOf(v))).rows;
+  return { llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut }, tpl, tplVersions, modelLabel };
 }
 
 /** PURE. Every study of what wrote the emails, for one pipe. */

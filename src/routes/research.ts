@@ -32,6 +32,13 @@ import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
+import {
+  dynastyLegKeyOf,
+  templateDynastyIndex,
+  type TemplateDynasty,
+  type TemplateDynastyIndex,
+  type TemplateDynastyReason,
+} from "../lib/research/template-dynasties.js";
 import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
@@ -280,6 +287,40 @@ async function readTemplateTexts(types: readonly string[]): Promise<Map<string, 
   return out;
 }
 
+/**
+ * One pipe's template dynasties, read from content-generation-service's deployed catalogue (TPL-DYNASTY-1021-FS2; api
+ * key, no identity). Unreadable = every version is its own page this build, said on each (`template_dynasties_unreadable`).
+ */
+async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
+  try {
+    const q = new URLSearchParams({ featureSlug: COLD_EMAIL, legKey: dynastyLegKeyOf(legKey) });
+    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/template-dynasties?${q}`, {
+      headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
+    });
+    if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const body = (await res.json()) as { dynasties?: Array<Partial<TemplateDynasty> & { versions?: Array<{ type?: string; position?: number }> }> };
+    if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
+    return body.dynasties.map((d) => {
+      if (typeof d.slug !== "string" || typeof d.name !== "string") throw new Error("content-generation-service template-dynasties: a dynasty without slug or name");
+      const versions = [...(d.versions ?? [])]
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        .flatMap((v) => (typeof v.type === "string" ? [v.type] : []));
+      return {
+        slug: d.slug,
+        name: d.name,
+        description: typeof d.description === "string" ? d.description : "",
+        signature: typeof d.signature === "string" ? d.signature : null,
+        identity: typeof d.identity === "string" ? d.identity : "",
+        head: typeof d.head === "string" ? d.head : null,
+        versions,
+      };
+    });
+  } catch (error) {
+    console.error(`[features-service] research: template dynasties of ${legKey} unreadable, every version is its own page this time:`, error);
+    return "template_dynasties_unreadable";
+  }
+}
+
 interface GenerationPart {
   studies: ResearchStudy[];
   /** Per pipe, the bars the catalogue lists (templates, models) and what each workflow's people were mostly written with. */
@@ -292,12 +333,13 @@ interface CatalogGen {
   models: ResearchBucket[];
   modelLabel: (id: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
+  templateVersions: ResearchBucket[];
 }
 
-const NO_GEN: CatalogGen = { templates: [], models: [], modelLabel: (id) => id, mainOf: () => ({ model: null, template: null }) };
+const NO_GEN: CatalogGen = { templates: [], models: [], modelLabel: (id) => id, mainOf: () => ({ model: null, template: null }), templateVersions: [] };
 
-/** PURE. The model and template most of a dynasty's people (people emailed) were written with. */
-function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: ReadonlyMap<string, string>, screened: boolean) {
+/** PURE. The model and template (dynasty, else version) most of a dynasty's people (people emailed) were written with. */
+function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: ReadonlyMap<string, string>, screened: boolean, templateKeyOf: (id: string) => string) {
   const tally = new Map<string, { models: Map<string, number>; templates: Map<string, number> }>();
   for (const b of persons) {
     if (!b.generation) continue;
@@ -306,14 +348,22 @@ function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: Readon
     tally.set(d, t);
     const c = (screened ? b.screenedContacted : b.contacted) || 0.0001;
     t.models.set(b.generation.model, (t.models.get(b.generation.model) ?? 0) + c);
-    if (b.generation.promptType) t.templates.set(b.generation.promptType, (t.templates.get(b.generation.promptType) ?? 0) + c);
+    if (b.generation.promptType) {
+      const k = templateKeyOf(b.generation.promptType);
+      t.templates.set(k, (t.templates.get(k) ?? 0) + c);
+    }
   }
   const top = (m: Map<string, number> | undefined) => (m && m.size ? [...m].sort((a, b) => b[1] - a[1])[0]![0] : null);
   return (dynasty: string) => ({ model: top(tally.get(dynasty)?.models), template: top(tally.get(dynasty)?.templates) });
 }
 
 /** The studies of what wrote the emails; none while the fleet person cell carries no generation yet (its ids stay waiting). */
-async function generationInputs(reply: ColdEmailPipeRead, visit: ColdEmailPipeRead, note: string): Promise<GenerationPart> {
+async function generationInputs(
+  reply: ColdEmailPipeRead,
+  visit: ColdEmailPipeRead,
+  note: string,
+  dynasties: { reply: TemplateDynastyIndex; visit: TemplateDynastyIndex },
+): Promise<GenerationPart> {
   if (![...reply.persons, ...visit.persons].some((b) => b.generation)) return { studies: [], reply: NO_GEN, visit: NO_GEN, templateTexts: new Map() };
   const types = [...reply.persons, ...visit.persons].map((b) => b.generation?.promptType).filter((x): x is string => Boolean(x));
   const [models, templateTexts] = await Promise.all([readModelNames(), readTemplateTexts(types)]);
@@ -326,10 +376,18 @@ async function generationInputs(reply: ColdEmailPipeRead, visit: ColdEmailPipeRe
     models,
     templateTexts,
     naming: pipe === POSITIVE_REPLY_PIPE,
+    templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
   });
   const partOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead): CatalogGen => {
     const g = generationBuckets(inputOf(pipe, r));
-    return { templates: g.tpl.rows, models: g.llm.rows, modelLabel: g.modelLabel, mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened) };
+    const dyn = pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit;
+    return {
+      templates: g.tpl.rows,
+      models: g.llm.rows,
+      modelLabel: g.modelLabel,
+      mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf),
+      templateVersions: g.tplVersions,
+    };
   };
   return {
     studies: [...generationStudies(inputOf(POSITIVE_REPLY_PIPE, reply)), ...generationStudies(inputOf(WEBSITE_VISIT_PIPE, visit))],
@@ -382,6 +440,11 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
+  // Each pipe's template dynasties (never throws: unreadable = every version on its own page, said so).
+  const dynastiesP = Promise.all([readTemplateDynasties(REPLY_LEG), readTemplateDynasties(VISIT_LEG)]).then(([r, v]) => ({
+    reply: templateDynastyIndex(r),
+    visit: templateDynastyIndex(v),
+  }));
   // The two legs in turn on the vendor basis (one heavy aggregation at a time), together on the billed one.
   const legs =
     basis === "actual"
@@ -413,7 +476,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     readJevInputs(),
     readReplyAuthors(),
     // A study family whose producer read fails stays waiting (logged), never fails the whole file.
-    generationInputs(reply, visit, ruleNote(reply.input, visit.input)).catch((err): GenerationPart => {
+    dynastiesP.then((d) => generationInputs(reply, visit, ruleNote(reply.input, visit.input), d)).catch((err): GenerationPart => {
       console.error("[features-service] research: the studies of what wrote the emails could not be built this time:", err);
       return { studies: [], reply: NO_GEN, visit: NO_GEN, templateTexts: new Map() };
     }),
@@ -482,8 +545,12 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   });
   // The text of every template a workflow writes with now, beside the ones its people were written with.
   // Every version's template too: a deprecated workflow's page names the template its newest writing version used.
-  const nowTemplates =
-    typeof writers === "string" ? [] : [...writers.now.values(), ...writers.last.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []));
+  const dynasties = await dynastiesP;
+  const dynastyVersions = [...dynasties.reply.dynasties, ...dynasties.visit.dynasties].flatMap((d) => d.versions);
+  const nowTemplates = [
+    ...(typeof writers === "string" ? [] : [...writers.now.values(), ...writers.last.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []))),
+    ...dynastyVersions,
+  ];
   const nowTexts = await readTemplateTexts(nowTemplates).catch((err) => {
     console.error("[features-service] research catalogue: template texts unreadable this time:", err);
     return new Map<string, string>();
@@ -502,6 +569,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       modelLabel: g.modelLabel,
       dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
       workflowRuns: runs,
+      templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
+      templateVersions: g.templateVersions,
       generationRuns: gensRuns,
       templateTexts: new Set(allTexts.keys()),
       runnableWorkflows: runnableWorkflowsOf(ranking),
@@ -514,8 +583,12 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     [WEBSITE_VISIT_PIPE]: catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking),
     [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
-  const listed = new Set(Object.values(catalog).flatMap((c) => c.templates.map((t) => t.key)));
-  const texts = Object.fromEntries([...allTexts].filter(([k]) => listed.has(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+  // Every listed page's text: a version's under its id, a dynasty's (its head's) under the dynasty's slug.
+  const listed = new Set(Object.values(catalog).flatMap((c) => c.templates.flatMap((t) => [t.key, ...t.versions.map((v) => v.key)])));
+  const headTexts = Object.values(catalog).flatMap((c) =>
+    c.templates.flatMap((t) => (t.dynasty?.head && allTexts.has(t.dynasty.head.key) ? [[t.key, allTexts.get(t.dynasty.head.key)!] as [string, string]] : [])),
+  );
+  const texts = Object.fromEntries([...[...allTexts].filter(([k]) => listed.has(k)), ...headTexts].sort(([a], [b]) => (a < b ? -1 : 1)));
   return { file, catalog, texts };
 }
 

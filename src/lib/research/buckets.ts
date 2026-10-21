@@ -86,11 +86,20 @@ export function bucketOf(input: {
   legKey: string;
   cells: readonly SlugCell[];
   override?: { basis: "mature" | "flash"; figures: BucketFigures; learning: boolean };
+  /**
+   * Read on this half whatever its own count says (a template VERSION is read on its dynasty's basis, so the versions'
+   * figures add up to the dynasty's exactly). `mature` falls to flash when the mature cut could not be made.
+   */
+  forceBasis?: "mature" | "flash";
 }): ResearchBucket {
   const flash = poolHalves(input.cells.map((c) => c.flash));
   const matureCut = input.cells.every((c) => c.mature !== null);
   const mature = matureCut ? poolHalves(input.cells.map((c) => c.mature!)) : null;
-  const isMature = input.override ? input.override.basis === "mature" : isMatureCount(mature ? mature.figures.outcomes : null, input.legKey) === true;
+  const isMature = input.override
+    ? input.override.basis === "mature"
+    : input.forceBasis
+      ? input.forceBasis === "mature" && mature !== null
+      : isMatureCount(mature ? mature.figures.outcomes : null, input.legKey) === true;
   const half = isMature && mature ? mature : flash;
   const figures = input.override ? input.override.figures : half.figures;
   const months = datedCovers(half.months, figures) ? scaled(half.months, figures) : null;
