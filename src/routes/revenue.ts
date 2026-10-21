@@ -5,7 +5,7 @@ import { perOfferPricer } from "../lib/per-offer-revenue.js";
 import type { OfferPricing } from "../lib/per-offer-pricing.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
-import { contactedPricingSoft } from "./contacted-value.js";
+import { contactedPricingOf } from "./contacted-value.js";
 import { Router, type Request, type Response } from "express";
 import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { funnelLeg, funnelsContainingLeg } from "../lib/funnel-legs.js";
@@ -42,6 +42,7 @@ import { fetchSpendBreakdown, type SpendBreakdown, type SpendSource } from "../l
 import { fetchConversionCounts, type ConversionCounts } from "../lib/conversion-counts-client.js";
 import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
+import { ContactedValueUnavailableError, contactedValueUnavailableBody, readOrUnavailable } from "../lib/contacted-value-unavailable.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchObservedStepFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
 import {
@@ -1624,7 +1625,10 @@ export async function computeFeatureRevenue(
   // last-send expiry, off the brand's contacted-value cell (the Contacted column's own figure). Kicked
   // alongside the lead read so the brand-wide page it walks is shared in flight. Soft: null → those
   // leads carry nothing.
-  const contactedPricingPromise = lens ? Promise.resolve(null) : contactedPricingSoft(brandId, headers);
+  const contactedPricingPromise = lens ? Promise.resolve(null) : contactedPricingOf(brandId, headers);
+  // Awaited further down; LOUD now (it can reject), so it must never reject UNHANDLED while an earlier await throws
+  // (that killed the process in the 2026-10-21 replay). The await below still surfaces the error.
+  contactedPricingPromise.catch(() => {});
   const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay, split, maturityScope] = await Promise.all([
     includeSpend
       ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs, brandLevelSpend)
@@ -1696,13 +1700,20 @@ export async function computeFeatureRevenue(
     // `recipientsContacted.daily: []`, while a contacted lead has a send date): the same email-gateway
     // timestamp overlay the priced path applies, fail-soft (a failed read leaves the leads undated, loudly).
     const coldEmails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
+    // The per-offer pricer below prices contacted leads off these dates: LOUD then (a dateless contacted lead
+    // reads as expired, a silent $0); an unpriced read only dates its volume, so it stays soft.
+    const pricesContacted = !lens && Boolean(perOfferPricing);
     const coldTimestamps =
-      coldEmails.length > 0
-        ? await fetchEventTimestamps(brandId, campaignId, coldEmails, headers).catch((err) => {
-            console.warn(`[features-service] event-timestamp enrichment failed (unpriced read: every lead undated): ${(err as Error).message}`);
-            return null;
-          })
-        : null;
+      coldEmails.length === 0
+        ? null
+        : pricesContacted
+          ? await readOrUnavailable(brandId, "send_dates_unreadable", "event timestamps (per-offer revenue)", () =>
+              fetchEventTimestamps(brandId, campaignId, coldEmails, headers),
+            )
+          : await fetchEventTimestamps(brandId, campaignId, coldEmails, headers).catch((err) => {
+              console.warn(`[features-service] event-timestamp enrichment failed (unpriced read: every lead undated): ${(err as Error).message}`);
+              return null;
+            });
     applySignalOverlays(persons, coldTimestamps, null);
     const coldFunnel = funnelForSteps(requestedFunnel, priced.pricedFunnelKeys);
     // The leads WERE read, so the scope's maturity is a real answer here too: counts and spend need no
@@ -1902,10 +1913,11 @@ export async function computeFeatureRevenue(
   // lead somebody ruled out while its Deals card reads $0.
   const disqualifiedRead = deferLoud(fetchDisqualifiedLeadIds(brandId, offerId ?? null, headers));
   const [timestamps, observed, quals, stepCosts, learning] = await Promise.all([
-    fetchEventTimestamps(brandId, campaignId, emails, headers).catch((err) => {
-      console.warn(`[features-service] event-timestamp enrichment failed (degrading to dateless): ${(err as Error).message}`);
-      return null;
-    }),
+    // LOUD (lib/contacted-value-unavailable.ts): a dateless contacted lead reads as expired, so a failed read
+    // would serve the pipeline without its Contacted value as if it were real.
+    readOrUnavailable(brandId, "send_dates_unreadable", "event timestamps (revenue)", () =>
+      fetchEventTimestamps(brandId, campaignId, emails, headers),
+    ),
     fetchObservedStepFacts(brandId, causes).catch((err) => {
       console.warn(`[features-service] observed step statements failed (degrading to the projection alone): ${(err as Error).message}`);
       return null;
@@ -2831,6 +2843,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     if (runId) {
       traceEvent(runId, { service: "features-service", event: "feature-revenue-error", detail: error instanceof Error ? error.message : "Unknown error", level: "error" }, req.headers).catch(() => {});
     }
+    if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     res.status(502).json({ error: "Failed to compute feature revenue" });
   }
 }
