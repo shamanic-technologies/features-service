@@ -22,8 +22,11 @@
  *     (`valueSource`); a sale none of our pipes caused is 0 `not_ours`.
  *
  * A card is one Unibox row (a person at a company); its value is the MAX over its leads held by this population. A
- * rung's value is company-level, the pipeline's rule: one organisation = one client = the MAX over its members on
- * the rung, organisations summed. `totalUsd` = Σ rung values, `expectedPipelineUsd` = Σ of every rung but Paid
+ * rung's value is company-level, the pipeline's rule: one organisation = one client = the MAX over its members, so
+ * an organisation is counted ONCE across the pipeline rungs (Contacted..Meeting attended), on the rung of its
+ * most valuable member (ties: the higher rung); a colleague on another rung keeps its card value and adds 0 to its
+ * rung (2026-10-21: karriere.at stood on Contacted $0.26 AND Engaged $0.36, the board read $0.26 above the
+ * revenue read's pipeline, which takes the max). Paid client (won, not pipeline) keeps its own org max. `totalUsd` = Σ rung values, `expectedPipelineUsd` = Σ of every rung but Paid
  * client, `wonUsd` = Paid client's: each sum is exact by construction. A rung with nobody on it is 0, never absent.
  *
  * Every figure but a stated sale is EXPECTED (`expected: true`), and lists what it assumes (`assumptions`): the
@@ -205,6 +208,8 @@ export function priceLifecycleColumns(input: {
     : [];
 
   let outOfScopeCardCount = 0;
+  /** Per rung, each organisation's MAX over its members on that rung (before the cross-rung count-once). */
+  const orgMaxByRung = new Map<BoardRungKey, Map<string, number>>();
   const rowsByRung = new Map<BoardRungKey, LifecycleBoardRow[]>(BOARD_RUNG_KEYS.map((k) => [k, []]));
   for (const row of input.rows) rowsByRung.get(row.rung)?.push(row);
 
@@ -215,6 +220,7 @@ export function priceLifecycleColumns(input: {
     );
     const cards: LifecycleCard[] = [];
     const byOrg = new Map<string, number>();
+    orgMaxByRung.set(key, byOrg);
     const leadIds = new Set<string>();
     let allStated = true;
     const entrySources = new Set<EntryRateSource>();
@@ -256,7 +262,8 @@ export function priceLifecycleColumns(input: {
       rank: r.rank,
       label: r.label,
       valueKind,
-      valueUsd: unvaluedReason !== null ? null : round([...byOrg.values()].reduce((s, v) => s + v, 0)),
+      // Set below once every rung is known (an organisation counts once across the pipeline rungs).
+      valueUsd: unvaluedReason !== null ? null : 0,
       expected: !(key === "paid_client" && cards.length > 0 && allStated),
       assumptions,
       cardCount: cards.length,
@@ -265,6 +272,24 @@ export function priceLifecycleColumns(input: {
       cards,
     };
   });
+
+  if (unvaluedReason === null) {
+    // ONE organisation = ONE client (the pipeline's MAX over members): each organisation's value lands on the
+    // pipeline rung holding its most valuable member (ties: the higher rung), never on every rung it touches.
+    const pipelineRungs = rungs.filter((r) => r.key !== "paid_client");
+    const top = new Map<string, { rung: BoardRungKey; v: number }>();
+    for (const r of pipelineRungs) {
+      for (const [org, v] of orgMaxByRung.get(r.key) ?? []) {
+        const cur = top.get(org);
+        if (cur === undefined || v >= cur.v) top.set(org, { rung: r.key, v });
+      }
+    }
+    const perRung = new Map<BoardRungKey, number>();
+    for (const { rung, v } of top.values()) perRung.set(rung, (perRung.get(rung) ?? 0) + v);
+    for (const r of pipelineRungs) r.valueUsd = round(perRung.get(r.key) ?? 0);
+    const won = rungs.find((r) => r.key === "paid_client");
+    if (won) won.valueUsd = round([...(orgMaxByRung.get("paid_client") ?? new Map()).values()].reduce((s, v) => s + v, 0));
+  }
 
   const sum = (rs: LifecycleRungValue[]): number | null =>
     unvaluedReason !== null ? null : round(rs.reduce((s, r) => s + (r.valueUsd ?? 0), 0));

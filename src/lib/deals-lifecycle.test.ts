@@ -206,3 +206,38 @@ describe("a rung lead-service places further along than the engine sees: the pip
     expect(card(r, "engaged", "h-eq").zeroValueReason).toBeNull();
   });
 });
+
+describe("one organisation = one client ACROSS the pipeline rungs (the revenue read's MAX over members)", () => {
+  it("a company with a colleague on Contacted and one on Engaged counts once, on the most valuable member's rung", () => {
+    // 2026-10-21 prod: karriere.at stood on Contacted ($0.26) AND Engaged ($0.36); the board summed both.
+    const contacted = person("k-contacted", "org-K", {});
+    const engaged = person("k-engaged", "org-K", { positiveReply: true });
+    const r = run({
+      persons: [contacted, engaged],
+      rows: [row("h-kc", "contacted", ["k-contacted"]), row("h-ke", "engaged", ["k-engaged"])],
+    });
+    const vc = card(r, "contacted", "h-kc").valueUsd!;
+    const ve = card(r, "engaged", "h-ke").valueUsd!;
+    expect(vc).toBeGreaterThan(0);
+    expect(ve).toBeGreaterThan(vc);
+    // Cards keep their own value; the colleague adds 0 to its rung.
+    expect(rung(r, "contacted").valueUsd).toBe(0);
+    expect(rung(r, "engaged").valueUsd).toBeCloseTo(ve, 6);
+    expect(r.expectedPipelineUsd).toBeCloseTo(Math.max(vc, ve), 6);
+    expect(rung(r, "contacted").organizationCount).toBe(1);
+  });
+
+  it("a tie lands on the higher rung; different companies still add up", () => {
+    const a = person("t-low", "org-T", {});
+    const b = person("t-high", "org-T", {});
+    const c = person("u-1", "org-U", {});
+    const r = run({
+      persons: [a, b, c],
+      rows: [row("h-tl", "contacted", ["t-low"]), row("h-th", "engaged", ["t-high"]), row("h-u", "contacted", ["u-1"])],
+    });
+    const v = card(r, "contacted", "h-u").valueUsd!;
+    expect(rung(r, "engaged").valueUsd).toBeCloseTo(v, 6);
+    expect(rung(r, "contacted").valueUsd).toBeCloseTo(v, 6);
+    expect(r.expectedPipelineUsd).toBeCloseTo(2 * v, 6);
+  });
+});
