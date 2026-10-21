@@ -186,11 +186,20 @@ describe("template dynasties on the Research pages", () => {
     expect(dynastyStatusOf(undefined, [])).toEqual({ status: null, statusSource: null });
   });
 
-  const catalogWith = (roi: Map<string, number | null>, moneyGoesHere: string | null, cs: SlugCell[] = cells, ps = persons) => {
+  // TPL-ROI-OWN-1022: a template's return is its OWN: its outcomes' share of each workflow's pipeline ÷ its people's share
+  // of each workflow's billed spend. Terms per dynasty: pipeline P, billed B (roi = P ÷ B).
+  const catalogWith = (
+    terms2: Map<string, { pipeline: number | null; billed: number | null }>,
+    moneyGoesHere: string | null,
+    cs: SlugCell[] = cells,
+    ps = persons,
+    wfOutcomes = 7,
+  ) => {
     const g = generationBuckets({ ...input([BLIND_FREE_OFFER, PAIN_QUESTION]), cells: cs, persons: ps });
+    const roi = new Map([...terms2].map(([d, t]) => [d, t.pipeline != null && t.billed != null && t.billed > 0 ? t.pipeline / t.billed : null]));
     return pipeCatalog({
       terms,
-      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 400, contacted: 500, outcomes: 7 }, learning: false, months: null, strata: null }],
+      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 400, contacted: 500, outcomes: wfOutcomes }, learning: false, months: null, strata: null }],
       templates: g.tpl.rows,
       templateVersions: g.tplVersions,
       templateDynasties: templateDynastyIndex([BLIND_FREE_OFFER, PAIN_QUESTION]),
@@ -204,47 +213,82 @@ describe("template dynasties on the Research pages", () => {
       templateTexts: new Set(),
       runnableWorkflows: null,
       writerOf: () => ({ ok: true, workflowSlug: "azalea-v2", version: 2, template: "blind-discovery-email-v4", modelAlias: "pro", model: null }),
-      workflowReturns: { roiOf: roi, moneyGoesHere },
-      templateSpendByVersion: g.tplSpendByVersion,
-      templateVersionSpendByVersion: g.tplVersionSpendByVersion,
+      workflowReturns: {
+        roiOf: roi,
+        moneyGoesHere,
+        pipelineOf: new Map([...terms2].map(([d, t]) => [d, t.pipeline])),
+        billedOf: new Map([...terms2].map(([d, t]) => [d, t.billed])),
+      },
+      templateFiguresByVersion: g.tplFiguresByVersion,
+      templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
+      workflowVersionTotals: g.workflowVersionTotals,
     });
   };
+  const azalea = (pipeline: number | null, billed: number | null) => new Map([["azalea", { pipeline, billed }]]);
 
-  it("a template that wrote for one workflow alone reads that workflow's return exactly; every version too", () => {
-    const c = catalogWith(new Map([["azalea", 3.25]]), "azalea");
+  it("a template that wrote ALL of a workflow reads that workflow's return exactly; a version that never wrote reads its dynasty's, expected", () => {
+    const cs: SlugCell[] = [{ slug: "azalea-v1", flash: half(400, 400, 8), mature: half(300, 300, 6) }];
+    const ps = [pb("azalea-v1", "blind-discovery-email-v40", 300, 6), pb("azalea-v1", "blind-discovery-email-v41", 100, 2)];
+    const c = catalogWith(azalea(1300, 400), "azalea", cs, ps);
     expect(c.workflows[0]!.roiDetail).toMatchObject({ value: 3.25, display: "3.25x", basis: "measured", source: "workflow" });
     const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
-    expect(page.roiDetail).toMatchObject({ value: 3.25, basis: "measured", source: "workflows_written_for", spendCovered: 1 });
+    expect(page.roiDetail).toMatchObject({ value: 3.25, basis: "measured", source: "own_outcomes", spendCovered: 1 });
     expect([page.roi, c.workflows[0]!.roi]).toEqual(["3.25x", "3.25x"]);
-    expect(page.versions.find((v) => v.key === "blind-discovery-email-v40")!.roiDetail).toMatchObject({ value: 3.25, basis: "measured" });
     // v47 never wrote: its dynasty's return, marked expected.
     expect(page.versions.find((v) => v.key === "blind-discovery-email-v47")!.roiDetail).toMatchObject({ value: 3.25, basis: "expected", source: "dynasty" });
     expect([page.status, page.statusSource, page.statusUnavailableReason]).toEqual(["active", "all_versions_deprecated", null]);
     expect(page.versions.map((v) => v.status)).toEqual(["deprecated", "deprecated", "active"]);
   });
 
-  it("a template that wrote for several workflows reads their returns weighted by what its people cost under each", () => {
-    // azalea-v1 and lily-v1 both wrote with v40: $200 (half of azalea-v1's $400 on 200 of 400 people) and $100.
-    const cs: SlugCell[] = [
-      { slug: "azalea-v1", flash: half(400, 400, 8), mature: half(300, 300, 6) },
-      { slug: "lily-v1", flash: half(100, 100, 2), mature: half(100, 100, 2) },
-    ];
-    const ps = [pb("azalea-v1", "blind-discovery-email-v40", 200, 4), pb("azalea-v1", "cold-email-v35", 200, 4), pb("lily-v1", "blind-discovery-email-v40", 100, 2)];
-    const c = catalogWith(new Map([["azalea", 2], ["lily", 5]]), "azalea", cs, ps);
+  it("two templates on one workflow: each reads its own outcomes' pipeline ÷ its own billed spend, the cheaper outcome the higher return", () => {
+    // azalea: $500 spent, 9 replies, pipeline $900, billed $500 (1.8x). Blind Free Offer: $400, 6 replies; Cold email v35: $100, 3.
+    const c = catalogWith(azalea(900, 500), "azalea");
     const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
-    expect(page.roiDetail.value).toBeCloseTo((2 * 200 + 5 * 100) / 300, 9);
+    expect(page.roiDetail.value).toBeCloseTo((900 * 6) / 9 / ((500 * 400) / 500), 9); // 1.5x
+    expect(c.templates.find((t) => t.key === "cold-email-v35")!.roiDetail).toMatchObject({ basis: "measured", source: "own_outcomes" });
+    expect(c.templates.find((t) => t.key === "cold-email-v35")!.roiDetail.value).toBeCloseTo(3, 9);
+    // Versions, each its own: v40 5 replies on $200 (2.5x), v41 1 reply on $200 (0.5x).
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v40")!.roiDetail.value).toBeCloseTo(2.5, 9);
+    expect(page.versions.find((v) => v.key === "blind-discovery-email-v41")!.roiDetail.value).toBeCloseTo(0.5, 9);
+    // The templates' own pipelines and billed spends add up to the workflow's: (600 + 300) ÷ (400 + 100) = 1.8x.
   });
 
-  it("never blank: unmeasured templates read the workflows writing with them now, else the pipe's money workflow, marked expected", () => {
-    const c = catalogWith(new Map([["azalea", 4]]), "azalea");
+  it("a template with NO outcome of its own is never measured, whatever the workflows it wrote for return", () => {
+    // v41 sent to 300 people, no reply; the workflow reads a measured 1.8x off v40's replies.
+    const ps = [pb("azalea-v1", "blind-discovery-email-v40", 300, 8), pb("azalea-v1", "blind-discovery-email-v41", 100, 0), pb("azalea-v2", "blind-discovery-email-v41", 200, 0)];
+    const cs: SlugCell[] = [
+      { slug: "azalea-v1", flash: half(400, 400, 8), mature: half(300, 300, 6) },
+      { slug: "azalea-v2", flash: half(100, 200, 0), mature: half(100, 200, 0) },
+    ];
+    const c = catalogWith(azalea(900, 500), "azalea", cs, ps);
+    const page = c.templates.find((t) => t.key === "cold-reply-free-offer-blind")!;
+    expect(page.roiDetail.basis).toBe("measured"); // 8 replies through v40
+    const v41 = page.versions.find((v) => v.key === "blind-discovery-email-v41")!;
+    expect(v41.outcomes).toBe("0");
+    expect(v41.roiDetail).toMatchObject({ basis: "expected", source: "dynasty" });
+  });
+
+  it("never blank: unmeasured templates read the workflows writing with them now, else the pipe's money workflow, marked expected; never an expected 0", () => {
+    const c = catalogWith(azalea(2000, 500), "azalea");
     // Pain Question never wrote; azalea writes with its head now.
     expect(c.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 4, basis: "expected", source: "writes_with_now" });
-    const none = catalogWith(new Map([["azalea", null], ["rose", 1.5]]), "rose");
+    // A workflow with no outcome states no evidence about a template it writes with: the pipe's figure instead.
+    const noOutcome = catalogWith(new Map([["azalea", { pipeline: 2000, billed: 500 }], ["rose", { pipeline: 150, billed: 100 }]]), "rose", cells, persons, 0);
+    expect(noOutcome.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
+    const none = catalogWith(new Map([["azalea", { pipeline: null, billed: null }], ["rose", { pipeline: 150, billed: 100 }]]), "rose");
     expect(none.templates.find((t) => t.key === "cold-reply-free-offer-blind")!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
     expect(none.workflows[0]!.roiDetail).toMatchObject({ value: 1.5, basis: "expected", source: "pipe_best_workflow" });
-    const empty = catalogWith(new Map([["azalea", null]]), null);
+    // Every return of the pipe is 0: an unmeasured template reads no expected 0, it says why.
+    const zero = catalogWith(azalea(0, 500), "azalea", cells, persons, 0);
+    expect(zero.templates.find((t) => t.key === "cold-reply-pain-question-blind")!.roiDetail).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
+    const empty = catalogWith(azalea(null, null), null);
     expect(empty.templates.find((t) => t.key === "cold-email-v35")!.roiDetail).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
     expect(empty.templates.find((t) => t.key === "cold-email-v35")!.statusUnavailableReason).toBe("no_dynasty");
+  });
+
+  it("rank states its basis: the cost per outcome", () => {
+    const c = catalogWith(azalea(900, 500), "azalea");
+    expect(new Set(c.templates.map((t) => t.rankBasis))).toEqual(new Set(["cost_per_outcome"]));
   });
 
   it("TPL-DYNASTY-ONE-HOME-1021-FS: a generation under an original template counts for the dynasty of the pipe listing its copy", () => {

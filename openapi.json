@@ -46681,6 +46681,16 @@
                             "nullable": true,
                             "description": "Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."
                           },
+                          "pipelineUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The numerator of `roiMultiple`: the fleet pipeline (USD) for the workflow on the leg, lifetime. Null = unknown."
+                          },
+                          "billedSpendUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The denominator of `roiMultiple`: what clients were billed (USD, net) for the workflow on the leg, lifetime. Null = unknown."
+                          },
                           "goesFirst": {
                             "type": "boolean",
                             "description": "Rank 1, when selectable."
@@ -67051,17 +67061,17 @@
                                   "nullable": true,
                                   "enum": [
                                     "workflow",
-                                    "workflows_written_for",
+                                    "own_outcomes",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                  "description": "On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."
                                 },
                                 "unavailableReason": {
                                   "type": "string",
@@ -67080,7 +67090,7 @@
                                 "spendCovered",
                                 "unavailableReason"
                               ],
-                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
+                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured."
                             },
                             "model": {
                               "type": "object",
@@ -67485,7 +67495,14 @@
                             "rank": {
                               "type": "integer",
                               "nullable": true,
-                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                              "description": "Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."
+                            },
+                            "rankBasis": {
+                              "type": "string",
+                              "enum": [
+                                "cost_per_outcome"
+                              ],
+                              "description": "What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."
                             },
                             "emails": {
                               "type": "string",
@@ -67743,6 +67760,7 @@
                             "wroteWith",
                             "wroteWithUnavailableReason",
                             "rank",
+                            "rankBasis",
                             "emails",
                             "emailsNoun",
                             "outcomes",
@@ -67891,17 +67909,17 @@
                                   "nullable": true,
                                   "enum": [
                                     "workflow",
-                                    "workflows_written_for",
+                                    "own_outcomes",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                  "description": "On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."
                                 },
                                 "unavailableReason": {
                                   "type": "string",
@@ -67920,7 +67938,7 @@
                                 "spendCovered",
                                 "unavailableReason"
                               ],
-                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
+                              "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured."
                             },
                             "versions": {
                               "type": "array",
@@ -67980,17 +67998,17 @@
                                         "nullable": true,
                                         "enum": [
                                           "workflow",
-                                          "workflows_written_for",
+                                          "own_outcomes",
                                           "writes_with_now",
                                           "dynasty",
                                           "pipe_best_workflow"
                                         ],
-                                        "description": "measured: `workflow` (its leg ranking row), `workflows_written_for` (a template: the returns of the workflows it wrote for, weighted by what its people cost under each). expected: `writes_with_now` (mean of the workflows writing with it now), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return)."
+                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                       },
                                       "spendCovered": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "On `workflows_written_for`: share (0..1) of its spend whose workflow states a return."
+                                        "description": "On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."
                                       },
                                       "unavailableReason": {
                                         "type": "string",
@@ -68009,12 +68027,19 @@
                                       "spendCovered",
                                       "unavailableReason"
                                     ],
-                                    "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template that wrote for one workflow alone reads that workflow's return exactly. Never blank: `expected` when not measured."
+                                    "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured."
                                   },
                                   "rank": {
                                     "type": "integer",
                                     "nullable": true,
-                                    "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                                    "description": "Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."
+                                  },
+                                  "rankBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "cost_per_outcome"
+                                    ],
+                                    "description": "What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."
                                   },
                                   "emails": {
                                     "type": "string",
@@ -68233,6 +68258,7 @@
                                   "roi",
                                   "roiDetail",
                                   "rank",
+                                  "rankBasis",
                                   "emails",
                                   "emailsNoun",
                                   "outcomes",
@@ -68249,7 +68275,14 @@
                             "rank": {
                               "type": "integer",
                               "nullable": true,
-                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                              "description": "Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."
+                            },
+                            "rankBasis": {
+                              "type": "string",
+                              "enum": [
+                                "cost_per_outcome"
+                              ],
+                              "description": "What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."
                             },
                             "emails": {
                               "type": "string",
@@ -68576,6 +68609,7 @@
                             "roiDetail",
                             "versions",
                             "rank",
+                            "rankBasis",
                             "emails",
                             "emailsNoun",
                             "outcomes",
@@ -68636,7 +68670,14 @@
                             "rank": {
                               "type": "integer",
                               "nullable": true,
-                              "description": "Its place in the study's ROI order; null with no priced outcome yet."
+                              "description": "Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."
+                            },
+                            "rankBasis": {
+                              "type": "string",
+                              "enum": [
+                                "cost_per_outcome"
+                              ],
+                              "description": "What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."
                             },
                             "emails": {
                               "type": "string",
@@ -68952,6 +68993,7 @@
                             "formerAliases",
                             "aliasesUnavailableReason",
                             "rank",
+                            "rankBasis",
                             "emails",
                             "emailsNoun",
                             "outcomes",
