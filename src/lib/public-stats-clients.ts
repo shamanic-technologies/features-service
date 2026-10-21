@@ -11,6 +11,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { runsCostsUrl, selectCostCentsString, type Pricing } from "./pricing.js";
 import { refundedCents, type CostBasis } from "./cost-basis.js";
 import { runsFeatureSlugsParam, runsSpendSlugsParam, type SpendSlugs } from "./feature-scope.js";
+import { NO_MERGES, poolMergedDynasties, resolveDynastyMerges, sumOverMembers, type DynastyMerges } from "./dynasty-merges.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,11 @@ export interface WorkflowMetadata {
   featureSlug: string;
   createdForBrandId: string | null;
   upgradedTo: string | null;
+  /**
+   * workflow-service's merge record (TPL-DYNASTY-1021-WF): the FINAL survivor dynasty this version's dynasty was merged
+   * into, null when not merged (or un-merged). Absent on a build predating the record = not merged.
+   */
+  mergedIntoDynastySlug?: string | null;
 }
 
 /**
@@ -67,10 +73,41 @@ export interface WorkflowEngagementLatency {
 
 // ── Workflow metadata ────────────────────────────────────────────────────────
 
+/**
+ * The catalogue as STATS read it: every absorbed dynasty's versions re-keyed onto their survivor (`lib/dynasty-merges.ts`),
+ * so every roll-up keyed on `workflowDynastySlug` pools a merged dynasty's history. No merge stated = byte-identical.
+ */
 export async function fetchPublicWorkflows(
   featureSlugs: string,
   status = "all",
   /** Skip the 30s shared read (a caller checking a workflow created a second ago). */
+  fresh = false,
+): Promise<WorkflowMetadata[]> {
+  const stated = await fetchStatedPublicWorkflows(featureSlugs, status, fresh);
+  return poolMergedDynasties(stated, dynastyMergesOf(stated));
+}
+
+/** PURE. The merge record the catalogue rows state (`mergedIntoDynastySlug`), chains resolved. */
+export function dynastyMergesOf(workflows: ReadonlyArray<Pick<WorkflowMetadata, "workflowDynastySlug" | "mergedIntoDynastySlug">>): DynastyMerges {
+  const pairs: Array<{ absorbed: string; survivor: string }> = [];
+  for (const w of workflows) {
+    if (w.mergedIntoDynastySlug) pairs.push({ absorbed: w.workflowDynastySlug, survivor: w.mergedIntoDynastySlug });
+  }
+  return pairs.length === 0 ? NO_MERGES : resolveDynastyMerges(pairs);
+}
+
+/** The merges stated for a feature's dynasties (one shared catalogue read, every status). */
+export async function fetchDynastyMerges(featureSlugs: string): Promise<DynastyMerges> {
+  return dynastyMergesOf(await fetchStatedPublicWorkflows(featureSlugs, "all"));
+}
+
+/**
+ * The catalogue AS workflow-service STATES it, no pooling: for WRITE paths (leg assignments, one-leg resolution), which
+ * act on the dynasty workflow-service names, never on the survivor it is pooled into.
+ */
+export async function fetchStatedPublicWorkflows(
+  featureSlugs: string,
+  status = "all",
   fresh = false,
 ): Promise<WorkflowMetadata[]> {
   const url = `${process.env.WORKFLOW_SERVICE_URL}/public/workflows?featureSlugs=${encodeURIComponent(featureSlugs)}&status=${status}`;
@@ -169,8 +206,11 @@ export async function fetchDynastySpendByDay(
   // Per-workflow cross-org RECENT rate — a performance benchmark, same basis rule as its fleet sibling.
   basis: CostBasis = "incurred",
 ): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
-  return fetchCostTimeseriesByDay(params, basis);
+  // runs-service resolves the dynasty itself and cannot see a merge: one read per member dynasty, summed.
+  return sumOverMembers(workflowDynastySlug, await fetchDynastyMerges(featureSlug), (member) => {
+    const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug: member });
+    return fetchCostTimeseriesByDay(params, basis);
+  }, (a, b) => a + b);
 }
 
 /**
@@ -189,14 +229,17 @@ export async function fetchDynastyBilledSpendByDay(
   campaignIds?: string[],
   slugs: SpendSlugs = "fed",
 ): Promise<Map<string, number>> {
-  if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, undefined, slugs);
-  const byDay = new Map<string, number>();
-  for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-    // A cost row belongs to exactly one campaign, so summing the chunks is exact.
-    const part = await fetchDynastyBilledSpendChunk(featureSlug, workflowDynastySlug, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST), slugs);
-    for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
-  }
-  return byDay;
+  // runs-service resolves the dynasty itself and cannot see a merge: one read per member dynasty, summed.
+  return sumOverMembers(workflowDynastySlug, await fetchDynastyMerges(featureSlug), async (member) => {
+    if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, member, undefined, slugs);
+    const byDay = new Map<string, number>();
+    for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
+      // A cost row belongs to exactly one campaign, so summing the chunks is exact.
+      const part = await fetchDynastyBilledSpendChunk(featureSlug, member, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST), slugs);
+      for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
+    }
+    return byDay;
+  }, (a, b) => a + b);
 }
 
 async function fetchDynastyBilledSpendChunk(
@@ -265,6 +308,30 @@ export async function fetchPublicEmailStats(
   workflowDynastySlug?: string,
   // Narrow to these campaigns (email-gateway `campaignIds`, at most 200 per request — the caller chunks).
   campaignIds?: readonly string[],
+): Promise<Map<string, Record<string, number>>> {
+  if (!workflowDynastySlug) return fetchPublicEmailStatsOnce(featureSlugs, groupBy, brandIds, undefined, campaignIds);
+  // email-gateway resolves the dynasty itself and cannot see a merge: one read per member dynasty, summed per key.
+  return sumOverMembers(
+    workflowDynastySlug,
+    await fetchDynastyMerges(featureSlugs),
+    (member) => fetchPublicEmailStatsOnce(featureSlugs, groupBy, brandIds, member, campaignIds),
+    sumNumberRecords,
+  );
+}
+
+/** PURE. Two per-key count records added field by field (a field one side lacks counts 0 there). */
+export function sumNumberRecords(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
+async function fetchPublicEmailStatsOnce(
+  featureSlugs: string,
+  groupBy: string,
+  brandIds: string[] | undefined,
+  workflowDynastySlug: string | undefined,
+  campaignIds: readonly string[] | undefined,
 ): Promise<Map<string, Record<string, number>>> {
   const params = new URLSearchParams({ featureSlugs, groupBy });
   if (campaignIds && campaignIds.length > 0) {

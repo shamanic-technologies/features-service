@@ -7,7 +7,7 @@ import { features } from "../db/schema.js";
 import { pipeLegKeyOf, servedLegKeyOf } from "../lib/funnel-legs.js";
 import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
-import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
+import { fetchStatedPublicWorkflows } from "../lib/public-stats-clients.js";
 import { invalidateChannelCatalogue } from "./public.js";
 import { resolveOneLegPerWorkflow } from "../lib/one-leg-per-workflow.js";
 import {
@@ -109,7 +109,7 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     }
     // A typo would store an assignment no row ever matches, so the dynasty must be one workflow-service
     // describes for this channel (any status: a retired lineage can still be deprecated on a leg).
-    const catalogue = await fetchPublicWorkflows(featureSlug, "all");
+    const catalogue = await fetchStatedPublicWorkflows(featureSlug, "all");
     if (!catalogue.some((w) => w.workflowDynastySlug === workflowDynastySlug)) {
       res.status(404).json({
         error: `workflow-service describes no dynasty ${workflowDynastySlug} for ${featureSlug}`,
@@ -178,7 +178,7 @@ router.post("/internal/workflow-leg-assignments/register", apiKeyOnly, async (re
       res.status(404).json({ error: `no pipe ${pipeId}: the channel does not perform that leg`, reason: "pipe_not_found" });
       return;
     }
-    const catalogue = await fetchPublicWorkflows(featureSlug, "all", true);
+    const catalogue = await fetchStatedPublicWorkflows(featureSlug, "all", true);
     if (!catalogue.some((w) => w.workflowDynastySlug === workflowDynastySlug)) {
       res.status(404).json({ error: `workflow-service describes no dynasty ${workflowDynastySlug} for ${featureSlug}`, reason: "workflow_dynasty_not_found" });
       return;

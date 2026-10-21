@@ -25,7 +25,7 @@ vi.mock("../lib/channel-declarations-store.js", async (importOriginal) => {
 });
 vi.mock("../lib/public-stats-clients.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  fetchPublicWorkflows: vi.fn(async () => [{ workflowSlug: "ai-meeting-booking-avior", workflowDynastySlug: "ai-meeting-booking-avior", status: "active" }]),
+  fetchStatedPublicWorkflows: vi.fn(async () => [{ workflowSlug: "ai-meeting-booking-avior", workflowDynastySlug: "ai-meeting-booking-avior", status: "active" }]),
 }));
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -99,8 +99,8 @@ describe("POST /internal/workflow-leg-assignments/register (owner 2026-10-10, op
   });
 
   it("serves an outbound entry pipe in its served spelling, from Lead found", async () => {
-    const { fetchPublicWorkflows } = await import("../lib/public-stats-clients.js");
-    vi.mocked(fetchPublicWorkflows).mockResolvedValueOnce([{ workflowSlug: "w", workflowDynastySlug: "sales-cold-email-outreach-vega", status: "active" } as any]);
+    const { fetchStatedPublicWorkflows } = await import("../lib/public-stats-clients.js");
+    vi.mocked(fetchStatedPublicWorkflows).mockResolvedValueOnce([{ workflowSlug: "w", workflowDynastySlug: "sales-cold-email-outreach-vega", status: "active" } as any]);
     const res = await post({ pipeId: "sales-cold-email-outreach|lead_found_to_conversation", workflowDynastySlug: "sales-cold-email-outreach-vega", registeredBy: "workflow-service" });
     expect(res.status).toBe(201);
     expect(res.body.pipe).toMatchObject({ legKey: "lead_found_to_conversation", fromStep: "lead_found", toStep: "conversation" });
@@ -118,8 +118,8 @@ describe("POST /internal/workflow-leg-assignments/register (owner 2026-10-10, op
       triggerId,
     });
     extraLegs.set("ai-follow-up-email", [leg(null, "reactive", "follow_up_date_reached"), leg("lead_found", "proactive", null)]);
-    const { fetchPublicWorkflows } = await import("../lib/public-stats-clients.js");
-    vi.mocked(fetchPublicWorkflows).mockResolvedValue([{ workflowSlug: "w", workflowDynastySlug: "ai-follow-up-email-alasia", status: "active" } as any]);
+    const { fetchStatedPublicWorkflows } = await import("../lib/public-stats-clients.js");
+    vi.mocked(fetchStatedPublicWorkflows).mockResolvedValue([{ workflowSlug: "w", workflowDynastySlug: "ai-follow-up-email-alasia", status: "active" } as any]);
     const res = await post({ pipeId: "ai-follow-up-email|lead_found_to_conversation", workflowDynastySlug: "ai-follow-up-email-alasia", registeredBy: "workflow-service" });
     expect(res.status).toBe(201);
     expect(res.body.assignment.legKey).toBe("lead_found_to_conversation");
@@ -127,7 +127,7 @@ describe("POST /internal/workflow-leg-assignments/register (owner 2026-10-10, op
     const reactive = await post({ pipeId: "ai-follow-up-email|start_to_conversation", workflowDynastySlug: "ai-follow-up-email-alasia", registeredBy: "workflow-service" });
     expect(reactive.body.assignment.legKey).toBe("start_to_conversation");
     expect(reactive.body.pipe).toMatchObject({ fromStep: null, mode: "reactive", triggerId: "follow_up_date_reached" });
-    vi.mocked(fetchPublicWorkflows).mockResolvedValue([{ workflowSlug: "ai-meeting-booking-avior", workflowDynastySlug: "ai-meeting-booking-avior", status: "active" } as any]);
+    vi.mocked(fetchStatedPublicWorkflows).mockResolvedValue([{ workflowSlug: "ai-meeting-booking-avior", workflowDynastySlug: "ai-meeting-booking-avior", status: "active" } as any]);
   });
 });
 
