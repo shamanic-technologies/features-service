@@ -203,3 +203,11 @@ vi.mock("./lib/contacted-value-unavailable.js", async (importOriginal) => {
     ),
   };
 });
+
+/**
+ * Suite-wide default: no send-date answer is remembered between reads (lib/email-status-client.ts
+ * `SEND_DATES_MEMORY_MS`, 60 s in production), so one test's fixture never answers another's. Asks of one scope are
+ * still serialised. `email-status-client.test.ts` sets its own window.
+ */
+process.env.SEND_DATES_MEMORY_MS = "0";
+process.env.SEND_DATES_BATCH_MS = "0";

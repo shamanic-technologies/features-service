@@ -243,7 +243,117 @@ export async function fetchEventTimestamps(
   return result;
 }
 
+/**
+ * ONE SEND-DATE READ PER SCOPE (2026-10-21). email-gateway answers `/orgs/status` by proxying to instantly-service
+ * with a 10 s timeout and one retry; instantly-service dedupes and caches (60 s) an answer keyed on the EXACT sorted
+ * address list, and a cold answer for the biggest brand (f4d73dab, 10,401 addresses) took ~16 s under load (0.5 s
+ * warm). One board + revenue read fired THREE brand-wide asks within 10 ms, on two different address lists (9,188
+ * and 10,401), so instantly ran heavy aggregations side by side and every ask hit the gateway's timeout twice (502
+ * at ~21 s): 3 of 6-8 calls failed on each replay. A call's fixed cost dominates (1,000 addresses ~1.8 s), so
+ * chunking would only add calls.
+ *
+ * So the asks of one (org, brand, campaign) scope arriving within `SEND_DATES_BATCH_MS` are merged into ONE ask
+ * of their union, asks of a scope never overlap (serialised), and an answer is remembered `SEND_DATES_MEMORY_MS`
+ * (60 s, the producer's own cache window): a later ask only asks for addresses nobody asked yet. A failed ask
+ * remembers nothing and fails every caller it carried; the next ask asks again. Bounded:
+ * `SEND_DATES_MEMORY_SCOPES` scopes, oldest dropped first.
+ */
+const SEND_DATES_MEMORY_SCOPES = 8;
+const envMs = (name: string, fallback: number): number => {
+  const raw = Number(process.env[name] ?? fallback);
+  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+};
+interface SendDatesMemory {
+  at: number;
+  asked: Set<string>;
+  dates: Map<string, SignalDates>;
+}
+interface PendingSendDatesAsk {
+  emails: Set<string>;
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string };
+  waiters: Array<{ resolve: (m: SendDatesMemory) => void; reject: (e: unknown) => void }>;
+}
+const sendDatesMemory = new Map<string, SendDatesMemory>();
+const sendDatesPending = new Map<string, PendingSendDatesAsk>();
+const sendDatesQueue = new Map<string, Promise<unknown>>();
+
+/** Test seam: forget every remembered send-date answer. */
+export function __resetSendDatesMemory(): void {
+  sendDatesMemory.clear();
+  sendDatesPending.clear();
+  sendDatesQueue.clear();
+}
+
+function freshMemory(key: string): SendDatesMemory | null {
+  const m = sendDatesMemory.get(key);
+  return m && Date.now() - m.at <= envMs("SEND_DATES_MEMORY_MS", 60_000) ? m : null;
+}
+
+async function flushSendDates(key: string, brandId: string, campaignId: string | undefined, batch: PendingSendDatesAsk): Promise<void> {
+  try {
+    const ttl = envMs("SEND_DATES_MEMORY_MS", 60_000);
+    const memory = freshMemory(key) ?? { at: Date.now(), asked: new Set<string>(), dates: new Map<string, SignalDates>() };
+    const missing = [...batch.emails].filter((e) => !memory.asked.has(e));
+    if (missing.length > 0) {
+      const fresh = await askEventTimestamps(brandId, campaignId, missing, batch.headers);
+      if (memory.asked.size === 0) memory.at = Date.now();
+      for (const e of missing) memory.asked.add(e);
+      for (const [e, d] of fresh) memory.dates.set(e, d);
+      if (ttl > 0) {
+        sendDatesMemory.delete(key);
+        sendDatesMemory.set(key, memory);
+        for (const [k, m] of sendDatesMemory) {
+          if (sendDatesMemory.size <= SEND_DATES_MEMORY_SCOPES && Date.now() - m.at <= ttl) break;
+          if (k !== key) sendDatesMemory.delete(k);
+        }
+      }
+    }
+    for (const w of batch.waiters) w.resolve(memory);
+  } catch (err) {
+    for (const w of batch.waiters) w.reject(err);
+  }
+}
+
 async function fetchEventTimestampsFor(
+  brandId: string,
+  campaignId: string | undefined,
+  emails: string[],
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<Map<string, SignalDates>> {
+  if (emails.length === 0) return new Map();
+  const key = `${headers.orgId}|${brandId}|${campaignId ?? ""}`;
+  const pick = (memory: SendDatesMemory): Map<string, SignalDates> => {
+    const result = new Map<string, SignalDates>();
+    for (const e of emails) {
+      const d = memory.dates.get(e);
+      if (d) result.set(e, d);
+    }
+    return result;
+  };
+  const known = freshMemory(key);
+  if (known && emails.every((e) => known.asked.has(e))) return pick(known);
+
+  let batch = sendDatesPending.get(key);
+  if (!batch) {
+    const created: PendingSendDatesAsk = { emails: new Set(), headers, waiters: [] };
+    batch = created;
+    sendDatesPending.set(key, created);
+    setTimeout(() => {
+      if (sendDatesPending.get(key) === created) sendDatesPending.delete(key);
+      // Serialised per scope: this union is asked once the previous ask of the scope settled.
+      const run = (sendDatesQueue.get(key) ?? Promise.resolve()).then(() => flushSendDates(key, brandId, campaignId, created));
+      sendDatesQueue.set(key, run);
+      void run.then(() => {
+        if (sendDatesQueue.get(key) === run) sendDatesQueue.delete(key);
+      });
+    }, envMs("SEND_DATES_BATCH_MS", 50));
+  }
+  for (const e of emails) batch.emails.add(e);
+  const memory = await new Promise<SendDatesMemory>((resolve, reject) => batch!.waiters.push({ resolve, reject }));
+  return pick(memory);
+}
+
+async function askEventTimestamps(
   brandId: string,
   campaignId: string | undefined,
   emails: string[],
