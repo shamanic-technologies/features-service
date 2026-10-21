@@ -172,7 +172,7 @@ const claimLostAt = new Map<string, number>();
 export function encodeCell(cell: FleetCell): string {
   return JSON.stringify({
     computedAt: cell.computedAt,
-    byPair: [...cell.byPair].map(([key, pair]) => [key, pair.serveDatesStated, [...pair.buckets], [...(pair.repliers ?? [])]]),
+    byPair: [...cell.byPair].map(([key, pair]) => [key, pair.serveDatesStated, [...pair.buckets], ...(pair.repliers ? [[...pair.repliers]] : [])]),
   });
 }
 
