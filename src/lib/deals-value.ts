@@ -6,19 +6,18 @@
  * answer (its `?standing=` filter), never re-derived here; what they are worth is this service's.
  *
  *   - `sales_interest` (Interested) — each person at the engine's OWN expected value, the byte-same
- *     `evForPerson` the pipeline prices them on (same paths, same LTR, same overlays) — on EVERY cause
- *     state (`pricedCauses`), because a deals board shows what a deal is worth to the customer, not our
- *     share of it: the pipeline's "our outreach only" default read 45 of 54 Interested cards at $0 in
- *     prod (Doc Dinners, meetings booked through the CRM). The column total is company-level exactly as
- *     the pipeline is: an organisation is one client, worth the MAX over its members, organisations
- *     summed — a SUBSET of the all-cause pipeline (`/revenue?cause=outreach,other,unstated`).
+ *     `evForPerson` the pipeline prices them on (same paths, same LTR, same overlays) — on the
+ *     PIPELINE's causes (`pricedCauses`, what our pipes caused; owner 2026-10-21 one pipeline figure everywhere,
+ *     superseding the 2026-09-26 every-cause board). The column total is company-level exactly as the pipeline
+ *     is: an organisation is one client, worth the MAX over its members, organisations summed — a SUBSET of the
+ *     pipeline.
  *     A card the engine still prices at 0 says why (`zeroValueReason`). A person lead-service holds a
  *     live "Disqualified" MARK on (its own mark beside the standing since lead-service v0.83.59, read off
  *     `GET /orgs/leads/disqualifications`, never re-derived; carried as `EnginePerson.disqualified`, which the
  *     engine prices exactly as the pipeline does) is RULED OUT: card at 0, `ruled_out`, adds
  *     nothing to the column. The mark leaves their standing untouched, so they can still stand here.
- *   - `customer` (Won) — what was won: the amount a human STATED on the sale (whoever caused it — this
- *     column shows the deal, not our share of it), else the brand's lifetime revenue per client, and
+ *   - `customer` (Won) — what was won: the amount a human STATED on the sale (as the pipeline prices
+ *     it), else the brand's lifetime revenue per client, and
  *     each card says which (`valueSource`). One organisation is one client: MAX over its members.
  *   - `disqualified` (always empty since 2026-10-13: lead-service kept the key, Disqualified is the mark
  *     above), `opted_out`, `not_contacted`, `unresolved` — no value, and the column SAYS so with a
@@ -91,7 +90,7 @@ export interface DealsColumn {
 
 export interface DealsValueResult {
   lifetimeRevenueUsd: number | null;
-  /** The outcome causes the values are priced on (every cause: the deal's value, not our share). */
+  /** The outcome causes the values are priced on (the pipeline's: what our pipes caused). */
   pricedCauses: readonly string[];
   columns: DealsColumn[];
 }

@@ -692,8 +692,30 @@ export interface ContactedPricing {
    * signal (`clicked`, `positiveReply`). A lead whose group (or route) is absent carries nothing.
    */
   entryRatePctByGroup: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  /**
+   * The seeded cold-email entry benchmark per engine signal, for a lead whose group has NO measured rate
+   * (owner 2026-10-11: an expected figure is never blank, « quitte à poser une hypothèse »; owner 2026-10-21:
+   * ONE pipeline figure everywhere, so every read values a contacted lead the same way). Absent ⇒ such a
+   * lead carries nothing.
+   */
+  defaultEntryRatePct?: Readonly<Record<string, number>>;
   /** ISO instant: a last send strictly before this has expired. */
   lastSentOnOrAfter: string;
+}
+
+/**
+ * The entry rates a contacted lead is priced on, and where they come from: its (campaign × workflow) group's
+ * measured rates, else the seeded default (`defaultEntryRatePct`), else none. The ONE lookup every reader of
+ * `ContactedPricing` makes, so the pipeline, the Deals board and the explained pipeline cannot disagree.
+ */
+export function contactedEntryRatesOf(
+  person: Pick<EnginePerson, "campaignId" | "workflowSlug">,
+  pricing: ContactedPricing,
+): { rates: Readonly<Record<string, number>>; source: "measured" | "default_entry" } | null {
+  const key = contactedGroupKey(person.campaignId, person.workflowSlug);
+  const measured = key === null ? undefined : pricing.entryRatePctByGroup[key];
+  if (measured) return { rates: measured, source: "measured" };
+  return pricing.defaultEntryRatePct ? { rates: pricing.defaultEntryRatePct, source: "default_entry" } : null;
 }
 
 /** The group a contacted lead's entry rate is keyed on: `<campaignId>|<workflowSlug>`, or null when either is unknown. */
@@ -729,8 +751,7 @@ export function contactedLeadValue(
       ? person.valueUsd
       : null;
   const scale = statedValueUsd !== null && closeValueUsd > 0 ? statedValueUsd / closeValueUsd : 1;
-  const key = contactedGroupKey(person.campaignId, person.workflowSlug);
-  const rates = key === null ? undefined : pricing.entryRatePctByGroup[key];
+  const rates = contactedEntryRatesOf(person, pricing)?.rates;
   if (!rates) return 0;
   const dead = new Set(person.deadSignals ?? []);
   const evs: number[] = [];
