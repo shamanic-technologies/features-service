@@ -267,6 +267,29 @@ describe("GET /offers/:offerId/deals-value?columns=lifecycle (DEALS-LIFECYCLE-10
   });
 });
 
+describe("GET /offers/:offerId/deals-value?columns=company_lifecycle (DEALS-LIFECYCLE-1021, Companies page)", () => {
+  it("serves each organisation of the offer at its highest rung, and the per-rung counts partition them", async () => {
+    const res = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=company_lifecycle");
+    expect(res.status).toBe(200);
+    expect(res.body.columns).toBe("company_lifecycle");
+    // offer A: 21 leads, one company each (offer B's people are not here).
+    expect(res.body.organizationCount).toBe(21);
+    expect(res.body.organizations[0]).toEqual({ organizationKey: "org:org-int-a", orgId: "org-int-a", lifecycle: { key: "engaged", rank: 3, label: "Engaged" } });
+    expect(res.body.organizations.some((o: { orgId: string }) => o.orgId === "org-int-b")).toBe(false);
+    const counts = Object.fromEntries((res.body.rungs as Array<{ key: string; organizationCount: number }>).map((r) => [r.key, r.organizationCount]));
+    expect(counts).toMatchObject({ lead_found: 0, contacted: 20, engaged: 1, paid_client: 0 });
+    expect(res.body.noRungOrganizationCount).toBe(0);
+    expect(res.body.outOfScopeRowCount).toBe(11);
+    // Consistent with the lifecycle board: one person per company here, so the counts are the board's.
+    const board = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=lifecycle");
+    for (const r of board.body.rungs as Array<{ key: string; organizationCount: number }>) expect(counts[r.key]).toBe(r.organizationCount);
+  });
+
+  it("refuses campaignId on this mode", async () => {
+    expect((await get("/offers/offer-a/deals-value?brandId=brand-1&columns=company_lifecycle&campaignId=camp-a1")).status).toBe(400);
+  });
+});
+
 describe("GET /offers/:offerId/contacted-value", () => {
   it("prices only the offer's contacted leads, on the BRAND's entry rates, adding up to the brand", async () => {
     const [a, b, brand] = await Promise.all([
