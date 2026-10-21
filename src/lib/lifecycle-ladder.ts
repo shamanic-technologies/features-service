@@ -3,7 +3,7 @@
  * same for every campaign, sales funnel, brand and channel. lead-service shows each lead's Lifecycle = the highest
  * rung of any step they ever reached, read from the catalogue step reads (`lifecycleRung` / `lifecycleRank`).
  *
- *   Lead found < Contacted < Engaged < Signup / Form submitted < Meeting booked < Meeting attended < Paid client
+ *   Lead found < Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client
  *
  * "Engaged" groups the interest signals nobody can order between themselves (post engaged, positive reply, website
  * visit); Signup and Form submitted share one rung. A step on no rung (purely technical) states `none`. A coded step's
@@ -16,7 +16,7 @@ export const LIFECYCLE_RUNGS = [
   { key: "lead_found", rank: 1, label: "Lead found" },
   { key: "contacted", rank: 2, label: "Contacted" },
   { key: "engaged", rank: 3, label: "Engaged" },
-  { key: "signup_or_form", rank: 4, label: "Signup / Form submitted" },
+  { key: "signup_or_form", rank: 4, label: "Signed up" },
   { key: "meeting_booked", rank: 5, label: "Meeting booked" },
   { key: "meeting_attended", rank: 6, label: "Meeting attended" },
   { key: "paid_client", rank: 7, label: "Paid client" },
