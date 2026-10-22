@@ -47436,6 +47436,20 @@
             "description": "Any pipe's leg key (required): a funnel leg (e.g. start_to_conversation, an outbound channel's lead_found_to_*) or a leg of the channel's own no funnel walks, e.g. the sourcing leg start_to_lead_found (ranked on Lead found). A word naming no leg of the channel = 400.",
             "name": "leg",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`."
+            },
+            "required": false,
+            "description": "The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`.",
+            "name": "pricing",
+            "in": "query"
           }
         ],
         "responses": {
@@ -47524,6 +47538,14 @@
                         "brandsLeftOut"
                       ],
                       "description": "On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped."
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ],
+                      "description": "The pricing of every row's `figures`."
                     },
                     "rows": {
                       "type": "array",
@@ -47627,6 +47649,228 @@
                               "cannot_run"
                             ],
                             "description": "Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."
+                          },
+                          "figures": {
+                            "type": "object",
+                            "properties": {
+                              "pricing": {
+                                "type": "string",
+                                "enum": [
+                                  "gross",
+                                  "net"
+                                ]
+                              },
+                              "half": {
+                                "type": "string",
+                                "enum": [
+                                  "mature",
+                                  "flash"
+                                ],
+                                "description": "The half $/outcome, % conversion and $ spent are read on (the row's `basis`). The ROI is lifetime."
+                              },
+                              "roi": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ],
+                                    "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "workflow",
+                                      "pipe_pooled",
+                                      "pipe_best_workflow",
+                                      "leg_default"
+                                    ],
+                                    "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                  },
+                                  "expectedValue": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_return_on_pipe",
+                                      "no_outcome_on_pipe",
+                                      "no_conversion_on_pipe",
+                                      "net_not_measured_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "basis",
+                                  "source",
+                                  "expectedValue",
+                                  "unavailableReason"
+                                ],
+                                "description": "Fleet pipeline ÷ what clients were billed (net), lifetime on the leg. MEASURED only once the workflow has an outcome of its own (a 0-outcome workflow's pipeline is the value of people it contacted, never a measured return). Pricing-independent (already on what clients paid)."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ],
+                                    "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "workflow",
+                                      "pipe_pooled",
+                                      "pipe_best_workflow",
+                                      "leg_default"
+                                    ],
+                                    "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                  },
+                                  "expectedValue": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_return_on_pipe",
+                                      "no_outcome_on_pipe",
+                                      "no_conversion_on_pipe",
+                                      "net_not_measured_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "basis",
+                                  "source",
+                                  "expectedValue",
+                                  "unavailableReason"
+                                ],
+                                "description": "Spend on `pricing` ÷ outcomes, on `half`. Measured once the half holds an outcome."
+                              },
+                              "conversionRatePct": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ],
+                                    "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "workflow",
+                                      "pipe_pooled",
+                                      "pipe_best_workflow",
+                                      "leg_default"
+                                    ],
+                                    "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                  },
+                                  "expectedValue": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_return_on_pipe",
+                                      "no_outcome_on_pipe",
+                                      "no_conversion_on_pipe",
+                                      "net_not_measured_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "basis",
+                                  "source",
+                                  "expectedValue",
+                                  "unavailableReason"
+                                ],
+                                "description": "Outcomes ÷ people contacted (%), on `half`. Measured once the half holds an outcome or the workflow is mature (a mature 0% is a fact)."
+                              },
+                              "spentUsd": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured"
+                                    ]
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "net_not_measured_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "basis",
+                                  "unavailableReason"
+                                ],
+                                "description": "Spend on `pricing`, on `half`. Always measured."
+                              },
+                              "outcomes": {
+                                "type": "number"
+                              },
+                              "contacted": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "pricing",
+                              "half",
+                              "roi",
+                              "costPerOutcomeUsd",
+                              "conversionRatePct",
+                              "spentUsd",
+                              "outcomes",
+                              "contacted"
+                            ],
+                            "description": "On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy)."
                           }
                         },
                         "required": [
@@ -47667,7 +47911,7 @@
             }
           },
           "400": {
-            "description": "Missing or unknown featureSlug / leg",
+            "description": "Missing or unknown featureSlug / leg, or `pricing_unrecognised`",
             "content": {
               "application/json": {
                 "schema": {
@@ -68316,6 +68560,7 @@
                                     "workflow",
                                     "own_outcomes",
                                     "pipe_templates",
+                                    "pipe_workflows",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
@@ -68345,6 +68590,229 @@
                                 "unavailableReason"
                               ],
                               "description": "Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured."
+                            },
+                            "figures": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "pricing": {
+                                  "type": "string",
+                                  "enum": [
+                                    "gross",
+                                    "net"
+                                  ]
+                                },
+                                "half": {
+                                  "type": "string",
+                                  "enum": [
+                                    "mature",
+                                    "flash"
+                                  ],
+                                  "description": "The half $/outcome, % conversion and $ spent are read on (the row's `basis`). The ROI is lifetime."
+                                },
+                                "roi": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ],
+                                      "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "workflow",
+                                        "pipe_pooled",
+                                        "pipe_best_workflow",
+                                        "leg_default"
+                                      ],
+                                      "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                    },
+                                    "expectedValue": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_return_on_pipe",
+                                        "no_outcome_on_pipe",
+                                        "no_conversion_on_pipe",
+                                        "net_not_measured_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "basis",
+                                    "source",
+                                    "expectedValue",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Fleet pipeline ÷ what clients were billed (net), lifetime on the leg. MEASURED only once the workflow has an outcome of its own (a 0-outcome workflow's pipeline is the value of people it contacted, never a measured return). Pricing-independent (already on what clients paid)."
+                                },
+                                "costPerOutcomeUsd": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ],
+                                      "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "workflow",
+                                        "pipe_pooled",
+                                        "pipe_best_workflow",
+                                        "leg_default"
+                                      ],
+                                      "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                    },
+                                    "expectedValue": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_return_on_pipe",
+                                        "no_outcome_on_pipe",
+                                        "no_conversion_on_pipe",
+                                        "net_not_measured_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "basis",
+                                    "source",
+                                    "expectedValue",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Spend on `pricing` ÷ outcomes, on `half`. Measured once the half holds an outcome."
+                                },
+                                "conversionRatePct": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ],
+                                      "description": "`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "workflow",
+                                        "pipe_pooled",
+                                        "pipe_best_workflow",
+                                        "leg_default"
+                                      ],
+                                      "description": "measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."
+                                    },
+                                    "expectedValue": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "What the pipe expects of a workflow (the expected figure), served beside a measured value too."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_return_on_pipe",
+                                        "no_outcome_on_pipe",
+                                        "no_conversion_on_pipe",
+                                        "net_not_measured_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "basis",
+                                    "source",
+                                    "expectedValue",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Outcomes ÷ people contacted (%), on `half`. Measured once the half holds an outcome or the workflow is mature (a mature 0% is a fact)."
+                                },
+                                "spentUsd": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured"
+                                      ]
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "net_not_measured_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "basis",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Spend on `pricing`, on `half`. Always measured."
+                                },
+                                "outcomes": {
+                                  "type": "number"
+                                },
+                                "contacted": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "pricing",
+                                "half",
+                                "roi",
+                                "costPerOutcomeUsd",
+                                "conversionRatePct",
+                                "spentUsd",
+                                "outcomes",
+                                "contacted"
+                              ],
+                              "description": "The CURRENT leg workflow ranking row's `figures` (gross), copied at every read: the list and this page print the same ROI, $/outcome, % conversion and $ spent. `roiDetail` is taken from `figures.roi`. Null when the ranking lists no such row."
                             },
                             "model": {
                               "type": "object",
@@ -69006,6 +69474,7 @@
                             "runnable",
                             "roi",
                             "roiDetail",
+                            "figures",
                             "model",
                             "template",
                             "wroteWithMost",
@@ -69165,6 +69634,7 @@
                                     "workflow",
                                     "own_outcomes",
                                     "pipe_templates",
+                                    "pipe_workflows",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
@@ -69255,6 +69725,7 @@
                                           "workflow",
                                           "own_outcomes",
                                           "pipe_templates",
+                                          "pipe_workflows",
                                           "writes_with_now",
                                           "dynasty",
                                           "pipe_best_workflow"

@@ -25,6 +25,7 @@
  */
 import { bestMatureSlug, explorePriceUsd, legWorkflowPlaces, orderLegWorkflows, type LegWorkflowOrderEntry, type LegWorkflowPlace } from "./leg-workflow-order.js";
 import { legMaturityFigures, type LegMaturityFigures, type OutcomeFigures } from "./maturity.js";
+import { legWorkflowFigures, type FigureRowInput, type LegWorkflowFigures } from "./leg-workflow-figures.js";
 
 export type LegWorkflowAssignment = "active" | "deprecated" | "unassigned";
 
@@ -60,6 +61,13 @@ export interface LegWorkflowRankingRow {
   explorePriceUsd: number | null;
   /** Why the row stands where it does (`LegWorkflowPlace`). */
   place: LegWorkflowPlace;
+  /**
+   * THE figures the Workflows list and the workflow page print (RESEARCH-WF-FIGURES-1022, `lib/leg-workflow-figures.ts`):
+   * one ROI, $/outcome, % conversion and $ spent, each measured or expected, on the read's `pricing` (gross by default).
+   */
+  figures?: LegWorkflowFigures;
+  /** The same on the NET pricing, held in the build; the route serves it as `figures` on `?pricing=net`, never both. */
+  figuresNet?: LegWorkflowFigures;
 }
 
 export interface RankLegWorkflowsInput {
@@ -73,13 +81,18 @@ export interface RankLegWorkflowsInput {
   pipelineUsd: ReadonlyMap<string, number | null>;
   /** Billed spend (USD) per dynasty on the leg. Absent → unknown. */
   billedSpendUsd: ReadonlyMap<string, number>;
+  /** NET spend per dynasty on the leg, per half (flash; mature null = not cut). Null/absent = not measured on the pipe. */
+  netSpend?: ReadonlyMap<string, { flash: number; mature: number | null }> | null;
+  /** The leg's seeded conversion (%), the expected conversion of a pipe with no outcome yet. */
+  defaultConversionPct?: number | null;
 }
 
 const EMPTY: OutcomeFigures = { spentUsd: 0, contacted: 0, outcomes: 0, costPerOutcomeUsd: null, conversionRatePct: null };
 
 /** PURE. The ordered list (see the owner rule above). */
 export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRankingRow[] {
-  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place">[] = [];
+  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place" | "figures" | "figuresNet">[] = [];
+  const figuresOf = new Map<string, LegMaturityFigures>();
   const byDynasty = new Map(input.byDynasty);
   for (const slug of input.assignments.keys()) {
     if (!byDynasty.has(slug)) byDynasty.set(slug, legMaturityFigures(null, EMPTY, null));
@@ -89,6 +102,7 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
     const mature = f.isMature === true && f.mature != null;
     const half = (mature ? f.mature : f.flash) ?? EMPTY;
     if (assignment === "unassigned" && (f.flash?.spentUsd ?? 0) <= 0) continue;
+    figuresOf.set(slug, f);
     const pipeline = input.pipelineUsd.get(slug) ?? null;
     const billed = input.billedSpendUsd.get(slug) ?? null;
     rows.push({
@@ -122,6 +136,32 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
   const best = bestMatureSlug(entries);
   const places = legWorkflowPlaces(entries);
   const entryOf = new Map(entries.map((e) => [e.slug, e]));
+  const figureRows = (spendOf: (r: (typeof rows)[number]) => FigureRowInput["spend"]): FigureRowInput[] =>
+    rows.map((r) => ({
+      slug: r.workflowDynastySlug,
+      mature: r.basis === "mature",
+      isMature: r.isMature,
+      figures: figuresOf.get(r.workflowDynastySlug)!,
+      spend: spendOf(r),
+      pipelineUsd: r.pipelineUsd,
+      billedSpendUsd: r.billedSpendUsd,
+      moneyGoesHere: r.workflowDynastySlug === best,
+    }));
+  const defaultConversion = input.defaultConversionPct ?? null;
+  const gross = legWorkflowFigures(
+    figureRows((r) => {
+      const f = figuresOf.get(r.workflowDynastySlug)!;
+      return { flash: f.flash?.spentUsd ?? 0, mature: f.mature ? f.mature.spentUsd : null };
+    }),
+    "gross",
+    defaultConversion,
+  );
+  const netSpend = input.netSpend ?? null;
+  const net = legWorkflowFigures(
+    figureRows((r) => (netSpend ? (netSpend.get(r.workflowDynastySlug) ?? { flash: 0, mature: 0 }) : null)),
+    "net",
+    defaultConversion,
+  );
   return orderLegWorkflows(entries).map((slug, i) => {
     const r = bySlug.get(slug)!;
     const e = entryOf.get(slug)!;
@@ -132,6 +172,8 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       moneyGoesHere: slug === best,
       explorePriceUsd: e.mature ? null : explorePriceUsd(e.fleet),
       place: places.get(slug)!,
+      figures: gross.get(slug)!,
+      figuresNet: net.get(slug)!,
     };
   });
 }

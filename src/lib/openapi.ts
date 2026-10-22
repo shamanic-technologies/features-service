@@ -5637,6 +5637,29 @@ const meetingPopulationSchema = z
 
 // ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
 
+const workflowFigureSchema = z.object({
+  value: z.number().nullable(),
+  basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."),
+  source: z
+    .enum(["workflow", "pipe_pooled", "pipe_best_workflow", "leg_default"])
+    .nullable()
+    .describe("measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."),
+  expectedValue: z.number().nullable().describe("What the pipe expects of a workflow (the expected figure), served beside a measured value too."),
+  unavailableReason: z.enum(["no_return_on_pipe", "no_outcome_on_pipe", "no_conversion_on_pipe", "net_not_measured_on_pipe"]).nullable(),
+});
+const legWorkflowFiguresSchema = z
+  .object({
+    pricing: z.enum(["gross", "net"]),
+    half: z.enum(["mature", "flash"]).describe("The half $/outcome, % conversion and $ spent are read on (the row's `basis`). The ROI is lifetime."),
+    roi: workflowFigureSchema.describe("Fleet pipeline ÷ what clients were billed (net), lifetime on the leg. MEASURED only once the workflow has an outcome of its own (a 0-outcome workflow's pipeline is the value of people it contacted, never a measured return). Pricing-independent (already on what clients paid)."),
+    costPerOutcomeUsd: workflowFigureSchema.describe("Spend on `pricing` ÷ outcomes, on `half`. Measured once the half holds an outcome."),
+    conversionRatePct: workflowFigureSchema.describe("Outcomes ÷ people contacted (%), on `half`. Measured once the half holds an outcome or the workflow is mature (a mature 0% is a fact)."),
+    spentUsd: z.object({ value: z.number().nullable(), basis: z.enum(["measured"]).nullable(), unavailableReason: z.enum(["net_not_measured_on_pipe"]).nullable() }).describe("Spend on `pricing`, on `half`. Always measured."),
+    outcomes: z.number(),
+    contacted: z.number(),
+  })
+  .describe("RESEARCH-WF-FIGURES-1022: THE four figures the Workflows list and the workflow page print, one per workflow (the catalogue's workflow page copies this object). A ROI and a % conversion are never blank.");
+
 const legWorkflowRankingRowSchema = z.object({
   rank: z.number().int().describe("1-based, total, no gaps. The leg order campaign-service receives on the leg-keyed `workflow-projection` (ONE computation), here on the fleet evidence: selectable rows first, then the rest in the same order. Within each: LEARNING workflows whose explore price (fleet spend on the leg ÷ max(outcomes, 1): $0 for one never run) is below the best MATURE price, cheapest first; the mature ones cheapest first (the first holds the money); then the other learning ones, cheapest explore price first. Slug ties."),
   workflowDynastySlug: z.string(),
@@ -5658,6 +5681,7 @@ const legWorkflowRankingRowSchema = z.object({
   moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
   explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
   place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
+  figures: legWorkflowFiguresSchema.optional().describe("On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy)."),
 });
 
 const writerRankingRowSchema = z.object({
@@ -5787,6 +5811,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       leg: z.string().describe("Any pipe's leg key (required): a funnel leg (e.g. start_to_conversation, an outbound channel's lead_found_to_*) or a leg of the channel's own no funnel walks, e.g. the sourcing leg start_to_lead_found (ranked on Lead found). A word naming no leg of the channel = 400."),
+      pricing: z.enum(["gross", "net"]).optional().describe("The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`."),
     }),
   },
   responses: {
@@ -5811,12 +5836,13 @@ registry.registerPath({
               .nullable()
               .optional()
               .describe("On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped."),
+            pricing: z.enum(["gross", "net"]).optional().describe("The pricing of every row's `figures`."),
             rows: z.array(legWorkflowRankingRowSchema),
           }),
         },
       },
     },
-    400: { description: "Missing or unknown featureSlug / leg", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "Missing or unknown featureSlug / leg, or `pricing_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -8525,7 +8551,7 @@ const researchCatalogRoi = z
     display: z.string().nullable().describe("Printed (`3.20x`)."),
     basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."),
     source: z
-      .enum(["workflow", "own_outcomes", "pipe_templates", "writes_with_now", "dynasty", "pipe_best_workflow"])
+      .enum(["workflow", "own_outcomes", "pipe_templates", "pipe_workflows", "writes_with_now", "dynasty", "pipe_best_workflow"])
       .nullable()
       .describe("measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."),
     spendCovered: z.number().nullable().describe("On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."),
@@ -8540,6 +8566,7 @@ const researchCatalogPipeSchema = z.object({
     name: z.string().nullable(),
     runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."),
     roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
+    figures: legWorkflowFiguresSchema.nullable().describe("The CURRENT leg workflow ranking row's `figures` (gross), copied at every read: the list and this page print the same ROI, $/outcome, % conversion and $ spent. `roiDetail` is taken from `figures.roi`. Null when the ranking lists no such row."),
     model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
     template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
     wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
