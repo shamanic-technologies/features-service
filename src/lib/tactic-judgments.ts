@@ -275,7 +275,9 @@ export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, ki
     type: "noul" as const,
     instructions:
       `Does this ${what} follow the tactic "${t.name}"? The tactic: ${t.description} ` +
-      (kind === "template" ? "Judge only on what the template's text asks the writer to do. Ignore its name and any label." : "Judge only on which model it is, who makes it and its tier."),
+      (kind === "template"
+        ? "Judge on what the template's text asks the writer to do, and on its type (headTemplate) when the tactic names template types. Ignore its display name."
+        : "Judge only on which model it is, who makes it and its tier."),
     criteria: {
       true: `The ${kind === "template" ? "template" : "model"} does exactly what the tactic describes: ${t.description}`,
       false: `The ${kind === "template" ? "template" : "model"} does not do what the tactic describes, or does the opposite.`,
