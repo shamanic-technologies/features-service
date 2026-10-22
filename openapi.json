@@ -1754,7 +1754,7 @@
               },
               "brandLevelActualSpentCents": {
                 "type": "integer",
-                "description": "The part of actualSpentCents no campaign carries (the brand's own setup work, notifications). On an offer of a brand selling several offers, every offer shows it. Always 0 on the campaign read (a campaign carries none of it). Σ daily[].brandLevelActualSpentCents."
+                "description": "The part of actualSpentCents no campaign carries (the brand's own setup work, notifications). All of it on the brand AND on every offer read (every offer of the brand carries it whole), the same spend its ROI divides since ROI-SPENT-SAME-BASIS-1022. Always 0 on the campaign read (a campaign carries none of it). Σ daily[].brandLevelActualSpentCents."
               },
               "costPerEmailSentCents": {
                 "type": "number",
@@ -2042,6 +2042,29 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "brandLevel": {
+                "type": "object",
+                "properties": {
+                  "brandCampaignLessTotalSpentCents": {
+                    "type": "integer",
+                    "description": "The brand's WHOLE campaign-less committed spend since inception (setting the brand up, notification emails: spend no campaign carries), USD cents, on the read's ?pricing= basis. Every offer of the brand carries all of it, nothing pro-rated (owner 2026-10-22)."
+                  },
+                  "totalSpentCents": {
+                    "type": "integer",
+                    "description": "The part of totalSpentCents (and of costEconomics.committedCostUsd) this read adds for that work, USD cents. OFFER read: all of it. BRAND read: only the part its channels' own read does not already hold."
+                  },
+                  "actualSpentCents": {
+                    "type": "integer",
+                    "description": "The billed twin of totalSpentCents."
+                  }
+                },
+                "required": [
+                  "brandCampaignLessTotalSpentCents",
+                  "totalSpentCents",
+                  "actualSpentCents"
+                ],
+                "description": "OFFER and BRAND reads only (ROI-SPENT-SAME-BASIS-1022): the brand's own work no campaign carries joins EVERY money figure of the body on one basis (totalSpentCents, sources, today's spend, costEconomics and its maturity pair, roiHistory, window.spend), counted whole on the flash and the mature basis (it waits for no outcome) unless the mature cohort has no spend of its own (then maturing). So ROI × committed spend = pipeline, and window.spend (windowDays=all) states the same spend. Absent on campaign, workflow and lens reads (that work belongs to no campaign)."
+              },
               "totalSpentCents": {
                 "type": "integer",
                 "description": "'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."
@@ -2056,11 +2079,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel, all of it on both grains. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), all of it on both grains (= runs-service's actual spend for the brand since 00:00 UTC, to cent rounding; an offer adds its own campaigns only). Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",
@@ -8485,6 +8508,29 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "brandLevel": {
+                "type": "object",
+                "properties": {
+                  "brandCampaignLessTotalSpentCents": {
+                    "type": "integer",
+                    "description": "The brand's WHOLE campaign-less committed spend since inception (setting the brand up, notification emails: spend no campaign carries), USD cents, on the read's ?pricing= basis. Every offer of the brand carries all of it, nothing pro-rated (owner 2026-10-22)."
+                  },
+                  "totalSpentCents": {
+                    "type": "integer",
+                    "description": "The part of totalSpentCents (and of costEconomics.committedCostUsd) this read adds for that work, USD cents. OFFER read: all of it. BRAND read: only the part its channels' own read does not already hold."
+                  },
+                  "actualSpentCents": {
+                    "type": "integer",
+                    "description": "The billed twin of totalSpentCents."
+                  }
+                },
+                "required": [
+                  "brandCampaignLessTotalSpentCents",
+                  "totalSpentCents",
+                  "actualSpentCents"
+                ],
+                "description": "OFFER and BRAND reads only (ROI-SPENT-SAME-BASIS-1022): the brand's own work no campaign carries joins EVERY money figure of the body on one basis (totalSpentCents, sources, today's spend, costEconomics and its maturity pair, roiHistory, window.spend), counted whole on the flash and the mature basis (it waits for no outcome) unless the mature cohort has no spend of its own (then maturing). So ROI × committed spend = pipeline, and window.spend (windowDays=all) states the same spend. Absent on campaign, workflow and lens reads (that work belongs to no campaign)."
+              },
               "totalSpentCents": {
                 "type": "integer",
                 "description": "'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."
@@ -8499,11 +8545,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel, all of it on both grains. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), all of it on both grains (= runs-service's actual spend for the brand since 00:00 UTC, to cent rounding; an offer adds its own campaigns only). Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",
@@ -17964,6 +18010,29 @@
             "type": "object",
             "nullable": true,
             "properties": {
+              "brandLevel": {
+                "type": "object",
+                "properties": {
+                  "brandCampaignLessTotalSpentCents": {
+                    "type": "integer",
+                    "description": "The brand's WHOLE campaign-less committed spend since inception (setting the brand up, notification emails: spend no campaign carries), USD cents, on the read's ?pricing= basis. Every offer of the brand carries all of it, nothing pro-rated (owner 2026-10-22)."
+                  },
+                  "totalSpentCents": {
+                    "type": "integer",
+                    "description": "The part of totalSpentCents (and of costEconomics.committedCostUsd) this read adds for that work, USD cents. OFFER read: all of it. BRAND read: only the part its channels' own read does not already hold."
+                  },
+                  "actualSpentCents": {
+                    "type": "integer",
+                    "description": "The billed twin of totalSpentCents."
+                  }
+                },
+                "required": [
+                  "brandCampaignLessTotalSpentCents",
+                  "totalSpentCents",
+                  "actualSpentCents"
+                ],
+                "description": "OFFER and BRAND reads only (ROI-SPENT-SAME-BASIS-1022): the brand's own work no campaign carries joins EVERY money figure of the body on one basis (totalSpentCents, sources, today's spend, costEconomics and its maturity pair, roiHistory, window.spend), counted whole on the flash and the mature basis (it waits for no outcome) unless the mature cohort has no spend of its own (then maturing). So ROI × committed spend = pipeline, and window.spend (windowDays=all) states the same spend. Absent on campaign, workflow and lens reads (that work belongs to no campaign)."
+              },
               "totalSpentCents": {
                 "type": "integer",
                 "description": "'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."
@@ -17978,11 +18047,11 @@
               },
               "totalSpentTodayCents": {
                 "type": "integer",
-                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel: what was charged for this brand today. Every other read: the scope's own runs only."
+                "description": "COMMITTED spend (actual + provisioned, USD cents) for runs started since 00:00 UTC today — 'Budget spent today'. On the OFFER and BRAND grains (/offers/{offerId}/revenue, /brands/{brandId}/revenue) it also counts the brand's own work no campaign carries (setting the brand up, notification emails), on every channel, all of it on both grains. Every other read: the scope's own runs only."
               },
               "actualSpentTodayCents": {
                 "type": "integer",
-                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), so it equals runs-service's actual spend for the brand since 00:00 UTC (to per-group cent rounding); an offer of a brand selling several offers shares that part with them. Every other read: the scope's own runs only."
+                "description": "ACTUAL (billed) spend (USD cents) for runs started since 00:00 UTC today. On the OFFER and BRAND grains it also counts the brand's own work no campaign carries (setting the brand up, notification emails), all of it on both grains (= runs-service's actual spend for the brand since 00:00 UTC, to cent rounding; an offer adds its own campaigns only). Every other read: the scope's own runs only."
               },
               "provisionedSpentTodayCents": {
                 "type": "integer",

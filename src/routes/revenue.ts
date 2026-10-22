@@ -133,6 +133,14 @@ import { featureSlugList, type FeatureScope } from "../lib/feature-scope.js";
 import { pickBestChannelParents } from "../lib/offer-parents.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
+import {
+  addBrandLevelByDay,
+  addBrandLevelCost,
+  fetchBrandLevelSpend,
+  withBrandLevelBreakdown,
+  type BrandLevelSpend,
+  type BrandLevelSpendBlock,
+} from "../lib/brand-level-spend.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
 import type { MaturityPair } from "../lib/maturity.js";
 import { conversionRateFigures } from "../lib/conversion-rate-history.js";
@@ -185,6 +193,8 @@ export { buildCostEconomics, type CostEconomics } from "../lib/cost-economics.js
  * survives only when there is neither an expected cost nor any spend to fall back on.
  */
 export interface Spend {
+  /** Offer and brand grains: the share of the brand's campaign-less work these figures carry (lib/brand-level-spend.ts). */
+  brandLevel?: BrandLevelSpendBlock;
   totalSpentCents: number;
   actualSpentCents: number;
   provisionedSpentCents: number;
@@ -516,6 +526,7 @@ function buildSpend(
     actualSpentTodayCents: breakdown.actualSpentTodayCents,
     provisionedSpentTodayCents: breakdown.provisionedSpentTodayCents,
     sources: breakdown.sources,
+    ...(breakdown.brandLevel ? { brandLevel: breakdown.brandLevel } : {}),
     // Each CPC keeps its OWN spend basis (the block never claims total == actual + provisioned for a
     // RATIO) and floors against the SAME fleet-backed cost per website visit — at 0 clicks none of the
     // three is measurable, so all three legitimately report the same lower bound.
@@ -1289,9 +1300,14 @@ function scopeMaturityOf(input: {
   split: Map<string, SpendSplit> | null;
   persons: EnginePerson[];
   maturePersons: EnginePerson[];
+  /** The brand-level part the scope carries (offer and brand grains), whole on both bases (lib/brand-level-spend.ts). */
+  brandLevel?: BrandLevelSpend | null;
 }): { maturity: ScopeMaturity; bases: ScopeBases } | null {
   if (!input.split) return null;
-  const spend = scopeSpendUsd(input.split);
+  const own = scopeSpendUsd(input.split);
+  const extraUsd = (input.brandLevel?.totalCents ?? 0) / 100;
+  // Whole on both bases, except a mature cohort with no spend of its own, which stays maturing.
+  const spend = { flash: own.flash + extraUsd, mature: own.mature > 0 ? own.mature + extraUsd : own.mature };
   const cuttable = !input.plan.unknown && input.campaigns !== null && serveDatesStated(input.persons);
   const maturity = input.campaigns
     ? buildScopeMaturity({
@@ -1526,6 +1542,22 @@ export async function computeFeatureRevenue(
   const customerStepMap = (costs: BrandStepCosts | null | undefined) =>
     costs ? customerCostsByStep(costs.costs, stepCostScope.length > 0 ? stepCostScope : null) : null;
 
+  // THE BRAND'S OWN WORK NO CAMPAIGN CARRIES (setup, notifications), on the OFFER and BRAND grains only: the
+  // whole of it joins EVERY money figure of the body, so its ROI divides the same
+  // spend its Spent tile states (ROI-SPENT-SAME-BASIS-1022, lib/brand-level-spend.ts). Fail-loud like the spend
+  // reads beside it. Never on a campaign, workflow or lens read: that work belongs to none of them.
+  const brandLevelRead: Promise<BrandLevelSpend | null> =
+    brandLevelSpend && !workflowScope && !lens
+      ? fetchBrandLevelSpend({
+          brandId,
+          orgId: headers.orgId,
+          pricing,
+          featureScope,
+          campaignScoped: stepCostScope.length > 0,
+        })
+      : Promise.resolve(null);
+  brandLevelRead.catch(() => {}); // awaited below; never unhandled while an earlier await throws
+
   // No funnel wired for this feature yet → null pipeline (not an error). `funnel` is known up
   // front (caller param), so short-circuit BEFORE Wave A and fetch ONLY the cost the empty body
   // needs — never over-fetching economics/rates/leads on the no-funnel path. Fail-loud: a
@@ -1534,12 +1566,14 @@ export async function computeFeatureRevenue(
     if (includeSpend) {
       // Overview: fetch spend (fail-loud) + sequences (fail-soft) in parallel. Outreach activity
       // is independent of the funnel — a no-funnel feature still launches campaigns worth graphing.
-      const [breakdown, sequences, counts, parents] = await Promise.all([
-        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs, brandLevelSpend),
+      const [ownBreakdown, sequences, counts, parents, brandLevel] = await Promise.all([
+        fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs),
         fetchSequencesSoft(brandId, campaignScope, featureScope, headers, workflowScope?.producerSlugs),
         fetchConversionCountsSoft(brandId),
         fetchSpendCostParentsSoft(brandId, offerId, featureScope, headers, campaignId, pricing, requestedFunnel),
+        brandLevelRead,
       ]);
+      const breakdown = withBrandLevelBreakdown(ownBreakdown, brandLevel);
       // ONE basis: ROI/CAC ride the SAME committed total the `spend` block reports.
       return emptyBody(
         null,
@@ -1553,8 +1587,11 @@ export async function computeFeatureRevenue(
         causes,
       );
     }
-    const cost = await fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs);
-    return emptyBody(null, cost, null, null, null, null, null, [], causes);
+    const [ownCost, brandLevel] = await Promise.all([
+      fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
+      brandLevelRead,
+    ]);
+    return emptyBody(null, addBrandLevelCost(ownCost, brandLevel), null, null, null, null, null, [], causes);
   }
 
   // ── Wave A: the downstream reads with NO data dependency on each other, in parallel.
@@ -1629,9 +1666,9 @@ export async function computeFeatureRevenue(
   // Awaited further down; LOUD now (it can reject), so it must never reject UNHANDLED while an earlier await throws
   // (that killed the process in the 2026-10-21 replay). The await below still surfaces the error.
   contactedPricingPromise.catch(() => {});
-  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, spendByDay, plan, matureCost, maturingByDay, split, maturityScope] = await Promise.all([
+  const [costResult, priced, persons, sequences, counts, conversionEmails, parents, ownSpendByDay, plan, ownMatureCost, maturingByDay, split, maturityScope, brandLevel] = await Promise.all([
     includeSpend
-      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs, brandLevelSpend)
+      ? fetchSpendBreakdown(brandId, campaignScope, featureScope, headers, new Date(), pricing, workflowScope?.producerSlugs)
       : fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
     // Priced on the offer's terms over the funnels this scope walks (the route resolves this once and
     // passes it as the override).
@@ -1682,15 +1719,24 @@ export async function computeFeatureRevenue(
     maturingByDayPromise,
     splitPromise,
     scopePromise,
+    brandLevelRead,
   ]);
   const { economics, unpricedReason } = priced.economics;
-  const breakdown: SpendBreakdown | null = "totalSpentCents" in costResult ? costResult : null;
+  // The brand-level part (offer/brand grains, else null = byte-unchanged) joins the spend breakdown, the cost,
+  // the mature cost (brand work waits for no outcome: whole on both bases), the dated spend and the scope bases.
+  const breakdown: SpendBreakdown | null =
+    "totalSpentCents" in costResult ? withBrandLevelBreakdown(costResult, brandLevel) : null;
   // ONE basis, COMMITTED. Whether the cost arrived as the Overview's spend breakdown or as the plain
   // runs read, `committedCents` is byte the same total the `spend` block reports — so the ROI a
   // campaign row shows and the "Total spent" the Overview shows can never describe different money.
   const cost: RunsCostCents = breakdown
     ? { committedCents: breakdown.totalSpentCents, actualCents: breakdown.actualSpentCents }
-    : (costResult as RunsCostCents);
+    : addBrandLevelCost(costResult as RunsCostCents, brandLevel);
+  // A mature cohort that has spent nothing of its own stays `maturing` (a young offer is not a 0x on brand work).
+  const matureHasOwnSpend = Boolean(ownMatureCost && ownMatureCost.committedCents > 0);
+  const matureCost = ownMatureCost && matureHasOwnSpend ? addBrandLevelCost(ownMatureCost, brandLevel) : ownMatureCost;
+  const spendByDay = ownSpendByDay ? addBrandLevelByDay(ownSpendByDay, brandLevel) : ownSpendByDay;
+  const matureCurveSpendByDay = matureHasOwnSpend ? spendByDay : ownSpendByDay;
 
   if (economics === null) {
     // Cold start: no economics, so no pipeline to price — but the leads WERE read, so the volume half
@@ -1725,6 +1771,7 @@ export async function computeFeatureRevenue(
       split,
       persons,
       maturePersons: coldMaturePersons,
+      brandLevel,
     });
     // The SAME ratio basis the priced path divides by (`lib/ratio-basis.ts`): an unpriced scope is still
     // maturing or of unknown legs, and its volume ratios must say so rather than serve whole history.
@@ -2075,7 +2122,7 @@ export async function computeFeatureRevenue(
   // THE SCOPE'S MATURITY (`lib/scope-maturity.ts`) — built on the SAME persons (overlays applied) and the
   // SAME mature cohort the ratios above divide, so every pair on this body agrees with the legacy mature
   // figures to the spend's rounding, and with every other surface's pair for this scope exactly.
-  const scoped = scopeMaturityOf({ campaigns: maturityScope.campaigns, plan, split, persons, maturePersons });
+  const scoped = scopeMaturityOf({ campaigns: maturityScope.campaigns, plan, split, persons, maturePersons, brandLevel });
 
   const body: RevenueBody = {
     headline: {
@@ -2101,7 +2148,7 @@ export async function computeFeatureRevenue(
       spendByDay && maturingByDay && !plan.unknown
         ? {
             ...buildRoiHistory(
-              plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
+              plan.cutoffIso ? matureSpendByDay(matureCurveSpendByDay!, maturingByDay, plan.cutoffIso) : spendByDay,
               matureResult.timeSeries,
               matureResult.headline.totalPipelineUsd,
             ),
@@ -2117,7 +2164,7 @@ export async function computeFeatureRevenue(
     costPerOutcomeHistory:
       spendByDay && maturingByDay && outcomeTerms && !plan.unknown
         ? buildCostPerOutcomeHistory(
-            plan.cutoffIso ? matureSpendByDay(spendByDay, maturingByDay, plan.cutoffIso) : spendByDay,
+            plan.cutoffIso ? matureSpendByDay(matureCurveSpendByDay!, maturingByDay, plan.cutoffIso) : spendByDay,
             outcomeTerms.driver === "click"
               ? buildOutcomeSeries(matureResult.leads).recipientsClicked
               : buildOutcomeSeries(matureResult.leads).recipientsRepliesPositive,

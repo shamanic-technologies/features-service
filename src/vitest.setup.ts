@@ -211,3 +211,19 @@ vi.mock("./lib/contacted-value-unavailable.js", async (importOriginal) => {
  */
 process.env.SEND_DATES_MEMORY_MS = "0";
 process.env.SEND_DATES_BATCH_MS = "0";
+
+// The brand's campaign-less work on the offer/brand grains (lib/brand-level-spend.ts): none by default, so every
+// route suite reads its own spend unchanged. lib/brand-level-spend.test.ts drives the real fold.
+vi.mock("./lib/brand-level-spend.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/brand-level-spend.js")>();
+  return {
+    ...actual,
+    fetchBrandLevelSpend: vi.fn(async () => ({
+      brandCampaignLessTotalCents: 0,
+      sources: [],
+      totalCents: 0,
+      actualCents: 0,
+      byDay: new Map(),
+    })),
+  };
+});

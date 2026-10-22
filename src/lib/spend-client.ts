@@ -61,6 +61,8 @@ export interface SpendBreakdown {
   /** Open provisioned holds for runs started since 00:00 UTC today (= total − actual). */
   provisionedSpentTodayCents: number;
   sources: SpendSource[];
+  /** Offer and brand grains: the brand-level part these figures carry (lib/brand-level-spend.ts). */
+  brandLevel?: import("./brand-level-spend.js").BrandLevelSpendBlock;
 }
 
 export interface RunsCostGroup {

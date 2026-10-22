@@ -605,6 +605,10 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             undefined,
             undefined,
             causes,
+            undefined,
+            undefined,
+            // The offer's share of the brand's campaign-less work, as on its own page (lib/brand-level-spend.ts).
+            true,
           );
           return {
             offerId,
