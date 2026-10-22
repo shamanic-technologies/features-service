@@ -227,3 +227,25 @@ vi.mock("./lib/brand-level-spend.js", async (importOriginal) => {
     })),
   };
 });
+
+/**
+ * Suite-wide default: the workflow / template marks (lib/catalogue-marks-store.ts) are Postgres rows. Here they live in
+ * memory with the SAME first-sight rule (`nextMarks`), so a route suite reads real, stable, distinct marks.
+ */
+vi.mock("./lib/catalogue-marks-store.js", async () => {
+  const { markId, nextMarks } = await import("./lib/catalogue-marks.js");
+  type Mark = { icon: string; color: string };
+  const store = new Map<string, Map<string, Mark>>();
+  return {
+    MARK_ASSIGNMENT_LOCK: 0,
+    marksFor: vi.fn(async (family: "workflow" | "template", keys: readonly string[]) => {
+      const given = store.get(family) ?? new Map<string, Mark>();
+      store.set(family, given);
+      const missing = [...new Set(keys.filter((k) => k.length > 0 && !given.has(k)))];
+      const fresh = nextMarks(family, new Set([...given.values()].map(markId)), missing.length);
+      missing.forEach((k, i) => given.set(k, fresh[i]));
+      return new Map(keys.filter((k) => given.has(k)).map((k) => [k, given.get(k)!] as const));
+    }),
+    __resetCatalogueMarksMemory: vi.fn(() => store.clear()),
+  };
+});

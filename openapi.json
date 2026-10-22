@@ -46802,6 +46802,14 @@
                                   "active",
                                   "deprecated"
                                 ]
+                              },
+                              "icon": {
+                                "type": "string",
+                                "description": "MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."
+                              },
+                              "color": {
+                                "type": "string",
+                                "description": "MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."
                               }
                             },
                             "required": [
@@ -46823,7 +46831,9 @@
                               "moneyGoesHere",
                               "templateDynastySlug",
                               "head",
-                              "status"
+                              "status",
+                              "icon",
+                              "color"
                             ]
                           }
                         },
@@ -48063,6 +48073,14 @@
                             "enum": [
                               "tactics_unreadable"
                             ]
+                          },
+                          "icon": {
+                            "type": "string",
+                            "description": "MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."
+                          },
+                          "color": {
+                            "type": "string",
+                            "description": "MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."
                           }
                         },
                         "required": [
@@ -48083,7 +48101,9 @@
                           "goesFirst",
                           "moneyGoesHere",
                           "explorePriceUsd",
-                          "place"
+                          "place",
+                          "icon",
+                          "color"
                         ]
                       }
                     }
@@ -68117,6 +68137,56 @@
         }
       }
     },
+    "/public/catalogue/mark-icons": {
+      "get": {
+        "summary": "Every icon and colour a workflow or template mark can take (public)",
+        "description": "MARKS-1022 (owner 2026-10-22): every workflow dynasty and every template dynasty carries its OWN `icon` + `color`, given on first sight and never moved (leg workflow ranking rows, leg writer ranking template rows, Research catalogue workflow and template pages, agent catalogue workflows). `icons` = the fixed pool of Phosphor icon names a mark is drawn from (append-only), `colors` = the colours. A reader that imports icons one by one imports these. No identity.",
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "The mark vocabulary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "icons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "families": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "workflow",
+                          "template"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "icons",
+                    "colors",
+                    "families"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/public/catalogue/steps": {
       "get": {
         "summary": "Every catalogue step's key, name and icon (public)",
@@ -68718,6 +68788,14 @@
                             },
                             "label": {
                               "type": "string"
+                            },
+                            "icon": {
+                              "type": "string",
+                              "description": "MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."
+                            },
+                            "color": {
+                              "type": "string",
+                              "description": "MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."
                             },
                             "name": {
                               "type": "string",
@@ -69671,6 +69749,8 @@
                           "required": [
                             "key",
                             "label",
+                            "icon",
+                            "color",
                             "name",
                             "runnable",
                             "roi",
@@ -69706,6 +69786,14 @@
                             "key": {
                               "type": "string",
                               "description": "The template dynasty's slug (`cold-reply-free-offer-blind`); a version on its own keeps its template id."
+                            },
+                            "icon": {
+                              "type": "string",
+                              "description": "MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."
+                            },
+                            "color": {
+                              "type": "string",
+                              "description": "MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."
                             },
                             "label": {
                               "type": "string",
@@ -70526,6 +70614,8 @@
                           },
                           "required": [
                             "key",
+                            "icon",
+                            "color",
                             "label",
                             "hasText",
                             "dynasty",

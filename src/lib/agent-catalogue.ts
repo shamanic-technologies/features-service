@@ -109,6 +109,7 @@ import { FUNNEL_LEGS, legacyFunnelIdAliasOf, pipeLegKeyOf, servedLegKeyOf, store
 import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
 import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
+import { GLYPH_COLORS } from "./catalogue-marks.js";
 import { STEP_SIGNAL } from "./value-added.js";
 import { codedStepLifecycleRungOf, isStepLifecycleRung, type StepLifecycleRung } from "./lifecycle-ladder.js";
 import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug, type PlayBlock } from "./plays.js";
@@ -133,7 +134,6 @@ export function valueAddedTo(valueOf: (step: string) => number | null, fromStep:
 /** One Phosphor icon per family (the dashboard maps Phosphor names) + a colour derived from the name. */
 export const FAMILY_GLYPHS = { step: null, sales_path: "waves", channel: null, pipe: "bird", sales_funnel: null, workflow: "flow-arrow", trigger: "lightning" } as const;
 
-const GLYPH_COLORS = ["#E0784B", "#8E6CD8", "#3FA27E", "#D6A21E", "#3D7FD0", "#D9577A", "#9C6B3E", "#5E9E3A", "#2F9DB3", "#C2563A"];
 
 /** PURE: the colour a name shows its family glyph in (stable: a hash of the name). */
 export const glyphColorOf = (name: string): string => GLYPH_COLORS[stableHash(name.toLowerCase()) % GLYPH_COLORS.length];

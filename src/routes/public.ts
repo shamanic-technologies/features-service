@@ -35,6 +35,7 @@ import type { Pricing } from "../lib/pricing.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { legCutoffIso, legMaturity, type LegMaturityFigures } from "../lib/maturity.js";
+import { withWorkflowRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
   buildFleetLegMaturity,
@@ -5329,7 +5330,14 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   // deploy while the stored copy sat in the cell store); kicks a rebuild when stale, never waits on it.
   const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
   if (stored) {
-    res.json(legRankingOnPricing(stored, pricing, await workflowTacticsOf()));
+    const served = legRankingOnPricing(stored, pricing, await workflowTacticsOf());
+    try {
+      // Each workflow's own icon + colour (MARKS-1022), given on first sight in rank order, the same on every read.
+      res.json(await withWorkflowRankingMarks(served));
+    } catch (error) {
+      console.error("[features-service] leg workflow ranking: workflow marks unreadable:", error);
+      res.status(502).json({ error: "workflow marks unreadable", reason: "marks_unreadable" });
+    }
     return;
   }
   const rule = legMaturity(legKey);
