@@ -40,6 +40,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getInternalPipeFleet } from "../lib/meeting-leg-fleet.js";
 import { fetchFollowupLlmAliases } from "../lib/followup-actions-client.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
+import { withTemplateRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "../lib/plays.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { fetchCampaignSalesFunnelId } from "../lib/fleet-leg-campaigns.js";
@@ -63,6 +64,9 @@ const WARM_TIMEOUT_MS = 10 * 60_000;
 export type WriterEvidenceReason = "internal_pipe_not_measured_per_writer" | "no_sequence_recorded_on_pipe";
 
 export interface TemplateRow extends WriterRankingRow {
+  /** The template dynasty's own icon (Phosphor name) + colour (MARKS-1022), keyed on `key`; set at serve time. */
+  icon?: string;
+  color?: string;
   /** content-generation's dynasty slug (the key), its head (the version a run writes with); null = a version on its own. */
   templateDynastySlug: string | null;
   head: string | null;
@@ -489,7 +493,8 @@ router.get("/public/stats/leg-writer-ranking", async (req: Request, res: Respons
     if (strategyId && !strategy) return bad(res, 404, "strategy_not_found", `no strategy ${strategyId}`);
     const p = await readLegWriterRanking(featureSlug, leg, 0);
     if (!p) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${leg} is being built; retry in a few minutes`);
-    const served = servedRankings(p, catalogue, strategy);
+    // Each template dynasty's own icon + colour (MARKS-1022); LLM rows carry none (the dashboard draws the provider's logo).
+    const served = await withTemplateRankingMarks(servedRankings(p, catalogue, strategy));
     res.json({ featureSlug: p.featureSlug, legKey: p.legKey, pipeId: p.pipeId, computedAt: p.computedAt, costBasis: p.costBasis, rankBasis: p.rankBasis, maturity: p.maturity, writerEvidence: p.writerEvidence, strategyId, leftOut: p.leftOut, ...served });
   } catch (error) {
     console.error("[features-service] leg writer ranking read failed:", error);

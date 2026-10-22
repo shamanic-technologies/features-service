@@ -97,6 +97,9 @@ export interface CatalogWroteWith {
 
 export interface CatalogWorkflow extends CatalogFigures {
   key: string;
+  /** Its own icon (Phosphor name) + colour (MARKS-1022), keyed on `key`, the same on every read; set at serve time. */
+  icon?: string;
+  color?: string;
   label: string;
   name: string | null;
   /** A run may still pick it on this pipe (assigned active AND executable). */
@@ -154,6 +157,9 @@ export type CatalogTemplateStandaloneReason = "no_dynasty_on_pipe" | TemplateDyn
 export interface CatalogTemplate extends CatalogFigures {
   /** The dynasty's slug; a version on its own keeps its template id. */
   key: string;
+  /** Its own icon (Phosphor name) + colour (MARKS-1022), keyed on `key`, the same on every read; set at serve time. */
+  icon?: string;
+  color?: string;
   /** The dynasty's name; a version on its own reads its version label. */
   label: string;
   /** The text shown: the head's on a dynasty (`/internal/research/templates` serves it under this key). */

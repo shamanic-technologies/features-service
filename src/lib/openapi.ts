@@ -5693,6 +5693,7 @@ const legWorkflowRankingRowSchema = z.object({
   lastRunUnavailableReason: z.enum(["never_ran", "run_time_not_served", "not_read_on_pipe"]).nullable().optional().describe("Set whenever `lastRunAt` is null. `never_ran`: no spend and nobody contacted on the pipe. `run_time_not_served`: it ran but the run-time read states no date. `not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet."),
   tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().optional().describe("The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`."),
   tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().optional().describe("`not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (unknown, never an empty list). `[]` with no reason = judged, follows none. The email angle (blind / named / offer) is a TEMPLATE tactic since RESEARCH-WF-FIGURES-1022, so it is never listed here."),
+  icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
 });
 
 const writerRankingRowSchema = z.object({
@@ -5751,7 +5752,7 @@ registry.registerPath({
             strategyId: z.string().nullable(),
             leftOut: z.object({ templates: z.object({ contacted: z.number(), outcomes: z.number() }), llms: z.object({ contacted: z.number(), outcomes: z.number() }) }).describe("People whose writer is not on record: in no bar (as on the Research page)."),
             templates: writerRankingSchema.extend({
-              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable() })),
+              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable(), icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."), })),
             }),
             llms: writerRankingSchema.extend({
               rows: z.array(
@@ -8342,6 +8343,21 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/public/catalogue/mark-icons",
+  summary: "Every icon and colour a workflow or template mark can take (public)",
+  description:
+    "MARKS-1022 (owner 2026-10-22): every workflow dynasty and every template dynasty carries its OWN `icon` + `color`, given on first sight and never moved (leg workflow ranking rows, leg writer ranking template rows, Research catalogue workflow and template pages, agent catalogue workflows). `icons` = the fixed pool of Phosphor icon names a mark is drawn from (append-only), `colors` = the colours. A reader that imports icons one by one imports these. No identity.",
+  tags: ["Public"],
+  responses: {
+    200: {
+      description: "The mark vocabulary.",
+      content: { "application/json": { schema: z.object({ icons: z.array(z.string()), colors: z.array(z.string()), families: z.array(z.enum(["workflow", "template"])) }) } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/public/catalogue/steps",
   summary: "Every catalogue step's key, name and icon (public)",
   description:
@@ -8596,6 +8612,7 @@ const researchCatalogPipeSchema = z.object({
   workflows: z.array(z.object({
     key: z.string(),
     label: z.string(),
+    icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
     name: z.string().nullable(),
     runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."),
     roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
@@ -8629,6 +8646,7 @@ const researchCatalogPipeSchema = z.object({
   templates: z
     .array(z.object({
       key: z.string().describe("The template dynasty's slug (`cold-reply-free-offer-blind`); a version on its own keeps its template id."),
+      icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
       label: z.string().describe("The dynasty's name (`Blind Free Offer`); a version on its own reads its version label."),
       hasText: z.boolean().describe("`/internal/research/templates` serves a text under `key`: the head's on a dynasty."),
       dynasty: z

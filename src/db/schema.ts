@@ -398,6 +398,22 @@ export const retiredNames = pgTable("retired_names", {
   retiredAt: timestamp("retired_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * THE MARK of a workflow dynasty or a template dynasty (MARKS-1022, `lib/catalogue-marks.ts`): its own icon + colour,
+ * written once on first sight, never updated nor deleted, unique per family.
+ */
+export const catalogueMarks = pgTable(
+  "catalogue_marks",
+  {
+    family: text("family").notNull(),
+    objectKey: text("object_key").notNull(),
+    icon: text("icon").notNull(),
+    color: text("color").notNull(),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "catalogue_marks_pk", columns: [t.family, t.objectKey] }), uniqueIndex("catalogue_marks_family_mark_unique").on(t.family, t.icon, t.color)],
+);
+
 export const salesPathCombinationNames = pgTable("sales_path_combination_names", {
   /** `combinationKeyOf` (`lib/offer-sales-paths.ts`): the legs in order, each managed leg `@<channel slug>`. */
   combinationKey: text("combination_key").primaryKey(),

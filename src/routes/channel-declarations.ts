@@ -45,6 +45,7 @@ import { salesPathNamesFor } from "../lib/sales-path-names.js";
 import { isOutboundChannel } from "../lib/channel-types.js";
 import { storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { invalidateChannelCatalogue } from "./public.js";
+import { pgErrorOf } from "../lib/pg-error.js";
 
 /**
  * RUN-TIME DECLARATIONS (`lib/channel-declarations.ts`, owner 2026-10-09): channels, legs on a channel,
@@ -144,8 +145,10 @@ function fail(res: Response, err: unknown, what: string): void {
     return;
   }
   // A unique violation raced past the pre-check (two writes of the same slug/id/name at once).
-  if ((err as { code?: string })?.code === "23505") {
-    res.status(409).json({ error: (err as Error).message, reason: "already_exists" });
+  // drizzle-orm >= 0.44 wraps the driver error in DrizzleQueryError: read the postgres error.
+  const pg = pgErrorOf(err);
+  if (pg.code === "23505") {
+    res.status(409).json({ error: String(pg.message ?? (err as Error).message), reason: "already_exists" });
     return;
   }
   console.error(`[features-service] declarations: ${what} failed:`, err);
