@@ -55,6 +55,7 @@ import {
 import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
 import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
 import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
+import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "../lib/default-leg-rates.js";
 import { getOnDemandPipeFleet } from "../lib/on-demand-pipe-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
@@ -5044,7 +5045,24 @@ export interface LegWorkflowRankingPayload {
   maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null; measured: boolean };
   /** On a pipe landing on a meeting step: the brands counted / left out (`lib/meeting-population.ts`); else null. */
   meetingPopulation?: MeetingPopulation | null;
+  /** The pricing every row's `figures` is on (`?pricing=gross|net`, gross by default). Set at serve time. */
+  pricing?: "gross" | "net";
   rows: LegWorkflowRankingRow[];
+}
+
+/**
+ * PURE. The body served for one `?pricing=` (RESEARCH-WF-FIGURES-1022): each row's `figures` on that pricing, the build's
+ * net twin never served beside it. A build persisted before the figures existed is served as stored.
+ */
+export function legRankingOnPricing(payload: LegWorkflowRankingPayload, pricing: "gross" | "net"): LegWorkflowRankingPayload {
+  return {
+    ...payload,
+    pricing,
+    rows: payload.rows.map((r) => {
+      const { figuresNet, ...row } = r;
+      return pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
+    }),
+  };
 }
 
 const legRankingStore = new Map<string, { value: LegWorkflowRankingPayload; computedAt: number }>();
@@ -5094,7 +5112,38 @@ export async function fleetPipeFigures(
   return { ...maturity, campaignCount: campaigns.length, meetingPopulation: population };
 }
 
+/**
+ * One pipe's NET spend per workflow dynasty, flash and mature (RESEARCH-WF-FIGURES-1022: the dashboard reads every money
+ * figure on what the org pays). An ENTRY pipe reads the byte-same evidence as its gross figures on the net basis; an
+ * internal or on-demand pipe states no net spend per workflow yet = null (its rows say `net_not_measured_on_pipe`).
+ */
+async function fleetPipeNetSpend(featureSlug: string, legKey: string): Promise<Map<string, { flash: number; mature: number | null }> | null> {
+  if (await onDemandPipeTrigger(featureSlug, legKey)) return null;
+  if (await internalPipeToStep(featureSlug, legKey)) return null;
+  const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, effectiveSpendSlugs(featureSlug, "own"), "net");
+  const flash = legEvidenceByDynasty(featureSlug, legKey, ev.workflows, ev.flash.costGroups, ev.flash.emailStats);
+  const mature = ev.mature ? legEvidenceByDynasty(featureSlug, legKey, ev.workflows, ev.mature.costGroups, ev.mature.emailStats) : null;
+  const out = new Map<string, { flash: number; mature: number | null }>();
+  for (const d of new Set([...flash.keys(), ...(mature ? mature.keys() : [])])) {
+    out.set(d, { flash: (flash.get(d)?.spentCents ?? 0) / 100, mature: mature ? (mature.get(d)?.spentCents ?? 0) / 100 : null });
+  }
+  return out;
+}
+
+/** PURE. The leg's seeded conversion (%): an entry leg's default entry rate, else the seeded leg default; null when none. */
+export function legDefaultConversionPct(legKey: string): number | null {
+  const leg = funnelLeg(legKey);
+  if (!leg) return null;
+  const from = leg.fromStep?.key ?? null;
+  if (from === null || from === "lead_found") return DEFAULT_ENTRY_RATE_PCT[leg.toStep.key] ?? null;
+  return defaultLegRatePct(from, leg.toStep.key);
+}
+
 export async function computeLegWorkflowRanking(featureSlug: string, legKey: string): Promise<LegWorkflowRankingPayload> {
+  const netSpendP = fleetPipeNetSpend(featureSlug, legKey).catch((error) => {
+    console.error(`[features-service] leg workflow ranking: net spend unreadable (${featureSlug}, ${legKey}); its net figures read not measured:`, error);
+    return null;
+  });
   const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
     fleetPipeFigures(featureSlug, legKey),
     fetchLegAssignments(featureSlug, legKey),
@@ -5132,7 +5181,16 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
     computedAt: new Date().toISOString(),
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
     meetingPopulation: maturity.meetingPopulation,
-    rows: rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynasties(workflows), pipelineUsd, billedSpendUsd }),
+    rows: rankLegWorkflows({
+      byDynasty,
+      names,
+      assignments,
+      executable: executableDynasties(workflows),
+      pipelineUsd,
+      billedSpendUsd,
+      netSpend: await netSpendP,
+      defaultConversionPct: legDefaultConversionPct(legKey),
+    }),
   };
 }
 
@@ -5212,6 +5270,12 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
     res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}, or a leg of the channel's own` });
     return;
   }
+  const rawPricing = req.query.pricing;
+  if (rawPricing !== undefined && rawPricing !== "gross" && rawPricing !== "net") {
+    res.status(400).json({ error: "pricing_unrecognised", detail: "pricing must be gross or net" });
+    return;
+  }
+  const pricing: "gross" | "net" = rawPricing === "net" ? "net" : "gross";
   try {
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
     if (!feature) {
@@ -5227,7 +5291,7 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   // deploy while the stored copy sat in the cell store); kicks a rebuild when stale, never waits on it.
   const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
   if (stored) {
-    res.json(stored);
+    res.json(legRankingOnPricing(stored, pricing));
     return;
   }
   const rule = legMaturity(legKey);
@@ -5239,6 +5303,7 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
     roiBasis: "billed",
     computedAt: null,
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: null, measured: false },
+    pricing,
     rows: [],
   };
   res.json(empty);

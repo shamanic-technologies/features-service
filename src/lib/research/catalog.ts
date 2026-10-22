@@ -4,6 +4,7 @@
  * nightly snapshot's `research-catalog.json`. Pure: every bar is the same bucket the studies draw (`lib/research/*`), so a
  * page and its study can never state two figures.
  */
+import type { LegWorkflowFigures } from "../leg-workflow-figures.js";
 import { rankWriters } from "../leg-writer-ranking.js";
 import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
@@ -56,9 +57,10 @@ export interface CatalogRoi {
    * measured: `workflow` (the ranking row), `own_outcomes` (a template: its own outcomes' pipeline ÷ its own billed spend).
    * expected: `pipe_templates` (a template: every template of the pipe pooled, own pipeline ÷ own billed), `writes_with_now`
    * (the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's),
-   * `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return).
+   * `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return), `pipe_workflows` (a
+   * workflow with no outcome yet: every workflow of the pipe pooled, the ranking row's `figures.roi`).
    */
-  source: "workflow" | "own_outcomes" | "pipe_templates" | "writes_with_now" | "dynasty" | "pipe_best_workflow" | null;
+  source: "workflow" | "own_outcomes" | "pipe_templates" | "pipe_workflows" | "writes_with_now" | "dynasty" | "pipe_best_workflow" | null;
   /** On `own_outcomes`: the share of its spend whose workflow states its pipeline and billed spend (1 = all of it). */
   spendCovered: number | null;
   unavailableReason: "no_return_on_pipe" | null;
@@ -101,6 +103,12 @@ export interface CatalogWorkflow extends CatalogFigures {
   /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
   roi: string | null;
   roiDetail: CatalogRoi;
+  /**
+   * The leg workflow ranking row's `figures` (RESEARCH-WF-FIGURES-1022), byte-same as the Workflows list prints: ROI,
+   * $/outcome, % conversion and $ spent, each measured or expected, gross pricing. Copied from the CURRENT ranking at
+   * every read, so the page and the list never print two returns. Null when the ranking lists no such row.
+   */
+  figures: LegWorkflowFigures | null;
   /** What most of its people's sequences were written with (= `wroteWithMost`, kept for the readers typed on it). */
   model: CatalogRef | null;
   template: CatalogRef | null;
@@ -498,6 +506,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       name: p.nameOf(r.key) ?? pageNames.get(r.key) ?? null,
       runnable: runnableKeys.has(r.key),
       ...roiFields(workflowRoi(r.key)),
+      figures: null,
       model: most.model,
       template: most.template,
       wroteWithMost: most,
@@ -600,4 +609,29 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       .map((x) => ({ when: whenText(x.createdAt), workflow: wfRef(x.workflowSlug), template: tplRef(x.promptType), version: x.workflowSlug ? versionText(x.workflowSlug) : null, tokens: null })),
   }));
   return { workflows, templates, models };
+}
+
+/** PURE. A ranking row's ROI figure as a catalogue return. */
+export function catalogRoiOfFigure(f: LegWorkflowFigures["roi"]): CatalogRoi {
+  if (f.value == null) return { ...NO_ROI, unavailableReason: "no_return_on_pipe" };
+  const source: CatalogRoi["source"] = f.basis === "measured" ? "workflow" : f.source === "pipe_best_workflow" ? "pipe_best_workflow" : "pipe_workflows";
+  return roiOfValue(f.value, f.basis === "measured" ? "measured" : "expected", source);
+}
+
+/**
+ * PURE (RESEARCH-WF-FIGURES-1022). Every workflow page takes its ranking row's `figures` and its return from them, so the
+ * Workflows list and the workflow page print ONE figure (before: the page held the ranking of its own build, up to 15 min
+ * older, and a measured 30x on a workflow with no outcome). A row without `figures` (a ranking persisted before them)
+ * leaves the page as built.
+ */
+export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(pipe: T, rows: ReadonlyArray<{ workflowDynastySlug: string; figures?: LegWorkflowFigures }> | null): T {
+  if (!rows) return pipe;
+  const bySlug = new Map(rows.filter((r) => r.figures).map((r) => [r.workflowDynastySlug, r.figures!]));
+  return {
+    ...pipe,
+    workflows: pipe.workflows.map((w) => {
+      const f = bySlug.get(w.key);
+      return f ? { ...w, ...roiFields(catalogRoiOfFigure(f.roi)), figures: f } : w;
+    }),
+  };
 }
