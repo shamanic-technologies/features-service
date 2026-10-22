@@ -190,6 +190,10 @@ vi.mock("../lib/plays-store.js", async () => {
       const t = tactics.find((x) => x.id === input.id)!;
       return { tactic: { ...t, clientLine: input.clientLine, updatedBy: input.updatedBy, updatedAt: "2026-10-19T08:00:00.000Z" }, changed: true };
     }),
+    updateTacticSubject: vi.fn(async (input: { id: string; appliesTo: "workflow" | "template" | "llm"; updatedBy: string }) => {
+      const t = tactics.find((x) => x.id === input.id)!;
+      return { tactic: { ...t, appliesTo: input.appliesTo, updatedBy: input.updatedBy, updatedAt: "2026-10-22T18:00:00.000Z" }, changed: input.appliesTo !== "workflow", previousAppliesTo: "workflow" };
+    }),
     insertStrategy: vi.fn(),
     insertPlay: vi.fn(async (input: { pipeId: string; strategyId: string; isDefault?: boolean }) => {
       const all = [...plays, ...playState.added];
@@ -550,6 +554,17 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     const listed = (await request(app).get("/internal/catalogue/tactics").set(KEY)).body.rows;
     expect(listed.find((t: any) => t.id === "unknown-email").clientLine).toBeNull();
     expect((await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ clientLine: " ", updatedBy: "u" })).body.reason).toBe("clientLine_required");
+  });
+
+  it("a tactic moves to another subject (RESEARCH-WF-FIGURES-1022): Jev judges it on its new subject", async () => {
+    const { kickTacticJudgments } = await import("../lib/tactic-judgments.js");
+    const kick = vi.mocked(kickTacticJudgments);
+    kick.mockClear();
+    const res = await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ appliesTo: "template", updatedBy: "user:u1" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: "catch-all", changed: true, previousAppliesTo: "workflow" });
+    expect(kick).toHaveBeenCalled();
+    expect((await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ appliesTo: "people", updatedBy: "u" })).body.reason).toBe("applies_to_invalid");
   });
 
   it("an unknown pipe is 404", async () => {

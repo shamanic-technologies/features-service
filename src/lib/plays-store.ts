@@ -189,6 +189,27 @@ export async function updateTacticDescription(input: { id: string; description: 
 }
 
 /**
+ * Move a tactic to another SUBJECT (RESEARCH-WF-FIGURES-1022, owner 2026-10-22: « une tactique de choix de LLM ou de choix
+ * de template pourrait filtrer les possibles »). The angle tactics were judged on the workflow's DAG template; since
+ * BEST-TPL-LLM-1022 the pipe picks the template at run time, so the angle is a TEMPLATE's. Every reader applies only its
+ * subject's tactics (`strategyOnSubject`): from now on the tactic narrows the templates a play may write with and no
+ * longer the workflows. The old subject's verdicts are kept (unread). `changed:false` when it already is on that subject.
+ */
+export async function updateTacticSubject(input: { id: string; appliesTo: TacticSubject; updatedBy: string }): Promise<{ tactic: Tactic; changed: boolean; previousAppliesTo: TacticSubject }> {
+  const current = (await loadPlayCatalogueFresh()).tactics.find((t) => t.id === input.id);
+  if (!current) throw new DeclarationError(404, "tactic_not_found", `no tactic ${input.id} (GET /internal/catalogue/tactics)`);
+  const previousAppliesTo: TacticSubject = current.appliesTo ?? "workflow";
+  if (previousAppliesTo === input.appliesTo) return { tactic: current, changed: false, previousAppliesTo };
+  const [row] = await db
+    .update(tactics)
+    .set({ appliesTo: input.appliesTo, updatedBy: input.updatedBy, updatedAt: new Date() })
+    .where(sql`${tactics.id} = ${input.id}`)
+    .returning();
+  invalidatePlayCatalogue();
+  return { tactic: tacticOf(row), changed: true, previousAppliesTo };
+}
+
+/**
  * Set the line a client reads about a tactic (WRITTEN-BY-1019). Client copy only: no verdict moves, nothing is re-judged.
  * `changed:false` when the line is the stored one.
  */
