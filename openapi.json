@@ -64517,6 +64517,15 @@
                     "type": "string",
                     "description": "<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."
                   },
+                  "appliesTo": {
+                    "type": "string",
+                    "enum": [
+                      "workflow",
+                      "template",
+                      "llm"
+                    ],
+                    "description": "RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM alias). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."
+                  },
                   "updatedBy": {
                     "type": "string",
                     "description": "Who makes the edit (the gateway sets it from the authenticated caller)."

@@ -109,6 +109,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
+import { updateTacticSubject } from "../lib/plays-store.js";
 import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
@@ -1952,6 +1953,21 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
 router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    // The subject (RESEARCH-WF-FIGURES-1022): workflow | template | llm. With a description, both are edited.
+    if (body.appliesTo !== undefined) {
+      const appliesTo = body.appliesTo;
+      if (typeof appliesTo !== "string" || !(TACTIC_SUBJECTS as readonly string[]).includes(appliesTo)) {
+        throw new DeclarationError(400, "applies_to_invalid", `appliesTo must be one of ${TACTIC_SUBJECTS.join(", ")}`);
+      }
+      const moved = await updateTacticSubject({ id: req.params.id, appliesTo: appliesTo as TacticSubject, updatedBy: actorOf(body, "updatedBy") });
+      if (moved.changed) {
+        console.log(`[features-service] agent catalogue: tactic ${moved.tactic.id} moved from ${moved.previousAppliesTo} to ${moved.tactic.appliesTo} by ${moved.tactic.updatedBy}; Jev judges it on its new subject`);
+        if (body.description === undefined) void kickTacticJudgments().then(() => kickTacticJudgments()).then(() => refreshCatalogueMeasurementsAfterPlayWrite());
+      }
+      if (body.description === undefined && body.clientLine === undefined) {
+        return void res.json({ ...tacticRowOf(await loadPlayCatalogue(), moved.tactic), changed: moved.changed, previousAppliesTo: moved.previousAppliesTo, previousDescription: moved.tactic.description, updatedBy: moved.tactic.updatedBy ?? null, updatedAt: moved.tactic.updatedAt ?? null });
+      }
+    }
     // The client line alone (WRITTEN-BY-1019): client copy, nothing re-judged. With a description, both are edited.
     if (body.clientLine !== undefined) {
       const line = await updateTacticClientLine({ id: req.params.id, clientLine: text(body, "clientLine", 80), updatedBy: actorOf(body, "updatedBy") });

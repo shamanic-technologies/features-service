@@ -8054,7 +8054,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A tactic id") }),
-    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM alias). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
   },
   responses: {
     200: {
