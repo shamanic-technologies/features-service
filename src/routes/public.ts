@@ -57,6 +57,7 @@ import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
 import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "../lib/default-leg-rates.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
+import type { PlayCatalogue } from "../lib/plays.js";
 import { getOnDemandPipeFleet } from "../lib/on-demand-pipe-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
@@ -5058,8 +5059,8 @@ export interface LegWorkflowRankingPayload {
 export function legRankingOnPricing(
   payload: LegWorkflowRankingPayload,
   pricing: "gross" | "net",
-  /** The tactics a dynasty's current version follows (live, never from the build); null = unreadable. */
-  tacticsOf?: ((dynasty: string) => Array<{ id: string; name: string }>) | null,
+  /** The tactics a dynasty's current version follows (live, never from the build), `not_judged_yet`; null = unreadable. */
+  tacticsOf?: ((dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet") | null,
 ): LegWorkflowRankingPayload {
   return {
     ...payload,
@@ -5068,22 +5069,33 @@ export function legRankingOnPricing(
       const { figuresNet, ...row } = r;
       const priced = pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
       if (tacticsOf === undefined) return priced;
-      return tacticsOf
-        ? { ...priced, tactics: tacticsOf(r.workflowDynastySlug), tacticsUnavailableReason: null }
-        : { ...priced, tactics: null, tacticsUnavailableReason: "tactics_unreadable" as const };
+      if (!tacticsOf) return { ...priced, tactics: null, tacticsUnavailableReason: "tactics_unreadable" as const };
+      const t = tacticsOf(r.workflowDynastySlug);
+      return t === "not_judged_yet" ? { ...priced, tactics: null, tacticsUnavailableReason: t } : { ...priced, tactics: t, tacticsUnavailableReason: null };
     }),
   };
 }
 
+/**
+ * PURE. The workflow tactics each dynasty's current version follows; `not_judged_yet` when that version lacks a verdict on
+ * any workflow tactic (unknown is never an empty list: the page would read "None").
+ */
+export function workflowTacticsFrom(c: Pick<PlayCatalogue, "tactics" | "tacticsByDynasty">): (dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet" {
+  const workflowTactics = [...c.tactics.values()].filter((t) => (t.appliesTo ?? "workflow") === "workflow");
+  return (dynasty) => {
+    const verdicts = c.tacticsByDynasty.get(dynasty);
+    if (!verdicts || workflowTactics.some((t) => !verdicts.has(t.id))) return "not_judged_yet";
+    return workflowTactics
+      .filter((t) => verdicts.get(t.id) === true)
+      .map((t) => ({ id: t.id, name: t.name }))
+      .sort((a, b) => (a.name < b.name ? -1 : 1));
+  };
+}
+
 /** The tactics each dynasty's CURRENT version follows (workflow tactics judged yes), read live off the play catalogue. */
-async function workflowTacticsOf(): Promise<((dynasty: string) => Array<{ id: string; name: string }>) | null> {
+async function workflowTacticsOf(): Promise<((dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet") | null> {
   try {
-    const c = await loadPlayCatalogue();
-    return (dynasty) =>
-      [...(c.tacticsByDynasty.get(dynasty) ?? new Map<string, boolean>())]
-        .filter(([id, yes]) => yes && (c.tactics.get(id)?.appliesTo ?? "workflow") === "workflow" && c.tactics.has(id))
-        .map(([id]) => ({ id, name: c.tactics.get(id)!.name }))
-        .sort((a, b) => (a.name < b.name ? -1 : 1));
+    return workflowTacticsFrom(await loadPlayCatalogue());
   } catch (error) {
     console.error("[features-service] leg workflow ranking: tactics unreadable, rows serve none:", error);
     return null;
