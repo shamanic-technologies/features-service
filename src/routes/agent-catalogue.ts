@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
+import { GLYPH_COLORS, MARK_FAMILIES, MARK_ICONS } from "../lib/catalogue-marks.js";
+import { marksFor } from "../lib/catalogue-marks-store.js";
 import {
   valueAddedTo,
   buildCatalogueModel,
@@ -1269,6 +1271,10 @@ async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
   });
 }
 
+/** A workflow's own mark; the family glyph only for a row with no dynasty slug (never happens on a listed row). */
+const markOrGlyph = (mark: { icon: string; color: string } | undefined, name: string) =>
+  mark ?? { icon: FAMILY_GLYPHS.workflow, color: glyphColorOf(name) };
+
 router.get("/internal/catalogue/workflows", apiKeyOnly, async (req, res) => {
   try {
     const limit = limitOf(req);
@@ -1280,13 +1286,14 @@ router.get("/internal/catalogue/workflows", apiKeyOnly, async (req, res) => {
     if (!pipe) return void res.status(404).json({ error: `no pipe ${pipeId}`, reason: "pipe_not_found" });
     const rows = pipe.operatedBy === "customer" ? [] : await workflowRows(model, pipe);
     if (rows === null) return void res.status(503).json({ error: `the workflow ranking of ${pipeId} is not computed yet`, reason: "workflow_ranking_not_computed_yet" });
-    const listed = rows
-      .filter((x) => matchesQuery(q, [x.name, x.r.workflowDynastySlug]))
+    const matched = rows.filter((x) => matchesQuery(q, [x.name, x.r.workflowDynastySlug]));
+    // Each workflow's OWN mark (MARKS-1022), the one the leg ranking and the Research pages serve for it.
+    const marks = await marksFor("workflow", matched.map((x) => x.r.workflowDynastySlug));
+    const listed = matched
       .map((x) => ({
         id: x.r.workflowDynastySlug,
         name: x.name,
-        icon: FAMILY_GLYPHS.workflow,
-        color: glyphColorOf(x.name),
+        ...markOrGlyph(marks.get(x.r.workflowDynastySlug), x.name),
         line: `${x.r.outcomes} outcomes from ${x.r.contacted} people, ${x.r.assignment}${x.r.moneyGoesHere ? ", holds the money" : ""}`,
         ...econWire(x.e, perStep(model, pipe.toStep)),
       }));
@@ -1307,12 +1314,12 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
     if (rows === null) return void res.status(503).json({ error: `the workflow ranking of ${pipeId} is not computed yet`, reason: "workflow_ranking_not_computed_yet" });
     const x = rows.find((w) => w.r.workflowDynastySlug === req.params.id);
     if (!x) return void res.status(404).json({ error: `no workflow ${req.params.id} on ${pipeId}`, reason: "workflow_not_found" });
+    const marks = await marksFor("workflow", [x.r.workflowDynastySlug]);
     res.json({
       object: "workflow",
       id: x.r.workflowDynastySlug,
       name: x.name,
-      icon: FAMILY_GLYPHS.workflow,
-      color: glyphColorOf(x.name),
+      ...markOrGlyph(marks.get(x.r.workflowDynastySlug), x.name),
       pipeId,
       rank: x.r.rank,
       assignment: x.r.assignment,
@@ -2320,6 +2327,11 @@ router.post("/internal/catalogue/plays/:id/retire", apiKeyOnly, async (req, res)
  * as `GET /internal/catalogue/steps` without the measurements (icon and name never depend on them),
  * so each row is byte-equal to the staff read's `id`/`name`/`icon` for that step.
  */
+/** Every icon and colour a workflow / template mark can take (MARKS-1022), so a reader can draw every one it may be served. */
+router.get("/public/catalogue/mark-icons", (_req, res) => {
+  res.json({ icons: MARK_ICONS, colors: GLYPH_COLORS, families: MARK_FAMILIES });
+});
+
 router.get("/public/catalogue/steps", async (_req, res) => {
   try {
     const [all, pub, declaredSteps] = await Promise.all([

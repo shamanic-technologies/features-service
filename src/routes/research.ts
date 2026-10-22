@@ -40,6 +40,7 @@ import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
+import { withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
@@ -823,11 +824,13 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
     // Workflows list prints, never the ranking its build held (up to 15 min older).
     const [replyRanking, visitRanking] = await Promise.all([readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0), readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0)]);
-    res.json({
-      ...build.catalog,
-      [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
-      [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
-    });
+    res.json(
+      await withResearchCatalogMarks({
+        ...build.catalog,
+        [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
+        [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
+      }),
+    );
   } catch (error) {
     console.error("[features-service] research catalogue read failed:", error);
     res.status(500).json({ error: "Internal server error" });

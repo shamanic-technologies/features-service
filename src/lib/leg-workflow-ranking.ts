@@ -77,6 +77,9 @@ export interface LegWorkflowRankingRow {
   tactics?: Array<{ id: string; name: string }> | null;
   /** `not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (`[]` = judged, follows none). */
   tacticsUnavailableReason?: "tactics_unreadable" | "not_judged_yet" | null;
+  /** The workflow dynasty's own icon (Phosphor name) + colour (MARKS-1022, `lib/catalogue-marks.ts`), set at serve time. */
+  icon?: string;
+  color?: string;
   /** The same on the NET pricing, held in the build; the route serves it as `figures` on `?pricing=net`, never both. */
   figuresNet?: LegWorkflowFigures;
 }
