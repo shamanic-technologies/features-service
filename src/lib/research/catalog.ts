@@ -11,6 +11,7 @@ import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
 import { modelRowAliases, type DynastyWriter, type ModelAliasReason, type ModelIdRow, type WriterReason } from "./writers.js";
 import type { VersionShare } from "./generations.js";
+import { NO_LLM_DYNASTIES, type LlmDynastyIndex, type LlmDynastyReason } from "../llm-dynasties.js";
 import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex, type TemplateDynastyReason, type TemplateDynastyStatusSource, type TemplateStatus } from "./template-dynasties.js";
 
 export interface CatalogRef {
@@ -176,10 +177,46 @@ export interface CatalogTemplate extends CatalogFigures {
   runs: Array<{ when: string; model: CatalogRef | null; workflow: { key: string; label: string } | null; version: string | null; templateVersion: string | null; tokens: string | null }>;
 }
 
-export interface CatalogModel extends CatalogFigures {
+/** A model page's LLM dynasty, as chat-service states it (LLM-DYNASTY-1022-FS). */
+export interface CatalogLlmDynasty {
+  slug: string;
+  name: string;
+  provider: string;
+  capabilityTier: string;
+  /** The version the dynasty slug runs now (what a run calling the slug gets). */
+  headModelId: string;
+  /** The slug answers chat-service `/complete` today. */
+  servedToday: boolean;
+  /** Names workflows wrote before dynasties; each runs the head. */
+  legacyAliases: string[];
+}
+
+/** One MODEL of a dynasty page: its share of the dynasty's figures read on the dynasty's basis (the models add up to it). */
+export interface CatalogModelVersion extends CatalogFigures {
+  /** The model key (`modelKey` of its name), the key the per-model bars used before dynasties. */
   key: string;
   label: string;
-  /** chat-service's concrete model ids this page names (two ids with one display name are one page). */
+  /** chat-service's concrete ids under this name. */
+  modelIds: string[];
+  /** The dynasty's head (what its slug runs now). */
+  head: boolean;
+  servedToday: boolean;
+}
+
+/** Why a model page is one model on its own (no dynasty). */
+export type CatalogModelStandaloneReason = "no_dynasty_in_chat_service" | LlmDynastyReason;
+
+export interface CatalogModel extends CatalogFigures {
+  /** The LLM dynasty's slug (LLM-DYNASTY-1022-FS: one page per dynasty, its versions pooled); a model chat-service places in no dynasty keeps its model key. */
+  key: string;
+  /** The dynasty's name; a model on its own reads its model name. */
+  label: string;
+  dynasty: CatalogLlmDynasty | null;
+  /** Null on a dynasty; why this page is one model on its own otherwise. */
+  standaloneReason: CatalogModelStandaloneReason | null;
+  /** Every model of the dynasty, newest first, each with its share of the page's figures (zero until it writes); on a model on its own, that model. */
+  models: CatalogModelVersion[];
+  /** chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). */
   modelIds: string[];
   /** Every alias chat-service serves this model under NOW (the word a workflow writes in `model`); several when it truly serves it under several. */
   aliases: string[];
@@ -295,6 +332,10 @@ export interface PipeCatalogInput {
   lastWriterOf?: ((dynasty: string) => DynastyWriter | null) | WriterReason;
   /** chat-service's served models (`/internal/model-ids`), for each model page's aliases; a reason when unreadable. */
   servedModels?: readonly ModelIdRow[] | ModelAliasReason;
+  /** chat-service's LLM dynasties (LLM-DYNASTY-1022-FS): `models` are keyed on them (generationBuckets). Absent = every model on its own. */
+  llmDynasties?: LlmDynastyIndex;
+  /** Per model, its share of its dynasty bar on the bar's basis (generationBuckets `llmModels`). */
+  modelVersions?: ReadonlyArray<ResearchBucket & { dynastyKey: string }>;
   /**
    * The leg workflow ranking's return per workflow dynasty (`roiMultiple`, null = unstated) and the dynasty the pipe puts
    * its money on. Absent = no ranking read: every return then reads `no_return_on_pipe`.
@@ -409,18 +450,23 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       return [r.key, { main, last }] as const;
     }),
   );
+  // A model page is its chat-service LLM DYNASTY (LLM-DYNASTY-1022-FS), keyed on the slug; a model it places in none keeps its model key.
+  const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
+  const llmKeyOfId = (id: string) => llmDyn.dynastyOfName(id)?.slug ?? modelKey(p.modelLabel(id));
+  const llmKeyOfModel = (m: { id: string; label: string }) => llmDyn.dynastyOfName(m.id)?.slug ?? modelKey(m.label);
+  const llmLabelOf = (key: string, fallback: string) => llmDyn.bySlug(key)?.name ?? fallback;
   const nowTemplates = new Set<string>();
   const nowModels = new Map<string, string>();
   for (const w of writers.values()) {
     if (!w.ok) continue;
     if (w.template) nowTemplates.add(w.template);
-    if (w.model) nowModels.set(modelKey(w.model.label), w.model.label);
+    if (w.model) nowModels.set(llmKeyOfModel(w.model), llmLabelOf(llmKeyOfModel(w.model), w.model.label));
   }
   // A template or model that wrote a row's figures has its page too.
   for (const { main, last } of fallbacks.values()) {
     if (!last || typeof last === "string" || !last.ok) continue;
     if (!main.template && last.template) nowTemplates.add(last.template);
-    if (!main.model && last.model) nowModels.set(modelKey(last.model.label), last.model.label);
+    if (!main.model && last.model) nowModels.set(llmKeyOfModel(last.model), llmLabelOf(llmKeyOfModel(last.model), last.model.label));
   }
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   // Every dynasty of the pipe has its page, empty until one of its versions writes.
@@ -437,7 +483,8 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     const d = dyn.dynastyOf(key);
     return Boolean(d && d.status !== "deprecated" && d.head);
   });
-  const mdRows = writerOrder(allModels, (key) => (typeof p.servedModels === "object" ? modelRowAliases(key, p.servedModels, modelKey).aliases.length > 0 : true));
+  const pageKeyOfServed = (m: ModelIdRow) => llmDyn.dynastyOfName(m.modelId)?.slug ?? modelKey(m.displayName);
+  const mdRows = writerOrder(allModels, (key) => (typeof p.servedModels === "object" ? modelRowAliases(key, p.servedModels, pageKeyOfServed).aliases.length > 0 : true));
   const writerRank = new Map([...tplRows, ...mdRows].map((r) => [r, (tplRows.includes(r) ? tplRows : mdRows).indexOf(r) + 1]));
   const wfKeys = new Set(wfRows.map((r) => r.key));
   const tplKeys = new Set(tplRows.map((r) => r.key));
@@ -446,9 +493,8 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const rankOf = (r: ResearchBucket, i: number) => (costOf(r) === null ? null : i + 1);
   const modelRef = (id: string | null): CatalogRef | null => {
     if (!id) return null;
-    const label = p.modelLabel(id);
-    const key = modelKey(label);
-    return { key, label, linked: mdKeys.has(key) };
+    const key = llmKeyOfId(id);
+    return { key, label: llmLabelOf(key, p.modelLabel(id)), linked: mdKeys.has(key) };
   };
   const tplRef = (id: string | null): CatalogRef | null => {
     if (!id) return null;
@@ -458,7 +504,11 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     return v === key ? ref : { ...ref, version: { key: v, label: templateLabel(v) } };
   };
   const versionBars = new Map((p.templateVersions ?? []).map((v) => [v.key, v]));
-  const resolvedModelRef = (m: { label: string } | null): CatalogRef | null => (m ? { key: modelKey(m.label), label: m.label, linked: mdKeys.has(modelKey(m.label)) } : null);
+  const resolvedModelRef = (m: { id: string; label: string } | null): CatalogRef | null => {
+    if (!m) return null;
+    const key = llmKeyOfModel(m);
+    return { key, label: llmLabelOf(key, m.label), linked: mdKeys.has(key) };
+  };
   const wfRef = (slug: string | null) => {
     if (!slug) return null;
     const d = p.dynastyOf(slug);
@@ -597,17 +647,53 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       })),
     };
   });
-  const models: CatalogModel[] = mdRows.map((r, i) => ({
+  const versionBarsOf = new Map<string, Array<ResearchBucket & { dynastyKey: string }>>();
+  for (const v of p.modelVersions ?? []) versionBarsOf.set(v.dynastyKey, [...(versionBarsOf.get(v.dynastyKey) ?? []), v]);
+  const servedList = typeof p.servedModels === "object" ? p.servedModels : [];
+  const modelVersionsOf = (key: string, label: string): CatalogModelVersion[] => {
+    const d = llmDyn.bySlug(key);
+    const bars = versionBarsOf.get(key) ?? [];
+    const idsOf = (k: string) => servedList.filter((m) => modelKey(m.displayName) === k || modelKey(m.modelId) === k).map((m) => m.modelId);
+    if (!d) {
+      const bar = bars[0] ?? emptyBucket(key, label);
+      return [{ key, label, modelIds: idsOf(key), head: true, servedToday: idsOf(key).length > 0, ...figures(p.terms, bar, null) }];
+    }
+    // Every version newest first (chat-service's order), its bar if it wrote; a bar naming no listed version is appended.
+    const used = new Set<string>();
+    const out: CatalogModelVersion[] = [];
+    for (const m of d.models) {
+      const k = modelKey(m.displayName);
+      const existing = out.find((x) => x.key === k);
+      if (existing) {
+        if (!existing.modelIds.includes(m.modelId)) existing.modelIds.push(m.modelId);
+        existing.head ||= m.modelId === d.headModelId;
+        existing.servedToday ||= m.servedToday;
+        continue;
+      }
+      const bar = bars.find((b) => b.key === k || b.key === modelKey(m.modelId));
+      if (bar) used.add(bar.key);
+      out.push({ key: k, label: m.displayName, modelIds: [m.modelId], head: m.modelId === d.headModelId, servedToday: m.servedToday, ...figures(p.terms, bar ?? emptyBucket(k, m.displayName), null) });
+    }
+    for (const b of bars) if (!used.has(b.key)) out.push({ key: b.key, label: b.label, modelIds: idsOf(b.key), head: false, servedToday: false, ...figures(p.terms, b, null) });
+    return out;
+  };
+  const models: CatalogModel[] = mdRows.map((r) => {
+    const d = llmDyn.bySlug(r.key);
+    return {
     key: r.key,
     label: r.label,
-    ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", modelKey),
+    dynasty: d ? { slug: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModelId: d.headModelId, servedToday: d.servedToday, legacyAliases: [...d.legacyAliases] } : null,
+    standaloneReason: d ? null : (llmDyn.unavailableReason ?? "no_dynasty_in_chat_service"),
+    models: modelVersionsOf(r.key, r.label),
+    ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", pageKeyOfServed),
     ...figures(p.terms, r, writerRank.get(r) ?? null),
     workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key || w.wroteWith?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
-      .filter((x) => modelKey(p.modelLabel(x.model)) === r.key)
+      .filter((x) => llmKeyOfId(x.model) === r.key)
       .slice(0, RUNS_SHOWN)
       .map((x) => ({ when: whenText(x.createdAt), workflow: wfRef(x.workflowSlug), template: tplRef(x.promptType), version: x.workflowSlug ? versionText(x.workflowSlug) : null, tokens: null })),
-  }));
+    };
+  });
   return { workflows, templates, models };
 }
 

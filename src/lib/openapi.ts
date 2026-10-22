@@ -5725,7 +5725,7 @@ registry.registerPath({
   path: "/public/stats/leg-writer-ranking",
   summary: "The best template dynasty and the best LLM of one pipe, on $/outcome (public, no auth)",
   description:
-    "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
+    "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). LLM-DYNASTY-1022-FS: an LLM row is a chat-service LLM DYNASTY (`key` = `llmDynastySlug`, `gemini-flash`), every version's spend, people and outcomes pooled and its maturity read on the pooled figures; `models[]` = each version's share (they add up to the row). Which dynasty an alias / model id / slug belongs to is chat-service's (`/internal/model-dynasties`); a model it places in none keeps its own row (`llmDynastySlug` null); dynasties unreadable = every model its own row, `llms.dynastiesUnavailableReason`. An LLM tactic judges the dynasty on its head model. Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
   tags: ["Public"],
   request: {
     query: z.object({
@@ -5754,7 +5754,19 @@ registry.registerPath({
               rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable() })),
             }),
             llms: writerRankingSchema.extend({
-              rows: z.array(writerRankingRowSchema.extend({ aliases: z.array(z.object({ alias: z.string(), provider: z.string(), status: z.enum(["active", "deprecated"]) })), modelIds: z.array(z.string()), provider: z.string().nullable() })),
+              rows: z.array(
+                writerRankingRowSchema.extend({
+                  llmDynastySlug: z.string().nullable().describe("chat-service's LLM dynasty this row is (= `key`); null = a model chat-service places in no dynasty, its own row."),
+                  headModelId: z.string().nullable().describe("The dynasty's head: what a run calling the dynasty slug gets."),
+                  aliases: z.array(z.object({ alias: z.string(), provider: z.string(), status: z.enum(["active", "deprecated"]) })).describe("content-generation writer aliases running this dynasty, active first."),
+                  modelIds: z.array(z.string()).describe("Every concrete model id of the dynasty."),
+                  provider: z.string().nullable(),
+                  models: z
+                    .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), basis: z.enum(["mature", "flash"]), spentUsd: z.number(), contacted: z.number(), outcomes: z.number() }))
+                    .describe("Per model, newest first: its share of the row, read on the row's basis (they add up to it). Zero for a version that never wrote. Empty on an internal pipe (its ledger names the alias, not the version)."),
+                }),
+              ),
+              dynastiesUnavailableReason: z.string().nullable().optional().describe("`llm_dynasties_unreadable` when chat-service's dynasties could not be read this build (every model its own row)."),
             }),
           }),
         },
@@ -5798,7 +5810,17 @@ registry.registerPath({
             computedAt: z.string().nullable(),
             template: z.object({ templateDynastySlug: z.string().nullable().describe("content-generation's dynasty: write with its head."), head: z.string().nullable(), name: z.string(), ...writerPickFigures }).nullable(),
             templateUnavailableReason: z.string().nullable(),
-            llm: z.object({ model: z.string().describe("The content-generation writer alias (`/generate` body.model)."), provider: z.string().nullable(), modelKey: z.string(), label: z.string(), ...writerPickFigures }).nullable(),
+            llm: z
+              .object({
+                model: z.string().describe("What the run sends as `/generate` body.model: the picked dynasty's SLUG when content-generation lists it active (`gemini-flash`), else an active legacy alias of the same dynasty; chat-service runs the dynasty's head for either."),
+                llmDynastySlug: z.string().nullable().describe("LLM-DYNASTY-1022-FS: the LLM dynasty rank 1 is (`gemini-flash`); calling chat-service `/complete` with it runs the head. Null = a model chat-service places in no dynasty."),
+                headModelId: z.string().nullable(),
+                provider: z.string().nullable(),
+                modelKey: z.string().describe("The ranking row's key (the dynasty slug)."),
+                label: z.string(),
+                ...writerPickFigures,
+              })
+              .nullable(),
             llmUnavailableReason: z.string().nullable(),
           }),
         },
@@ -7889,7 +7911,7 @@ const catalogueTacticRow = z.object({
   name: z.string().describe("Unique (case-insensitive)."),
   description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
   clientLine: z.string().nullable().describe("The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."),
-  appliesTo: z.enum(["workflow", "template", "llm"]).describe("What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."),
+  appliesTo: z.enum(["workflow", "template", "llm"]).describe("What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."),
   writersJudged: z.number().int().nullable().describe("A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."),
   writersFollowing: z.number().int().nullable().describe("Of them, those judged to follow it (null on a workflow tactic)."),
   workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
@@ -8061,7 +8083,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A tactic id") }),
-    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM alias). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
   },
   responses: {
     200: {
@@ -8637,10 +8659,18 @@ const researchCatalogPipeSchema = z.object({
     }))
     .describe("One page per template DYNASTY of the pipe (TPL-DYNASTY-1021-FS2), its figures pooled over every version (every dynasty of the pipe has a page, zero figures until a version writes); a version no dynasty lists keeps its own page. The template study bars are the same buckets."),
   models: z.array(z.object({
-    key: z.string(),
-    label: z.string(),
-    modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (`glm-5.3`); two ids with one display name are one page. Empty when chat-service lists none."),
-    aliases: z.array(z.string()).describe("Every alias chat-service serves this model under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
+    key: z.string().describe("LLM-DYNASTY-1022-FS: the chat-service LLM dynasty's slug (`gemini-flash`), one page per dynasty, every version pooled; a model chat-service places in no dynasty keeps its model key."),
+    label: z.string().describe("The dynasty's name (`Gemini Flash`); a model on its own reads its model name."),
+    dynasty: z
+      .object({ slug: z.string(), name: z.string(), provider: z.string(), capabilityTier: z.string(), headModelId: z.string().describe("What the slug runs now."), servedToday: z.boolean(), legacyAliases: z.array(z.string()) })
+      .nullable()
+      .describe("The LLM dynasty this page is (chat-service `/internal/model-dynasties`); null on a model it places in none."),
+    standaloneReason: z.enum(["no_dynasty_in_chat_service", "llm_dynasties_unreadable"]).nullable().describe("Null on a dynasty. Why this page is one model on its own."),
+    models: z
+      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), ...researchCatalogFigures }))
+      .describe("Every version of the dynasty, newest first (chat-service's order), each with its share of the page's figures read on the DYNASTY's basis: their spend, people and outcomes add up to the page's. `rank` is null. Zero for a version that never wrote. On a model on its own: that model."),
+    modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). Empty when chat-service lists none."),
+    aliases: z.array(z.string()).describe("Every alias chat-service serves this page's models under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
     formerAliases: z.array(z.string()).describe("Aliases that once named this model and now name another (a status set on them acts on that other model)."),
     aliasesUnavailableReason: z.enum(["model_ids_unreadable", "model_not_in_chat_service", "no_alias_serves_it"]).nullable().describe("Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."),
     ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),

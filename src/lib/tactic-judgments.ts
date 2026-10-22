@@ -23,9 +23,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
 import { insertVerdict, insertWriterVerdict, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, recordJudgingSweeps, refreshVersionActive } from "./plays-store.js";
-import { readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "./writer-catalogue-client.js";
-import { readModelIds } from "./model-ids-client.js";
-import { resolveModelAlias } from "./research/writers.js";
+import { readTemplateDynasties, readTemplateTexts } from "./writer-catalogue-client.js";
+import { readLlmDynasties } from "./llm-dynasties.js";
 import { subjectOfTactic, type Tactic, type TacticJudgingSweep } from "./plays.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 
@@ -259,25 +258,25 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   return result;
 }
 
-/** One template dynasty or LLM alias Jev judges a writer tactic on (BEST-TPL-LLM-1022). */
+/** One template dynasty or LLM dynasty Jev judges a writer tactic on (BEST-TPL-LLM-1022, LLM-DYNASTY-1022-FS). */
 export interface WriterSubject {
   kind: "template" | "llm";
   key: string;
-  /** What the verdict was judged on: the dynasty's head template, the alias's concrete model. A move re-judges it. */
+  /** What the verdict was judged on: the template dynasty's head template, the LLM dynasty's head model. A move re-judges it. */
   version: string;
   state: Record<string, unknown>;
 }
 
 /** The yes/no question on a template dynasty or an LLM, from the tactic's own description. */
 export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, kind: "template" | "llm") {
-  const what = kind === "template" ? "email template (the prompt our writer model follows)" : "language model (the LLM that writes our messages)";
+  const what = kind === "template" ? "email template (the prompt our writer model follows)" : "language model line (the LLM dynasty that writes our messages, run on its newest version)";
   return {
     type: "noul" as const,
     instructions:
       `Does this ${what} follow the tactic "${t.name}"? The tactic: ${t.description} ` +
       (kind === "template"
         ? "Judge on what the template's text asks the writer to do, and on its type (headTemplate) when the tactic names template types. Ignore its display name."
-        : "Judge only on which model it is, who makes it and its tier."),
+        : "Judge only on which model line it is (its head model and its versions), who makes it and its tier."),
     criteria: {
       true: `The ${kind === "template" ? "template" : "model"} does exactly what the tactic describes: ${t.description}`,
       false: `The ${kind === "template" ? "template" : "model"} does not do what the tactic describes, or does the opposite.`,
@@ -287,7 +286,7 @@ export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, ki
 
 /**
  * Every template dynasty of every pipe holding a workflow (content-generation's dynasties, judged on their HEAD's text)
- * and every writer model alias content-generation accepts (judged on its concrete model). A pipe whose dynasties cannot
+ * and every chat-service LLM dynasty (judged on its HEAD model). A pipe whose dynasties cannot
  * be read is skipped this sweep (logged, its tactics state the failure).
  */
 export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[]; failures: string[] }> {
@@ -314,20 +313,20 @@ export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[];
     if (!d.head || !text) continue; // judged once its head's text is readable
     subjects.push({ kind: "template", key: d.slug, version: d.head, state: { templateDynasty: d.slug, name: d.name, description: d.description, headTemplate: d.head, prompt: text } });
   }
+  // An LLM tactic judges a chat-service LLM DYNASTY on its HEAD model (LLM-DYNASTY-1022-FS; the template rule): key = the
+  // dynasty slug, version = the head's id, so a new head re-judges it.
   try {
-    const [aliases, models] = await Promise.all([readWriterModelAliases(), readModelIds()]);
-    for (const a of aliases) {
-      const m = resolveModelAlias(a.alias, models);
-      const row = m ? models.find((x) => x.modelId === m.id) : undefined;
+    for (const d of await readLlmDynasties()) {
+      const head = d.models.find((m) => m.modelId === d.headModelId);
       subjects.push({
         kind: "llm",
-        key: a.alias,
-        version: m?.id ?? a.alias,
-        state: { alias: a.alias, model: m?.label ?? a.alias, modelId: m?.id ?? null, provider: row?.provider || a.provider, capabilityTier: row?.capabilityTier ?? null },
+        key: d.slug,
+        version: d.headModelId,
+        state: { llmDynasty: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModel: head?.displayName ?? d.headModelId, headModelId: d.headModelId, versions: d.models.map((m) => m.displayName) },
       });
     }
   } catch (error) {
-    failures.push(`the writer models could not be read: ${(error as Error).message}`);
+    failures.push(`the LLM dynasties could not be read: ${(error as Error).message}`);
   }
   return { subjects, failures };
 }
