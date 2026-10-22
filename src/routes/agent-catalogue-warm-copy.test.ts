@@ -49,6 +49,7 @@ const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: []
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listLegAssignments: async () => [],
+  listRunnableLegAssignments: async () => [],
 }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
