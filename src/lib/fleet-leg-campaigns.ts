@@ -128,3 +128,43 @@ export async function fetchFleetCampaignRows(): Promise<unknown[]> {
   if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
   return data.campaigns;
 }
+
+// ── One campaign's sales funnel, by its id alone (BEST-TPL-LLM-1022: a run knows its campaign, not its org) ─────────
+
+const LIST_SHARE_MS = 60_000;
+let listShared: { at: number; value: Promise<unknown[]> } | null = null;
+
+/** Every campaign row of every org, shared 60 s (a run-time reader calls it once per send). FAIL-LOUD. */
+function readCampaignList(): Promise<unknown[]> {
+  if (listShared && Date.now() - listShared.at < LIST_SHARE_MS) return listShared.value;
+  const value = (async () => {
+    const url = process.env.CAMPAIGN_SERVICE_URL;
+    const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+    if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+    const response = await fetchWithRetry(`${url}/campaigns/list`, { headers: { "x-api-key": apiKey } });
+    if (!response.ok) throw new Error(`campaign-service /campaigns/list failed (${response.status}): ${await response.text()}`);
+    const data = (await response.json()) as { campaigns?: unknown };
+    if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
+    return data.campaigns;
+  })();
+  listShared = { at: Date.now(), value };
+  value.catch(() => {
+    if (listShared?.value === value) listShared = null;
+  });
+  return value;
+}
+
+/**
+ * The sales funnel a campaign UNIT states (its own `salesFunnelId`, the leg ladder's rule), null when it states none.
+ * `found:false` = campaign-service lists no such campaign.
+ */
+export async function fetchCampaignSalesFunnelId(campaignId: string): Promise<{ found: boolean; salesFunnelId: string | null }> {
+  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as { salesFunnelId?: unknown } | undefined;
+  if (!row) return { found: false, salesFunnelId: null };
+  return { found: true, salesFunnelId: typeof row.salesFunnelId === "string" && row.salesFunnelId ? row.salesFunnelId : null };
+}
+
+/** Test seam. */
+export function __resetCampaignListShareForTest(): void {
+  listShared = null;
+}

@@ -43,8 +43,11 @@ const LAYOUT: Record<string, string> = { one_block: "One block", single_line_bre
 const OPENING: Record<string, string> = { greeting: "Greeting + first name", first_name_alone: "First name alone", no_greeting: "No greeting" };
 const DASH: Record<string, string> = { em: "Em dash", en: "En dash", both: "Both dashes", none: "No dash" };
 
+/** What the bars need (the studies' terms, texts and naming are not read to build them). */
+export type GenerationBucketsInput = Pick<GenerationsInput, "legKey" | "cells" | "persons" | "split" | "models" | "templateDynasties">;
+
 function bucketsBy(
-  input: GenerationsInput,
+  input: GenerationBucketsInput,
   groupOf: (b: FleetPersonBucket) => string | null,
   label: (g: string) => string,
   basisOf?: (g: string) => "mature" | "flash" | undefined,
@@ -215,7 +218,7 @@ function shapeStudy(input: GenerationsInput, dim: "layout" | "opening" | "dash")
  * per template DYNASTY, its versions pooled; a version no dynasty lists is its own bar) and, per version, its share of
  * its bar read on the bar's own basis (so a dynasty's versions add up to it exactly).
  */
-export function generationBuckets(input: GenerationsInput) {
+export function generationBuckets(input: GenerationBucketsInput) {
   const modelLabel = (id: string) => input.models.get(id)?.label ?? id;
   const dyn = input.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);

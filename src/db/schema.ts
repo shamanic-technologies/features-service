@@ -580,6 +580,11 @@ export const tactics = pgTable("tactics", {
    * (service paths, field names), never client copy. Null = the tactic is not shown to clients.
    */
   clientLine: text("client_line"),
+  /**
+   * What the tactic tags (migration 0044, BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG),
+   * `template` (a template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model).
+   */
+  appliesTo: text("applies_to").notNull().default("workflow"),
 });
 
 export const strategies = pgTable("strategies", {
@@ -652,6 +657,27 @@ export const workflowTacticVerdicts = pgTable(
     judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.workflowSlug, t.tacticId] })],
+);
+
+/**
+ * One Jev verdict per (template dynasty | LLM alias, tactic) (migration 0044, BEST-TPL-LLM-1022): the writer twin of
+ * `workflow_tactic_verdicts`. Judged once per tactic DESCRIPTION and subject VERSION (a template dynasty's head, an
+ * alias's concrete model): either moving re-judges the row in place.
+ */
+export const writerTacticVerdicts = pgTable(
+  "writer_tactic_verdicts",
+  {
+    subjectKind: text("subject_kind").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    tacticId: text("tactic_id").notNull(),
+    subjectVersion: text("subject_version").notNull(),
+    verdict: boolean("verdict").notNull(),
+    probability: doublePrecision("probability").notNull(),
+    model: text("model").notNull(),
+    judgedDescription: text("judged_description").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.subjectKind, t.subjectKey, t.tacticId] })],
 );
 
 /**

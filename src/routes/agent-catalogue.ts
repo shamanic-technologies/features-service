@@ -109,9 +109,9 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
-import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -254,7 +254,7 @@ async function computeMeasurements(): Promise<MeasurementStore> {
       }
       const strategiesInOrder = [defaultStrategyOf(plays, p.id), ...catalogued.filter((x) => !x.isDefault).map((x) => plays.strategies.get(x.strategyId) ?? null)];
       const prices = await withTimeout(
-        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => new Set(excludedDynasties(st, dynasties, plays.tacticsByDynasty, nameOf).keys()))),
+        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => new Set(excludedDynasties(st && workflowStrategyOf(plays, st), dynasties, plays.tacticsByDynasty, nameOf).keys()))),
         MEASUREMENT_TIMEOUT_MS,
         `pipe ${p.id}`,
       );
@@ -514,10 +514,10 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
     const inputOf = (strategyId: string): PlayInput | null => {
       const st = c.strategies.get(strategyId);
       if (!st) return null;
-      const excluded = excludedDynasties(st, onPipe.map((a) => a.workflowDynastySlug), c.tacticsByDynasty, nameOf);
+      const excluded = excludedDynasties(workflowStrategyOf(c, st), onPipe.map((a) => a.workflowDynastySlug), c.tacticsByDynasty, nameOf);
       const active = onPipe.filter((a) => a.state === "active").map((a) => a.workflowDynastySlug);
       return {
-        block: playBlockOf(st, active, c.tacticsByDynasty, judgingOf, nameOf),
+        block: playBlockOf(workflowStrategyOf(c, st), active, c.tacticsByDynasty, judgingOf, nameOf),
         strategyId,
         strategyName: st.name,
         strategyDescription: st.description,
@@ -1854,12 +1854,19 @@ router.post("/internal/catalogue/sales-funnels", apiKeyOnly, async (req, res) =>
  * workflow ranking): another word for another thing. Names and descriptions are unique (409 on a taken one).
  */
 const tacticRowOf = (c: PlayCatalogue, t: Tactic) => {
+  const appliesTo = subjectOfTactic(t);
   const judged = [...c.tacticsByDynasty.values()].filter((m) => m.has(t.id));
+  const writers = [...c.tacticsByWriter.entries()].filter(([k, m]) => k.startsWith(`${appliesTo}|`) && m.has(t.id)).map(([, m]) => m);
   return {
     object: "tactic" as const,
     id: t.id,
     name: t.name,
     description: t.description,
+    // What it tags (BEST-TPL-LLM-1022): a workflow version, a template dynasty or an LLM (a writer model alias).
+    appliesTo,
+    // Template dynasties / LLM aliases judged on it (null on a workflow tactic).
+    writersJudged: appliesTo === "workflow" ? null : writers.length,
+    writersFollowing: appliesTo === "workflow" ? null : writers.filter((m) => m.get(t.id) === true).length,
     // The plain line a client reads on a message this tactic's workflows wrote (null = not shown to clients).
     clientLine: t.clientLine ?? null,
     // On each workflow's CURRENT version (the one a run executes).
@@ -1903,6 +1910,7 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
     const t = c.tactics.get(req.params.id);
     if (!t) return void res.status(404).json({ error: `no tactic ${req.params.id}`, reason: "tactic_not_found" });
     const verdicts = (await listVerdicts(t.id)).sort((a, b) => (a.workflowSlug < b.workflowSlug ? -1 : 1));
+    const writerVerdicts = subjectOfTactic(t) === "workflow" ? [] : (await listWriterVerdicts(t.id)).sort((a, b) => (a.subjectKey < b.subjectKey ? -1 : 1));
     res.json({
       ...tacticRowOf(c, t),
       createdBy: t.createdBy,
@@ -1912,6 +1920,8 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
       // Every workflow VERSION judged, with Jev's probability and the model release that answered. A verdict judged on an
       // older description (the tactic was edited) still serves until the sweep re-judges it: `onCurrentDescription:false`.
       verdicts: verdicts.map((v) => ({ workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug, version: v.version, versionActive: v.versionActive, follows: v.verdict, probability: v.probability, model: v.model, judgedAt: v.judgedAt, onCurrentDescription: v.judgedDescription === t.description })),
+      // A template / LLM tactic: every template dynasty (judged on its head) or writer model alias judged (BEST-TPL-LLM-1022).
+      writerVerdicts: writerVerdicts.map((v) => ({ subject: v.subjectKind, key: v.subjectKey, judgedOn: v.subjectVersion, follows: v.verdict, probability: v.probability, model: v.model, judgedAt: v.judgedAt, onCurrentDescription: v.judgedDescription === t.description })),
     });
   } catch (err) {
     fail(res, err, "get tactic");
@@ -1921,8 +1931,12 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
 router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
-    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80) });
-    console.log(`[features-service] agent catalogue: tactic ${t.id} declared by ${t.createdBy}; Jev judges every workflow version on it`);
+    const appliesTo = body.appliesTo === undefined ? "workflow" : body.appliesTo;
+    if (typeof appliesTo !== "string" || !(TACTIC_SUBJECTS as readonly string[]).includes(appliesTo)) {
+      throw new DeclarationError(400, "applies_to_invalid", `appliesTo must be one of ${TACTIC_SUBJECTS.join(", ")}`);
+    }
+    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80), appliesTo: appliesTo as TacticSubject });
+    console.log(`[features-service] agent catalogue: ${t.appliesTo} tactic ${t.id} declared by ${t.createdBy}; Jev judges every ${t.appliesTo} on it`);
     void kickTacticJudgments();
     res.status(201).json(tacticRowOf(await loadPlayCatalogue(), t));
   } catch (err) {
@@ -2152,7 +2166,7 @@ async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promis
 function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], pipeId: string, st: Strategy, consequence: string): void {
   const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
   const active = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg) && a.state === "active").map((a) => a.workflowDynastySlug);
-  const excluded = excludedDynasties(st, active, c.tacticsByDynasty, tacticNameOf(c));
+  const excluded = excludedDynasties(workflowStrategyOf(c, st), active, c.tacticsByDynasty, tacticNameOf(c));
   if (active.every((d) => excluded.has(d))) {
     throw new DeclarationError(
       409,

@@ -35,6 +35,57 @@ export interface Tactic {
   updatedAt?: string | null;
   /** The plain line a client reads (never the judged description); null = not shown to clients. */
   clientLine?: string | null;
+  /** What the tactic tags (BEST-TPL-LLM-1022); absent = `workflow`. */
+  appliesTo?: TacticSubject;
+}
+
+/**
+ * What a tactic tags (BEST-TPL-LLM-1022, owner 2026-10-22): a workflow VERSION (its DAG), a template DYNASTY (its head's
+ * text) or an LLM (a writer model alias). The three are chosen independently on a pipe; a strategy names tactics of any
+ * subject, and each choice reads only the tactics of its own subject.
+ */
+export const TACTIC_SUBJECTS = ["workflow", "template", "llm"] as const;
+export type TacticSubject = (typeof TACTIC_SUBJECTS)[number];
+
+export const subjectOfTactic = (t: Pick<Tactic, "appliesTo"> | undefined): TacticSubject => t?.appliesTo ?? "workflow";
+
+/**
+ * PURE: the strategy as ONE choice reads it: only its tactics tagging `subject` (a template tactic never gates a
+ * workflow, and back). A strategy naming no tactic of the subject allows every candidate of it. A tactic the catalogue
+ * does not know is kept (a workflow read stays as strict as before).
+ */
+export function strategyOnSubject(strategy: Strategy, subject: TacticSubject, tactics: ReadonlyMap<string, Tactic>): Strategy {
+  const keep = (id: string) => {
+    const t = tactics.get(id);
+    return t ? subjectOfTactic(t) === subject : subject === "workflow";
+  };
+  return { ...strategy, requiresTacticIds: strategy.requiresTacticIds.filter(keep), excludesTacticIds: strategy.excludesTacticIds.filter(keep) };
+}
+
+/** One stored Jev verdict on one template dynasty or LLM alias (`writer_tactic_verdicts`). */
+export interface WriterTacticVerdictRow {
+  subjectKind: "template" | "llm";
+  subjectKey: string;
+  tacticId: string;
+  subjectVersion: string;
+  verdict: boolean;
+  probability: number;
+  model: string;
+  judgedDescription: string;
+  judgedAt: string;
+}
+
+/** PURE: `<kind>|<key>` -> tactic id -> verdict. */
+export const writerSubjectKey = (kind: "template" | "llm", key: string): string => `${kind}|${key}`;
+export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
+  const out = new Map<string, Map<string, boolean>>();
+  for (const r of rows) {
+    const k = writerSubjectKey(r.subjectKind, r.subjectKey);
+    const m = out.get(k) ?? new Map<string, boolean>();
+    m.set(r.tacticId, r.verdict);
+    out.set(k, m);
+  }
+  return out;
 }
 
 export interface Strategy {
@@ -306,9 +357,11 @@ export interface PlayCatalogue {
   tacticsByDynasty: Map<string, Map<string, boolean>>;
   /** tactic id -> its last full Jev sweep (absent = never swept). */
   sweepsByTactic: Map<string, TacticJudgingSweep>;
+  /** `<template|llm>|<key>` -> tactic id -> verdict (BEST-TPL-LLM-1022). */
+  tacticsByWriter: Map<string, Map<string, boolean>>;
 }
 
-export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategies: readonly Strategy[]; plays: readonly PlayRecord[]; verdicts: readonly TacticVerdictRow[]; sweeps?: readonly TacticJudgingSweep[] }): PlayCatalogue {
+export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategies: readonly Strategy[]; plays: readonly PlayRecord[]; verdicts: readonly TacticVerdictRow[]; sweeps?: readonly TacticJudgingSweep[]; writerVerdicts?: readonly WriterTacticVerdictRow[] }): PlayCatalogue {
   const playsByPipe = new Map<string, PlayRecord[]>();
   const retiredByPipe = new Map<string, Set<string>>();
   for (const p of input.plays) {
@@ -323,8 +376,12 @@ export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategi
     retiredByPipe,
     tacticsByDynasty: currentTacticsByDynasty(input.verdicts),
     sweepsByTactic: new Map((input.sweeps ?? []).map((w) => [w.tacticId, w])),
+    tacticsByWriter: writerTacticsBySubject(input.writerVerdicts ?? []),
   };
 }
+
+/** PURE: the strategy as the WORKFLOW choice reads it (its workflow tactics only). */
+export const workflowStrategyOf = (c: Pick<PlayCatalogue, "tactics">, s: Strategy): Strategy => strategyOnSubject(s, "workflow", c.tactics);
 
 export const tacticNameOf = (c: PlayCatalogue) => (id: string): string => c.tactics.get(id)?.name ?? id;
 
