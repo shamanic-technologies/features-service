@@ -1325,8 +1325,11 @@ export interface PlayAnswer {
   strategyId: string;
   strategyName: string;
   default: boolean;
-  /** Where the play was read: the campaign's sales funnel names it, or the pipe's default (no funnel / bare leg). */
-  source: "sales_funnel" | "pipe_default";
+  /**
+   * Where the play was read: the campaign's sales funnel names it, the pipe's default (no funnel / bare leg), or the
+   * pipe's default because the play the funnel names was RETIRED from the pipe (`retired_play`, PLAY-RETIRE-1022).
+   */
+  source: "sales_funnel" | "pipe_default" | "retired_play";
   /** Workflows of the rows still selectable under the play. 0 = nothing may run: hold, never fall back. */
   allowedWorkflowCount: number;
 }
@@ -1353,7 +1356,7 @@ export async function playOfLegRead(
   const sameLeg = (a: string, b: string) => pipeLegKeyOf(featureSlug, a) === pipeLegKeyOf(featureSlug, b);
   const named = salesFunnelId ? strategyOfFunnelLeg(salesFunnelId, featureSlug, legKey, sameLeg) : null;
   const resolved = resolvePlay(plays, pipeId, named);
-  const source = named ? ("sales_funnel" as const) : ("pipe_default" as const);
+  const source = resolved.retiredFrom ? ("retired_play" as const) : named ? ("sales_funnel" as const) : ("pipe_default" as const);
   // The DEFAULT play of a pipe that states no default strategy is every assigned workflow, as before plays existed
   // (a non-default play added to such a pipe narrows only the funnels naming it; 2026-10-14: a catch-all play on
   // the website-visit pipe ruled out every workflow for its 7 live default campaigns).

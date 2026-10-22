@@ -604,6 +604,10 @@ export const plays = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     createdBy: text("created_by").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** PLAY-RETIRE-1022: set = taken off the pipe by staff; a funnel naming it runs the pipe's default play. */
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    retiredBy: text("retired_by"),
+    retiredNote: text("retired_note"),
   },
   (t) => [primaryKey({ columns: [t.pipeId, t.strategyId] })],
 );

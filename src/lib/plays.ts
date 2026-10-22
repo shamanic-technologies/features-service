@@ -54,6 +54,8 @@ export interface PlayRecord {
   pipeId: string;
   strategyId: string;
   isDefault: boolean;
+  /** PLAY-RETIRE-1022: taken off the pipe by staff (absent = live). A retired play is in no `playsByPipe` list. */
+  retired?: boolean;
 }
 
 /** One stored Jev verdict on one workflow VERSION. */
@@ -296,8 +298,10 @@ export function excludedDynasties(strategy: Strategy | null, dynasties: Iterable
 export interface PlayCatalogue {
   tactics: Map<string, Tactic>;
   strategies: Map<string, Strategy>;
-  /** pipe id -> its catalogued plays (default first, then by strategy id). */
+  /** pipe id -> its catalogued LIVE plays (default first, then by strategy id). */
   playsByPipe: Map<string, PlayRecord[]>;
+  /** pipe id -> the strategies of its RETIRED plays (PLAY-RETIRE-1022): a funnel naming one runs the pipe's default. */
+  retiredByPipe: Map<string, Set<string>>;
   /** dynasty -> tactic id -> verdict on its current version. */
   tacticsByDynasty: Map<string, Map<string, boolean>>;
   /** tactic id -> its last full Jev sweep (absent = never swept). */
@@ -306,12 +310,17 @@ export interface PlayCatalogue {
 
 export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategies: readonly Strategy[]; plays: readonly PlayRecord[]; verdicts: readonly TacticVerdictRow[]; sweeps?: readonly TacticJudgingSweep[] }): PlayCatalogue {
   const playsByPipe = new Map<string, PlayRecord[]>();
-  for (const p of input.plays) playsByPipe.set(p.pipeId, [...(playsByPipe.get(p.pipeId) ?? []), p]);
+  const retiredByPipe = new Map<string, Set<string>>();
+  for (const p of input.plays) {
+    if (p.retired) retiredByPipe.set(p.pipeId, new Set([...(retiredByPipe.get(p.pipeId) ?? []), p.strategyId]));
+    else playsByPipe.set(p.pipeId, [...(playsByPipe.get(p.pipeId) ?? []), p]);
+  }
   for (const list of playsByPipe.values()) list.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || (a.strategyId < b.strategyId ? -1 : 1));
   return {
     tactics: new Map(input.tactics.map((t) => [t.id, t])),
     strategies: new Map(input.strategies.map((s) => [s.id, s])),
     playsByPipe,
+    retiredByPipe,
     tacticsByDynasty: currentTacticsByDynasty(input.verdicts),
     sweepsByTactic: new Map((input.sweeps ?? []).map((w) => [w.tacticId, w])),
   };
@@ -325,14 +334,22 @@ export function defaultStrategyOf(c: PlayCatalogue, pipeId: string): Strategy | 
   return d ? (c.strategies.get(d.strategyId) ?? null) : null;
 }
 
+/** PURE: the strategy was a play of this pipe that staff RETIRED (PLAY-RETIRE-1022). */
+export const isRetiredPlay = (c: PlayCatalogue, pipeId: string, strategyId: string | null): boolean =>
+  strategyId !== null && (c.retiredByPipe.get(pipeId)?.has(strategyId) ?? false);
+
 /**
  * PURE: the strategy a play id or a funnel segment names on a pipe. `strategyId` null or the pipe's default = its
- * default play. A strategy the pipe does not catalogue is no play of it: null + `known:false`.
+ * default play. A RETIRED play of the pipe is its default play too, `retiredFrom` naming it (PLAY-RETIRE-1022: the
+ * campaigns that ran it keep running, on the default). A strategy the pipe never catalogued is no play of it: null +
+ * `known:false`.
  */
-export function resolvePlay(c: PlayCatalogue, pipeId: string, strategyId: string | null): { known: boolean; isDefault: boolean; strategy: Strategy | null } {
+export function resolvePlay(c: PlayCatalogue, pipeId: string, strategyId: string | null): { known: boolean; isDefault: boolean; strategy: Strategy | null; retiredFrom: string | null } {
   const def = defaultStrategyOf(c, pipeId);
-  if (strategyId === null || strategyId === def?.id) return { known: true, isDefault: true, strategy: def };
+  if (strategyId === null || strategyId === def?.id) return { known: true, isDefault: true, strategy: def, retiredFrom: null };
   const listed = c.playsByPipe.get(pipeId)?.some((p) => p.strategyId === strategyId) ?? false;
   const strategy = c.strategies.get(strategyId) ?? null;
-  return listed && strategy ? { known: true, isDefault: false, strategy } : { known: false, isDefault: false, strategy: null };
+  if (listed && strategy) return { known: true, isDefault: false, strategy, retiredFrom: null };
+  if (isRetiredPlay(c, pipeId, strategyId)) return { known: true, isDefault: true, strategy: def, retiredFrom: strategyId };
+  return { known: false, isDefault: false, strategy: null, retiredFrom: null };
 }

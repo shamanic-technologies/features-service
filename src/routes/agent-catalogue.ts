@@ -109,9 +109,9 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
-import { clearDefaultPlay, insertPlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
-import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, tacticJudgingOf, tacticNameOf, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -455,6 +455,7 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     ...(offer ? { offerRates: offer.rates } : {}),
     triggers,
     plays: playInputsOf(playCatalogue, assignments, measurements.byPlay),
+    retiredPlays: playCatalogue.retiredByPipe,
     triggerHeadedPaths: statedTriggerHeadedPaths(chains, statedFunnels),
   });
   for (const id of measurements.unreadable) {
@@ -2243,6 +2244,39 @@ router.delete("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, asyn
   }
 });
 
+/**
+ * STAFF: RETIRE a non-default play from its pipe (`{retiredBy, note?}`; owner 2026-10-22, PLAY-RETIRE-1022: the
+ * "Valid only" and "Valid + Catch-all" plays belong on Lead Sourcing, not on the Sales Cold Email pipe). Every campaign
+ * whose funnel names the play runs the pipe's DEFAULT play from then on (no client action, no unit held: its funnel id
+ * reads as the bare pipe on every read, `resolvePlay` / `pipeOrPlayById` / `canonicalFunnelId`); the catalogue lists
+ * the play no more, the row is kept. The DEFAULT play (bare pipe id, or the strategy the pipe defaults to) is refused 409
+ * `default_play_not_retirable`. Re-cataloguing it (`POST plays`) revives it. Answers what the pipe now runs.
+ */
+router.post("/internal/catalogue/plays/:id/retire", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const retiredBy = actorOf(body, "retiredBy");
+    if (body.note !== undefined && body.note !== null && (typeof body.note !== "string" || body.note.trim().length > 500)) throw bad("note_invalid", "note must be a string of at most 500 characters");
+    const note = typeof body.note === "string" && body.note.trim() !== "" ? body.note.trim() : null;
+    const { pipeId, strategyId } = splitPlayId(req.params.id);
+    const before = await loadModel();
+    const pipe = before.model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    if (!strategyId) {
+      throw new DeclarationError(409, "default_play_not_retirable", `${pipeId} is the pipe's DEFAULT play: change or clear the default first (PUT or DELETE /internal/catalogue/pipes/{pipeId}/default-play)`);
+    }
+    const { changed, retiredAt } = await retirePlay({ pipeId, strategyId, retiredBy, note });
+    const { model } = await loadModel();
+    const now = model.pipes.get(pipeId);
+    if (!now) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
+    console.log(`[features-service] agent catalogue: play ${req.params.id} ${changed ? "retired" : "already retired"} by ${retiredBy}${note ? ` (${note})` : ""}: its campaigns run the default play of ${pipeId}`);
+    if (changed) void refreshCatalogueMeasurementsAfterPlayWrite();
+    res.json({ changed, retiredPlayId: playIdOf(pipeId, strategyId), retiredAt, runsNow: playRowOf(model, now) });
+  } catch (err) {
+    fail(res, err, "retire play");
+  }
+});
+
 // ── Step vocabulary (public: the customer dashboard's Outcomes icons) ──────────────────────────────
 
 /**
@@ -2398,6 +2432,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     lifetimeRevenueUsd: null,
     triggers,
     plays: playInputsOf(playCatalogue, assignments, new Map()),
+    retiredPlays: playCatalogue.retiredByPipe,
   });
   const found = new Map(ids.flatMap((id) => {
     const f = funnelById(model, id);
