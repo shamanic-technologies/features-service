@@ -241,7 +241,7 @@ describe("every model page and model version serves its OWN return (MODEL-ROI-10
     // Nothing written earned: Opus, written with now by azalea (which produced an outcome), reads azalea's return; the
     // others the pipe's money workflow.
     const noReply = persons.map((p) => ({ ...p, positiveReplies: 0 }));
-    const noCells: SlugCell[] = cells.map((c) => ({ ...c, flash: half(c.flash.figures.spentUsd, c.flash.figures.contacted, 0), mature: half(c.mature.figures.spentUsd, c.mature.figures.contacted, 0) }));
+    const noCells: SlugCell[] = cells.map((c) => ({ ...c, flash: half(c.flash.figures.spentUsd, c.flash.figures.contacted, 0), mature: half(c.mature!.figures.spentUsd, c.mature!.figures.contacted, 0) }));
     const none = catalogWith(900, 500, noReply, noCells);
     expect(none.models.find((m) => m.key === "claude-opus")!.roiDetail).toMatchObject({ value: 1.8, basis: "expected", source: "writes_with_now" });
     expect(new Set(none.models.filter((m) => m.key !== "claude-opus").map((m) => [m.roiDetail.basis, m.roiDetail.source, m.roiDetail.value].join()))).toEqual(new Set(["expected,pipe_best_workflow,1.8"]));
