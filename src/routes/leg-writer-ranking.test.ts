@@ -128,7 +128,8 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
 
   it("a chat /complete internal pipe: each campaign's spend shared on its acted people, filed under the LLM the ledger states", () => {
     const writerOf = (campaignId: string, person: string) => {
-      const alias = { "c1|b:l1": "opus", "c1|b:l2": "opus", "c1|b:l3": "flash", "c2|b:l4": "flash" }[`${campaignId}|${person}`];
+      const aliases: Record<string, string> = { "c1|b:l1": "opus", "c1|b:l2": "opus", "c1|b:l3": "flash", "c2|b:l4": "flash" };
+      const alias = aliases[`${campaignId}|${person}`];
       return alias ? { key: alias === "opus" ? "claude-opus-5.5" : "gemini-3-flash", label: alias } : null;
     };
     const r = ledgerLlmBars(
