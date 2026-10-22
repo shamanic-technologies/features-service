@@ -105,7 +105,7 @@ import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
 import { pipeLegKeyOf, servedCombinationKeyOf, servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
-import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
+import { listLegAssignments, listRunnableLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
@@ -437,7 +437,9 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     listDeclaredSteps(),
     allNamesByKey(),
     listTriggerCatalogue(),
-    listLegAssignments(),
+    // What can RUN (PLAY-SEED-LADDER-1022): a pipe / play is runnable on workflows workflow-service still executes,
+    // merges pooled, never on an assignment row alone (the leg read campaign-service seeds from serves only those).
+    listRunnableLegAssignments(),
     loadPlayCatalogue(),
     listDeclaredSalesPathChains(),
     listDeclaredSalesPaths(),
@@ -2062,7 +2064,7 @@ router.patch("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) 
     let st = current;
     if (changed) {
       invalidatePlayCatalogue();
-      const [c, assignments] = await Promise.all([loadPlayCatalogue(), listLegAssignments()]);
+      const [c, assignments] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments()]);
       for (const [pipeId, ps] of c.playsByPipe) {
         if (ps.some((p) => p.isDefault && p.strategyId === next.id)) assertStrategyRunsOnPipe(c, assignments, pipeId, next, `it is the pipe's default play, so every campaign of the pipe would have nothing to run`);
       }
@@ -2172,7 +2174,7 @@ router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
  */
 async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promise<void> {
   invalidatePlayCatalogue();
-  const [c, assignments] = await Promise.all([loadPlayCatalogue(), listLegAssignments()]);
+  const [c, assignments] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments()]);
   const st = c.strategies.get(strategyId);
   if (!st) throw new DeclarationError(404, "strategy_not_found", `no strategy ${strategyId} (GET /internal/catalogue/strategies)`);
   assertStrategyRunsOnPipe(c, assignments, pipeId, st, "as the default play, every campaign of the pipe would have nothing to run");

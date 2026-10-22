@@ -68,6 +68,7 @@ const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: []
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listLegAssignments: async () => mem.assignments,
+  listRunnableLegAssignments: async () => mem.assignments,
 }));
 // Every org's campaigns (campaign-service /campaigns/list), per pipe group.
 const fleetCampaigns = vi.hoisted(() => ({ rows: [] as Array<{ campaignId: string; orgId: string; brandId: string | null; channelSlug: string; legKey: string }>, fail: false }));

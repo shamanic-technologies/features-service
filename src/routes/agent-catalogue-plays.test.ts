@@ -68,6 +68,7 @@ const mem = vi.hoisted(() => ({ legs: [] as any[], steps: [] as any[], rates: []
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listLegAssignments: async () => mem.assignments,
+  listRunnableLegAssignments: async () => mem.assignments.filter((a: { runnable?: boolean }) => a.runnable !== false),
 }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
@@ -354,6 +355,18 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     // Each allowed workflow with its fleet figure, beside what the pipe's default play runs today.
     expect(detail.allowedWorkflows.map((w: any) => [w.id, typeof w.status, w.isDefaultPlayPick])).toEqual([["nova", "string", false]]);
     expect(detail.defaultPlayPick).toMatchObject({ playId: COLD, bestWorkflowSlug: "orion" });
+  });
+
+  it("a play counts only workflows workflow-service can still run (PLAY-SEED-LADDER-1022)", async () => {
+    // nova is judged catch-all and assigned active, but every version is retired: campaign-service's seed (the leg
+    // read) never serves it, so a play showing it runnable would launch into a refusal.
+    mem.assignments.push({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null, runnable: false });
+    playState.verdicts.push(verdict("nova-v1", "nova", true));
+    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
+    expect(plays.map((p: any) => [p.id, p.allowedActiveWorkflowCount, p.runnable, p.allowedWorkflowDynastySlugs])).toEqual([
+      [COLD, 1, true, ["orion"]],
+      [CATCH, 0, false, []],
+    ]);
   });
 
   it("a play running nothing says why (judging failing / pending / judged out), and its detail lists the funnels carrying it (owner 2026-10-14)", async () => {

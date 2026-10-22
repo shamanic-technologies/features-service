@@ -34,7 +34,7 @@ import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { db } from "../db/index.js";
 import type { DynastyMerges } from "./dynasty-merges.js";
-import { fetchDynastyMerges } from "./public-stats-clients.js";
+import { dynastyMergesOf, executableDynasties, fetchDynastyMerges, fetchStatedPublicWorkflows, type WorkflowMetadata } from "./public-stats-clients.js";
 import { workflowLegAssignmentChanges, workflowLegAssignments } from "../db/schema.js";
 
 export const LEG_ASSIGNMENT_STATES = ["active", "deprecated"] as const;
@@ -171,6 +171,41 @@ export function poolLegAssignments(rows: readonly LegAssignmentRow[], merges: Dy
     if (!out.has(survivor)) out.set(survivor, { ...r, workflowDynastySlug: survivor });
   }
   return out;
+}
+
+/**
+ * PURE. The assignments a RUNNABILITY verdict may count (PLAY-SEED-LADDER-1022): per (channel, leg), absorbed dynasties
+ * pooled into their survivor (`poolLegAssignments`), then every row whose dynasty workflow-service runs no version of
+ * (`executableDynasties`, the same predicate as a leg read's `selectable`) dropped. Prod 2026-10-22: "Blind emails only"
+ * read runnable on 32 assigned-active dynasties, every one retired or merged into a non-blind survivor, while the leg
+ * read campaign-service seeds a launch from served none of them, so the launch was refused. A feature whose catalogue
+ * is not in `workflowsByFeature` keeps no row (never counted runnable on a guess).
+ */
+export function runnableLegAssignments(
+  rows: readonly LegAssignmentRow[],
+  workflowsByFeature: ReadonlyMap<string, ReadonlyArray<Pick<WorkflowMetadata, "workflowDynastySlug" | "status" | "workflowDynastyStatus" | "mergedIntoDynastySlug">>>,
+): LegAssignmentRow[] {
+  const byPipe = new Map<string, LegAssignmentRow[]>();
+  for (const r of rows) {
+    const k = `${r.featureSlug}|${pipeLegKeyOf(r.featureSlug, r.legKey)}`;
+    byPipe.set(k, [...(byPipe.get(k) ?? []), r]);
+  }
+  const out: LegAssignmentRow[] = [];
+  for (const pipeRows of byPipe.values()) {
+    const workflows = workflowsByFeature.get(pipeRows[0].featureSlug);
+    if (!workflows) continue;
+    const runnable = executableDynasties(workflows);
+    for (const r of poolLegAssignments(pipeRows, dynastyMergesOf(workflows)).values()) if (runnable.has(r.workflowDynastySlug)) out.push(r);
+  }
+  return out;
+}
+
+/** Every assignment a runnability verdict may count, read live (`runnableLegAssignments`). An unreadable catalogue throws. */
+export async function listRunnableLegAssignments(): Promise<LegAssignmentRow[]> {
+  const rows = await listLegAssignments();
+  const features = [...new Set(rows.map((r) => r.featureSlug))];
+  const catalogues = await Promise.all(features.map(async (f) => [f, await fetchStatedPublicWorkflows(f, "all")] as const));
+  return runnableLegAssignments(rows, new Map(catalogues));
 }
 
 /** The history of one (channel, leg, dynasty), oldest first. */
