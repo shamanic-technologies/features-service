@@ -113,6 +113,7 @@ import { updateTacticSubject } from "../lib/plays-store.js";
 import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { pgErrorOf } from "../lib/pg-error.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -639,7 +640,9 @@ function fail(res: Response, err: unknown, what: string): void {
   if (err instanceof DeclarationError) return void res.status(err.status).json({ error: err.message, reason: err.reason });
   if (err instanceof StoreNotComputedError) return void res.status(503).json({ error: err.message, reason: "catalogue_economics_not_computed_yet" });
   if (err instanceof SalesPathNamePoolExhaustedError) return void res.status(502).json({ error: err.message, reason: "name_family_exhausted" });
-  if ((err as { code?: string })?.code === "23505") return void res.status(409).json({ error: (err as Error).message, reason: "already_exists" });
+  // drizzle-orm >= 0.44 wraps the driver error in DrizzleQueryError: read the postgres error.
+  const pg = pgErrorOf(err);
+  if (pg.code === "23505") return void res.status(409).json({ error: String(pg.message ?? (err as Error).message), reason: "already_exists" });
   console.error(`[features-service] agent catalogue: ${what} failed:`, err);
   res.status(500).json({ error: "Internal server error" });
 }

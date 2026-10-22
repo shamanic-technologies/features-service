@@ -17,7 +17,7 @@ vi.mock("../lib/sales-path-names.js", async (importOriginal) => ({
 
 // An in-memory store with the REAL merge + catalogue build, so the route, the publish rule and the public
 // catalogue read are exercised end to end on the seeded features.
-const mem = vi.hoisted(() => ({ channels: [] as any[], legs: [] as any[], triggers: [] as any[], paths: [] as any[] }));
+const mem = vi.hoisted(() => ({ channels: [] as any[], legs: [] as any[], triggers: [] as any[], paths: [] as any[], insertChannelError: null as unknown }));
 vi.mock("../lib/channel-declarations-store.js", async () => {
   const { mergeDeclarations } = await import("../lib/channel-declarations.js");
   const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
@@ -43,6 +43,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       names: new Set([...SEED_FEATURES.map((f) => f.name.toLowerCase()), ...mem.channels.map((c) => c.name.toLowerCase())]),
     }),
     insertChannel: async (input: any, createdBy: string, requestedByOrgId: string | null) => {
+      if (mem.insertChannelError) throw mem.insertChannelError;
       const row = { ...input, displayOrder: 10_000 + mem.channels.length, published: false, publishedAt: null, publishedBy: null, createdBy, requestedByOrgId, createdAt: NOW, updatedAt: NOW };
       mem.channels.push(row);
       return row;
@@ -114,10 +115,22 @@ beforeEach(() => {
   mem.channels.length = 0;
   mem.legs.length = 0;
   mem.paths.length = 0;
+  mem.insertChannelError = null;
   mem.triggers.splice(0, mem.triggers.length, ...CHANNEL_TRIGGER_TYPES.map((t, i) => ({ ...t, origin: "code", kind: t.kind ?? "event", params: null, displayOrder: i, createdBy: null, requestedByOrgId: null })));
 });
 
 describe("/internal/declarations: a staff caller declares a channel, a reactive leg and a sales path live", () => {
+  it("a unique violation that raced past the pre-check is a 409 with the database's reason, read through drizzle's wrapper", async () => {
+    const { DrizzleQueryError } = await import("drizzle-orm");
+    mem.insertChannelError = new DrizzleQueryError("insert into declared_channels ...", ["secret-param"], Object.assign(
+      new Error('duplicate key value violates unique constraint "declared_channels_pkey"'),
+      { code: "23505" },
+    ));
+    const res = await request(app).post("/internal/declarations/channels").set(KEY).send(channelBody);
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'duplicate key value violates unique constraint "declared_channels_pkey"', reason: "already_exists" });
+  });
+
   it("is service-key only", async () => {
     expect((await request(app).get("/internal/declarations/channels")).status).toBe(401);
     expect((await request(app).post("/internal/declarations/channels").send(channelBody)).status).toBe(401);
