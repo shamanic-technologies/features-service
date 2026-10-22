@@ -26,8 +26,8 @@
  *     buckets (run start, UTC). It is the scope's campaigns' spend PLUS the brand's own work no
  *     campaign carries (setting the brand up, notification emails): what was taken from the credit for
  *     this brand, the same composition as `spend.actualSpentTodayCents` on the same read. The
- *     campaign-less part is also stated alone (`brandLevelActualSpentCents`), because an offer of a
- *     brand selling several offers shares it with the others.
+ *     campaign-less part is also stated alone (`brandLevelActualSpentCents`); every offer of the brand carries
+ *     all of it, and since ROI-SPENT-SAME-BASIS-1022 its ROI divides that same spend (lib/brand-level-spend.ts).
  *     Beside it, the COMMITTED twin on the same composition and days: `totalSpentCents` = actual +
  *     the holds still open for runs still working (`provisionedSpentCents`), runs' `total…` field —
  *     what the customer has committed over the window, the figure a "Spent" tile states (owner
