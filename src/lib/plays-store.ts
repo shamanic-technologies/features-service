@@ -5,9 +5,9 @@
  */
 import { inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts } from "../db/schema.js";
+import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts, writerTacticVerdicts } from "../db/schema.js";
 import { DeclarationError } from "./channel-declarations.js";
-import { buildPlayCatalogue, idOfName, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticVerdictRow } from "./plays.js";
+import { buildPlayCatalogue, idOfName, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticSubject, type TacticVerdictRow, type WriterTacticVerdictRow } from "./plays.js";
 
 const SHARE_MS = 30_000;
 let shared: { at: number; value: Promise<PlayCatalogue> } | null = null;
@@ -20,12 +20,13 @@ export function invalidatePlayCatalogue(): void {
 export function loadPlayCatalogue(): Promise<PlayCatalogue> {
   if (shared && Date.now() - shared.at < SHARE_MS) return shared.value;
   const value = (async () => {
-    const [t, s, p, v, w] = await Promise.all([
+    const [t, s, p, v, w, wr] = await Promise.all([
       db.select().from(tactics),
       db.select().from(strategies),
       db.select().from(plays),
       db.select().from(workflowTacticVerdicts),
       db.select().from(tacticJudgingSweeps),
+      db.select().from(writerTacticVerdicts),
     ]);
     return buildPlayCatalogue({
       tactics: t.map(tacticOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
@@ -33,6 +34,7 @@ export function loadPlayCatalogue(): Promise<PlayCatalogue> {
       plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault, ...(r.retiredAt ? { retired: true } : {}) })),
       verdicts: v.map(verdictOf),
       sweeps: w.map(sweepOf),
+      writerVerdicts: wr.map(writerVerdictOf),
     });
   })();
   shared = { at: Date.now(), value };
@@ -51,7 +53,39 @@ const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
   updatedBy: r.updatedBy,
   updatedAt: r.updatedAt?.toISOString() ?? null,
   clientLine: r.clientLine,
+  appliesTo: (r.appliesTo === "template" || r.appliesTo === "llm" ? r.appliesTo : "workflow") as TacticSubject,
 });
+const writerVerdictOf = (r: typeof writerTacticVerdicts.$inferSelect): WriterTacticVerdictRow => ({
+  subjectKind: r.subjectKind === "llm" ? "llm" : "template",
+  subjectKey: r.subjectKey,
+  tacticId: r.tacticId,
+  subjectVersion: r.subjectVersion,
+  verdict: r.verdict,
+  probability: r.probability,
+  model: r.model,
+  judgedDescription: r.judgedDescription,
+  judgedAt: r.judgedAt.toISOString(),
+});
+
+/** Every stored template / LLM verdict (of one tactic when named): the writer sweep's "already judged" set and the tactic detail. */
+export async function listWriterVerdicts(tacticId?: string): Promise<WriterTacticVerdictRow[]> {
+  const rows = tacticId ? await db.select().from(writerTacticVerdicts).where(sql`${writerTacticVerdicts.tacticId} = ${tacticId}`) : await db.select().from(writerTacticVerdicts);
+  return rows.map(writerVerdictOf);
+}
+
+/** Store one template / LLM verdict; replaced in place only when the description or the subject's version moved. */
+export async function insertWriterVerdict(row: Omit<WriterTacticVerdictRow, "judgedAt">): Promise<void> {
+  const set = { subjectVersion: row.subjectVersion, verdict: row.verdict, probability: row.probability, model: row.model, judgedDescription: row.judgedDescription, judgedAt: new Date() };
+  await db
+    .insert(writerTacticVerdicts)
+    .values({ subjectKind: row.subjectKind, subjectKey: row.subjectKey, tacticId: row.tacticId, ...set })
+    .onConflictDoUpdate({
+      target: [writerTacticVerdicts.subjectKind, writerTacticVerdicts.subjectKey, writerTacticVerdicts.tacticId],
+      set,
+      setWhere: sql`${writerTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription} OR ${writerTacticVerdicts.subjectVersion} IS DISTINCT FROM ${row.subjectVersion}`,
+    });
+  invalidatePlayCatalogue();
+}
 const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   id: r.id,
   name: r.name,
@@ -123,11 +157,11 @@ function assertUnique(existing: ReadonlyArray<{ id: string; name: string; descri
   if (sameDescription) throw new DeclarationError(409, `${family}_description_taken`, `the ${family} ${sameDescription.id} already has this description`);
 }
 
-export async function insertTactic(input: { name: string; description: string; createdBy: string; clientLine?: string | null }): Promise<Tactic> {
+export async function insertTactic(input: { name: string; description: string; createdBy: string; clientLine?: string | null; appliesTo?: TacticSubject }): Promise<Tactic> {
   const id = idOfName(input.name);
   if (!id) throw new DeclarationError(400, "name_invalid", "name must hold at least one letter or digit");
   assertUnique((await loadPlayCatalogueFresh()).tactics, id, input.name, input.description, "tactic");
-  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy, clientLine: input.clientLine ?? null }).returning();
+  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy, clientLine: input.clientLine ?? null, appliesTo: input.appliesTo ?? "workflow" }).returning();
   invalidatePlayCatalogue();
   return tacticOf(row);
 }

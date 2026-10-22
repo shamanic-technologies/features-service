@@ -32,15 +32,8 @@ import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
-import {
-  dynastyLegKeyOf,
-  dynastyStatusOf,
-  templateDynastyIndex,
-  type TemplateDynasty,
-  type TemplateDynastyIndex,
-  type TemplateDynastyReason,
-  type TemplateStatus,
-} from "../lib/research/template-dynasties.js";
+import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
+import { readTemplateDynasties, readTemplateTexts } from "../lib/writer-catalogue-client.js";
 import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
@@ -274,71 +267,6 @@ function runnableWorkflowsOf(rows: readonly LegWorkflowRankingRow[] | null) {
   return rows.filter((r) => r.selectable).map((r) => ({ key: r.workflowDynastySlug, label: r.workflowDynastyName ? shortName(r.workflowDynastyName) : r.workflowDynastySlug, name: r.workflowDynastyName || null }));
 }
 
-/** Each template's prompt text (content-generation-service, no identity), held 6 hours: a versioned template never changes. */
-const templateTextHeld = new Map<string, { at: number; text: string | null }>();
-async function readTemplateTexts(types: readonly string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  await mapWithConcurrency([...new Set(types)], 4, async (type) => {
-    const held = templateTextHeld.get(type);
-    if (held && Date.now() - held.at < 6 * 60 * 60_000) {
-      if (held.text) out.set(type, held.text);
-      return;
-    }
-    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/platform-prompts?type=${encodeURIComponent(type)}`, {
-      headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
-    });
-    const text = res.ok ? (((await res.json()) as { prompt?: string }).prompt ?? null) : null;
-    if (!res.ok && res.status !== 404) throw new Error(`content-generation-service platform-prompts ${type} ${res.status}`);
-    templateTextHeld.set(type, { at: Date.now(), text });
-    if (text) out.set(type, text);
-  });
-  return out;
-}
-
-/**
- * One pipe's template dynasties, read from content-generation-service's deployed catalogue (TPL-DYNASTY-1021-FS2; api
- * key, no identity). Unreadable = every version is its own page this build, said on each (`template_dynasties_unreadable`).
- */
-async function readTemplateDynasties(legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
-  try {
-    const q = new URLSearchParams({ featureSlug: COLD_EMAIL, legKey: dynastyLegKeyOf(legKey) });
-    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/template-dynasties?${q}`, {
-      headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
-    });
-    if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown; statusInDynasty?: unknown; copiedFrom?: unknown }> }> };
-    if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
-    return body.dynasties.map((d) => {
-      if (typeof d.slug !== "string" || typeof d.name !== "string") throw new Error("content-generation-service template-dynasties: a dynasty without slug or name");
-      const ordered = [...(d.versions ?? [])]
-        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-        .flatMap((v) => {
-          if (typeof v.type !== "string") return [];
-          // A version's status IN this dynasty (head = its own, older = deprecated); `status` is the template's own,
-          // active when it heads a dynasty on another pipe. Before content-generation served it: the template's own.
-          const st = v.statusInDynasty !== undefined ? v.statusInDynasty : v.status;
-          return [{ type: v.type, status: st === "active" || st === "deprecated" ? (st as TemplateStatus) : null, copiedFrom: typeof v.copiedFrom === "string" && v.copiedFrom ? v.copiedFrom : null }];
-        });
-      const versions = ordered.map((v) => v.type);
-      return {
-        ...dynastyStatusOf(d.status, ordered),
-        versionStatuses: Object.fromEntries(ordered.map((v) => [v.type, v.status])),
-        copiedFrom: Object.fromEntries(ordered.flatMap((v) => (v.copiedFrom ? [[v.type, v.copiedFrom]] : []))),
-        slug: d.slug,
-        name: d.name,
-        description: typeof d.description === "string" ? d.description : "",
-        signature: typeof d.signature === "string" ? d.signature : null,
-        identity: typeof d.identity === "string" ? d.identity : "",
-        head: typeof d.head === "string" ? d.head : null,
-        versions,
-      };
-    });
-  } catch (error) {
-    console.error(`[features-service] research: template dynasties of ${legKey} unreadable, every version is its own page this time:`, error);
-    return "template_dynasties_unreadable";
-  }
-}
-
 interface GenerationPart {
   studies: ResearchStudy[];
   /** Per pipe, the bars the catalogue lists (templates, models) and what each workflow's people were mostly written with. */
@@ -535,7 +463,7 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
   // Each pipe's template dynasties (never throws: unreadable = every version on its own page, said so).
-  const dynastiesP = Promise.all([readTemplateDynasties(REPLY_LEG), readTemplateDynasties(VISIT_LEG)]).then(([r, v]) => ({
+  const dynastiesP = Promise.all([readTemplateDynasties(COLD_EMAIL, REPLY_LEG), readTemplateDynasties(COLD_EMAIL, VISIT_LEG)]).then(([r, v]) => ({
     reply: templateDynastyIndex(r),
     visit: templateDynastyIndex(v),
   }));

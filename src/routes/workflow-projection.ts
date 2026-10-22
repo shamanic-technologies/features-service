@@ -101,7 +101,7 @@ import {
 } from "../lib/maturity.js";
 import { serveDatesStated } from "../lib/mature-evidence.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
-import { playIdOf, resolvePlay, strategyOfFunnelLeg, strategyVerdict, tacticNameOf } from "../lib/plays.js";
+import { playIdOf, resolvePlay, strategyOfFunnelLeg, strategyVerdict, tacticNameOf, workflowStrategyOf } from "../lib/plays.js";
 import { pipeIdOf } from "../lib/agent-catalogue.js";
 import { MISSION_PRICE_GRAINS, missionPriceOf } from "../lib/mission-workflow-order.js";
 import { orderLegWorkflows } from "../lib/leg-workflow-order.js";
@@ -1370,7 +1370,7 @@ export async function playOfLegRead(
   const nameOf = tacticNameOf(plays);
   return {
     answer: { id: resolved.isDefault ? pipeId : playIdOf(pipeId, st.id), pipeId, strategyId: st.id, strategyName: st.name, default: resolved.isDefault, source },
-    excludedReason: (slug) => strategyVerdict(st, plays.tacticsByDynasty.get(slug), nameOf).reason,
+    excludedReason: (slug) => strategyVerdict(workflowStrategyOf(plays, st), plays.tacticsByDynasty.get(slug), nameOf).reason,
   };
 }
 

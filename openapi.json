@@ -46498,6 +46498,917 @@
         }
       }
     },
+    "/public/stats/leg-writer-ranking": {
+      "get": {
+        "summary": "The best template dynasty and the best LLM of one pipe, on $/outcome (public, no auth)",
+        "description": "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
+        "tags": [
+          "Public"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "featureSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Any pipe's leg key (either outbound spelling)."
+            },
+            "required": true,
+            "description": "Any pipe's leg key (either outbound spelling).",
+            "name": "leg",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A strategy id (404 `strategy_not_found`)."
+            },
+            "required": false,
+            "description": "A strategy id (404 `strategy_not_found`).",
+            "name": "strategyId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Both rankings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "incurred"
+                      ]
+                    },
+                    "rankBasis": {
+                      "type": "string",
+                      "enum": [
+                        "cost_per_outcome"
+                      ]
+                    },
+                    "maturity": {
+                      "type": "object",
+                      "properties": {
+                        "durationDays": {
+                          "type": "number"
+                        },
+                        "outcomesRequired": {
+                          "type": "number"
+                        },
+                        "cutoffIso": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "durationDays",
+                        "outcomesRequired",
+                        "cutoffIso"
+                      ]
+                    },
+                    "writerEvidence": {
+                      "type": "string",
+                      "enum": [
+                        "measured",
+                        "internal_pipe_not_measured_per_writer",
+                        "no_sequence_recorded_on_pipe"
+                      ]
+                    },
+                    "strategyId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "leftOut": {
+                      "type": "object",
+                      "properties": {
+                        "templates": {
+                          "type": "object",
+                          "properties": {
+                            "contacted": {
+                              "type": "number"
+                            },
+                            "outcomes": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "contacted",
+                            "outcomes"
+                          ]
+                        },
+                        "llms": {
+                          "type": "object",
+                          "properties": {
+                            "contacted": {
+                              "type": "number"
+                            },
+                            "outcomes": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "contacted",
+                            "outcomes"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "templates",
+                        "llms"
+                      ],
+                      "description": "People whose writer is not on record: in no bar (as on the Research page)."
+                    },
+                    "templates": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "rank": {
+                                "type": "integer",
+                                "description": "1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."
+                              },
+                              "key": {
+                                "type": "string",
+                                "description": "Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "selectable": {
+                                "type": "boolean",
+                                "description": "A run may write with it: an active template dynasty with a head; an LLM with an active content-generation writer alias. Non-selectable rows rank after every selectable one and are never picked."
+                              },
+                              "notSelectableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`template_dynasty_deprecated`, `template_dynasty_has_no_head`, `no_dynasty_on_pipe`, `writer_alias_deprecated`, `no_writer_alias`."
+                              },
+                              "isMature": {
+                                "type": "boolean",
+                                "description": "Its outcomes on runs started before the leg's cutoff reach the leg's bar (the workflows' maturity rule)."
+                              },
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "mature",
+                                  "flash"
+                                ]
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Observed on `basis`: spend ÷ outcomes. Null at zero outcomes (the order reads `explorePriceUsd`)."
+                              },
+                              "conversionRatePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "spentUsd": {
+                                "type": "number"
+                              },
+                              "contacted": {
+                                "type": "number"
+                              },
+                              "outcomes": {
+                                "type": "number"
+                              },
+                              "explorePriceUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "A LEARNING row's price: spend so far ÷ max(outcomes, 1); $0 never used (goes first, never floored). Null on a mature row."
+                              },
+                              "place": {
+                                "type": "string",
+                                "enum": [
+                                  "explore",
+                                  "money",
+                                  "mature",
+                                  "proven_worse",
+                                  "cannot_run"
+                                ]
+                              },
+                              "goesFirst": {
+                                "type": "boolean"
+                              },
+                              "moneyGoesHere": {
+                                "type": "boolean"
+                              },
+                              "templateDynastySlug": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "head": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "status": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "active",
+                                  "deprecated"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "rank",
+                              "key",
+                              "label",
+                              "selectable",
+                              "notSelectableReason",
+                              "isMature",
+                              "basis",
+                              "costPerOutcomeUsd",
+                              "conversionRatePct",
+                              "spentUsd",
+                              "contacted",
+                              "outcomes",
+                              "explorePriceUsd",
+                              "place",
+                              "goesFirst",
+                              "moneyGoesHere",
+                              "templateDynastySlug",
+                              "head",
+                              "status"
+                            ]
+                          }
+                        },
+                        "best": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "rank": {
+                              "type": "integer",
+                              "description": "1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."
+                            },
+                            "key": {
+                              "type": "string",
+                              "description": "Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "selectable": {
+                              "type": "boolean",
+                              "description": "A run may write with it: an active template dynasty with a head; an LLM with an active content-generation writer alias. Non-selectable rows rank after every selectable one and are never picked."
+                            },
+                            "notSelectableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "`template_dynasty_deprecated`, `template_dynasty_has_no_head`, `no_dynasty_on_pipe`, `writer_alias_deprecated`, `no_writer_alias`."
+                            },
+                            "isMature": {
+                              "type": "boolean",
+                              "description": "Its outcomes on runs started before the leg's cutoff reach the leg's bar (the workflows' maturity rule)."
+                            },
+                            "basis": {
+                              "type": "string",
+                              "enum": [
+                                "mature",
+                                "flash"
+                              ]
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Observed on `basis`: spend ÷ outcomes. Null at zero outcomes (the order reads `explorePriceUsd`)."
+                            },
+                            "conversionRatePct": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            },
+                            "contacted": {
+                              "type": "number"
+                            },
+                            "outcomes": {
+                              "type": "number"
+                            },
+                            "explorePriceUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "A LEARNING row's price: spend so far ÷ max(outcomes, 1); $0 never used (goes first, never floored). Null on a mature row."
+                            },
+                            "place": {
+                              "type": "string",
+                              "enum": [
+                                "explore",
+                                "money",
+                                "mature",
+                                "proven_worse",
+                                "cannot_run"
+                              ]
+                            },
+                            "goesFirst": {
+                              "type": "boolean"
+                            },
+                            "moneyGoesHere": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "rank",
+                            "key",
+                            "label",
+                            "selectable",
+                            "notSelectableReason",
+                            "isMature",
+                            "basis",
+                            "costPerOutcomeUsd",
+                            "conversionRatePct",
+                            "spentUsd",
+                            "contacted",
+                            "outcomes",
+                            "explorePriceUsd",
+                            "place",
+                            "goesFirst",
+                            "moneyGoesHere"
+                          ],
+                          "description": "Rank 1 when selectable and the pipe's writer evidence is measured; else null + `unavailableReason`."
+                        },
+                        "excluded": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "reason"
+                            ]
+                          },
+                          "description": "Ruled out by the strategy's tactics of this subject (never listed in `rows`, never picked). An item not judged yet on a tactic the strategy names is ruled out too."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "best",
+                        "excluded",
+                        "unavailableReason"
+                      ]
+                    },
+                    "llms": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "rank": {
+                                "type": "integer",
+                                "description": "1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."
+                              },
+                              "key": {
+                                "type": "string",
+                                "description": "Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "selectable": {
+                                "type": "boolean",
+                                "description": "A run may write with it: an active template dynasty with a head; an LLM with an active content-generation writer alias. Non-selectable rows rank after every selectable one and are never picked."
+                              },
+                              "notSelectableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`template_dynasty_deprecated`, `template_dynasty_has_no_head`, `no_dynasty_on_pipe`, `writer_alias_deprecated`, `no_writer_alias`."
+                              },
+                              "isMature": {
+                                "type": "boolean",
+                                "description": "Its outcomes on runs started before the leg's cutoff reach the leg's bar (the workflows' maturity rule)."
+                              },
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "mature",
+                                  "flash"
+                                ]
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Observed on `basis`: spend ÷ outcomes. Null at zero outcomes (the order reads `explorePriceUsd`)."
+                              },
+                              "conversionRatePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "spentUsd": {
+                                "type": "number"
+                              },
+                              "contacted": {
+                                "type": "number"
+                              },
+                              "outcomes": {
+                                "type": "number"
+                              },
+                              "explorePriceUsd": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "A LEARNING row's price: spend so far ÷ max(outcomes, 1); $0 never used (goes first, never floored). Null on a mature row."
+                              },
+                              "place": {
+                                "type": "string",
+                                "enum": [
+                                  "explore",
+                                  "money",
+                                  "mature",
+                                  "proven_worse",
+                                  "cannot_run"
+                                ]
+                              },
+                              "goesFirst": {
+                                "type": "boolean"
+                              },
+                              "moneyGoesHere": {
+                                "type": "boolean"
+                              },
+                              "aliases": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "alias": {
+                                      "type": "string"
+                                    },
+                                    "provider": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "active",
+                                        "deprecated"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "alias",
+                                    "provider",
+                                    "status"
+                                  ]
+                                }
+                              },
+                              "modelIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "provider": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "rank",
+                              "key",
+                              "label",
+                              "selectable",
+                              "notSelectableReason",
+                              "isMature",
+                              "basis",
+                              "costPerOutcomeUsd",
+                              "conversionRatePct",
+                              "spentUsd",
+                              "contacted",
+                              "outcomes",
+                              "explorePriceUsd",
+                              "place",
+                              "goesFirst",
+                              "moneyGoesHere",
+                              "aliases",
+                              "modelIds",
+                              "provider"
+                            ]
+                          }
+                        },
+                        "best": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "rank": {
+                              "type": "integer",
+                              "description": "1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."
+                            },
+                            "key": {
+                              "type": "string",
+                              "description": "Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "selectable": {
+                              "type": "boolean",
+                              "description": "A run may write with it: an active template dynasty with a head; an LLM with an active content-generation writer alias. Non-selectable rows rank after every selectable one and are never picked."
+                            },
+                            "notSelectableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "`template_dynasty_deprecated`, `template_dynasty_has_no_head`, `no_dynasty_on_pipe`, `writer_alias_deprecated`, `no_writer_alias`."
+                            },
+                            "isMature": {
+                              "type": "boolean",
+                              "description": "Its outcomes on runs started before the leg's cutoff reach the leg's bar (the workflows' maturity rule)."
+                            },
+                            "basis": {
+                              "type": "string",
+                              "enum": [
+                                "mature",
+                                "flash"
+                              ]
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Observed on `basis`: spend ÷ outcomes. Null at zero outcomes (the order reads `explorePriceUsd`)."
+                            },
+                            "conversionRatePct": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            },
+                            "contacted": {
+                              "type": "number"
+                            },
+                            "outcomes": {
+                              "type": "number"
+                            },
+                            "explorePriceUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "A LEARNING row's price: spend so far ÷ max(outcomes, 1); $0 never used (goes first, never floored). Null on a mature row."
+                            },
+                            "place": {
+                              "type": "string",
+                              "enum": [
+                                "explore",
+                                "money",
+                                "mature",
+                                "proven_worse",
+                                "cannot_run"
+                              ]
+                            },
+                            "goesFirst": {
+                              "type": "boolean"
+                            },
+                            "moneyGoesHere": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "rank",
+                            "key",
+                            "label",
+                            "selectable",
+                            "notSelectableReason",
+                            "isMature",
+                            "basis",
+                            "costPerOutcomeUsd",
+                            "conversionRatePct",
+                            "spentUsd",
+                            "contacted",
+                            "outcomes",
+                            "explorePriceUsd",
+                            "place",
+                            "goesFirst",
+                            "moneyGoesHere"
+                          ],
+                          "description": "Rank 1 when selectable and the pipe's writer evidence is measured; else null + `unavailableReason`."
+                        },
+                        "excluded": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "label",
+                              "reason"
+                            ]
+                          },
+                          "description": "Ruled out by the strategy's tactics of this subject (never listed in `rows`, never picked). An item not judged yet on a tactic the strategy names is ruled out too."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "best",
+                        "excluded",
+                        "unavailableReason"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "featureSlug",
+                    "legKey",
+                    "pipeId",
+                    "computedAt",
+                    "costBasis",
+                    "rankBasis",
+                    "maturity",
+                    "writerEvidence",
+                    "strategyId",
+                    "leftOut",
+                    "templates",
+                    "llms"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "featureSlug and leg are required"
+          },
+          "404": {
+            "description": "strategy_not_found"
+          },
+          "503": {
+            "description": "writer_ranking_not_computed_yet"
+          }
+        }
+      }
+    },
+    "/internal/writer-pick": {
+      "get": {
+        "summary": "What one run writes with: the best template dynasty and LLM of its pipe (internal, api-key; workflow-service)",
+        "description": "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason: `internal_pipe_not_measured_per_writer`, `no_sequence_recorded_on_pipe`, `strategy_allows_none_or_none_selectable`, `play_not_catalogued_on_pipe`, `template_dynasties_unreadable`, `writer_models_unreadable`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The VERSION executing (or its dynasty)."
+            },
+            "required": true,
+            "description": "The VERSION executing (or its dynasty).",
+            "name": "workflowSlug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "campaignId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pick",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workflowSlug": {
+                      "type": "string"
+                    },
+                    "workflowDynastySlug": {
+                      "type": "string"
+                    },
+                    "featureSlug": {
+                      "type": "string"
+                    },
+                    "legKey": {
+                      "type": "string"
+                    },
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "strategyId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "template": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "templateDynastySlug": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "content-generation's dynasty: write with its head."
+                        },
+                        "head": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "place": {
+                          "type": "string",
+                          "enum": [
+                            "explore",
+                            "money",
+                            "mature",
+                            "proven_worse",
+                            "cannot_run"
+                          ]
+                        },
+                        "costPerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "explorePriceUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "isMature": {
+                          "type": "boolean"
+                        },
+                        "spentUsd": {
+                          "type": "number"
+                        },
+                        "outcomes": {
+                          "type": "number"
+                        },
+                        "contacted": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "templateDynastySlug",
+                        "head",
+                        "name",
+                        "place",
+                        "costPerOutcomeUsd",
+                        "explorePriceUsd",
+                        "isMature",
+                        "spentUsd",
+                        "outcomes",
+                        "contacted"
+                      ]
+                    },
+                    "templateUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "llm": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "model": {
+                          "type": "string",
+                          "description": "The content-generation writer alias (`/generate` body.model)."
+                        },
+                        "provider": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "modelKey": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "place": {
+                          "type": "string",
+                          "enum": [
+                            "explore",
+                            "money",
+                            "mature",
+                            "proven_worse",
+                            "cannot_run"
+                          ]
+                        },
+                        "costPerOutcomeUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "explorePriceUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "isMature": {
+                          "type": "boolean"
+                        },
+                        "spentUsd": {
+                          "type": "number"
+                        },
+                        "outcomes": {
+                          "type": "number"
+                        },
+                        "contacted": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "model",
+                        "provider",
+                        "modelKey",
+                        "label",
+                        "place",
+                        "costPerOutcomeUsd",
+                        "explorePriceUsd",
+                        "isMature",
+                        "spentUsd",
+                        "outcomes",
+                        "contacted"
+                      ]
+                    },
+                    "llmUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "workflowSlug",
+                    "workflowDynastySlug",
+                    "featureSlug",
+                    "legKey",
+                    "pipeId",
+                    "strategyId",
+                    "computedAt",
+                    "template",
+                    "templateUnavailableReason",
+                    "llm",
+                    "llmUnavailableReason"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "workflow_slug_required"
+          },
+          "404": {
+            "description": "workflow_not_on_a_pipe | campaign_not_found"
+          },
+          "502": {
+            "description": "writer_pick_unreadable"
+          },
+          "503": {
+            "description": "writer_ranking_not_computed_yet"
+          }
+        }
+      }
+    },
     "/public/stats/leg-workflow-ranking": {
       "get": {
         "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
@@ -62586,6 +63497,25 @@
                             "nullable": true,
                             "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                           },
+                          "appliesTo": {
+                            "type": "string",
+                            "enum": [
+                              "workflow",
+                              "template",
+                              "llm"
+                            ],
+                            "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                          },
+                          "writersJudged": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."
+                          },
+                          "writersFollowing": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "Of them, those judged to follow it (null on a workflow tactic)."
+                          },
                           "workflowsJudged": {
                             "type": "integer",
                             "description": "Workflows (current version) Jev judged on it."
@@ -62662,6 +63592,9 @@
                           "name",
                           "description",
                           "clientLine",
+                          "appliesTo",
+                          "writersJudged",
+                          "writersFollowing",
                           "workflowsJudged",
                           "workflowsFollowing",
                           "judging"
@@ -62717,6 +63650,15 @@
                     "type": "string",
                     "description": "<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."
                   },
+                  "appliesTo": {
+                    "type": "string",
+                    "enum": [
+                      "workflow",
+                      "template",
+                      "llm"
+                    ],
+                    "description": "What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."
+                  },
                   "createdBy": {
                     "type": "string"
                   }
@@ -62760,6 +63702,25 @@
                       "nullable": true,
                       "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                     },
+                    "appliesTo": {
+                      "type": "string",
+                      "enum": [
+                        "workflow",
+                        "template",
+                        "llm"
+                      ],
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "writersJudged": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."
+                    },
+                    "writersFollowing": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of them, those judged to follow it (null on a workflow tactic)."
+                    },
                     "workflowsJudged": {
                       "type": "integer",
                       "description": "Workflows (current version) Jev judged on it."
@@ -62836,6 +63797,9 @@
                     "name",
                     "description",
                     "clientLine",
+                    "appliesTo",
+                    "writersJudged",
+                    "writersFollowing",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging"
@@ -62873,6 +63837,25 @@
                       "nullable": true,
                       "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                     },
+                    "appliesTo": {
+                      "type": "string",
+                      "enum": [
+                        "workflow",
+                        "template",
+                        "llm"
+                      ],
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "writersJudged": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."
+                    },
+                    "writersFollowing": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of them, those judged to follow it (null on a workflow tactic)."
+                    },
                     "workflowsJudged": {
                       "type": "integer",
                       "description": "Workflows (current version) Jev judged on it."
@@ -62949,6 +63932,9 @@
                     "name",
                     "description",
                     "clientLine",
+                    "appliesTo",
+                    "writersJudged",
+                    "writersFollowing",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging"
@@ -63026,6 +64012,25 @@
                       "type": "string",
                       "nullable": true,
                       "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
+                    },
+                    "appliesTo": {
+                      "type": "string",
+                      "enum": [
+                        "workflow",
+                        "template",
+                        "llm"
+                      ],
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "writersJudged": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."
+                    },
+                    "writersFollowing": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of them, those judged to follow it (null on a workflow tactic)."
                     },
                     "workflowsJudged": {
                       "type": "integer",
@@ -63166,6 +64171,9 @@
                     "name",
                     "description",
                     "clientLine",
+                    "appliesTo",
+                    "writersJudged",
+                    "writersFollowing",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging",
@@ -63267,6 +64275,25 @@
                       "nullable": true,
                       "description": "The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."
                     },
+                    "appliesTo": {
+                      "type": "string",
+                      "enum": [
+                        "workflow",
+                        "template",
+                        "llm"
+                      ],
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "writersJudged": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."
+                    },
+                    "writersFollowing": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Of them, those judged to follow it (null on a workflow tactic)."
+                    },
                     "workflowsJudged": {
                       "type": "integer",
                       "description": "Workflows (current version) Jev judged on it."
@@ -63358,6 +64385,9 @@
                     "name",
                     "description",
                     "clientLine",
+                    "appliesTo",
+                    "writersJudged",
+                    "writersFollowing",
                     "workflowsJudged",
                     "workflowsFollowing",
                     "judging",

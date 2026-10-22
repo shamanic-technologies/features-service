@@ -5660,6 +5660,122 @@ const legWorkflowRankingRowSchema = z.object({
   place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
 });
 
+const writerRankingRowSchema = z.object({
+  rank: z.number().int().describe("1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."),
+  key: z.string().describe("Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."),
+  label: z.string(),
+  selectable: z.boolean().describe("A run may write with it: an active template dynasty with a head; an LLM with an active content-generation writer alias. Non-selectable rows rank after every selectable one and are never picked."),
+  notSelectableReason: z.string().nullable().describe("`template_dynasty_deprecated`, `template_dynasty_has_no_head`, `no_dynasty_on_pipe`, `writer_alias_deprecated`, `no_writer_alias`."),
+  isMature: z.boolean().describe("Its outcomes on runs started before the leg's cutoff reach the leg's bar (the workflows' maturity rule)."),
+  basis: z.enum(["mature", "flash"]),
+  costPerOutcomeUsd: z.number().nullable().describe("Observed on `basis`: spend ÷ outcomes. Null at zero outcomes (the order reads `explorePriceUsd`)."),
+  conversionRatePct: z.number().nullable(),
+  spentUsd: z.number(),
+  contacted: z.number(),
+  outcomes: z.number(),
+  explorePriceUsd: z.number().nullable().describe("A LEARNING row's price: spend so far ÷ max(outcomes, 1); $0 never used (goes first, never floored). Null on a mature row."),
+  place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]),
+  goesFirst: z.boolean(),
+  moneyGoesHere: z.boolean(),
+});
+const writerRankingSchema = z.object({
+  rows: z.array(writerRankingRowSchema),
+  best: writerRankingRowSchema.nullable().describe("Rank 1 when selectable and the pipe's writer evidence is measured; else null + `unavailableReason`."),
+  excluded: z.array(z.object({ key: z.string(), label: z.string(), reason: z.string() })).describe("Ruled out by the strategy's tactics of this subject (never listed in `rows`, never picked). An item not judged yet on a tactic the strategy names is ruled out too."),
+  unavailableReason: z.string().nullable(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/public/stats/leg-writer-ranking",
+  summary: "The best template dynasty and the best LLM of one pipe, on $/outcome (public, no auth)",
+  description:
+    "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
+  tags: ["Public"],
+  request: {
+    query: z.object({
+      featureSlug: z.string(),
+      leg: z.string().describe("Any pipe's leg key (either outbound spelling)."),
+      strategyId: z.string().optional().describe("A strategy id (404 `strategy_not_found`)."),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Both rankings",
+      content: {
+        "application/json": {
+          schema: z.object({
+            featureSlug: z.string(),
+            legKey: z.string(),
+            pipeId: z.string(),
+            computedAt: z.string().nullable(),
+            costBasis: z.literal("incurred"),
+            rankBasis: z.literal("cost_per_outcome"),
+            maturity: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoffIso: z.string().nullable() }),
+            writerEvidence: z.enum(["measured", "internal_pipe_not_measured_per_writer", "no_sequence_recorded_on_pipe"]),
+            strategyId: z.string().nullable(),
+            leftOut: z.object({ templates: z.object({ contacted: z.number(), outcomes: z.number() }), llms: z.object({ contacted: z.number(), outcomes: z.number() }) }).describe("People whose writer is not on record: in no bar (as on the Research page)."),
+            templates: writerRankingSchema.extend({
+              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable() })),
+            }),
+            llms: writerRankingSchema.extend({
+              rows: z.array(writerRankingRowSchema.extend({ aliases: z.array(z.object({ alias: z.string(), provider: z.string(), status: z.enum(["active", "deprecated"]) })), modelIds: z.array(z.string()), provider: z.string().nullable() })),
+            }),
+          }),
+        },
+      },
+    },
+    400: { description: "featureSlug and leg are required" },
+    404: { description: "strategy_not_found" },
+    503: { description: "writer_ranking_not_computed_yet" },
+  },
+});
+
+const writerPickFigures = {
+  place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]),
+  costPerOutcomeUsd: z.number().nullable(),
+  explorePriceUsd: z.number().nullable(),
+  isMature: z.boolean(),
+  spentUsd: z.number(),
+  outcomes: z.number(),
+  contacted: z.number(),
+};
+registry.registerPath({
+  method: "get",
+  path: "/internal/writer-pick",
+  summary: "What one run writes with: the best template dynasty and LLM of its pipe (internal, api-key; workflow-service)",
+  description:
+    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason: `internal_pipe_not_measured_per_writer`, `no_sequence_recorded_on_pipe`, `strategy_allows_none_or_none_selectable`, `play_not_catalogued_on_pipe`, `template_dynasties_unreadable`, `writer_models_unreadable`.",
+  tags: ["Internal"],
+  request: { query: z.object({ workflowSlug: z.string().describe("The VERSION executing (or its dynasty)."), campaignId: z.string().optional() }) },
+  responses: {
+    200: {
+      description: "The pick",
+      content: {
+        "application/json": {
+          schema: z.object({
+            workflowSlug: z.string(),
+            workflowDynastySlug: z.string(),
+            featureSlug: z.string(),
+            legKey: z.string(),
+            pipeId: z.string(),
+            strategyId: z.string().nullable(),
+            computedAt: z.string().nullable(),
+            template: z.object({ templateDynastySlug: z.string().nullable().describe("content-generation's dynasty: write with its head."), head: z.string().nullable(), name: z.string(), ...writerPickFigures }).nullable(),
+            templateUnavailableReason: z.string().nullable(),
+            llm: z.object({ model: z.string().describe("The content-generation writer alias (`/generate` body.model)."), provider: z.string().nullable(), modelKey: z.string(), label: z.string(), ...writerPickFigures }).nullable(),
+            llmUnavailableReason: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "workflow_slug_required" },
+    404: { description: "workflow_not_on_a_pipe | campaign_not_found" },
+    502: { description: "writer_pick_unreadable" },
+    503: { description: "writer_ranking_not_computed_yet" },
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/leg-workflow-ranking",
@@ -7736,6 +7852,9 @@ const catalogueTacticRow = z.object({
   name: z.string().describe("Unique (case-insensitive)."),
   description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
   clientLine: z.string().nullable().describe("The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."),
+  appliesTo: z.enum(["workflow", "template", "llm"]).describe("What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."),
+  writersJudged: z.number().int().nullable().describe("A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."),
+  writersFollowing: z.number().int().nullable().describe("Of them, those judged to follow it (null on a workflow tactic)."),
   workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
   workflowsFollowing: z.number().int().describe("Of them, those judged to follow it."),
   judging: z
@@ -7873,7 +7992,13 @@ catalogueCreate(
   "/internal/catalogue/tactics",
   "Declare a tactic (internal, api-key)",
   "A yes/no tag on workflow versions. Its `description` is what Jev judges every version against (precise: what the workflow DOES, not what it is called). Name and description unique (409 `tactic_name_taken` / `tactic_description_taken`); id = the name slugged. Jev judges every assigned workflow version on it within minutes.",
-  z.object({ name: z.string(), description: z.string(), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."), createdBy: z.string() }),
+  z.object({
+    name: z.string(),
+    description: z.string(),
+    clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."),
+    appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."),
+    createdBy: z.string(),
+  }),
   catalogueTacticRow,
 );
 catalogueCreate(

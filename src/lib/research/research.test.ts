@@ -537,10 +537,11 @@ describe("research catalogue: every runnable workflow, and what it writes with n
     const aldhanab = c.workflows[1]!;
     expect(aldhanab.name).toBe("Sales Cold Email Outreach Aldhanab");
     expect(aldhanab.writesWithNow?.model).toEqual({ key: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", linked: true });
-    expect(c.templates.map((t) => [t.key, t.emails, t.hasText])).toEqual([["blind-discovery-email-v9", "500", false], ["blind-discovery-email-v47", "0", true], ["cold-email-v53", "0", false]]);
+    // The leg order (BEST-TPL-LLM-1022): a template never used has spent $0 and stands before one still learning.
+    expect(c.templates.map((t) => [t.key, t.emails, t.hasText])).toEqual([["blind-discovery-email-v47", "0", true], ["cold-email-v53", "0", false], ["blind-discovery-email-v9", "500", false]]);
     expect(c.templates.find((t) => t.key === "blind-discovery-email-v47")!.workflows).toEqual([{ key: "azalea", label: "Azalea" }]);
-    expect(c.models.map((m) => [m.key, m.emails])).toEqual([["gemini-3.1-pro", "500"], ["deepseek-v4.1-flash", "0"]]);
-    expect(c.models[1]!.sample).toMatch(/^0 /);
+    expect(c.models.map((m) => [m.key, m.emails])).toEqual([["deepseek-v4.1-flash", "0"], ["gemini-3.1-pro", "500"]]);
+    expect(c.models[0]!.sample).toMatch(/^0 /);
   });
 });
 
