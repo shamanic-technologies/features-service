@@ -5690,9 +5690,9 @@ const legWorkflowRankingRowSchema = z.object({
   place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
   figures: legWorkflowFiguresSchema.optional().describe("On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy)."),
   lastRunAt: z.string().nullable().optional().describe("When a run of this workflow (any version) last started on the pipe, every org (ISO). Null = never ran on it, or `lastRunUnavailableReason`. Absent on a copy built before it shipped."),
-  lastRunUnavailableReason: z.enum(["not_read_on_pipe"]).nullable().optional().describe("`not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet."),
+  lastRunUnavailableReason: z.enum(["never_ran", "run_time_not_served", "not_read_on_pipe"]).nullable().optional().describe("Set whenever `lastRunAt` is null. `never_ran`: no spend and nobody contacted on the pipe. `run_time_not_served`: it ran but the run-time read states no date. `not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet."),
   tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().optional().describe("The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`."),
-  tacticsUnavailableReason: z.enum(["tactics_unreadable"]).nullable().optional(),
+  tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().optional().describe("`not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (unknown, never an empty list). `[]` with no reason = judged, follows none. The email angle (blind / named / offer) is a TEMPLATE tactic since RESEARCH-WF-FIGURES-1022, so it is never listed here."),
 });
 
 const writerRankingRowSchema = z.object({

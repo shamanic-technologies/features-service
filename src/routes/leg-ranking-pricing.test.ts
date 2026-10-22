@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { legDefaultConversionPct, legRankingOnPricing, type LegWorkflowRankingPayload } from "./public.js";
+import { legDefaultConversionPct, legRankingOnPricing, workflowTacticsFrom, type LegWorkflowRankingPayload } from "./public.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 
 // RESEARCH-WF-FIGURES-1022: `?pricing=net` serves each row's net figures as `figures`, never both.
@@ -23,6 +23,27 @@ describe("leg workflow ranking on a pricing", () => {
     expect(withTactics.rows[0]).toMatchObject({ tactics: [{ id: "blind-angle", name: "Blind angle" }], tacticsUnavailableReason: null });
     const unreadable = legRankingOnPricing(payload, "gross", null);
     expect(unreadable.rows[0]).toMatchObject({ tactics: null, tacticsUnavailableReason: "tactics_unreadable" });
+  });
+
+  it("unknown tactics are null + not_judged_yet, never an empty list; a fully judged row with no yes is []", () => {
+    const tactics = new Map([
+      ["catch-all", { id: "catch-all", name: "Catch-all", appliesTo: "workflow" }],
+      ["blind-angle", { id: "blind-angle", name: "Blind angle", appliesTo: "template" }],
+    ]) as never;
+    const of = workflowTacticsFrom({
+      tactics,
+      tacticsByDynasty: new Map([
+        ["judged-no", new Map([["catch-all", false]])],
+        ["judged-yes", new Map([["catch-all", true]])],
+        ["half", new Map([["other", true]])],
+      ]),
+    });
+    expect(of("judged-no")).toEqual([]);
+    expect(of("judged-yes")).toEqual([{ id: "catch-all", name: "Catch-all" }]);
+    expect(of("half")).toBe("not_judged_yet");
+    expect(of("never-seen")).toBe("not_judged_yet");
+    const served = legRankingOnPricing(payload, "gross", () => "not_judged_yet");
+    expect(served.rows[0]).toMatchObject({ tactics: null, tacticsUnavailableReason: "not_judged_yet" });
   });
 
   it("states the leg's seeded conversion for an entry leg", () => {
