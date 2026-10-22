@@ -17,6 +17,7 @@ import { namingOf, namingStudies, NAMING_LABEL } from "./naming.js";
 import type { ResearchChart, ResearchStudy } from "./types.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
 import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex } from "./template-dynasties.js";
+import { NO_LLM_DYNASTIES, type LlmDynastyIndex } from "../llm-dynasties.js";
 
 export interface ModelName {
   label: string;
@@ -37,6 +38,8 @@ export interface GenerationsInput {
   naming: boolean;
   /** The pipe's template dynasties (content-generation-service): a template bar is a dynasty, its versions pooled. */
   templateDynasties?: TemplateDynastyIndex;
+  /** chat-service's LLM dynasties (LLM-DYNASTY-1022-FS): a model bar is a dynasty, its versions pooled. */
+  llmDynasties?: LlmDynastyIndex;
 }
 
 const LAYOUT: Record<string, string> = { one_block: "One block", single_line_breaks: "Single line breaks", double_line_breaks: "Double line breaks" };
@@ -44,7 +47,7 @@ const OPENING: Record<string, string> = { greeting: "Greeting + first name", fir
 const DASH: Record<string, string> = { em: "Em dash", en: "En dash", both: "Both dashes", none: "No dash" };
 
 /** What the bars need (the studies' terms, texts and naming are not read to build them). */
-export type GenerationBucketsInput = Pick<GenerationsInput, "legKey" | "cells" | "persons" | "split" | "models" | "templateDynasties">;
+export type GenerationBucketsInput = Pick<GenerationsInput, "legKey" | "cells" | "persons" | "split" | "models" | "templateDynasties" | "llmDynasties">;
 
 function bucketsBy(
   input: GenerationBucketsInput,
@@ -214,19 +217,46 @@ function shapeStudy(input: GenerationsInput, dim: "layout" | "opening" | "dash")
 }
 
 /**
- * PURE. The model bars (one per model NAME: two ids naming one model are one bar), the template bars of one pipe (one
+ * PURE. The LLM bars (one per chat-service LLM DYNASTY, its versions pooled, LLM-DYNASTY-1022-FS; a model no dynasty
+ * places is its own bar), the per-MODEL bars as their detail (two ids naming one model are one bar, read on the dynasty
+ * bar's basis so they add up to it), the template bars of one pipe (one
  * per template DYNASTY, its versions pooled; a version no dynasty lists is its own bar) and, per version, its share of
  * its bar read on the bar's own basis (so a dynasty's versions add up to it exactly).
  */
 export function generationBuckets(input: GenerationBucketsInput) {
   const modelLabel = (id: string) => input.models.get(id)?.label ?? id;
   const dyn = input.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
-  const llm = bucketsBy(input, (b) => (b.generation ? modelLabel(b.generation.model) : null), (g) => g);
+  const llmDyn = input.llmDynasties ?? NO_LLM_DYNASTIES;
+  // LLM-DYNASTY-1022-FS: a model bar is its chat-service DYNASTY (slug, name), every version pooled; a model chat-service
+  // places in no dynasty keeps its own bar (key = modelKey of its name). Per-model bars stay as the dynasty's detail.
+  const llmKeyOf = (id: string) => llmDyn.dynastyOfName(id)?.slug ?? modelKey(modelLabel(id));
+  const llmLabels = new Map<string, string>();
+  const modelDynastyKey = new Map<string, string>();
+  for (const b of input.persons) {
+    if (!b.generation) continue;
+    const key = llmKeyOf(b.generation.model);
+    llmLabels.set(key, llmDyn.dynastyOfName(b.generation.model)?.name ?? modelLabel(b.generation.model));
+    modelDynastyKey.set(modelKey(modelLabel(b.generation.model)), key);
+  }
+  const llmLabelOf = (key: string) => llmDyn.bySlug(key)?.name ?? llmLabels.get(key) ?? key;
+  const llm = bucketsBy(input, (b) => (b.generation ? llmKeyOf(b.generation.model) : null), llmLabelOf);
+  const llmBasis = new Map(llm.rows.map((r) => [r.key, r.basis]));
+  const llmModels = bucketsBy(
+    input,
+    (b) => (b.generation ? modelLabel(b.generation.model) : null),
+    (g) => g,
+    (label) => llmBasis.get(modelDynastyKey.get(modelKey(label)) ?? ""),
+  );
   const tpl = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.keyOf(b.generation.promptType) : null), dyn.labelOf);
   const basisOfBar = new Map(tpl.rows.map((r) => [r.key, r.basis]));
   const versions = bucketsBy(input, (b) => (b.generation?.promptType ? dyn.versionOf(b.generation.promptType) : null), templateLabel, (v) => basisOfBar.get(dyn.keyOf(v)));
   return {
-    llm: { rows: llm.rows.map((r) => ({ ...r, key: modelKey(r.label) })), leftOut: llm.leftOut },
+    llm: { rows: llm.rows, leftOut: llm.leftOut },
+    /** One bar per MODEL (two ids naming one model are one bar), read on its dynasty bar's basis, so a dynasty's models add up to it. */
+    llmModels: llmModels.rows.map((r) => ({ ...r, key: modelKey(r.label), dynastyKey: modelDynastyKey.get(modelKey(r.label)) ?? modelKey(r.label) })),
+    /** Model id / alias → the LLM bar it pools into (its dynasty's slug, else its own model key) and that bar's label. */
+    llmKeyOf,
+    llmLabelOf,
     tpl,
     tplVersions: versions.rows,
     /** Template bar key (dynasty, else version) / template version → workflow version → what its people cost and produced. */

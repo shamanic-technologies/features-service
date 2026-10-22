@@ -46,7 +46,8 @@ export type ModelAliasReason = "model_ids_unreadable" | "model_not_in_chat_servi
 
 /**
  * PURE. The aliases a Research model row is served under (TEMPLATE-MODEL-STATUS-1019): every concrete model chat-service
- * lists whose page key is the row's (`modelKey` of its display name, else of its id when chat-service names none), and
+ * lists whose page key is the row's (`pageKeyOf`: its LLM dynasty's slug since LLM-DYNASTY-1022-FS, else `modelKey` of its
+ * display name), and
  * every CURRENT alias chat-service resolves to one of them. Read off chat-service's own alias list, never off which
  * workflows ran. Several aliases = chat-service truly serves the model under each (`deepseek-flash` and `deepseek-pro`
  * both resolve to DeepSeek V4.1 Flash on 2026-10-19). An alias that once named it but now names another model is a
@@ -55,10 +56,10 @@ export type ModelAliasReason = "model_ids_unreadable" | "model_not_in_chat_servi
 export function modelRowAliases(
   rowKey: string,
   models: readonly ModelIdRow[] | ModelAliasReason,
-  keyOf: (label: string) => string,
+  pageKeyOf: (m: ModelIdRow) => string,
 ): { modelIds: string[]; aliases: string[]; formerAliases: string[]; aliasesUnavailableReason: ModelAliasReason | null } {
   if (typeof models === "string") return { modelIds: [], aliases: [], formerAliases: [], aliasesUnavailableReason: models };
-  const hits = models.filter((m) => keyOf(m.displayName) === rowKey || keyOf(m.modelId) === rowKey);
+  const hits = models.filter((m) => pageKeyOf(m) === rowKey);
   const sorted = (xs: Iterable<string>) => [...new Set(xs)].sort();
   const aliases = sorted(hits.flatMap((m) => m.aliases));
   const formerAliases = sorted(hits.flatMap((m) => m.formerAliases)).filter((a) => !aliases.includes(a));
