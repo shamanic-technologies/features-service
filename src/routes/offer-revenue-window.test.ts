@@ -19,6 +19,8 @@ vi.mock("../db/index.js", () => ({
 }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
+// This suite drives the brand's campaign-less work through the real reads (src/vitest.setup.ts mocks it to none).
+vi.unmock("../lib/brand-level-spend.js");
 vi.mock("@sentry/node", () => ({
   default: { setupExpressErrorHandler: vi.fn() },
   setupExpressErrorHandler: vi.fn(),
@@ -160,6 +162,14 @@ function mockFetch(): void {
     if (path.includes("/public/stats")) return json({});
     if (path.includes("/stats/costs")) {
       const groupBy = q.get("groupBy") ?? "";
+      if (groupBy === "campaignId,featureSlug,costName") {
+        // The brand-level spend read (lib/brand-level-spend.ts): every campaign of the brand, every feature,
+        // since inception; its campaign-less rows are the setup today and 199 days ago (= the timeseries').
+        return json({ groups: [
+          { dimensions: { campaignId: "c1", featureSlug: PITCH, costName: "apollo" }, totalCostInUsdCents: "3722", actualCostInUsdCents: "3722", netTotalCostInUsdCents: "3722", netActualCostInUsdCents: "3722", runCount: 1 },
+          { dimensions: { campaignId: null, featureSlug: null, costName: "setup" }, totalCostInUsdCents: "844.6", actualCostInUsdCents: "834.6", netTotalCostInUsdCents: "844.6", netActualCostInUsdCents: "834.6", runCount: 2 },
+        ] });
+      }
       if (groupBy === "campaignId,featureSlug") {
         // The brand-level today read: no feature filter, so campaign-less rows of every feature appear.
         return json({ groups: [
@@ -219,12 +229,19 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
 
   const read = (extra = "") => request(app).get(`/offers/${OFFER}/revenue?brandId=b1&pricing=net${extra}`).set(AUTH);
 
-  it("today's actual spend counts the brand's campaign-less work; the lifetime figures do not move", async () => {
+  it("today's AND lifetime spend count the brand's campaign-less work, and the ROI divides that same spend (ROI-SPENT-SAME-BASIS-1022)", async () => {
     const res = await read();
     expect(res.status).toBe(200);
-    expect(res.body.spend.actualSpentTodayCents).toBe(2722 + 7 + 578);
-    expect(res.body.spend.totalSpentTodayCents).toBe(2722 + 7 + 578);
-    expect(res.body.spend.actualSpentCents).toBe(3722);
+    expect(res.body.spend.actualSpentTodayCents).toBe(2722 + 585);
+    expect(res.body.spend.totalSpentTodayCents).toBe(2722 + 595);
+    expect(res.body.spend.actualSpentCents).toBe(3722 + 835);
+    expect(res.body.spend.totalSpentCents).toBe(3722 + 845);
+    expect(res.body.spend.brandLevel).toEqual({ brandCampaignLessTotalSpentCents: 845, totalSpentCents: 845, actualSpentCents: 835 });
+    expect(res.body.costEconomics.committedCostUsd * 100).toBeCloseTo(3722 + 845, 6);
+    expect(res.body.costEconomics.roiMultiple * res.body.costEconomics.committedCostUsd).toBeCloseTo(res.body.headline.totalPipelineUsd, 6);
+    // The Spent tile since inception carries the SAME brand work the ROI divides (all of it, no share).
+    const all = await read("&windowDays=all");
+    expect(all.body.window.spend.brandLevelTotalSpentCents).toBe(res.body.spend.brandLevel.totalSpentCents);
   });
 
   it("an unwindowed read has no `window` and is byte-equal to the windowed one without it", async () => {
