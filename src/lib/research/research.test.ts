@@ -543,6 +543,28 @@ describe("research catalogue: every runnable workflow, and what it writes with n
     expect(c.models.map((m) => [m.key, m.emails])).toEqual([["deepseek-v4.1-flash", "0"], ["gemini-3.1-pro", "500"]]);
     expect(c.models[0]!.sample).toMatch(/^0 /);
   });
+
+  it("lists every workflow the leg ranking lists, one that cannot run included (TPL-TACTICS-ROWS-1022: one source of workflows)", () => {
+    const c = pipeCatalog({
+      terms,
+      workflows: [],
+      templates: [],
+      models: [],
+      nameOf: () => null,
+      mainOf: () => ({ model: null, template: null }),
+      modelLabel: (id) => id,
+      dynastyOf: (s) => s,
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: [
+        { key: "azalea", label: "Azalea", name: "Sales Cold Email Outreach Azalea", runnable: true },
+        { key: "zephyr", label: "Zephyr", name: "Sales Cold Email Outreach Zephyr", runnable: false },
+      ],
+      writerOf: () => null,
+    });
+    expect(c.workflows.map((w) => [w.key, w.runnable]).sort()).toEqual([["azalea", true], ["zephyr", false]]);
+  });
 });
 
 describe("research catalogue: what wrote every row's figures, deprecated workflows included (RESEARCH-DEPRECATED-LLM-TEMPLATE-1019)", () => {

@@ -46803,6 +46803,35 @@
                                   "deprecated"
                                 ]
                               },
+                              "tactics": {
+                                "type": "array",
+                                "nullable": true,
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "name"
+                                  ]
+                                },
+                                "description": "TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."
+                              },
+                              "tacticsUnavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "tactics_unreadable",
+                                  "not_judged_yet"
+                                ],
+                                "description": "`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."
+                              },
                               "icon": {
                                 "type": "string",
                                 "description": "MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."
@@ -46832,6 +46861,8 @@
                               "templateDynastySlug",
                               "head",
                               "status",
+                              "tactics",
+                              "tacticsUnavailableReason",
                               "icon",
                               "color"
                             ]
@@ -68807,7 +68838,7 @@
                             },
                             "runnable": {
                               "type": "boolean",
-                              "description": "A run may still pick it on this pipe (assigned active AND executable). Every runnable workflow has a page, with zero figures until it sends."
+                              "description": "A run may still pick it on this pipe (assigned active AND executable). Every workflow the leg workflow ranking lists has a page (TPL-TACTICS-ROWS-1022: runnable or not, so both reads list the same workflows), with zero figures until it sends."
                             },
                             "roi": {
                               "type": "string",
@@ -69807,6 +69838,35 @@
                               "type": "boolean",
                               "description": "`/internal/research/templates` serves a text under `key`: the head's on a dynasty."
                             },
+                            "tactics": {
+                              "type": "array",
+                              "nullable": true,
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name"
+                                ]
+                              },
+                              "description": "TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."
+                            },
+                            "tacticsUnavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "tactics_unreadable",
+                                "not_judged_yet"
+                              ],
+                              "description": "`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."
+                            },
                             "dynasty": {
                               "type": "object",
                               "nullable": true,
@@ -70622,6 +70682,8 @@
                             "color",
                             "label",
                             "hasText",
+                            "tactics",
+                            "tacticsUnavailableReason",
                             "dynasty",
                             "standaloneReason",
                             "status",
