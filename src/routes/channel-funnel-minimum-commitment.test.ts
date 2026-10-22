@@ -10,7 +10,7 @@ vi.mock("../db/index.js", () => ({
   sql: {},
 }));
 // The catalogue reads which channels hold an active workflow (`managed` by fact): none here.
-vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({ ...(await importOriginal<object>()), listLegAssignments: vi.fn(async () => []) }));
+vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({ ...(await importOriginal<object>()), listLegAssignments: vi.fn(async () => []), listRunnableLegAssignments: vi.fn(async () => []) }));
 // Every leg now carries its pipe identity (PIPE-PUBLIC-MARK-1018): names from an in-memory table, no DB.
 vi.mock("../lib/sales-path-names.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
