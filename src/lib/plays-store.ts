@@ -30,7 +30,7 @@ export function loadPlayCatalogue(): Promise<PlayCatalogue> {
     return buildPlayCatalogue({
       tactics: t.map(tacticOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
       strategies: s.map(strategyOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
-      plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault })),
+      plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault, ...(r.retiredAt ? { retired: true } : {}) })),
       verdicts: v.map(verdictOf),
       sweeps: w.map(sweepOf),
     });
@@ -254,7 +254,8 @@ export async function storeStrategyEdit(next: Strategy, updatedBy: string): Prom
 }
 
 /**
- * Catalogue a play on a pipe (the caller checked the pipe exists). Idempotent: an existing play answers `created:false`.
+ * Catalogue a play on a pipe (the caller checked the pipe exists). Idempotent: an existing play answers `created:false`;
+ * a play staff RETIRED from the pipe is revived (`created:true`: it is back in the catalogue, PLAY-RETIRE-1022).
  * `isDefault` makes it the pipe's DEFAULT play in one transaction (the previous default, if any, stays catalogued as a
  * non-default play); the caller checked the strategy runs at least one workflow of the pipe.
  */
@@ -270,10 +271,43 @@ export async function insertPlay(input: { pipeId: string; strategyId: string; cr
       if (defaultChanged) await tx.update(plays).set({ isDefault: false }).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.isDefault}`);
     }
     const inserted = await tx.insert(plays).values({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: input.isDefault === true, createdBy: input.createdBy }).onConflictDoNothing().returning();
+    const revived =
+      inserted.length === 0
+        ? await tx
+            .update(plays)
+            .set({ retiredAt: null, retiredBy: null, retiredNote: null })
+            .where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId} AND ${plays.retiredAt} IS NOT NULL`)
+            .returning()
+        : [];
     if (input.isDefault && inserted.length === 0 && defaultChanged) {
       await tx.update(plays).set({ isDefault: true }).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId}`);
     }
-    return { created: inserted.length > 0, defaultChanged };
+    return { created: inserted.length > 0 || revived.length > 0, defaultChanged };
+  });
+  invalidatePlayCatalogue();
+  return result;
+}
+
+/**
+ * Take a NON-default play off its pipe (owner 2026-10-22, PLAY-RETIRE-1022): the row is kept with who retired it and
+ * when; every campaign whose funnel names the play runs the pipe's DEFAULT play from then on (`resolvePlay`), and the
+ * catalogue lists it no more. The pipe's default play is refused (409 `default_play_not_retirable`: change it through
+ * the default-play route first). `changed:false` when it was already retired.
+ */
+export async function retirePlay(input: { pipeId: string; strategyId: string; retiredBy: string; note: string | null }): Promise<{ changed: boolean; retiredAt: string }> {
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(plays).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId}`).for("update");
+    if (!row) throw new DeclarationError(404, "play_not_found", `no play ${input.strategyId} on ${input.pipeId} (GET /internal/catalogue/plays)`);
+    if (row.isDefault) {
+      throw new DeclarationError(409, "default_play_not_retirable", `${input.strategyId} is the DEFAULT play of ${input.pipeId}: change or clear the default first (PUT or DELETE /internal/catalogue/pipes/{pipeId}/default-play)`);
+    }
+    if (row.retiredAt) return { changed: false, retiredAt: row.retiredAt.toISOString() };
+    const [updated] = await tx
+      .update(plays)
+      .set({ retiredAt: new Date(), retiredBy: input.retiredBy, retiredNote: input.note })
+      .where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId}`)
+      .returning();
+    return { changed: true, retiredAt: updated.retiredAt!.toISOString() };
   });
   invalidatePlayCatalogue();
   return result;

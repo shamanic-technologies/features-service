@@ -55,6 +55,34 @@ describe("plays (owner 2026-10-13)", () => {
     expect(resolvePlay(c, "q|l", null)).toMatchObject({ known: true, isDefault: true, strategy: null });
     expect(c.playsByPipe.get("p|l")![0].isDefault).toBe(true);
   });
+
+  // PLAY-RETIRE-1022 (owner 2026-10-22): a play staff took off a pipe runs the pipe's default, never nothing.
+  it("a RETIRED play resolves to the pipe's default play (or every workflow when the pipe has none) and is listed no more", () => {
+    const withDefault = buildPlayCatalogue({
+      tactics: [],
+      strategies: [VALID, CATCH],
+      plays: [
+        { pipeId: "p|l", strategyId: "valid-only", isDefault: true },
+        { pipeId: "p|l", strategyId: "valid-catch-all", isDefault: false, retired: true },
+      ],
+      verdicts: [],
+    });
+    expect(withDefault.playsByPipe.get("p|l")!.map((p) => p.strategyId)).toEqual(["valid-only"]);
+    expect(resolvePlay(withDefault, "p|l", "valid-catch-all")).toMatchObject({ known: true, isDefault: true, strategy: { id: "valid-only" }, retiredFrom: "valid-catch-all" });
+    const noDefault = buildPlayCatalogue({
+      tactics: [],
+      strategies: [VALID, CATCH],
+      plays: [
+        { pipeId: "p|l", strategyId: "valid-only", isDefault: false, retired: true },
+        { pipeId: "p|l", strategyId: "valid-catch-all", isDefault: false, retired: true },
+      ],
+      verdicts: [],
+    });
+    expect(noDefault.playsByPipe.has("p|l")).toBe(false);
+    expect(resolvePlay(noDefault, "p|l", "valid-only")).toMatchObject({ known: true, isDefault: true, strategy: null, retiredFrom: "valid-only" });
+    // Retired on ANOTHER pipe is no play of this one.
+    expect(resolvePlay(noDefault, "q|l", "valid-only")).toMatchObject({ known: false });
+  });
 });
 
 describe("judging state and why a play runs nothing (owner 2026-10-14)", () => {

@@ -1340,7 +1340,7 @@ const workflowProjectionResponseSchema = z.object({
       strategyId: z.string(),
       strategyName: z.string(),
       default: z.boolean(),
-      source: z.enum(["sales_funnel", "pipe_default"]).describe("`sales_funnel` = the campaign's sales funnel names this play on the pipe; `pipe_default` = it names none (or the read names no campaign)."),
+      source: z.enum(["sales_funnel", "pipe_default", "retired_play"]).describe("`sales_funnel` = the campaign's sales funnel names this play on the pipe; `pipe_default` = it names none (or the read names no campaign); `retired_play` = it names a play staff retired from the pipe, so it runs the pipe's default play (PLAY-RETIRE-1022)."),
       allowedWorkflowCount: z.number().int().describe("Workflows of the rows still selectable under the play. 0 = nothing may run it: the run waits, never falls back to another workflow."),
     })
     .optional()
@@ -8109,6 +8109,29 @@ registry.registerPath({
     400: { description: "A field is missing or invalid, or `pipe_not_ours`." },
     401: { description: "Missing or wrong service key." },
     404: { description: "`pipe_not_found`." },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/catalogue/plays/{id}/retire",
+  summary: "Retire a non-default play from its pipe (internal, api-key, staff)",
+  description:
+    "PLAY-RETIRE-1022 (owner 2026-10-22): takes a NON-default play off its pipe when its strategy belongs on another pipe. Every campaign whose sales funnel names the play runs the pipe's DEFAULT play from its next run on, with no client action and no unit held: a funnel id, pipe id or play id naming the retired play reads as the bare pipe (`GET /internal/catalogue/pipes/{id}`, `/sales-funnels/{id}`, the leg-keyed workflow projection's `play.source: retired_play`). The catalogue lists the play no more; the row is kept (who retired it, when, why). Re-cataloguing it (`POST /internal/catalogue/plays`) revives it. Refused 409 `default_play_not_retirable` for the pipe's DEFAULT play (its bare id, or the strategy the pipe defaults to): change or clear the default first (`PUT`/`DELETE /internal/catalogue/pipes/{pipeId}/default-play`). Already retired = 200 `changed: false`.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ id: z.string().describe("A play id (`<pipe id>~<strategy id>`), URL-encoded.") }),
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters.") }) } } },
+  },
+  responses: {
+    200: {
+      description: "Retired (or already retired). `runsNow` = the pipe's default play, what the play's campaigns run now.",
+      content: { "application/json": { schema: z.object({ changed: z.boolean().describe("false when the play was already retired."), retiredPlayId: z.string(), retiredAt: z.string(), runsNow: catalogueTacticPlayRow }) } },
+    },
+    400: { description: "`retiredBy_required` or `note_invalid`." },
+    401: { description: "Missing or wrong service key." },
+    404: { description: "`pipe_not_found` or `play_not_found` (the pipe never catalogued that strategy)." },
+    409: { description: "`default_play_not_retirable`." },
   },
 });
 

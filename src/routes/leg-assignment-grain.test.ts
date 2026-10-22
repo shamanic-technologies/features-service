@@ -536,6 +536,37 @@ describe("a campaign's PLAY decides which workflows may run (owner 2026-10-13, l
     expect(selectableSet(catchAll.body)).toEqual(["sodium"]);
   });
 
+  // PLAY-RETIRE-1022 (owner 2026-10-22): the plays leave the writing pipe; their campaigns run its default, never held.
+  it("a unit naming a RETIRED play runs the pipe's default: its play when it has one, every assigned workflow when not", async () => {
+    const { loadPlayCatalogue } = await import("../lib/plays-store.js");
+    const { buildPlayCatalogue } = await import("../lib/plays.js");
+    const current = await loadPlayCatalogue();
+    const verdicts = [
+      { workflowSlug: "wf-lithium-v1", tacticId: "catch-all", workflowDynastySlug: "lithium", version: 1, versionActive: true, verdict: false, probability: 0.02, model: "m", judgedAt: "" },
+      { workflowSlug: "wf-sodium-v1", tacticId: "catch-all", workflowDynastySlug: "sodium", version: 1, versionActive: true, verdict: true, probability: 0.97, model: "m", judgedAt: "" },
+    ];
+    const catalogueWith = (plays: Array<{ pipeId: string; strategyId: string; isDefault: boolean; retired?: boolean }>) =>
+      buildPlayCatalogue({ tactics: [...current.tactics.values()], strategies: [...current.strategies.values()], plays, verdicts });
+
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(catalogueWith([
+      { pipeId: PIPE, strategyId: "valid-only", isDefault: true },
+      { pipeId: PIPE, strategyId: "valid-catch-all", isDefault: false, retired: true },
+    ]));
+    const onDefault = await get("leg=start_to_conversation&campaignId=unit-catch");
+    expect(onDefault.body.play).toMatchObject({ id: PIPE, strategyId: "valid-only", default: true, source: "retired_play", allowedWorkflowCount: 1 });
+    expect(selectableSet(onDefault.body)).toEqual(["lithium"]);
+
+    // Prod 2026-10-22: Sales Cold Email has NO default play, and both its plays are retired.
+    vi.mocked(loadPlayCatalogue).mockResolvedValue(catalogueWith([
+      { pipeId: PIPE, strategyId: "valid-only", isDefault: false, retired: true },
+      { pipeId: PIPE, strategyId: "valid-catch-all", isDefault: false, retired: true },
+    ]));
+    const free = await get("leg=start_to_conversation&campaignId=unit-catch");
+    expect(free.body.play ?? null).toBeNull();
+    expect(selectableSet(free.body)).toEqual(["lithium", "sodium"]);
+    expect(free.body.recommendedWorkflowDynastySlug).not.toBeNull();
+  });
+
   it("nothing allowed = nothing recommended, stated (campaign-service holds, never falls back)", async () => {
     const { loadPlayCatalogue } = await import("../lib/plays-store.js");
     const current = await loadPlayCatalogue();
