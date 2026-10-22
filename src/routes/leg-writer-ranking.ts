@@ -34,6 +34,7 @@ import { templateDynastyIndex, type TemplateDynasty } from "../lib/research/temp
 import { modelKey } from "../lib/research/format.js";
 import { readModelIds, type ServedModel } from "../lib/model-ids-client.js";
 import { readTemplateDynasties, readWriterModelAliases, type WriterModelAlias } from "../lib/writer-catalogue-client.js";
+import { llmDynastyIndex, NO_LLM_DYNASTIES, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { rankWriters, type WriterCandidate, type WriterRanking, type WriterRankingRow } from "../lib/leg-writer-ranking.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getInternalPipeFleet } from "../lib/meeting-leg-fleet.js";
@@ -68,11 +69,30 @@ export interface TemplateRow extends WriterRankingRow {
   status: "active" | "deprecated" | null;
 }
 
+/** One model of an LLM dynasty row: its share of the row's figures, read on the row's basis (the models add up to it). */
+export interface LlmModelDetail {
+  key: string;
+  label: string;
+  modelIds: string[];
+  /** The dynasty's head: what its slug runs now. */
+  head: boolean;
+  basis: "mature" | "flash";
+  spentUsd: number;
+  contacted: number;
+  outcomes: number;
+}
+
 export interface LlmRow extends WriterRankingRow {
-  /** content-generation writer aliases naming this model, active ones first (what a run sends as `model`). */
+  /** chat-service's LLM dynasty slug (= `key`; LLM-DYNASTY-1022-FS); null = a model chat-service places in no dynasty (its own row). */
+  llmDynastySlug: string | null;
+  /** The dynasty's head model id (what a run writing with this row gets). */
+  headModelId: string | null;
+  /** content-generation writer aliases running this dynasty, active ones first (what a run sends as `model` today). */
   aliases: Array<{ alias: string; provider: string; status: "active" | "deprecated" }>;
   modelIds: string[];
   provider: string | null;
+  /** Per model, its share of the row (every version chat-service lists, newest first, zero until it writes). */
+  models: LlmModelDetail[];
 }
 
 /** One pipe's evidence, before any strategy: what is stored and served. */
@@ -87,7 +107,12 @@ export interface LegWriterRankingPayload {
   /** `measured` = the pipe's people are filed under what wrote them; else why nothing is picked. */
   writerEvidence: "measured" | WriterEvidenceReason;
   templates: { candidates: Array<WriterCandidate & { templateDynastySlug: string | null; head: string | null; status: "active" | "deprecated" | null }>; unavailableReason: string | null };
-  llms: { candidates: Array<WriterCandidate & { aliases: LlmRow["aliases"]; modelIds: string[]; provider: string | null }>; unavailableReason: string | null };
+  llms: {
+    candidates: Array<WriterCandidate & { llmDynastySlug: string | null; headModelId: string | null; aliases: LlmRow["aliases"]; modelIds: string[]; provider: string | null; models: LlmModelDetail[] }>;
+    unavailableReason: string | null;
+    /** Set when chat-service's LLM dynasties could not be read this build: every model is its own row then (LLM-DYNASTY-1022-FS). */
+    dynastiesUnavailableReason?: string | null;
+  };
   /** People of the pipe's versions whose writer is not on record (left out of every bar, like the Research page). */
   leftOut: { templates: { contacted: number; outcomes: number }; llms: { contacted: number; outcomes: number } };
 }
@@ -124,20 +149,37 @@ export function templateCandidates(
   return out;
 }
 
-/** PURE. The LLM candidates: every model a writer alias names (zero until it writes) + every model that wrote on the pipe. */
+type Bar = { key: string; label: string; basis: "mature" | "flash"; figures: { spentUsd: number; contacted: number; outcomes: number } };
+
+/**
+ * PURE. The LLM candidates, one per chat-service LLM DYNASTY (LLM-DYNASTY-1022-FS, every version's evidence pooled): every
+ * dynasty a content-generation writer alias runs (zero until it writes) + every bar that wrote on the pipe. Which dynasty
+ * an alias, a model id or a slug belongs to is chat-service's (`llmDyn`); a name it places in none keeps its own row keyed
+ * on its model (`modelKey` of chat-service's name, else of the name). `modelBars` = the per-model detail (generationBuckets
+ * `llmModels`, keyed `dynastyKey`); null on an internal pipe (its ledger names the alias, not the version: `models` empty).
+ */
 export function llmCandidates(
-  bars: ReadonlyArray<{ key: string; label: string; basis: "mature" | "flash"; figures: { spentUsd: number; contacted: number; outcomes: number } }>,
+  bars: readonly Bar[],
   aliases: readonly WriterModelAlias[],
   models: readonly ServedModel[],
+  llmDyn: LlmDynastyIndex = NO_LLM_DYNASTIES,
+  modelBars: ReadonlyArray<Bar & { dynastyKey: string }> | null = [],
 ): LegWriterRankingPayload["llms"]["candidates"] {
-  const keyOfModel = (m: ServedModel) => modelKey(m.displayName || m.modelId);
+  const servedOf = (name: string) => models.find((x) => x.modelId === name) ?? models.find((x) => x.aliases.includes(name)) ?? models.find((x) => x.formerAliases.includes(name));
+  const keyOfName = (name: string) => {
+    const d = llmDyn.dynastyOfName(name);
+    if (d) return d.slug;
+    const m = servedOf(name);
+    return modelKey(m ? m.displayName || m.modelId : name);
+  };
   type Acc = { label: string; aliases: LlmRow["aliases"]; modelIds: Set<string>; provider: string | null };
   const byKey = new Map<string, Acc>();
   for (const a of aliases) {
-    const m = models.find((x) => x.modelId === a.alias) ?? models.find((x) => x.aliases.includes(a.alias));
-    const key = m ? keyOfModel(m) : modelKey(a.alias);
-    const acc = byKey.get(key) ?? { label: m?.displayName || a.alias, aliases: [], modelIds: new Set<string>(), provider: m?.provider || a.provider || null };
-    acc.aliases.push({ alias: a.alias, provider: a.provider || m?.provider || "", status: a.status });
+    const d = llmDyn.dynastyOfName(a.alias);
+    const m = servedOf(a.alias);
+    const key = keyOfName(a.alias);
+    const acc = byKey.get(key) ?? { label: d?.name ?? (m?.displayName || a.alias), aliases: [], modelIds: new Set<string>(), provider: d?.provider || m?.provider || a.provider || null };
+    acc.aliases.push({ alias: a.alias, provider: a.provider || m?.provider || d?.provider || "", status: a.status });
     if (m) acc.modelIds.add(m.modelId);
     byKey.set(key, acc);
   }
@@ -146,17 +188,41 @@ export function llmCandidates(
   return keys.map((key) => {
     const acc = byKey.get(key);
     const bar = barOf.get(key);
+    const d = llmDyn.bySlug(key);
     const sorted = [...(acc?.aliases ?? [])].sort((a, b) => (a.status === b.status ? (a.alias < b.alias ? -1 : 1) : a.status === "active" ? -1 : 1));
     const active = sorted.some((a) => a.status === "active");
+    // A dynasty no name serves any more (DeepSeek Pro) keeps its history, never a pick.
+    const runs = d ? d.servedToday : true;
+    const basis = bar?.basis ?? "flash";
+    const ownBars = (modelBars ?? []).filter((b) => b.dynastyKey === key);
+    const detail: LlmModelDetail[] = [];
+    if (d && modelBars) {
+      for (const m of d.models) {
+        const k = modelKey(m.displayName);
+        const seen = detail.find((x) => x.key === k);
+        if (seen) {
+          if (!seen.modelIds.includes(m.modelId)) seen.modelIds.push(m.modelId);
+          seen.head ||= m.modelId === d.headModelId;
+          continue;
+        }
+        const b = ownBars.find((x) => x.key === k || x.key === modelKey(m.modelId));
+        detail.push({ key: k, label: m.displayName, modelIds: [m.modelId], head: m.modelId === d.headModelId, basis, ...(b ? b.figures : ZERO) });
+      }
+    }
+    for (const b of ownBars) if (!detail.some((x) => x.key === b.key)) detail.push({ key: b.key, label: b.label, modelIds: [], head: !d, basis, ...b.figures });
+    const modelIds = new Set([...(acc?.modelIds ?? []), ...(d ? d.models.map((m) => m.modelId) : [])]);
     return {
       key,
-      label: bar?.label ?? acc?.label ?? key,
+      label: d?.name ?? bar?.label ?? acc?.label ?? key,
+      llmDynastySlug: d?.slug ?? null,
+      headModelId: d?.headModelId ?? null,
       aliases: sorted,
-      modelIds: [...(acc?.modelIds ?? [])].sort(),
-      provider: acc?.provider ?? null,
-      selectable: active,
-      notSelectableReason: active ? null : acc ? "writer_alias_deprecated" : "no_writer_alias",
-      basis: bar?.basis ?? "flash",
+      modelIds: [...modelIds].sort(),
+      provider: d?.provider || acc?.provider || null,
+      models: detail,
+      selectable: active && runs,
+      notSelectableReason: !runs ? "llm_dynasty_not_served" : active ? null : acc ? "writer_alias_deprecated" : "no_writer_alias",
+      basis,
       figures: bar ? { ...bar.figures } : { ...ZERO },
     };
   });
@@ -212,12 +278,14 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
   const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
   const rule = legMaturity(legKey);
   const pipeId = `${featureSlug}|${servedLegKeyOf(featureSlug, legKey)}`;
-  const [dynastiesRead, aliasesRead, modelsRead, internal] = await Promise.all([
+  const [dynastiesRead, aliasesRead, modelsRead, llmDynRead, internal] = await Promise.all([
     readTemplateDynasties(featureSlug, legKey),
     readWriterModelAliases().catch((error: Error) => error),
     readModelIds().catch((error: Error) => error),
+    readLlmDynastiesSoft(`leg writer ranking ${featureSlug}|${rawLegKey}`),
     internalPipeToStep(featureSlug, legKey),
   ]);
+  const llmDyn = llmDynastyIndex(llmDynRead);
   const dynasties = typeof dynastiesRead === "string" ? [] : dynastiesRead;
   const models = modelsRead instanceof Error ? [] : modelsRead;
   const aliases = aliasesRead instanceof Error ? [] : aliasesRead;
@@ -241,6 +309,9 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     const writerOf = (campaignId: string, person: string) => {
       const alias = aliases.get(`${campaignId}|${person.slice(person.indexOf(":") + 1)}`);
       if (!alias) return null;
+      // Filed under the LLM DYNASTY the alias runs (chat-service's mapping), else the model it names.
+      const d = llmDyn.dynastyOfName(alias);
+      if (d) return { key: d.slug, label: d.name };
       const m = models.find((x) => x.modelId === alias) ?? models.find((x) => x.aliases.includes(alias)) ?? models.find((x) => x.formerAliases.includes(alias));
       return { key: modelKey(m?.displayName || alias), label: m?.displayName || alias };
     };
@@ -256,7 +327,7 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     // The same cells as the Research page (its dated spend only spreads the bars over months: the figures do not move).
     const cells = buildSlugCells({ legKey, ...split, flash: ev.flash, mature: ev.mature, persons, spend: [], orgOfCampaign: new Map(ev.campaigns.map((c) => [c.campaignId, c.orgId])) });
     const names = new Map(models.map((m) => [m.modelId, { label: m.displayName, tier: m.capabilityTier === "cheap" ? "Flash" : "Pro" } as ModelName]));
-    bars = generationBuckets({ legKey, cells, persons, split, models: names, templateDynasties: templateDynastyIndex(dynastiesRead) });
+    bars = generationBuckets({ legKey, cells, persons, split, models: names, templateDynasties: templateDynastyIndex(dynastiesRead), llmDynasties: llmDyn });
   }
   const tplBars = bars?.tpl.rows ?? [];
   const llmBars = internalLlm?.rows ?? bars?.llm.rows ?? [];
@@ -270,7 +341,7 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso },
     writerEvidence,
     templates: { candidates: templateCandidates(tplBars, dynasties), unavailableReason: templateUnavailable },
-    llms: { candidates: llmCandidates(llmBars, aliases, models), unavailableReason: llmUnavailable },
+    llms: { candidates: llmCandidates(llmBars, aliases, models, llmDyn, internalLlm ? null : (bars?.llmModels ?? [])), unavailableReason: llmUnavailable, dynastiesUnavailableReason: llmDyn.unavailableReason },
     leftOut: { templates: bars?.tpl.leftOut ?? { contacted: 0, outcomes: 0 }, llms: internalLlm?.leftOut ?? bars?.llm.leftOut ?? { contacted: 0, outcomes: 0 } },
   };
 }
@@ -359,29 +430,23 @@ export interface ServedWriterRanking {
   unavailableReason: string | null;
 }
 
-/** PURE. A strategy's verdict on one template dynasty / one model (allowed when ONE of its active aliases is). */
-export function writerRuledOut(c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, strategy: Strategy | null, kind: "template" | "llm", aliasesOf?: (key: string) => string[]) {
+/**
+ * PURE. A strategy's verdict on one template dynasty / one LLM dynasty, judged on its own key (the template dynasty's
+ * slug, judged on its head's text; the LLM dynasty's slug, judged on its head model: LLM-DYNASTY-1022-FS).
+ */
+export function writerRuledOut(c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, strategy: Strategy | null, kind: "template" | "llm") {
   if (!strategy) return undefined;
   const st = strategyOnSubject(strategy, kind, c.tactics);
   if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return undefined;
   const nameOf = tacticNameOf(c as PlayCatalogue);
-  return (key: string): string | null => {
-    if (kind === "template") return strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("template", key)), nameOf).reason;
-    const reasons = (aliasesOf?.(key) ?? []).map((a) => strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("llm", a)), nameOf).reason);
-    if (reasons.some((r) => r === null)) return null;
-    return reasons[0] ?? `the strategy "${strategy.name}" names an LLM tactic and no writer alias of this model is judged on it`;
-  };
+  return (key: string): string | null => strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey(kind, key)), nameOf).reason;
 }
 
 /** PURE. The payload ranked under a strategy (null = none). An LLM row keeps only the aliases the strategy allows. */
 export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, strategy: Strategy | null): { templates: ServedWriterRanking; llms: ServedWriterRanking } {
   const tplOf = new Map(p.templates.candidates.map((x) => [x.key, x]));
   const llmOf = new Map(p.llms.candidates.map((x) => [x.key, x]));
-  const activeAliases = (key: string) => (llmOf.get(key)?.aliases ?? []).filter((a) => a.status === "active").map((a) => a.alias);
-  const llmRule = writerRuledOut(c, strategy, "llm", activeAliases);
-  const st = strategy ? strategyOnSubject(strategy, "llm", c.tactics) : null;
-  const nameOf = tacticNameOf(c as PlayCatalogue);
-  const allowedAlias = (alias: string) => !st || st.requiresTacticIds.length + st.excludesTacticIds.length === 0 || strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("llm", alias)), nameOf).allowed;
+  const llmRule = writerRuledOut(c, strategy, "llm");
   const t = rankWriters(p.templates.candidates, writerRuledOut(c, strategy, "template"));
   const l = rankWriters(p.llms.candidates, llmRule);
   const tRows: TemplateRow[] = t.rows.map((r) => {
@@ -390,7 +455,7 @@ export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue
   });
   const lRows: LlmRow[] = l.rows.map((r) => {
     const x = llmOf.get(r.key)!;
-    return { ...r, aliases: x.aliases.filter((a) => a.status !== "active" || allowedAlias(a.alias)), modelIds: x.modelIds, provider: x.provider };
+    return { ...r, llmDynastySlug: x.llmDynastySlug ?? null, headModelId: x.headModelId ?? null, aliases: x.aliases, modelIds: x.modelIds, provider: x.provider, models: x.models ?? [] };
   });
   // `strategy_excludes_every_candidate`: a run could have written with one of them, the strategy ruled every such one
   // out (workflow-service refuses to write). `no_selectable_candidate`: nothing a run may write with, strategy or not.
@@ -469,7 +534,10 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
     const served = servedRankings(p, catalogue, strategy);
     const t = unknownPlay ? null : (served.templates.best as TemplateRow | null);
     const l = unknownPlay ? null : (served.llms.best as LlmRow | null);
-    const alias = l?.aliases.find((a) => a.status === "active") ?? null;
+    // The run calls the DYNASTY SLUG when content-generation accepts it (LLM-DYNASTY-1022-CG: every name chat-service
+    // accepts, slugs included); else an active legacy alias of the same dynasty (chat-service runs the same head).
+    const activeAliases = l?.aliases.filter((a) => a.status === "active") ?? [];
+    const alias = activeAliases.find((a) => a.alias === l?.llmDynastySlug) ?? activeAliases[0] ?? null;
     const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
     res.json({
       workflowSlug,
@@ -481,7 +549,8 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       computedAt: p.computedAt,
       template: t ? { templateDynastySlug: t.templateDynastySlug, head: t.head, name: t.label, ...figures(t) } : null,
       templateUnavailableReason: t ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.templates.unavailableReason,
-      llm: l && alias ? { model: alias.alias, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
+      // `llmDynastySlug` names the dynasty rank 1 is (LLM-DYNASTY-1022-FS: chat-service runs its head when called by the slug).
+      llm: l && alias ? { model: alias.alias, llmDynastySlug: l.llmDynastySlug, headModelId: l.headModelId, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
       llmUnavailableReason: l && alias ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.llms.unavailableReason,
     });
   } catch (error) {

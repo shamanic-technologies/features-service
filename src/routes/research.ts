@@ -36,6 +36,7 @@ import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research
 import { readTemplateDynasties, readTemplateTexts } from "../lib/writer-catalogue-client.js";
 import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
+import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
@@ -278,6 +279,10 @@ interface CatalogGen {
   templates: ResearchBucket[];
   models: ResearchBucket[];
   modelLabel: (id: string) => string;
+  /** Per-MODEL bars, the detail of each LLM dynasty bar (LLM-DYNASTY-1022-FS). */
+  modelVersions: Array<ResearchBucket & { dynastyKey: string }>;
+  /** Model id / alias → its LLM bar key (dynasty slug, else model key). */
+  llmKeyOf: (id: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
   templateVersions: ResearchBucket[];
   templateFiguresByVersion: Map<string, Map<string, VersionShare>>;
@@ -289,6 +294,8 @@ const NO_GEN: CatalogGen = {
   templates: [],
   models: [],
   modelLabel: (id) => id,
+  modelVersions: [],
+  llmKeyOf: (id) => id,
   mainOf: () => ({ model: null, template: null }),
   templateVersions: [],
   templateFiguresByVersion: new Map(),
@@ -296,8 +303,11 @@ const NO_GEN: CatalogGen = {
   workflowVersionTotals: new Map(),
 };
 
-/** PURE. The model and template (dynasty, else version) most of a dynasty's people (people emailed) were written with. */
-function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: ReadonlyMap<string, string>, screened: boolean, templateKeyOf: (id: string) => string) {
+/**
+ * PURE. The model and template (dynasty, else version) most of a dynasty's people (people emailed) were written with. The
+ * model is tallied per LLM bar (`llmKeyOf`: its LLM dynasty), and the winner is named by its most used model id.
+ */
+function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: ReadonlyMap<string, string>, screened: boolean, templateKeyOf: (id: string) => string, llmKeyOf: (id: string) => string = (id) => id) {
   const tally = new Map<string, { models: Map<string, number>; templates: Map<string, number> }>();
   for (const b of persons) {
     if (!b.generation) continue;
@@ -306,13 +316,21 @@ function mainsByDynasty(persons: readonly FleetPersonBucket[], dynastyOf: Readon
     tally.set(d, t);
     const c = (screened ? b.screenedContacted : b.contacted) || 0.0001;
     t.models.set(b.generation.model, (t.models.get(b.generation.model) ?? 0) + c);
+    const lk = `llm:${llmKeyOf(b.generation.model)}`;
+    t.models.set(lk, (t.models.get(lk) ?? 0) + c);
     if (b.generation.promptType) {
       const k = templateKeyOf(b.generation.promptType);
       t.templates.set(k, (t.templates.get(k) ?? 0) + c);
     }
   }
   const top = (m: Map<string, number> | undefined) => (m && m.size ? [...m].sort((a, b) => b[1] - a[1])[0]![0] : null);
-  return (dynasty: string) => ({ model: top(tally.get(dynasty)?.models), template: top(tally.get(dynasty)?.templates) });
+  const topModel = (m: Map<string, number> | undefined) => {
+    if (!m) return null;
+    const bar = top(new Map([...m].filter(([k]) => k.startsWith("llm:"))));
+    if (!bar) return null;
+    return top(new Map([...m].filter(([k]) => !k.startsWith("llm:") && `llm:${llmKeyOf(k)}` === bar)));
+  };
+  return (dynasty: string) => ({ model: topModel(tally.get(dynasty)?.models), template: top(tally.get(dynasty)?.templates) });
 }
 
 /** The studies of what wrote the emails; none while the fleet person cell carries no generation yet (its ids stay waiting). */
@@ -320,7 +338,7 @@ async function generationInputs(
   reply: ColdEmailPipeRead,
   visit: ColdEmailPipeRead,
   note: string,
-  dynasties: { reply: TemplateDynastyIndex; visit: TemplateDynastyIndex },
+  dynasties: { reply: TemplateDynastyIndex; visit: TemplateDynastyIndex; llm: LlmDynastyIndex },
 ): Promise<GenerationPart> {
   if (![...reply.persons, ...visit.persons].some((b) => b.generation)) return { studies: [], reply: NO_GEN, visit: NO_GEN, templateTexts: new Map() };
   const types = [...reply.persons, ...visit.persons].map((b) => b.generation?.promptType).filter((x): x is string => Boolean(x));
@@ -335,6 +353,7 @@ async function generationInputs(
     templateTexts,
     naming: pipe === POSITIVE_REPLY_PIPE,
     templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
+    llmDynasties: dynasties.llm,
   });
   const partOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead): CatalogGen => {
     const g = generationBuckets(inputOf(pipe, r));
@@ -343,7 +362,9 @@ async function generationInputs(
       templates: g.tpl.rows,
       models: g.llm.rows,
       modelLabel: g.modelLabel,
-      mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf),
+      modelVersions: g.llmModels,
+      llmKeyOf: g.llmKeyOf,
+      mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf, g.llmKeyOf),
       templateVersions: g.tplVersions,
       templateFiguresByVersion: g.tplFiguresByVersion,
       templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
@@ -463,9 +484,11 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
   // Each pipe's template dynasties (never throws: unreadable = every version on its own page, said so).
-  const dynastiesP = Promise.all([readTemplateDynasties(COLD_EMAIL, REPLY_LEG), readTemplateDynasties(COLD_EMAIL, VISIT_LEG)]).then(([r, v]) => ({
+  // And the LLM dynasties (chat-service, LLM-DYNASTY-1022-FS; unreadable = every model on its own page, said so).
+  const dynastiesP = Promise.all([readTemplateDynasties(COLD_EMAIL, REPLY_LEG), readTemplateDynasties(COLD_EMAIL, VISIT_LEG), readLlmDynastiesSoft("research")]).then(([r, v, l]) => ({
     reply: templateDynastyIndex(r),
     visit: templateDynastyIndex(v),
+    llm: llmDynastyIndex(l),
   }));
   // The two legs in turn on the vendor basis (one heavy aggregation at a time), together on the billed one.
   const legs =
@@ -612,6 +635,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
       workflowRuns: runs,
       templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
+      llmDynasties: dynasties.llm,
+      modelVersions: g.modelVersions,
       templateVersions: g.templateVersions,
       generationRuns: gensRuns,
       templateTexts: new Set(allTexts.keys()),

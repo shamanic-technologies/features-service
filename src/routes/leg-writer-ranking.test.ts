@@ -4,6 +4,7 @@ import { ledgerLlmBars, llmCandidates, servedRankings, templateCandidates, type 
 import { buildPlayCatalogue, strategyOnSubject, type Strategy, type Tactic } from "../lib/plays.js";
 import type { TemplateDynasty } from "../lib/research/template-dynasties.js";
 import type { ServedModel } from "../lib/model-ids-client.js";
+import { llmDynastyIndex, type LlmDynasty } from "../lib/llm-dynasties.js";
 
 const dynasty = (slug: string, status: "active" | "deprecated" = "active"): TemplateDynasty => ({
   slug,
@@ -95,8 +96,8 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
       plays: [],
       verdicts: [],
       writerVerdicts: [
-        { subjectKind: "llm", subjectKey: "opus", tacticId: "anthropic-models", subjectVersion: "claude-opus-5-5", verdict: true, probability: 0.99, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
-        { subjectKind: "llm", subjectKey: "gemini-flash", tacticId: "anthropic-models", subjectVersion: "gemini-3-flash-001", verdict: false, probability: 0.01, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
+        { subjectKind: "llm", subjectKey: "claude-opus-5.5", tacticId: "anthropic-models", subjectVersion: "claude-opus-5-5", verdict: true, probability: 0.99, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
+        { subjectKind: "llm", subjectKey: "gemini-3-flash", tacticId: "anthropic-models", subjectVersion: "gemini-3-flash-001", verdict: false, probability: 0.01, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
         { subjectKind: "template", subjectKey: "blind", tacticId: "blind-text", subjectVersion: "blind-v2", verdict: true, probability: 0.9, model: "jev", judgedDescription: "blind-text", judgedAt: "2026-10-22T00:00:00Z" },
         { subjectKind: "template", subjectKey: "offer", tacticId: "blind-text", subjectVersion: "offer-v2", verdict: false, probability: 0.1, model: "jev", judgedDescription: "blind-text", judgedAt: "2026-10-22T00:00:00Z" },
       ],
@@ -154,5 +155,118 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
     expect(r.recorded).toBe(4);
     // 0-day leg, bar 10 outcomes: one outcome is still learning
     expect(r.rows.every((x) => x.basis === "flash")).toBe(true);
+  });
+});
+
+// LLM-DYNASTY-1022-FS: the LLM side pools per chat-service DYNASTY, its versions as the detail.
+const FLASH: LlmDynasty = {
+  slug: "gemini-flash",
+  name: "Gemini Flash",
+  provider: "google",
+  capabilityTier: "cheap",
+  headModelId: "gemini-3.8-flash",
+  servedToday: true,
+  models: [
+    { modelId: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash", servedToday: true },
+    { modelId: "gemini-3.7-flash", displayName: "Gemini 3.7 Flash", servedToday: false },
+  ],
+  legacyAliases: ["flash-pro"],
+};
+const OPUS: LlmDynasty = {
+  slug: "claude-opus",
+  name: "Claude Opus",
+  provider: "anthropic",
+  capabilityTier: "frontier",
+  headModelId: "claude-opus-5-5",
+  servedToday: true,
+  models: [{ modelId: "claude-opus-5-5", displayName: "Claude Opus 5.5", servedToday: true }],
+  legacyAliases: ["opus"],
+};
+const DS_FLASH: LlmDynasty = { slug: "deepseek-flash", name: "DeepSeek Flash", provider: "deepseek", capabilityTier: "cheap", headModelId: "deepseek-flash", servedToday: true, models: [{ modelId: "deepseek-flash", displayName: "DeepSeek V4.1 Flash", servedToday: true }], legacyAliases: ["deepseek-flash", "deepseek-pro"] };
+const DS_PRO: LlmDynasty = { slug: "deepseek-pro", name: "DeepSeek Pro", provider: "deepseek", capabilityTier: "strong", headModelId: "deepseek-v4-pro", servedToday: false, models: [{ modelId: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", servedToday: false }], legacyAliases: [] };
+const LLM_DYN = llmDynastyIndex([FLASH, OPUS, DS_FLASH, DS_PRO]);
+
+describe("LLM dynasties on the writer ranking (LLM-DYNASTY-1022-FS)", () => {
+  it("resolves a name in chat-service's order: served slug, model id, served legacy alias", () => {
+    expect(LLM_DYN.dynastyOfName("gemini-flash")?.slug).toBe("gemini-flash");
+    expect(LLM_DYN.dynastyOfName("gemini-3.7-flash")?.slug).toBe("gemini-flash");
+    expect(LLM_DYN.dynastyOfName("flash-pro")?.slug).toBe("gemini-flash");
+    expect(LLM_DYN.dynastyOfName("opus")?.slug).toBe("claude-opus");
+    // `deepseek-pro`: slug of a line nothing serves AND a legacy alias of DeepSeek Flash: it runs DeepSeek Flash
+    expect(LLM_DYN.dynastyOfName("deepseek-pro")?.slug).toBe("deepseek-flash");
+    // the concrete V4 Pro id is DeepSeek Pro's history
+    expect(LLM_DYN.dynastyOfName("deepseek-v4-pro")?.slug).toBe("deepseek-pro");
+    expect(LLM_DYN.dynastyOfName("mystery-model")).toBeNull();
+  });
+
+  it("one row per dynasty, its versions pooled (the sum of its models), each model as the detail", () => {
+    const bars = [{ key: "gemini-flash", label: "Gemini Flash", basis: "mature" as const, figures: { spentUsd: 50, contacted: 1000, outcomes: 4 } }];
+    const modelBars = [
+      { key: "gemini-3.7-flash", label: "Gemini 3.7 Flash", dynastyKey: "gemini-flash", basis: "mature" as const, figures: { spentUsd: 30, contacted: 600, outcomes: 3 } },
+      { key: "gemini-3.8-flash", label: "Gemini 3.8 Flash", dynastyKey: "gemini-flash", basis: "mature" as const, figures: { spentUsd: 20, contacted: 400, outcomes: 1 } },
+    ];
+    const c = llmCandidates(
+      bars,
+      [
+        { alias: "flash-pro", provider: "google", status: "active" },
+        { alias: "opus", provider: "anthropic", status: "active" },
+        { alias: "deepseek-pro", provider: "deepseek", status: "active" },
+        // content-generation lists every name chat-service accepts (LLM-DYNASTY-1022-CG): slugs and head ids fold in
+        { alias: "gemini-flash", provider: "google", status: "active" },
+        { alias: "gemini-3.8-flash", provider: "google", status: "active" },
+        { alias: "claude-opus", provider: "anthropic", status: "active" },
+      ],
+      [],
+      LLM_DYN,
+      modelBars,
+    );
+    const flash = c.find((x) => x.key === "gemini-flash")!;
+    expect(flash).toMatchObject({ llmDynastySlug: "gemini-flash", label: "Gemini Flash", headModelId: "gemini-3.8-flash", selectable: true });
+    expect(flash.models.map((m) => [m.key, m.head, m.spentUsd, m.outcomes])).toEqual([
+      ["gemini-3.8-flash", true, 20, 1],
+      ["gemini-3.7-flash", false, 30, 3],
+    ]);
+    const sum = flash.models.reduce((a, m) => ({ spentUsd: a.spentUsd + m.spentUsd, contacted: a.contacted + m.contacted, outcomes: a.outcomes + m.outcomes }), { spentUsd: 0, contacted: 0, outcomes: 0 });
+    expect(sum).toEqual(flash.figures);
+    // `deepseek-pro` alias runs DeepSeek Flash: one row, never a DeepSeek Pro pick
+    expect(c.map((x) => x.key).sort()).toEqual(["claude-opus", "deepseek-flash", "gemini-flash"]);
+    expect(flash.aliases.map((a) => a.alias)).toEqual(["flash-pro", "gemini-3.8-flash", "gemini-flash"]);
+  });
+
+  it("rank 1 names a dynasty; the pick calls an active alias of it; an LLM tactic judges the dynasty", () => {
+    const base = payload();
+    const p: LegWriterRankingPayload = {
+      ...base,
+      llms: {
+        candidates: llmCandidates(
+          [{ key: "gemini-flash", label: "Gemini Flash", basis: "mature", figures: { spentUsd: 430, contacted: 4000, outcomes: 10 } }],
+          [
+            { alias: "flash-pro", provider: "google", status: "active" },
+            { alias: "opus", provider: "anthropic", status: "active" },
+          ],
+          [],
+          LLM_DYN,
+          [],
+        ),
+        unavailableReason: null,
+      },
+    };
+    const none = servedRankings(p, buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }), null);
+    expect(none.llms.best).toMatchObject({ key: "claude-opus", llmDynastySlug: "claude-opus" });
+    const t = tactic("anthropic-models", "llm");
+    const st = strategy("no-anthropic", [], ["anthropic-models"]);
+    const c = buildPlayCatalogue({
+      tactics: [t],
+      strategies: [st],
+      plays: [],
+      verdicts: [],
+      writerVerdicts: [
+        { subjectKind: "llm", subjectKey: "claude-opus", tacticId: "anthropic-models", subjectVersion: "claude-opus-5-5", verdict: true, probability: 0.99, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
+        { subjectKind: "llm", subjectKey: "gemini-flash", tacticId: "anthropic-models", subjectVersion: "gemini-3.8-flash", verdict: false, probability: 0.01, model: "jev", judgedDescription: "anthropic-models", judgedAt: "2026-10-22T00:00:00Z" },
+      ],
+    });
+    const narrowed = servedRankings(p, c, st);
+    expect(narrowed.llms.best).toMatchObject({ key: "gemini-flash", llmDynastySlug: "gemini-flash", aliases: [{ alias: "flash-pro", provider: "google", status: "active" }] });
+    expect(narrowed.llms.excluded.map((x) => x.key)).toEqual(["claude-opus"]);
   });
 });

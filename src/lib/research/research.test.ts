@@ -664,6 +664,6 @@ describe("research catalogue: every model page states the aliases chat-service s
       { modelId: "a-1", displayName: "Same Model", aliases: ["x"], formerAliases: ["y"] },
       { modelId: "a-2", displayName: "Same Model", aliases: ["y"], formerAliases: [] },
     ];
-    expect(modelRowAliases(modelKey("Same Model"), two, modelKey)).toEqual({ modelIds: ["a-1", "a-2"], aliases: ["x", "y"], formerAliases: [], aliasesUnavailableReason: null });
+    expect(modelRowAliases(modelKey("Same Model"), two, (m) => modelKey(m.displayName))).toEqual({ modelIds: ["a-1", "a-2"], aliases: ["x", "y"], formerAliases: [], aliasesUnavailableReason: null });
   });
 });

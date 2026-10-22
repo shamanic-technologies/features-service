@@ -46570,7 +46570,7 @@
     "/public/stats/leg-writer-ranking": {
       "get": {
         "summary": "The best template dynasty and the best LLM of one pipe, on $/outcome (public, no auth)",
-        "description": "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
+        "description": "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). LLM-DYNASTY-1022-FS: an LLM row is a chat-service LLM DYNASTY (`key` = `llmDynastySlug`, `gemini-flash`), every version's spend, people and outcomes pooled and its maturity read on the pooled figures; `models[]` = each version's share (they add up to the row). Which dynasty an alias / model id / slug belongs to is chat-service's (`/internal/model-dynasties`); a model it places in none keeps its own row (`llmDynastySlug` null); dynasties unreadable = every model its own row, `llms.dynastiesUnavailableReason`. An LLM tactic judges the dynasty on its head model. Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
         "tags": [
           "Public"
         ],
@@ -47035,6 +47035,16 @@
                               "moneyGoesHere": {
                                 "type": "boolean"
                               },
+                              "llmDynastySlug": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "chat-service's LLM dynasty this row is (= `key`); null = a model chat-service places in no dynasty, its own row."
+                              },
+                              "headModelId": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The dynasty's head: what a run calling the dynasty slug gets."
+                              },
                               "aliases": {
                                 "type": "array",
                                 "items": {
@@ -47059,17 +47069,70 @@
                                     "provider",
                                     "status"
                                   ]
-                                }
+                                },
+                                "description": "content-generation writer aliases running this dynasty, active first."
                               },
                               "modelIds": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"
-                                }
+                                },
+                                "description": "Every concrete model id of the dynasty."
                               },
                               "provider": {
                                 "type": "string",
                                 "nullable": true
+                              },
+                              "models": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The model key (`gemini-3.7-flash`)."
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "modelIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "head": {
+                                      "type": "boolean"
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "enum": [
+                                        "mature",
+                                        "flash"
+                                      ]
+                                    },
+                                    "spentUsd": {
+                                      "type": "number"
+                                    },
+                                    "contacted": {
+                                      "type": "number"
+                                    },
+                                    "outcomes": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "modelIds",
+                                    "head",
+                                    "basis",
+                                    "spentUsd",
+                                    "contacted",
+                                    "outcomes"
+                                  ]
+                                },
+                                "description": "Per model, newest first: its share of the row, read on the row's basis (they add up to it). Zero for a version that never wrote. Empty on an internal pipe (its ledger names the alias, not the version)."
                               }
                             },
                             "required": [
@@ -47089,9 +47152,12 @@
                               "place",
                               "goesFirst",
                               "moneyGoesHere",
+                              "llmDynastySlug",
+                              "headModelId",
                               "aliases",
                               "modelIds",
-                              "provider"
+                              "provider",
+                              "models"
                             ]
                           }
                         },
@@ -47216,6 +47282,11 @@
                         "unavailableReason": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "dynastiesUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`llm_dynasties_unreadable` when chat-service's dynasties could not be read this build (every model its own row)."
                         }
                       },
                       "required": [
@@ -47384,14 +47455,24 @@
                       "properties": {
                         "model": {
                           "type": "string",
-                          "description": "The content-generation writer alias (`/generate` body.model)."
+                          "description": "What the run sends as `/generate` body.model: the picked dynasty's SLUG when content-generation lists it active (`gemini-flash`), else an active legacy alias of the same dynasty; chat-service runs the dynasty's head for either."
+                        },
+                        "llmDynastySlug": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "LLM-DYNASTY-1022-FS: the LLM dynasty rank 1 is (`gemini-flash`); calling chat-service `/complete` with it runs the head. Null = a model chat-service places in no dynasty."
+                        },
+                        "headModelId": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "provider": {
                           "type": "string",
                           "nullable": true
                         },
                         "modelKey": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "The ranking row's key (the dynasty slug)."
                         },
                         "label": {
                           "type": "string"
@@ -47429,6 +47510,8 @@
                       },
                       "required": [
                         "model",
+                        "llmDynastySlug",
+                        "headModelId",
                         "provider",
                         "modelKey",
                         "label",
@@ -63857,7 +63940,7 @@
                               "template",
                               "llm"
                             ],
-                            "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                            "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                           },
                           "writersJudged": {
                             "type": "integer",
@@ -64062,7 +64145,7 @@
                         "template",
                         "llm"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -64197,7 +64280,7 @@
                         "template",
                         "llm"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -64373,7 +64456,7 @@
                         "template",
                         "llm"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -64593,7 +64676,7 @@
                       "template",
                       "llm"
                     ],
-                    "description": "RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM alias). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."
+                    "description": "RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."
                   },
                   "updatedBy": {
                     "type": "string",
@@ -64644,7 +64727,7 @@
                         "template",
                         "llm"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -70476,24 +70559,341 @@
                           "type": "object",
                           "properties": {
                             "key": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "LLM-DYNASTY-1022-FS: the chat-service LLM dynasty's slug (`gemini-flash`), one page per dynasty, every version pooled; a model chat-service places in no dynasty keeps its model key."
                             },
                             "label": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "The dynasty's name (`Gemini Flash`); a model on its own reads its model name."
+                            },
+                            "dynasty": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "capabilityTier": {
+                                  "type": "string"
+                                },
+                                "headModelId": {
+                                  "type": "string",
+                                  "description": "What the slug runs now."
+                                },
+                                "servedToday": {
+                                  "type": "boolean"
+                                },
+                                "legacyAliases": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "name",
+                                "provider",
+                                "capabilityTier",
+                                "headModelId",
+                                "servedToday",
+                                "legacyAliases"
+                              ],
+                              "description": "The LLM dynasty this page is (chat-service `/internal/model-dynasties`); null on a model it places in none."
+                            },
+                            "standaloneReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "no_dynasty_in_chat_service",
+                                "llm_dynasties_unreadable"
+                              ],
+                              "description": "Null on a dynasty. Why this page is one model on its own."
+                            },
+                            "models": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "key": {
+                                    "type": "string",
+                                    "description": "The model key (`gemini-3.7-flash`)."
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "modelIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "head": {
+                                    "type": "boolean"
+                                  },
+                                  "servedToday": {
+                                    "type": "boolean"
+                                  },
+                                  "rank": {
+                                    "type": "integer",
+                                    "nullable": true,
+                                    "description": "Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."
+                                  },
+                                  "rankBasis": {
+                                    "type": "string",
+                                    "enum": [
+                                      "cost_per_outcome"
+                                    ],
+                                    "description": "What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."
+                                  },
+                                  "emails": {
+                                    "type": "string",
+                                    "description": "People reached, printed."
+                                  },
+                                  "emailsNoun": {
+                                    "type": "string"
+                                  },
+                                  "outcomes": {
+                                    "type": "string"
+                                  },
+                                  "spend": {
+                                    "type": "string"
+                                  },
+                                  "cost": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "rate": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "thin": {
+                                    "type": "boolean",
+                                    "description": "Learning under the maturity rule."
+                                  },
+                                  "sample": {
+                                    "type": "string"
+                                  },
+                                  "charts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "bars",
+                                            "months"
+                                          ]
+                                        },
+                                        "title": {
+                                          "type": "string"
+                                        },
+                                        "lowerIsBetter": {
+                                          "type": "boolean"
+                                        },
+                                        "points": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "key": {
+                                                "type": "string",
+                                                "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                              },
+                                              "label": {
+                                                "type": "string"
+                                              },
+                                              "value": {
+                                                "type": "number"
+                                              },
+                                              "display": {
+                                                "type": "string",
+                                                "description": "The value as the page prints it."
+                                              },
+                                              "note": {
+                                                "type": "string",
+                                                "description": "The counts behind the value."
+                                              },
+                                              "thin": {
+                                                "type": "boolean",
+                                                "description": "LEARNING under the maturity rule (historical field name)."
+                                              },
+                                              "partial": {
+                                                "type": "boolean",
+                                                "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                              }
+                                            },
+                                            "required": [
+                                              "label",
+                                              "value",
+                                              "display",
+                                              "note",
+                                              "thin"
+                                            ]
+                                          }
+                                        },
+                                        "cumulative": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "On a months chart: the average since inception at the end of each month."
+                                        },
+                                        "curve": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
+                                        },
+                                        "note": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "title",
+                                        "lowerIsBetter",
+                                        "points"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label",
+                                  "modelIds",
+                                  "head",
+                                  "servedToday",
+                                  "rank",
+                                  "rankBasis",
+                                  "emails",
+                                  "emailsNoun",
+                                  "outcomes",
+                                  "spend",
+                                  "cost",
+                                  "rate",
+                                  "thin",
+                                  "sample",
+                                  "charts"
+                                ]
+                              },
+                              "description": "Every version of the dynasty, newest first (chat-service's order), each with its share of the page's figures read on the DYNASTY's basis: their spend, people and outcomes add up to the page's. `rank` is null. Zero for a version that never wrote. On a model on its own: that model."
                             },
                             "modelIds": {
                               "type": "array",
                               "items": {
                                 "type": "string"
                               },
-                              "description": "chat-service's concrete model ids this page names (`glm-5.3`); two ids with one display name are one page. Empty when chat-service lists none."
+                              "description": "chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). Empty when chat-service lists none."
                             },
                             "aliases": {
                               "type": "array",
                               "items": {
                                 "type": "string"
                               },
-                              "description": "Every alias chat-service serves this model under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."
+                              "description": "Every alias chat-service serves this page's models under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."
                             },
                             "formerAliases": {
                               "type": "array",
@@ -70833,6 +71233,9 @@
                           "required": [
                             "key",
                             "label",
+                            "dynasty",
+                            "standaloneReason",
+                            "models",
                             "modelIds",
                             "aliases",
                             "formerAliases",
