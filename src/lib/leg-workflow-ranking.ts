@@ -66,6 +66,12 @@ export interface LegWorkflowRankingRow {
    * one ROI, $/outcome, % conversion and $ spent, each measured or expected, on the read's `pricing` (gross by default).
    */
   figures?: LegWorkflowFigures;
+  /** When a run of this workflow last started on the pipe, any org (ISO). Null = never ran, or `lastRunUnavailableReason`. */
+  lastRunAt?: string | null;
+  lastRunUnavailableReason?: "not_read_on_pipe" | null;
+  /** The tactics its current version follows (Jev's verdicts), set at serve time (`?` absent on a stored build). */
+  tactics?: Array<{ id: string; name: string }> | null;
+  tacticsUnavailableReason?: "tactics_unreadable" | null;
   /** The same on the NET pricing, held in the build; the route serves it as `figures` on `?pricing=net`, never both. */
   figuresNet?: LegWorkflowFigures;
 }
@@ -83,6 +89,8 @@ export interface RankLegWorkflowsInput {
   billedSpendUsd: ReadonlyMap<string, number>;
   /** NET spend per dynasty on the leg, per half (flash; mature null = not cut). Null/absent = not measured on the pipe. */
   netSpend?: ReadonlyMap<string, { flash: number; mature: number | null }> | null;
+  /** Newest run start per dynasty on the pipe (fleet). Null/absent = not read on this pipe. */
+  lastRunAt?: ReadonlyMap<string, string> | null;
   /** The leg's seeded conversion (%), the expected conversion of a pipe with no outcome yet. */
   defaultConversionPct?: number | null;
 }
@@ -91,7 +99,7 @@ const EMPTY: OutcomeFigures = { spentUsd: 0, contacted: 0, outcomes: 0, costPerO
 
 /** PURE. The ordered list (see the owner rule above). */
 export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRankingRow[] {
-  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place" | "figures" | "figuresNet">[] = [];
+  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place" | "figures" | "figuresNet" | "lastRunAt" | "lastRunUnavailableReason" | "tactics" | "tacticsUnavailableReason">[] = [];
   const figuresOf = new Map<string, LegMaturityFigures>();
   const byDynasty = new Map(input.byDynasty);
   for (const slug of input.assignments.keys()) {
@@ -174,6 +182,8 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       place: places.get(slug)!,
       figures: gross.get(slug)!,
       figuresNet: net.get(slug)!,
+      lastRunAt: input.lastRunAt ? (input.lastRunAt.get(slug) ?? null) : null,
+      lastRunUnavailableReason: input.lastRunAt ? null : "not_read_on_pipe",
     };
   });
 }
