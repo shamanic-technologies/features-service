@@ -10,7 +10,7 @@ const REPLY = "start_to_conversation";
 const wf = (flash: [number, number, number], mature: [number, number, number] | null): LegMaturityFigures =>
   legMaturityFigures(REPLY, outcomeFigures(...flash), mature ? outcomeFigures(...mature) : null);
 
-function rank(opts: { netSpend?: Map<string, { flash: number; mature: number | null }> | null } = {}) {
+function rank(opts: { netSpend?: Map<string, { flash: number; mature: number | null }> | null; lastRunAt?: Map<string, string> | null } = {}) {
   // Prod shape, pipe Cold email -> Positive reply, 2026-10-22.
   const byDynasty = new Map<string, LegMaturityFigures>([
     ["cerulean", wf([4219.64, 15665, 26], [4219.64, 15665, 26])], // mature, 26 replies
@@ -38,6 +38,7 @@ function rank(opts: { netSpend?: Map<string, { flash: number; mature: number | n
       ["eden", 22.37],
     ]),
     netSpend: opts.netSpend,
+    lastRunAt: opts.lastRunAt,
     defaultConversionPct: 1,
   });
 }
@@ -122,5 +123,12 @@ describe("leg workflow figures", () => {
       expect(w.figures).toBe(r.figures);
     }
     expect(pipe.workflows.find((w) => w.key === "keel")!.roiDetail).toMatchObject({ basis: "expected", source: "pipe_workflows" });
+  });
+
+  it("states each workflow's last run on the pipe: null for a never-run one, a reason when the pipe was not read", () => {
+    const rows = rank({ lastRunAt: new Map([["cerulean", "2026-10-22T16:00:00.000Z"]]) });
+    expect(row(rows, "cerulean")).toMatchObject({ lastRunAt: "2026-10-22T16:00:00.000Z", lastRunUnavailableReason: null });
+    expect(row(rows, "pharaoh")).toMatchObject({ lastRunAt: null, lastRunUnavailableReason: null });
+    expect(row(rank({ lastRunAt: null }), "cerulean")).toMatchObject({ lastRunAt: null, lastRunUnavailableReason: "not_read_on_pipe" });
   });
 });
