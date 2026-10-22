@@ -47871,6 +47871,46 @@
                               "contacted"
                             ],
                             "description": "On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy)."
+                          },
+                          "lastRunAt": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "When a run of this workflow (any version) last started on the pipe, every org (ISO). Null = never ran on it, or `lastRunUnavailableReason`. Absent on a copy built before it shipped."
+                          },
+                          "lastRunUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "not_read_on_pipe"
+                            ],
+                            "description": "`not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet."
+                          },
+                          "tactics": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ]
+                            },
+                            "description": "The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`."
+                          },
+                          "tacticsUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "tactics_unreadable"
+                            ]
                           }
                         },
                         "required": [

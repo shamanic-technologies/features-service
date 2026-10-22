@@ -56,6 +56,7 @@ import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_S
 import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
 import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "../lib/default-leg-rates.js";
+import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { getOnDemandPipeFleet } from "../lib/on-demand-pipe-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
@@ -5054,15 +5055,39 @@ export interface LegWorkflowRankingPayload {
  * PURE. The body served for one `?pricing=` (RESEARCH-WF-FIGURES-1022): each row's `figures` on that pricing, the build's
  * net twin never served beside it. A build persisted before the figures existed is served as stored.
  */
-export function legRankingOnPricing(payload: LegWorkflowRankingPayload, pricing: "gross" | "net"): LegWorkflowRankingPayload {
+export function legRankingOnPricing(
+  payload: LegWorkflowRankingPayload,
+  pricing: "gross" | "net",
+  /** The tactics a dynasty's current version follows (live, never from the build); null = unreadable. */
+  tacticsOf?: ((dynasty: string) => Array<{ id: string; name: string }>) | null,
+): LegWorkflowRankingPayload {
   return {
     ...payload,
     pricing,
     rows: payload.rows.map((r) => {
       const { figuresNet, ...row } = r;
-      return pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
+      const priced = pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
+      if (tacticsOf === undefined) return priced;
+      return tacticsOf
+        ? { ...priced, tactics: tacticsOf(r.workflowDynastySlug), tacticsUnavailableReason: null }
+        : { ...priced, tactics: null, tacticsUnavailableReason: "tactics_unreadable" as const };
     }),
   };
+}
+
+/** The tactics each dynasty's CURRENT version follows (workflow tactics judged yes), read live off the play catalogue. */
+async function workflowTacticsOf(): Promise<((dynasty: string) => Array<{ id: string; name: string }>) | null> {
+  try {
+    const c = await loadPlayCatalogue();
+    return (dynasty) =>
+      [...(c.tacticsByDynasty.get(dynasty) ?? new Map<string, boolean>())]
+        .filter(([id, yes]) => yes && (c.tactics.get(id)?.appliesTo ?? "workflow") === "workflow" && c.tactics.has(id))
+        .map(([id]) => ({ id, name: c.tactics.get(id)!.name }))
+        .sort((a, b) => (a.name < b.name ? -1 : 1));
+  } catch (error) {
+    console.error("[features-service] leg workflow ranking: tactics unreadable, rows serve none:", error);
+    return null;
+  }
 }
 
 const legRankingStore = new Map<string, { value: LegWorkflowRankingPayload; computedAt: number }>();
@@ -5114,20 +5139,33 @@ export async function fleetPipeFigures(
 
 /**
  * One pipe's NET spend per workflow dynasty, flash and mature (RESEARCH-WF-FIGURES-1022: the dashboard reads every money
- * figure on what the org pays). An ENTRY pipe reads the byte-same evidence as its gross figures on the net basis; an
- * internal or on-demand pipe states no net spend per workflow yet = null (its rows say `net_not_measured_on_pipe`).
+ * figure on what the org pays), and each dynasty's LAST RUN on the pipe, fleet-wide (the newest run start of any of its
+ * versions on the pipe's campaigns, every org). An ENTRY pipe reads the byte-same evidence as its gross figures on the
+ * net basis; an internal or on-demand pipe states neither per workflow yet = null (rows say so).
  */
-async function fleetPipeNetSpend(featureSlug: string, legKey: string): Promise<Map<string, { flash: number; mature: number | null }> | null> {
+async function fleetPipeNetEvidence(
+  featureSlug: string,
+  legKey: string,
+): Promise<{ netSpend: Map<string, { flash: number; mature: number | null }>; lastRunAt: Map<string, string> } | null> {
   if (await onDemandPipeTrigger(featureSlug, legKey)) return null;
   if (await internalPipeToStep(featureSlug, legKey)) return null;
   const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, effectiveSpendSlugs(featureSlug, "own"), "net");
   const flash = legEvidenceByDynasty(featureSlug, legKey, ev.workflows, ev.flash.costGroups, ev.flash.emailStats);
   const mature = ev.mature ? legEvidenceByDynasty(featureSlug, legKey, ev.workflows, ev.mature.costGroups, ev.mature.emailStats) : null;
-  const out = new Map<string, { flash: number; mature: number | null }>();
+  const netSpend = new Map<string, { flash: number; mature: number | null }>();
   for (const d of new Set([...flash.keys(), ...(mature ? mature.keys() : [])])) {
-    out.set(d, { flash: (flash.get(d)?.spentCents ?? 0) / 100, mature: mature ? (mature.get(d)?.spentCents ?? 0) / 100 : null });
+    netSpend.set(d, { flash: (flash.get(d)?.spentCents ?? 0) / 100, mature: mature ? (mature.get(d)?.spentCents ?? 0) / 100 : null });
   }
-  return out;
+  const dynastyOf = new Map(ev.workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const lastRunAt = new Map<string, string>();
+  for (const g of ev.flash.costGroups) {
+    const slug = g.dimensions.workflowSlug;
+    const d = slug ? dynastyOf.get(slug) : undefined;
+    if (!d || !g.maxStartedAt) continue;
+    const prev = lastRunAt.get(d);
+    if (!prev || g.maxStartedAt > prev) lastRunAt.set(d, g.maxStartedAt);
+  }
+  return { netSpend, lastRunAt };
 }
 
 /** PURE. The leg's seeded conversion (%): an entry leg's default entry rate, else the seeded leg default; null when none. */
@@ -5140,8 +5178,8 @@ export function legDefaultConversionPct(legKey: string): number | null {
 }
 
 export async function computeLegWorkflowRanking(featureSlug: string, legKey: string): Promise<LegWorkflowRankingPayload> {
-  const netSpendP = fleetPipeNetSpend(featureSlug, legKey).catch((error) => {
-    console.error(`[features-service] leg workflow ranking: net spend unreadable (${featureSlug}, ${legKey}); its net figures read not measured:`, error);
+  const netP = fleetPipeNetEvidence(featureSlug, legKey).catch((error) => {
+    console.error(`[features-service] leg workflow ranking: net evidence unreadable (${featureSlug}, ${legKey}); its net figures and last runs read not measured:`, error);
     return null;
   });
   const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
@@ -5188,7 +5226,7 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
       executable: executableDynasties(workflows),
       pipelineUsd,
       billedSpendUsd,
-      netSpend: await netSpendP,
+      ...(await netP.then((net) => ({ netSpend: net?.netSpend ?? null, lastRunAt: net?.lastRunAt ?? null }))),
       defaultConversionPct: legDefaultConversionPct(legKey),
     }),
   };
@@ -5291,7 +5329,7 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   // deploy while the stored copy sat in the cell store); kicks a rebuild when stale, never waits on it.
   const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
   if (stored) {
-    res.json(legRankingOnPricing(stored, pricing));
+    res.json(legRankingOnPricing(stored, pricing, await workflowTacticsOf()));
     return;
   }
   const rule = legMaturity(legKey);
