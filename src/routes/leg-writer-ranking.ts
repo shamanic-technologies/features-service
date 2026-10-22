@@ -40,6 +40,7 @@ import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getInternalPipeFleet } from "../lib/meeting-leg-fleet.js";
 import { fetchFollowupLlmAliases } from "../lib/followup-actions-client.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
+import { templateTacticsFrom, type TemplateTactics, type TemplateTacticsReason } from "../lib/template-tactics.js";
 import { withTemplateRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "../lib/plays.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
@@ -71,6 +72,9 @@ export interface TemplateRow extends WriterRankingRow {
   templateDynastySlug: string | null;
   head: string | null;
   status: "active" | "deprecated" | null;
+  /** The template tactics it follows (TPL-TACTICS-ROWS-1022), read live; null with `tacticsUnavailableReason`. */
+  tactics: TemplateTactics | null;
+  tacticsUnavailableReason: TemplateTacticsReason | null;
 }
 
 /** One model of an LLM dynasty row: its share of the row's figures, read on the row's basis (the models add up to it). */
@@ -453,9 +457,11 @@ export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue
   const llmRule = writerRuledOut(c, strategy, "llm");
   const t = rankWriters(p.templates.candidates, writerRuledOut(c, strategy, "template"));
   const l = rankWriters(p.llms.candidates, llmRule);
+  const tacticsOf = templateTacticsFrom(c);
   const tRows: TemplateRow[] = t.rows.map((r) => {
     const x = tplOf.get(r.key)!;
-    return { ...r, templateDynastySlug: x.templateDynastySlug, head: x.head, status: x.status };
+    const tactics = tacticsOf(r.key);
+    return { ...r, templateDynastySlug: x.templateDynastySlug, head: x.head, status: x.status, tactics: tactics === "not_judged_yet" ? null : tactics, tacticsUnavailableReason: tactics === "not_judged_yet" ? tactics : null };
   });
   const lRows: LlmRow[] = l.rows.map((r) => {
     const x = llmOf.get(r.key)!;

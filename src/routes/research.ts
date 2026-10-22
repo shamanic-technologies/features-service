@@ -39,7 +39,8 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { pipeCatalog, withWorkflowFigures, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
+import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
+import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
@@ -263,10 +264,13 @@ async function readDynastyWriters(): Promise<{ now: Map<string, DynastyWriter>; 
   }
 }
 
-/** The workflows a run may still pick on a leg: the leg ranking's selectable rows. */
-function runnableWorkflowsOf(rows: readonly LegWorkflowRankingRow[] | null) {
+/**
+ * Every workflow the leg ranking lists, each with a page (TPL-TACTICS-ROWS-1022: ONE source of workflows for the
+ * Workflows list and the catalogue, so every ranking row finds its page and its icon); `runnable` = a run may still pick it.
+ */
+export function runnableWorkflowsOf(rows: readonly Pick<LegWorkflowRankingRow, "workflowDynastySlug" | "workflowDynastyName" | "selectable">[] | null) {
   if (!rows) return null;
-  return rows.filter((r) => r.selectable).map((r) => ({ key: r.workflowDynastySlug, label: r.workflowDynastyName ? shortName(r.workflowDynastyName) : r.workflowDynastySlug, name: r.workflowDynastyName || null }));
+  return rows.map((r) => ({ key: r.workflowDynastySlug, label: r.workflowDynastyName ? shortName(r.workflowDynastyName) : r.workflowDynastySlug, name: r.workflowDynastyName || null, runnable: r.selectable }));
 }
 
 interface GenerationPart {
@@ -823,13 +827,19 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     if (!build?.catalog) return notYet(res);
     // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
     // Workflows list prints, never the ranking its build held (up to 15 min older).
-    const [replyRanking, visitRanking] = await Promise.all([readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0), readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0)]);
+    const [replyRanking, visitRanking, tacticsOf] = await Promise.all([readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0), readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0), readTemplateTactics()]);
+    // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022).
+    const withTactics = <P extends { templates: CatalogTemplate[] }>(p: P): P => ({ ...p, templates: withTemplateTactics(p.templates, tacticsOf) });
     res.json(
-      await withResearchCatalogMarks({
-        ...build.catalog,
-        [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
-        [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
-      }),
+      await withResearchCatalogMarks(
+        Object.fromEntries(
+          Object.entries({
+            ...build.catalog,
+            [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
+            [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
+          }).map(([id, p]) => [id, withTactics(p)]),
+        ) as ResearchCatalog,
+      ),
     );
   } catch (error) {
     console.error("[features-service] research catalogue read failed:", error);
