@@ -95,3 +95,37 @@ export async function fetchFollowupActionRows(brandId: string, campaignIds: read
   }
   return out;
 }
+
+/**
+ * The served name of the LLM alias on a follow-up ledger row (lead-service, BEST-TPL-LLM-1022): the alias the row's LATEST
+ * acted act stated it wrote with (null = no act stated one). One constant, so conforming to the producer is one line.
+ */
+export const LEDGER_LLM_ALIAS_FIELD = "latestLlmAlias";
+
+/**
+ * Which LLM wrote each person an acting campaign acted on (BEST-TPL-LLM-1022): `${actingCampaignId}|${leadId}` → the
+ * alias the row's latest act stated. A row stating none is absent (its writer is not on record). Same ledger read as
+ * `fetchFollowupActedLeads`. Fails loud.
+ */
+export async function fetchFollowupLlmAliases(brandId: string, campaignIds: readonly string[]): Promise<Map<string, string>> {
+  const url = process.env.LEAD_SERVICE_URL;
+  const apiKey = process.env.LEAD_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("LEAD_SERVICE_URL or LEAD_SERVICE_API_KEY not configured");
+  const ids = [...new Set(campaignIds)];
+  const out = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += MAX_ACTING_CAMPAIGN_IDS) {
+    const chunk = ids.slice(i, i + MAX_ACTING_CAMPAIGN_IDS);
+    const response = await fetchWithRetry(
+      `${url}/internal/brands/${encodeURIComponent(brandId)}/followup-actions?campaignIds=${chunk.map(encodeURIComponent).join(",")}`,
+      { headers: { "x-api-key": apiKey, "x-service-name": "features-service" } },
+    );
+    if (!response.ok) throw new Error(`lead-service /internal/brands/:brandId/followup-actions failed (${response.status}): ${await response.text()}`);
+    const data = (await response.json()) as { leads?: unknown };
+    if (!Array.isArray(data.leads)) throw new Error("lead-service /internal/brands/:brandId/followup-actions returned no leads array");
+    for (const raw of data.leads as Array<Record<string, unknown>>) {
+      const alias = raw[LEDGER_LLM_ALIAS_FIELD];
+      if (typeof raw.actingCampaignId === "string" && typeof raw.leadId === "string" && typeof alias === "string" && alias) out.set(`${raw.actingCampaignId}|${raw.leadId}`, alias);
+    }
+  }
+  return out;
+}
