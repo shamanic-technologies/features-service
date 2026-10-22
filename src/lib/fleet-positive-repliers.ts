@@ -128,6 +128,38 @@ function splitBucketKey(key: string): { campaignId: string; slug: string; day: s
   return { campaignId, slug, day, gen, country };
 }
 
+/**
+ * A person content-generation recorded nothing for (a chat `/complete` writer: follow-up email, WhatsApp...) is filed
+ * under the LLM its acting run stated on the follow-up ledger (BEST-TPL-LLM-1022, lead-service `followup-actions`), as a
+ * writer record with no template. Content-generation's record wins where both exist. Fail-soft: an unreadable ledger or
+ * model list leaves those persons not on record (logged), never a guessed model.
+ */
+async function withLedgerWriters(brandId: string, persons: readonly EnginePerson[], generationOf: ReadonlyMap<string, GenerationClass>): Promise<ReadonlyMap<string, GenerationClass>> {
+  const missing = persons.filter((p) => p.campaignId && !generationOf.has(`${p.campaignId}|${p.leadId}`));
+  if (missing.length === 0) return generationOf;
+  try {
+    const [{ fetchFollowupLlmAliases }, { readModelIds }, { resolveModelAlias }] = await Promise.all([
+      import("./followup-actions-client.js"),
+      import("./model-ids-client.js"),
+      import("./research/writers.js"),
+    ]);
+    const aliases = await fetchFollowupLlmAliases(brandId, [...new Set(missing.map((p) => p.campaignId!))]);
+    if (aliases.size === 0) return generationOf;
+    const models = await readModelIds();
+    const out = new Map(generationOf);
+    for (const p of missing) {
+      const k = `${p.campaignId}|${p.leadId}`;
+      const alias = aliases.get(k);
+      if (!alias) continue;
+      out.set(k, { model: resolveModelAlias(alias, models)?.id ?? alias, promptType: null, layout: null, opening: null, dash: null });
+    }
+    return out;
+  } catch (error) {
+    console.error(`[features-service] fleet person cell: ledger writers of brand ${brandId} unreadable, those persons stay not on record:`, (error as Error).message);
+    return generationOf;
+  }
+}
+
 const cells = new Map<string, FleetCell>();
 const inFlight = new Map<string, Promise<FleetCell>>();
 
@@ -148,7 +180,7 @@ async function buildCell(featureSlug: string): Promise<FleetCell> {
     });
     const entries = await mapWithConcurrency([...pairs.entries()], PAIR_CONCURRENCY, async ([key, p]) => {
       const persons = await fetchScopePersons(p.brandId, undefined, { orgId: p.orgId });
-      return [key, bucketPopulation(persons, generationOf)] as const;
+      return [key, bucketPopulation(persons, await withLedgerWriters(p.brandId, persons, generationOf))] as const;
     });
     return { byPair: new Map(entries), computedAt: Date.now() };
   });

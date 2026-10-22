@@ -13,16 +13,17 @@
  *
  * A pipe's candidates: its template DYNASTIES (content-generation, active + head = selectable) and every LLM a writer
  * alias of content-generation names (active alias = selectable), plus anything that wrote on the pipe. Every pipe holding
- * a workflow assignment is covered by the same code (no per-pipe branch). A pipe measured on the people its campaigns
- * ACTED on (an internal pipe, `lib/pipe-kind.ts`) or one with no sequence recorded yet states WHY it picks nothing
- * (`writerEvidence`), and its runs keep writing with what their workflow states: never a pick on zero evidence there
+ * a workflow assignment is covered by the same code (no per-pipe branch). A chat `/complete` writer records no sequence:
+ * its people are filed under the LLM their acting run stated on lead-service's follow-up ledger (an entry pipe through
+ * the fleet person cell, an internal pipe, `lib/pipe-kind.ts`, through `ledgerLlmBars`). A pipe with no writer recorded
+ * at all states WHY it picks nothing (`writerEvidence: no_sequence_recorded_on_pipe`): never a pick on zero evidence
  * (every candidate at $0 would be an alphabetical pick, not a measured one).
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
-import { legMaturity } from "../lib/maturity.js";
+import { isMatureCount, legMaturity } from "../lib/maturity.js";
 import { pipeLegKeyOf, servedLegKeyOf } from "../lib/funnel-legs.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
 import { isScreenedVisitLeg } from "../lib/screened-visits.js";
@@ -35,6 +36,8 @@ import { readModelIds, type ServedModel } from "../lib/model-ids-client.js";
 import { readTemplateDynasties, readWriterModelAliases, type WriterModelAlias } from "../lib/writer-catalogue-client.js";
 import { rankWriters, type WriterCandidate, type WriterRanking, type WriterRankingRow } from "../lib/leg-writer-ranking.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
+import { getInternalPipeFleet } from "../lib/meeting-leg-fleet.js";
+import { fetchFollowupLlmAliases } from "../lib/followup-actions-client.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "../lib/plays.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
@@ -159,6 +162,51 @@ export function llmCandidates(
   });
 }
 
+/**
+ * PURE. An INTERNAL pipe's LLM bars (BEST-TPL-LLM-1022): its campaigns act on people another campaign holds, so each
+ * campaign's spend is shared out on the people it acted on, and each person is filed under the LLM its latest act stated
+ * on the follow-up ledger (`writerOf`, null = not on record: left out). Outcomes = the people of the LLM that reached the
+ * pipe's step. Read MATURE once the outcomes reach the leg's bar on a leg that waits for nothing (the pipe's own rule:
+ * an internal pipe has no dated cut), else everything to date, Learning.
+ */
+export function ledgerLlmBars(
+  ran: ReadonlyArray<{ campaignId: string; spentUsd: number; acted: readonly string[]; reached: readonly string[] }>,
+  writerOf: (campaignId: string, personKey: string) => { key: string; label: string } | null,
+  legKey: string,
+): { rows: Array<{ key: string; label: string; basis: "mature" | "flash"; figures: { spentUsd: number; contacted: number; outcomes: number } }>; leftOut: { contacted: number; outcomes: number }; recorded: number } {
+  const by = new Map<string, { label: string; spentUsd: number; contacted: number; outcomes: number }>();
+  const leftOut = { contacted: 0, outcomes: 0 };
+  let recorded = 0;
+  for (const c of ran) {
+    if (c.acted.length === 0) continue;
+    const share = c.spentUsd / c.acted.length;
+    const reached = new Set(c.reached);
+    for (const person of c.acted) {
+      const w = writerOf(c.campaignId, person);
+      const hit = reached.has(person) ? 1 : 0;
+      if (!w) {
+        leftOut.contacted += 1;
+        leftOut.outcomes += hit;
+        continue;
+      }
+      recorded += 1;
+      const e = by.get(w.key) ?? { label: w.label, spentUsd: 0, contacted: 0, outcomes: 0 };
+      e.spentUsd += share;
+      e.contacted += 1;
+      e.outcomes += hit;
+      by.set(w.key, e);
+    }
+  }
+  const waitsForNothing = legMaturity(legKey).durationDays === 0;
+  const rows = [...by].map(([key, e]) => ({
+    key,
+    label: e.label,
+    basis: (waitsForNothing && isMatureCount(e.outcomes, legKey) === true ? "mature" : "flash") as "mature" | "flash",
+    figures: { spentUsd: e.spentUsd, contacted: e.contacted, outcomes: e.outcomes },
+  }));
+  return { rows, leftOut, recorded };
+}
+
 /** One pipe's evidence, computed in this process. */
 export async function computeLegWriterRanking(featureSlug: string, rawLegKey: string): Promise<LegWriterRankingPayload> {
   const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
@@ -181,8 +229,24 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
   let bars: ReturnType<typeof generationBuckets> | null = null;
   let cutoffIso: string | null = null;
   let writerEvidence: LegWriterRankingPayload["writerEvidence"] = "measured";
-  if (internal) writerEvidence = "internal_pipe_not_measured_per_writer";
-  else {
+  let internalLlm: ReturnType<typeof ledgerLlmBars> | null = null;
+  if (internal) {
+    // An internal pipe: the people its campaigns acted on, filed under the LLM the follow-up ledger states per act.
+    const fleet = await getInternalPipeFleet(featureSlug, legKey, internal);
+    const ran = fleet.ranCampaigns ?? [];
+    const byBrand = new Map<string, string[]>();
+    for (const c of ran) if (c.brandId) byBrand.set(c.brandId, [...(byBrand.get(c.brandId) ?? []), c.campaignId]);
+    const aliases = new Map<string, string>();
+    for (const [brandId, ids] of byBrand) for (const [k, v] of await fetchFollowupLlmAliases(brandId, ids)) aliases.set(k, v);
+    const writerOf = (campaignId: string, person: string) => {
+      const alias = aliases.get(`${campaignId}|${person.slice(person.indexOf(":") + 1)}`);
+      if (!alias) return null;
+      const m = models.find((x) => x.modelId === alias) ?? models.find((x) => x.aliases.includes(alias)) ?? models.find((x) => x.formerAliases.includes(alias));
+      return { key: modelKey(m?.displayName || alias), label: m?.displayName || alias };
+    };
+    internalLlm = ledgerLlmBars(ran, writerOf, legKey);
+    if (internalLlm.recorded === 0) writerEvidence = "no_sequence_recorded_on_pipe";
+  } else {
     const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, "own", "gross");
     cutoffIso = ev.cutoffIso;
     const persons = await fetchFleetPersonBuckets(featureSlug, new Set(ev.campaigns.map((c) => c.campaignId)));
@@ -195,7 +259,7 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     bars = generationBuckets({ legKey, cells, persons, split, models: names, templateDynasties: templateDynastyIndex(dynastiesRead) });
   }
   const tplBars = bars?.tpl.rows ?? [];
-  const llmBars = bars?.llm.rows ?? [];
+  const llmBars = internalLlm?.rows ?? bars?.llm.rows ?? [];
   return {
     featureSlug,
     legKey,
@@ -207,7 +271,7 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     writerEvidence,
     templates: { candidates: templateCandidates(tplBars, dynasties), unavailableReason: templateUnavailable },
     llms: { candidates: llmCandidates(llmBars, aliases, models), unavailableReason: llmUnavailable },
-    leftOut: { templates: bars?.tpl.leftOut ?? { contacted: 0, outcomes: 0 }, llms: bars?.llm.leftOut ?? { contacted: 0, outcomes: 0 } },
+    leftOut: { templates: bars?.tpl.leftOut ?? { contacted: 0, outcomes: 0 }, llms: internalLlm?.leftOut ?? bars?.llm.leftOut ?? { contacted: 0, outcomes: 0 } },
   };
 }
 

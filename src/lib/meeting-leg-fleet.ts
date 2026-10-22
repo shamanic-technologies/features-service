@@ -87,6 +87,12 @@ export interface MeetingLegFleet {
    *  pipe's `to` step. What a finer grain (brand, campaign, offer) of the workflow ladder sums.
    *  `inFleetPopulation` = counted in fleet figures (false: its brand reports no meeting on a meeting pipe). */
   perCampaign: Array<{ campaignId: string; orgId: string; brandId: string | null; dynasty: string; acted: string[]; reached: string[]; inFleetPopulation: boolean }>;
+  /**
+   * EVERY campaign that ran on the fleet population, attributable to one workflow or not (BEST-TPL-LLM-1022: a template /
+   * LLM figure needs no workflow attribution): its incurred spend and the people (`brandId:leadId`) it acted on / that
+   * reached the `to` step. Absent on a cell built before the field.
+   */
+  ranCampaigns?: Array<{ campaignId: string; brandId: string | null; spentUsd: number; acted: string[]; reached: string[] }>;
   /** Who the fleet figures were measured on; null on a pipe not landing on a meeting step (every brand counts). */
   population: MeetingPopulation | null;
   /**
@@ -139,6 +145,7 @@ export function buildMeetingLegFleet(input: {
   const perCampaign: MeetingLegFleet["perCampaign"] = [];
   const orgs = new Map<string, { cents: number; acted: Set<string>; reached: Set<string> }>();
   const pooled = { cents: 0, acted: new Set<string>(), reached: new Set<string>(), centsByDynasty: new Map<string, number>() };
+  const ranCampaigns: NonNullable<MeetingLegFleet["ranCampaigns"]> = [];
   for (const c of input.campaigns) {
     const ran = spendByCampaign.get(c.campaignId);
     if (!ran || ran.size === 0) continue; // never ran: nothing spent, nothing answered
@@ -162,6 +169,14 @@ export function buildMeetingLegFleet(input: {
         }
       }
       orgs.set(c.orgId, org);
+      const acted = [...(pair?.actedByCampaign.get(c.campaignId) ?? [])];
+      ranCampaigns.push({
+        campaignId: c.campaignId,
+        brandId: c.brandId,
+        spentUsd: [...ran.values()].reduce((a, b) => a + b, 0) / 100,
+        acted: acted.map((l) => `${c.brandId}:${l}`),
+        reached: acted.filter((l) => pair!.meetingLeadIds.has(l)).map((l) => `${c.brandId}:${l}`),
+      });
     }
     // A workflow version that spent nothing on the campaign did not act for it: only spending dynasties attribute
     // (2026-10-18: $0 rows of retired versions made 10 of 20 meeting campaigns read as mixed).
@@ -200,6 +215,7 @@ export function buildMeetingLegFleet(input: {
     byDynasty,
     unattributableCampaignIds: unattributable.sort(),
     perCampaign,
+    ranCampaigns,
     population: input.reporting ? meetingPopulationOf(input.campaigns.map((c) => c.brandId), input.reporting) : null,
     byOrg: [...orgs]
       .sort(([a], [b]) => (a < b ? -1 : 1))
