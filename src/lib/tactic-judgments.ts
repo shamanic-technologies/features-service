@@ -22,8 +22,11 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
-import { insertVerdict, invalidatePlayCatalogue, listVerdicts, loadPlayCatalogue, recordJudgingSweeps, refreshVersionActive } from "./plays-store.js";
-import type { Tactic, TacticJudgingSweep } from "./plays.js";
+import { insertVerdict, insertWriterVerdict, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, recordJudgingSweeps, refreshVersionActive } from "./plays-store.js";
+import { readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "./writer-catalogue-client.js";
+import { readModelIds } from "./model-ids-client.js";
+import { resolveModelAlias } from "./research/writers.js";
+import { subjectOfTactic, type Tactic, type TacticJudgingSweep } from "./plays.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 
 const JUDGE_CONCURRENCY = 4;
@@ -177,7 +180,8 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   const record = deps.record ?? recordJudgingSweeps;
   const startedAt = (deps.now ?? (() => new Date()))();
   const [assignments, catalogue, stored] = await Promise.all([listLegAssignments(), loadPlayCatalogue(), listVerdicts()]);
-  const tactics = [...catalogue.tactics.values()];
+  // Workflow tactics only: a template / LLM tactic is judged by `sweepWriterTacticJudgments` (BEST-TPL-LLM-1022).
+  const tactics = [...catalogue.tactics.values()].filter((t) => subjectOfTactic(t) === "workflow");
   const result: SweepResult = { versions: 0, judged: 0, failed: 0, alreadyJudged: 0 };
   if (tactics.length === 0) return result;
   const dynastiesByFeature = new Map<string, Set<string>>();
@@ -255,6 +259,137 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   return result;
 }
 
+/** One template dynasty or LLM alias Jev judges a writer tactic on (BEST-TPL-LLM-1022). */
+export interface WriterSubject {
+  kind: "template" | "llm";
+  key: string;
+  /** What the verdict was judged on: the dynasty's head template, the alias's concrete model. A move re-judges it. */
+  version: string;
+  state: Record<string, unknown>;
+}
+
+/** The yes/no question on a template dynasty or an LLM, from the tactic's own description. */
+export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, kind: "template" | "llm") {
+  const what = kind === "template" ? "email template (the prompt our writer model follows)" : "language model (the LLM that writes our messages)";
+  return {
+    type: "noul" as const,
+    instructions:
+      `Does this ${what} follow the tactic "${t.name}"? The tactic: ${t.description} ` +
+      (kind === "template" ? "Judge only on what the template's text asks the writer to do. Ignore its name and any label." : "Judge only on which model it is, who makes it and its tier."),
+    criteria: {
+      true: `The ${kind === "template" ? "template" : "model"} does exactly what the tactic describes: ${t.description}`,
+      false: `The ${kind === "template" ? "template" : "model"} does not do what the tactic describes, or does the opposite.`,
+    },
+  };
+}
+
+/**
+ * Every template dynasty of every pipe holding a workflow (content-generation's dynasties, judged on their HEAD's text)
+ * and every writer model alias content-generation accepts (judged on its concrete model). A pipe whose dynasties cannot
+ * be read is skipped this sweep (logged, its tactics state the failure).
+ */
+export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[]; failures: string[] }> {
+  const failures: string[] = [];
+  const assignments = await listLegAssignments();
+  const pipes = [...new Map(assignments.map((a) => [`${a.featureSlug}|${a.legKey}`, a])).values()];
+  const byDynasty = new Map<string, { slug: string; name: string; description: string; head: string | null }>();
+  for (const a of pipes) {
+    const read = await readTemplateDynasties(a.featureSlug, a.legKey);
+    if (typeof read === "string") {
+      failures.push(`the template dynasties of ${a.featureSlug}|${a.legKey} could not be read`);
+      continue;
+    }
+    for (const d of read) if (!byDynasty.has(d.slug)) byDynasty.set(d.slug, { slug: d.slug, name: d.name, description: d.description, head: d.head });
+  }
+  const heads = [...byDynasty.values()].map((d) => d.head).filter((h): h is string => Boolean(h));
+  const texts = await readTemplateTexts(heads).catch((error) => {
+    failures.push(`template texts unreadable: ${(error as Error).message}`);
+    return new Map<string, string>();
+  });
+  const subjects: WriterSubject[] = [];
+  for (const d of byDynasty.values()) {
+    const text = d.head ? texts.get(d.head) : undefined;
+    if (!d.head || !text) continue; // judged once its head's text is readable
+    subjects.push({ kind: "template", key: d.slug, version: d.head, state: { templateDynasty: d.slug, name: d.name, description: d.description, headTemplate: d.head, prompt: text } });
+  }
+  try {
+    const [aliases, models] = await Promise.all([readWriterModelAliases(), readModelIds()]);
+    for (const a of aliases) {
+      const m = resolveModelAlias(a.alias, models);
+      const row = m ? models.find((x) => x.modelId === m.id) : undefined;
+      subjects.push({
+        kind: "llm",
+        key: a.alias,
+        version: m?.id ?? a.alias,
+        state: { alias: a.alias, model: m?.label ?? a.alias, modelId: m?.id ?? null, provider: row?.provider || a.provider, capabilityTier: row?.capabilityTier ?? null },
+      });
+    }
+  } catch (error) {
+    failures.push(`the writer models could not be read: ${(error as Error).message}`);
+  }
+  return { subjects, failures };
+}
+
+async function judgeWriter(t: Tactic, subject: WriterSubject, ask: typeof askOne = askOne): Promise<TacticJudgment> {
+  const a = await ask(subject.state, writerTacticQuestion(t, subject.kind));
+  return { verdict: a.probability >= 0.5, probability: a.probability, model: a.model };
+}
+
+/**
+ * One sweep of the TEMPLATE and LLM tactics (BEST-TPL-LLM-1022): every (subject of the tactic's kind, tactic) not
+ * judged on the tactic's current description and the subject's current version is asked; the old verdict serves until
+ * the new one lands. Records each tactic's judging like the workflow sweep (versions = subjects covered).
+ */
+export async function sweepWriterTacticJudgments(deps: { judge?: typeof judgeWriter; subjects?: typeof readWriterSubjects; record?: typeof recordJudgingSweeps; now?: () => Date } = {}): Promise<SweepResult> {
+  const judge = deps.judge ?? judgeWriter;
+  const startedAt = (deps.now ?? (() => new Date()))();
+  const catalogue = await loadPlayCatalogue();
+  const tactics = [...catalogue.tactics.values()].filter((t) => subjectOfTactic(t) !== "workflow");
+  const result: SweepResult = { versions: 0, judged: 0, failed: 0, alreadyJudged: 0 };
+  if (tactics.length === 0) return result;
+  const [{ subjects, failures }, stored] = await Promise.all([(deps.subjects ?? readWriterSubjects)(), listWriterVerdicts()]);
+  const done = new Set(stored.map((v) => `${v.subjectKind}|${v.subjectKey}|${v.tacticId}|${v.subjectVersion}|${v.judgedDescription}`));
+  const perTactic = new Map(tactics.map((t) => [t.id, { versions: 0, judged: 0, failed: failures.length, lastFailure: failures[0] ?? null }]));
+  const todo: Array<{ t: Tactic; subject: WriterSubject }> = [];
+  for (const t of tactics) {
+    for (const subject of subjects.filter((x) => x.kind === subjectOfTactic(t))) {
+      result.versions += 1;
+      perTactic.get(t.id)!.versions += 1;
+      if (done.has(`${subject.kind}|${subject.key}|${t.id}|${subject.version}|${t.description}`)) {
+        result.alreadyJudged += 1;
+        perTactic.get(t.id)!.judged += 1;
+      } else todo.push({ t, subject });
+    }
+  }
+  await mapWithConcurrency(todo, JUDGE_CONCURRENCY, async ({ t, subject }) => {
+    try {
+      const j = await judge(t, subject);
+      await insertWriterVerdict({ subjectKind: subject.kind, subjectKey: subject.key, tacticId: t.id, subjectVersion: subject.version, verdict: j.verdict, probability: j.probability, model: j.model, judgedDescription: t.description });
+      result.judged += 1;
+      perTactic.get(t.id)!.judged += 1;
+    } catch (error) {
+      result.failed += 1;
+      const x = perTactic.get(t.id)!;
+      x.failed += 1;
+      x.lastFailure = (error as Error).message.slice(0, 300);
+      console.error(`[features-service] writer tactic judgments: ${subject.kind} ${subject.key} x ${t.id} not judged (next sweep retries):`, (error as Error).message);
+    }
+  });
+  const sweptAt = startedAt.toISOString();
+  try {
+    await (deps.record ?? recordJudgingSweeps)(
+      tactics.map((t) => {
+        const x = perTactic.get(t.id)!;
+        return { tacticId: t.id, judgedDescription: t.description, sweptAt, versions: x.versions, judged: x.judged, failed: x.failed, lastFailure: x.failed > 0 ? x.lastFailure : null, lastFailureAt: x.failed > 0 ? sweptAt : null };
+      }),
+    );
+  } catch (error) {
+    console.error("[features-service] writer tactic judgments: the sweep's per-tactic outcome could not be recorded:", error);
+  }
+  invalidatePlayCatalogue();
+  return result;
+}
+
 let inFlight: Promise<SweepResult> | null = null;
 let pendingDynasties: Set<string> | null | undefined;
 
@@ -265,6 +400,17 @@ export function kickTacticJudgments(onlyDynasties: ReadonlySet<string> | null = 
     return inFlight;
   }
   inFlight = sweepTacticJudgments({}, onlyDynasties)
+    .then(async (r) => {
+      // The template and LLM tactics ride the same single flight (a registration kick narrows only the workflows).
+      if (!onlyDynasties) {
+        const w = await sweepWriterTacticJudgments().catch((error) => {
+          console.error("[features-service] writer tactic judgments sweep failed:", error);
+          return { versions: 0, judged: 0, failed: 1, alreadyJudged: 0 };
+        });
+        if (w.judged > 0 || w.failed > 0) console.log(`[features-service] writer tactic judgments: ${w.judged} judged, ${w.failed} failed, ${w.alreadyJudged} already judged over ${w.versions} subjects`);
+      }
+      return r;
+    })
     .then((r) => {
       if (r.judged > 0 || r.failed > 0) console.log(`[features-service] tactic judgments: ${r.judged} judged, ${r.failed} failed, ${r.alreadyJudged} already judged over ${r.versions} versions`);
       return r;

@@ -4,6 +4,7 @@
  * nightly snapshot's `research-catalog.json`. Pure: every bar is the same bucket the studies draw (`lib/research/*`), so a
  * page and its study can never state two figures.
  */
+import { rankWriters } from "../leg-writer-ranking.js";
 import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
@@ -229,6 +230,13 @@ function catalogOrder(rows: readonly ResearchBucket[]): ResearchBucket[] {
   return [...priced, ...rest, ...unreached];
 }
 
+/** The leg order of the pipe's templates or models (`rankWriters`), selectable ones first: every row ranked. */
+function writerOrder(rows: readonly ResearchBucket[], selectable: (key: string) => boolean): ResearchBucket[] {
+  const byKey = new Map(rows.map((r) => [r.key, r]));
+  const ranked = rankWriters(rows.map((r) => ({ key: r.key, label: r.label, selectable: selectable(r.key), notSelectableReason: null, basis: r.basis, figures: r.figures })));
+  return ranked.rows.map((x) => byKey.get(x.key)!);
+}
+
 function figures(t: PipeTerms, r: ResearchBucket, rank: number | null): CatalogFigures {
   const c = costOf(r);
   const o = Math.round(r.figures.outcomes);
@@ -415,8 +423,14 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const allTemplates = [...p.templates, ...[...nowTemplateKeys].filter((t) => !tplHave.has(t)).map((t) => emptyBucket(t, dyn.labelOf(t)))];
   const allModels = [...p.models, ...[...nowModels].filter(([k]) => !mdHave.has(k)).map(([k, label]) => emptyBucket(k, label))];
   const wfRows = catalogOrder(allWorkflows);
-  const tplRows = catalogOrder(allTemplates);
-  const mdRows = catalogOrder(allModels);
+  // Templates and models stand in the ONE leg order the pipe picks them by (BEST-TPL-LLM-1022, `rankWriters`, the
+  // workflows' rule on $/outcome): the page's rank is the ranking's, never a second order on the same figures.
+  const tplRows = writerOrder(allTemplates, (key) => {
+    const d = dyn.dynastyOf(key);
+    return Boolean(d && d.status !== "deprecated" && d.head);
+  });
+  const mdRows = writerOrder(allModels, (key) => (typeof p.servedModels === "object" ? modelRowAliases(key, p.servedModels, modelKey).aliases.length > 0 : true));
+  const writerRank = new Map([...tplRows, ...mdRows].map((r) => [r, (tplRows.includes(r) ? tplRows : mdRows).indexOf(r) + 1]));
   const wfKeys = new Set(wfRows.map((r) => r.key));
   const tplKeys = new Set(tplRows.map((r) => r.key));
   const mdKeys = new Set(mdRows.map((r) => r.key));
@@ -559,7 +573,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
           ...figures(p.terms, versionBars.get(v) ?? emptyBucket(v, templateLabel(v)), null),
         }))
       : [],
-    ...figures(p.terms, r, rankOf(r, i)),
+    ...figures(p.terms, r, writerRank.get(r) ?? null),
     workflows: workflows.filter((w) => w.template?.key === r.key || w.writesWithNow?.template?.key === r.key || w.wroteWith?.template?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => x.promptType !== null && dyn.keyOf(x.promptType) === r.key)
@@ -578,7 +592,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     key: r.key,
     label: r.label,
     ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", modelKey),
-    ...figures(p.terms, r, rankOf(r, i)),
+    ...figures(p.terms, r, writerRank.get(r) ?? null),
     workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key || w.wroteWith?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => modelKey(p.modelLabel(x.model)) === r.key)
