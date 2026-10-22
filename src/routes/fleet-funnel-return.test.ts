@@ -31,7 +31,7 @@ vi.mock("../db/index.js", () => ({
   sql: {},
 }));
 // The catalogue reads which channels hold an active workflow (`managed` by fact): none here.
-vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({ ...(await importOriginal<object>()), listLegAssignments: vi.fn(async () => []) }));
+vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => ({ ...(await importOriginal<object>()), listLegAssignments: vi.fn(async () => []), listRunnableLegAssignments: vi.fn(async () => []) }));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({ default: { setupExpressErrorHandler: vi.fn() }, setupExpressErrorHandler: vi.fn() }));
