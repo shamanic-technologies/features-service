@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { llmCandidates, servedRankings, templateCandidates, type LegWriterRankingPayload } from "./leg-writer-ranking.js";
+import { ledgerLlmBars, llmCandidates, servedRankings, templateCandidates, type LegWriterRankingPayload } from "./leg-writer-ranking.js";
 import { buildPlayCatalogue, strategyOnSubject, type Strategy, type Tactic } from "../lib/plays.js";
 import type { TemplateDynasty } from "../lib/research/template-dynasties.js";
 import type { ServedModel } from "../lib/model-ids-client.js";
@@ -124,5 +124,29 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
     expect(served.templates.best).toBeNull();
     expect(served.templates.unavailableReason).toBe("no_sequence_recorded_on_pipe");
     expect(served.llms.best).toBeNull();
+  });
+
+  it("a chat /complete internal pipe: each campaign's spend shared on its acted people, filed under the LLM the ledger states", () => {
+    const writerOf = (campaignId: string, person: string) => {
+      const aliases: Record<string, string> = { "c1|b:l1": "opus", "c1|b:l2": "opus", "c1|b:l3": "flash", "c2|b:l4": "flash" };
+      const alias = aliases[`${campaignId}|${person}`];
+      return alias ? { key: alias === "opus" ? "claude-opus-5.5" : "gemini-3-flash", label: alias } : null;
+    };
+    const r = ledgerLlmBars(
+      [
+        { campaignId: "c1", spentUsd: 40, acted: ["b:l1", "b:l2", "b:l3", "b:l9"], reached: ["b:l1", "b:l9"] },
+        { campaignId: "c2", spentUsd: 6, acted: ["b:l4"], reached: [] },
+      ],
+      writerOf,
+      "conversation_to_meeting_booked",
+    );
+    expect(r.rows.map((x) => [x.key, x.figures])).toEqual([
+      ["claude-opus-5.5", { spentUsd: 20, contacted: 2, outcomes: 1 }],
+      ["gemini-3-flash", { spentUsd: 16, contacted: 2, outcomes: 0 }],
+    ]);
+    expect(r.leftOut).toEqual({ contacted: 1, outcomes: 1 });
+    expect(r.recorded).toBe(4);
+    // 0-day leg, bar 10 outcomes: one outcome is still learning
+    expect(r.rows.every((x) => x.basis === "flash")).toBe(true);
   });
 });
