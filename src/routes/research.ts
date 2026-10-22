@@ -38,7 +38,7 @@ import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReas
 import { readModelIds } from "../lib/model-ids-client.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { pipeCatalog, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
+import { pipeCatalog, withWorkflowFigures, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
@@ -633,8 +633,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       workflowVersionTotals: g.workflowVersionTotals,
     });
   const catalog: ResearchCatalog = {
-    [POSITIVE_REPLY_PIPE]: catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking),
-    [WEBSITE_VISIT_PIPE]: catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking),
+    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking),
+    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking),
     [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
   // Every listed page's text: a version's under its id, a dynasty's (its head's) under the dynasty's slug.
@@ -795,7 +795,14 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
   try {
     const build = await readResearchBuild(basis);
     if (!build?.catalog) return notYet(res);
-    res.json(build.catalog);
+    // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
+    // Workflows list prints, never the ranking its build held (up to 15 min older).
+    const [replyRanking, visitRanking] = await Promise.all([readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0), readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0)]);
+    res.json({
+      ...build.catalog,
+      [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
+      [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
+    });
   } catch (error) {
     console.error("[features-service] research catalogue read failed:", error);
     res.status(500).json({ error: "Internal server error" });
