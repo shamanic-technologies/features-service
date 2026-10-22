@@ -68,10 +68,15 @@ export interface LegWorkflowRankingRow {
   figures?: LegWorkflowFigures;
   /** When a run of this workflow last started on the pipe, any org (ISO). Null = never ran, or `lastRunUnavailableReason`. */
   lastRunAt?: string | null;
-  lastRunUnavailableReason?: "not_read_on_pipe" | null;
+  /**
+   * Why `lastRunAt` is null (always set when it is): `never_ran` (no spend, no contact on the pipe), `run_time_not_served`
+   * (it ran, the run times read states no date), `not_read_on_pipe` (an internal / on-demand pipe states none).
+   */
+  lastRunUnavailableReason?: "never_ran" | "run_time_not_served" | "not_read_on_pipe" | null;
   /** The tactics its current version follows (Jev's verdicts), set at serve time (`?` absent on a stored build). */
   tactics?: Array<{ id: string; name: string }> | null;
-  tacticsUnavailableReason?: "tactics_unreadable" | null;
+  /** `not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (`[]` = judged, follows none). */
+  tacticsUnavailableReason?: "tactics_unreadable" | "not_judged_yet" | null;
   /** The workflow dynasty's own icon (Phosphor name) + colour (MARKS-1022, `lib/catalogue-marks.ts`), set at serve time. */
   icon?: string;
   color?: string;
@@ -185,8 +190,20 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       place: places.get(slug)!,
       figures: gross.get(slug)!,
       figuresNet: net.get(slug)!,
-      lastRunAt: input.lastRunAt ? (input.lastRunAt.get(slug) ?? null) : null,
-      lastRunUnavailableReason: input.lastRunAt ? null : "not_read_on_pipe",
+      ...lastRunOf(slug, input.lastRunAt ?? null, figuresOf.get(slug)!),
     };
   });
+}
+
+/** PURE. A row's last run and, whenever it is null, why (RESEARCH-WF-FIGURES-1022: a null never reads "Never" by default). */
+export function lastRunOf(
+  slug: string,
+  lastRunAt: ReadonlyMap<string, string> | null,
+  f: LegMaturityFigures,
+): { lastRunAt: string | null; lastRunUnavailableReason: "never_ran" | "run_time_not_served" | "not_read_on_pipe" | null } {
+  if (!lastRunAt) return { lastRunAt: null, lastRunUnavailableReason: "not_read_on_pipe" };
+  const at = lastRunAt.get(slug);
+  if (at) return { lastRunAt: at, lastRunUnavailableReason: null };
+  const ran = (f.flash?.spentUsd ?? 0) > 0 || (f.flash?.contacted ?? 0) > 0;
+  return { lastRunAt: null, lastRunUnavailableReason: ran ? "run_time_not_served" : "never_ran" };
 }
