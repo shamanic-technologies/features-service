@@ -106,6 +106,12 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
     expect(served.llms.best?.key).toBe("gemini-3-flash");
     expect(served.templates.rows.map((r) => r.key)).not.toContain("offer");
     expect(served.templates.best?.key).toBe("blind");
+    // every selectable LLM ruled out = a strategy refusal, named apart from "nothing selectable"
+    const allOut = servedRankings(payload(), c, strategy("anthropic-only", ["anthropic-models"], []));
+    expect(allOut.llms.best?.key).toBe("claude-opus-5.5");
+    const noneLeft = servedRankings({ ...payload(), llms: { ...payload().llms, candidates: payload().llms.candidates.filter((x) => x.key !== "claude-opus-5.5") } }, c, strategy("anthropic-only", ["anthropic-models"], []));
+    expect(noneLeft.llms.best).toBeNull();
+    expect(noneLeft.llms.unavailableReason).toBe("strategy_excludes_every_candidate");
     // A template never judged on a tactic the strategy names is ruled out (the workflow rule).
     expect(served.templates.excluded.map((x) => x.key).sort()).toEqual(["offer", "old-v3", "retired"]);
   });
