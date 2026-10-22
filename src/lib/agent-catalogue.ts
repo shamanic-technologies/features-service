@@ -247,6 +247,9 @@ export interface CatalogueInputs {
    * but its own (every assigned workflow, as always). The default play's measurement IS the pipe's (`measurements`).
    */
   plays?: ReadonlyMap<string, { default: PlayInput | null; others: readonly PlayInput[] }>;
+  /** pipe id -> the strategies of its RETIRED plays (PLAY-RETIRE-1022): a play or funnel id naming one reads the pipe's
+   *  default play (its bare id). Absent = none. */
+  retiredPlays?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /** One play of a pipe as the catalogue prices it. */
@@ -469,6 +472,8 @@ export interface CatalogueModel {
   /** Every NON-default play of a pipe, keyed `<pipe id>~<strategy id>` (`lib/plays.ts`): a pipe object of its own,
    *  same channel and leg, priced on its best allowed workflow. Never listed among the pipes. */
   plays: Map<string, CataloguePipe>;
+  /** pipe id -> strategies RETIRED from it (PLAY-RETIRE-1022): an id naming one resolves to the pipe's default play. */
+  retiredPlays?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 export const pipeIdOf = (channelSlug: string, servedLegKey: string): string => `${channelSlug}|${servedLegKey}`;
@@ -890,6 +895,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
     channels: inputs.channels,
     plays,
+    retiredPlays: inputs.retiredPlays,
   };
   // Trigger-headed paths stated through the creates (owner 2026-10-15): listed like any path.
   for (const h of inputs.triggerHeadedPaths ?? []) {
@@ -1055,16 +1061,22 @@ export const funnelIdOf = (legs: readonly FunnelLeg[]): string =>
 /** A platform pipe's part of a funnel id: its slug, `~<strategy>` on a non-default play (`lib/plays.ts`). */
 const funnelSlugPart = (p: CataloguePipe): string => (p.play && !p.play.isDefault ? `${p.channelSlug}${PLAY_SEPARATOR}${p.play.strategyId}` : p.channelSlug);
 
+/** PURE: the strategy names the pipe's default play, or a play staff RETIRED from it (PLAY-RETIRE-1022): either way
+ *  its bare id (the default play) is what runs. */
+function runsAsDefault(model: CatalogueModel, base: CataloguePipe, strategyId: string): boolean {
+  return (base.play?.isDefault === true && base.play.strategyId === strategyId) || (model.retiredPlays?.get(base.id)?.has(strategyId) ?? false);
+}
+
 /**
- * PURE: a pipe or a play by id. A play id naming the pipe's DEFAULT strategy is the pipe itself (its bare id is the
- * default play); a strategy the pipe does not catalogue is no play: null.
+ * PURE: a pipe or a play by id. A play id naming the pipe's DEFAULT strategy, or a play RETIRED from the pipe, is the
+ * pipe itself (its bare id is the default play); a strategy the pipe never catalogued is no play: null.
  */
 export function pipeOrPlayById(model: CatalogueModel, id: string): CataloguePipe | null {
   const direct = model.pipes.get(id) ?? model.plays.get(id);
   if (direct) return direct;
   const { pipeId, strategyId } = splitPlayId(id);
   const base = strategyId ? model.pipes.get(pipeId) : undefined;
-  return base?.play?.isDefault && base.play.strategyId === strategyId ? base : null;
+  return base && strategyId && runsAsDefault(model, base, strategyId) ? base : null;
 }
 
 /** PURE: every play of a pipe, default first (one entry, the pipe itself, when it catalogues none). */
@@ -1073,7 +1085,8 @@ export const playsOfPipe = (model: CatalogueModel, pipe: CataloguePipe): Catalog
   ...[...model.plays.values()].filter((v) => v.play?.basePipeId === pipe.id).sort((a, b) => (a.id < b.id ? -1 : 1)),
 ];
 
-/** PURE: a funnel id with every `~<strategy>` naming its pipe's DEFAULT play dropped (the default play is the bare pipe). */
+/** PURE: a funnel id with every `~<strategy>` naming its pipe's DEFAULT play, or a play RETIRED from it, dropped (the
+ *  default play is the bare pipe). */
 function canonicalFunnelId(model: CatalogueModel, id: string): string {
   return id
     .split("+")
@@ -1083,7 +1096,7 @@ function canonicalFunnelId(model: CatalogueModel, id: string): string {
       const { slug, strategyId } = splitPlaySlug(part.slice(at + 1));
       if (!strategyId) return part;
       const base = model.pipes.get(pipeIdOf(slug, part.slice(0, at)));
-      return base?.play?.isDefault && base.play.strategyId === strategyId ? `${part.slice(0, at)}@${slug}` : part;
+      return base && runsAsDefault(model, base, strategyId) ? `${part.slice(0, at)}@${slug}` : part;
     })
     .join("+");
 }

@@ -202,6 +202,15 @@ vi.mock("../lib/plays-store.js", async () => {
       playState.added.push({ pipeId: input.pipeId, strategyId: input.strategyId, isDefault: input.isDefault === true });
       return { created: true, defaultChanged };
     }),
+    retirePlay: vi.fn(async (input: { pipeId: string; strategyId: string }) => {
+      const { DeclarationError } = await import("../lib/channel-declarations.js");
+      const row = [...plays, ...playState.added].find((p) => p.pipeId === input.pipeId && p.strategyId === input.strategyId);
+      if (!row) throw new DeclarationError(404, "play_not_found", `no play ${input.strategyId} on ${input.pipeId}`);
+      if (row.isDefault) throw new DeclarationError(409, "default_play_not_retirable", `${input.strategyId} is the default play`);
+      if (row.retired) return { changed: false, retiredAt: "2026-10-22T10:00:00.000Z" };
+      row.retired = true;
+      return { changed: true, retiredAt: "2026-10-22T10:00:00.000Z" };
+    }),
     clearDefaultPlay: vi.fn(async (pipeId: string) => {
       const current = [...plays, ...playState.added].filter((p) => p.pipeId === pipeId && p.isDefault);
       for (const p of current) p.isDefault = false;
@@ -468,6 +477,39 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(again.body).toMatchObject({ changed: false, previousStrategyId: null });
     expect((await request(app).delete(url).set(KEY).send({})).status).toBe(400);
     expect((await request(app).delete(`/internal/catalogue/pipes/${encodeURIComponent("nope|x")}/default-play`).set(KEY).send({ decidedBy: "t" })).status).toBe(404);
+  });
+
+  // PLAY-RETIRE-1022 (owner 2026-10-22): "Valid only" / "Valid + Catch-all" belong on Lead Sourcing, not on the
+  // writing pipe; the campaigns that ran them keep running on the pipe's default, with no client action.
+  it("staff retire a non-default play: its funnels, pipe and play ids read as the pipe's default play; the default is refused", async () => {
+    const pipeIds = ["lead-sourcing|start_to_lead_found", CATCH, MEET, "your-team-meeting-attendance|meeting_booked_to_meeting_attended", "your-team-closing-calls|meeting_attended_to_paid_client"];
+    const created = (await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds, createdBy: "test" })).body;
+    expect(created.id).toContain("~valid-catch-all");
+    const url = `/internal/catalogue/plays/${encodeURIComponent(CATCH)}/retire`;
+    expect((await request(app).post(url).set(KEY).send({})).status).toBe(400);
+    const retired = await request(app).post(url).set(KEY).send({ retiredBy: "staff@distribute.you", note: "belongs on Lead Sourcing" });
+    expect(retired.status).toBe(200);
+    expect(retired.body).toMatchObject({ changed: true, retiredPlayId: CATCH, runsNow: { id: COLD, strategyId: "valid-only", default: true } });
+    // Listed no more.
+    const listed = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
+    expect(listed.map((p: any) => p.strategyId)).toEqual(["valid-only"]);
+    // The play id campaign-service reads a unit's pipe through answers the DEFAULT play (never a 404, never a hold).
+    const pipe = await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(CATCH)}`).set(KEY);
+    expect(pipe.status).toBe(200);
+    expect(pipe.body).toMatchObject({ id: COLD, play: { strategyId: "valid-only", default: true, allowedActiveWorkflowCount: 1 } });
+    // The funnel id a running campaign stores reads as the bare funnel (its default play).
+    const funnel = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(created.id)}`).set(KEY);
+    expect(funnel.status).toBe(200);
+    expect(funnel.body.id).toBe(created.id.replace("~valid-catch-all", ""));
+    expect(funnel.body.legs[1].pipe.id).toBe(COLD);
+    // Idempotent; the default play and an uncatalogued strategy are refused.
+    expect((await request(app).post(url).set(KEY).send({ retiredBy: "t" })).body.changed).toBe(false);
+    const bare = await request(app).post(`/internal/catalogue/plays/${encodeURIComponent(COLD)}/retire`).set(KEY).send({ retiredBy: "t" });
+    expect([bare.status, bare.body.reason ?? bare.body.code]).toEqual([409, "default_play_not_retirable"]);
+    const spelled = await request(app).post(`/internal/catalogue/plays/${encodeURIComponent(`${COLD}~valid-only`)}/retire`).set(KEY).send({ retiredBy: "t" });
+    expect(spelled.status).toBe(409);
+    expect((await request(app).post(`/internal/catalogue/plays/${encodeURIComponent(`${COLD}~telepathy`)}/retire`).set(KEY).send({ retiredBy: "t" })).status).toBe(404);
+    expect((await request(app).post(`/internal/catalogue/plays/${encodeURIComponent("nope|x~valid-only")}/retire`).set(KEY).send({ retiredBy: "t" })).status).toBe(404);
   });
 
   it("a tactic's description is edited (owner 2026-10-14): unique, and every workflow version is re-judged on the new words", async () => {
