@@ -292,6 +292,8 @@ interface CatalogGen {
   templateVersions: ResearchBucket[];
   templateFiguresByVersion: Map<string, Map<string, VersionShare>>;
   templateVersionFiguresByVersion: Map<string, Map<string, VersionShare>>;
+  modelFiguresByVersion: Map<string, Map<string, VersionShare>>;
+  modelVersionFiguresByVersion: Map<string, Map<string, VersionShare>>;
   workflowVersionTotals: Map<string, VersionShare>;
 }
 
@@ -305,6 +307,8 @@ const NO_GEN: CatalogGen = {
   templateVersions: [],
   templateFiguresByVersion: new Map(),
   templateVersionFiguresByVersion: new Map(),
+  modelFiguresByVersion: new Map(),
+  modelVersionFiguresByVersion: new Map(),
   workflowVersionTotals: new Map(),
 };
 
@@ -373,6 +377,8 @@ async function generationInputs(
       templateVersions: g.tplVersions,
       templateFiguresByVersion: g.tplFiguresByVersion,
       templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
+      modelFiguresByVersion: g.llmFiguresByVersion,
+      modelVersionFiguresByVersion: g.llmModelFiguresByVersion,
       workflowVersionTotals: g.workflowVersionTotals,
     };
   };
@@ -660,6 +666,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
         : undefined,
       templateFiguresByVersion: g.templateFiguresByVersion,
       templateVersionFiguresByVersion: g.templateVersionFiguresByVersion,
+      modelFiguresByVersion: g.modelFiguresByVersion,
+      modelVersionFiguresByVersion: g.modelVersionFiguresByVersion,
       workflowVersionTotals: g.workflowVersionTotals,
     });
   const catalog: ResearchCatalog = {
