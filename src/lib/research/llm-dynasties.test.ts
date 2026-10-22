@@ -173,3 +173,83 @@ describe("LLM dynasties on the Research pages (LLM-DYNASTY-1022-FS)", () => {
     expect(mystery.models.map((m) => m.key)).toEqual(["mystery-model"]);
   });
 });
+
+describe("every model page and model version serves its OWN return (MODEL-ROI-1023)", () => {
+  // azalea: $500 spent, 9 replies, pipeline $900, billed $500 (1.8x). Gemini Flash wrote 3.7 (v1: $200, 5 replies) and
+  // 3.8 (v2: $100, 1 reply); Opus $100 and no reply; a model chat-service places nowhere $100 and 3 replies.
+  const catalogWith = (pipeline: number | null, billed: number | null, ps = persons, cs = cells) => {
+    const g = generationBuckets({ ...input([FLASH, OPUS]), persons: ps, cells: cs });
+    return pipeCatalog({
+      terms,
+      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 500, contacted: 600, outcomes: 9 }, learning: false, months: null, strata: null }],
+      templates: g.tpl.rows,
+      models: g.llm.rows,
+      modelVersions: g.llmModels,
+      llmDynasties: llmDynastyIndex([FLASH, OPUS]),
+      nameOf: () => null,
+      mainOf: () => ({ model: "gemini-3.7-flash", template: null }),
+      modelLabel: g.modelLabel,
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: null,
+      writerOf: () => ({ ok: true, workflowSlug: "azalea-v2", version: 2, template: "cold-email-v35", modelAlias: "opus", model: { id: "claude-opus-5-5", label: "Claude Opus 5.5" } }),
+      workflowReturns: { roiOf: new Map([["azalea", pipeline != null && billed ? pipeline / billed : null]]), moneyGoesHere: "azalea", pipelineOf: new Map([["azalea", pipeline]]), billedOf: new Map([["azalea", billed]]) },
+      templateFiguresByVersion: g.tplFiguresByVersion,
+      templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
+      modelFiguresByVersion: g.llmFiguresByVersion,
+      modelVersionFiguresByVersion: g.llmModelFiguresByVersion,
+      workflowVersionTotals: g.workflowVersionTotals,
+    });
+  };
+
+  it("a model with outcomes reads its measured return: its outcomes' pipeline ÷ its people's billed spend", () => {
+    const c = catalogWith(900, 500);
+    const flash = c.models.find((m) => m.key === "gemini-flash")!;
+    // (900 × 6/9) ÷ (500 × 300/500) = 600 ÷ 300
+    expect(flash.roiDetail).toMatchObject({ value: 2, display: "2.00x", basis: "measured", source: "own_outcomes", spendCovered: 1 });
+    expect(flash.roi).toBe("2.00x");
+    expect(c.models.find((m) => m.key === "mystery-model")!.roiDetail).toMatchObject({ value: 3, basis: "measured", source: "own_outcomes" });
+    // A model that wrote all of a workflow reads that workflow's return exactly.
+    const solo = catalogWith(900, 500, persons.map((p) => ({ ...p, generation: { ...p.generation, model: "gemini-3.8-flash" } })));
+    expect(solo.models.find((m) => m.key === "gemini-flash")!.roiDetail.value).toBeCloseTo(1.8, 9);
+  });
+
+  it("every version row serves its own return; the versions' pipeline and billed spend add up to the page's", () => {
+    const flash = catalogWith(900, 500).models.find((m) => m.key === "gemini-flash")!;
+    const v = (k: string) => flash.models.find((m) => m.key === k)!;
+    // 3.7: (900 × 5/9) ÷ (500 × 200/500) = 500 ÷ 200; 3.8: (900 × 1/9) ÷ (500 × 100/500) = 100 ÷ 100.
+    expect(v("gemini-3.7-flash").roiDetail).toMatchObject({ value: 2.5, basis: "measured", source: "own_outcomes" });
+    expect(v("gemini-3.8-flash").roiDetail).toMatchObject({ value: 1, basis: "measured", source: "own_outcomes" });
+    // Sum check: (500 + 100) ÷ (200 + 100) = the page's 2.00x, on the same spend and outcomes the rows print.
+    expect((500 + 100) / (200 + 100)).toBe(flash.roiDetail.value);
+    // The printed spend (the bar's basis, mature here) adds up the same way: $150 + $100 = $250.
+    expect([v("gemini-3.7-flash").spend, v("gemini-3.8-flash").spend, flash.spend]).toEqual(["$150", "$100", "$250"]);
+    // 3.5 never wrote: its dynasty's return, marked expected.
+    expect(v("gemini-3.5-flash").roiDetail).toMatchObject({ value: 2, basis: "expected", source: "dynasty" });
+    // A model on its own is its one version: same return.
+    const mystery = catalogWith(900, 500).models.find((m) => m.key === "mystery-model")!;
+    expect(mystery.models[0]!.roiDetail).toEqual(mystery.roiDetail);
+  });
+
+  it("never blank: a model with no outcome of its own reads every model of the pipe pooled, else the workflows writing with it now, else the pipe's money workflow, marked expected", () => {
+    const opus = catalogWith(900, 500).models.find((m) => m.key === "claude-opus")!;
+    expect(opus.outcomes).toBe("0");
+    expect(opus.roiDetail).toMatchObject({ value: 1.8, basis: "expected", source: "pipe_models" });
+    expect(opus.models[0]!.roiDetail).toMatchObject({ value: 1.8, basis: "expected", source: "dynasty" });
+    // Nothing written earned: Opus, written with now by azalea (which produced an outcome), reads azalea's return; the
+    // others the pipe's money workflow.
+    const noReply = persons.map((p) => ({ ...p, positiveReplies: 0 }));
+    const noCells: SlugCell[] = cells.map((c) => ({ ...c, flash: half(c.flash.figures.spentUsd, c.flash.figures.contacted, 0), mature: half(c.mature.figures.spentUsd, c.mature.figures.contacted, 0) }));
+    const none = catalogWith(900, 500, noReply, noCells);
+    expect(none.models.find((m) => m.key === "claude-opus")!.roiDetail).toMatchObject({ value: 1.8, basis: "expected", source: "writes_with_now" });
+    expect(new Set(none.models.filter((m) => m.key !== "claude-opus").map((m) => [m.roiDetail.basis, m.roiDetail.source, m.roiDetail.value].join()))).toEqual(new Set(["expected,pipe_best_workflow,1.8"]));
+    // No return anywhere on the pipe: a stated reason, never a blank or an expected 0.
+    const empty = catalogWith(null, null);
+    for (const m of empty.models) {
+      expect(m.roiDetail).toMatchObject({ value: null, unavailableReason: "no_return_on_pipe" });
+      for (const v of m.models) expect(v.roiDetail.unavailableReason).toBe("no_return_on_pipe");
+    }
+  });
+});

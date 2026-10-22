@@ -262,6 +262,9 @@ export function generationBuckets(input: GenerationBucketsInput) {
     /** Template bar key (dynasty, else version) / template version → workflow version → what its people cost and produced. */
     tplFiguresByVersion: tpl.figuresByVersion,
     tplVersionFiguresByVersion: versions.figuresByVersion,
+    /** LLM bar key (dynasty slug, else model key) / model key → workflow version → what its people cost and produced (MODEL-ROI-1023). */
+    llmFiguresByVersion: llm.figuresByVersion,
+    llmModelFiguresByVersion: new Map([...llmModels.figuresByVersion].map(([label, m]) => [modelKey(label), m] as const)),
     /** Workflow version → everything it cost and produced (the whole of which a template's people are a share). */
     workflowVersionTotals: versionTotalsOf(input.cells),
     modelLabel,

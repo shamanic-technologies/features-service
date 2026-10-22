@@ -68874,12 +68874,13 @@
                                     "workflow",
                                     "own_outcomes",
                                     "pipe_templates",
+                                    "pipe_models",
                                     "pipe_workflows",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
@@ -69987,12 +69988,13 @@
                                     "workflow",
                                     "own_outcomes",
                                     "pipe_templates",
+                                    "pipe_models",
                                     "pipe_workflows",
                                     "writes_with_now",
                                     "dynasty",
                                     "pipe_best_workflow"
                                   ],
-                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                 },
                                 "spendCovered": {
                                   "type": "number",
@@ -70078,12 +70080,13 @@
                                           "workflow",
                                           "own_outcomes",
                                           "pipe_templates",
+                                          "pipe_models",
                                           "pipe_workflows",
                                           "writes_with_now",
                                           "dynasty",
                                           "pipe_best_workflow"
                                         ],
-                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
                                       },
                                       "spendCovered": {
                                         "type": "number",
@@ -70772,6 +70775,72 @@
                               ],
                               "description": "Null on a dynasty. Why this page is one model on its own."
                             },
+                            "roi": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."
+                            },
+                            "roiDetail": {
+                              "type": "object",
+                              "properties": {
+                                "value": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The multiple: 3.2 = $3.20 of pipeline per $1 billed."
+                                },
+                                "display": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Printed (`3.20x`)."
+                                },
+                                "basis": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "measured",
+                                    "expected"
+                                  ],
+                                  "description": "`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "workflow",
+                                    "own_outcomes",
+                                    "pipe_templates",
+                                    "pipe_models",
+                                    "pipe_workflows",
+                                    "writes_with_now",
+                                    "dynasty",
+                                    "pipe_best_workflow"
+                                  ],
+                                  "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                },
+                                "spendCovered": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."
+                                },
+                                "unavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_return_on_pipe"
+                                  ],
+                                  "description": "Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."
+                                }
+                              },
+                              "required": [
+                                "value",
+                                "display",
+                                "basis",
+                                "source",
+                                "spendCovered",
+                                "unavailableReason"
+                              ],
+                              "description": "MODEL-ROI-1023: the model's OWN return, the template rule (TPL-ROI-OWN-1022): the pipeline its own outcomes carry (each workflow's pipeline shared on the outcomes its emails produced) ÷ what its own people were billed (each workflow's billed spend shared on what they cost), on the same people as its $/outcome, % conversion, # outcomes and $ spent; `measured` only with an outcome of its own. Else `expected`: every model of the pipe pooled (`pipe_models`), then the workflows writing with it now (`writes_with_now`), then the pipe's money workflow (`pipe_best_workflow`); null only with `unavailableReason`."
+                            },
                             "models": {
                               "type": "array",
                               "items": {
@@ -70795,6 +70864,72 @@
                                   },
                                   "servedToday": {
                                     "type": "boolean"
+                                  },
+                                  "roi": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."
+                                  },
+                                  "roiDetail": {
+                                    "type": "object",
+                                    "properties": {
+                                      "value": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The multiple: 3.2 = $3.20 of pipeline per $1 billed."
+                                      },
+                                      "display": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "Printed (`3.20x`)."
+                                      },
+                                      "basis": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "measured",
+                                          "expected"
+                                        ],
+                                        "description": "`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."
+                                      },
+                                      "source": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "workflow",
+                                          "own_outcomes",
+                                          "pipe_templates",
+                                          "pipe_models",
+                                          "pipe_workflows",
+                                          "writes_with_now",
+                                          "dynasty",
+                                          "pipe_best_workflow"
+                                        ],
+                                        "description": "measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."
+                                      },
+                                      "spendCovered": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."
+                                      },
+                                      "unavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_return_on_pipe"
+                                        ],
+                                        "description": "Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."
+                                      }
+                                    },
+                                    "required": [
+                                      "value",
+                                      "display",
+                                      "basis",
+                                      "source",
+                                      "spendCovered",
+                                      "unavailableReason"
+                                    ],
+                                    "description": "MODEL-ROI-1023: this version's OWN return (`own_outcomes`) once it has an outcome of its own, else its dynasty page's, `expected` + `source: dynasty`. Its pipeline and billed spend are its share of the page's: the versions' add up to the page's."
                                   },
                                   "rank": {
                                     "type": "integer",
@@ -71022,6 +71157,8 @@
                                   "modelIds",
                                   "head",
                                   "servedToday",
+                                  "roi",
+                                  "roiDetail",
                                   "rank",
                                   "rankBasis",
                                   "emails",
@@ -71391,6 +71528,8 @@
                             "label",
                             "dynasty",
                             "standaloneReason",
+                            "roi",
+                            "roiDetail",
                             "models",
                             "modelIds",
                             "aliases",
