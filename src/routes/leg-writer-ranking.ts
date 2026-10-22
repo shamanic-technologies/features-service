@@ -392,14 +392,20 @@ export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue
     const x = llmOf.get(r.key)!;
     return { ...r, aliases: x.aliases.filter((a) => a.status !== "active" || allowedAlias(a.alias)), modelIds: x.modelIds, provider: x.provider };
   });
-  const why = (unavailable: string | null, best: unknown, rows: unknown[]) =>
-    best ? null : p.writerEvidence !== "measured" ? p.writerEvidence : (unavailable ?? (rows.length === 0 ? "no_candidate" : "strategy_allows_none_or_none_selectable"));
+  // `strategy_excludes_every_candidate`: a run could have written with one of them, the strategy ruled every such one
+  // out (workflow-service refuses to write). `no_selectable_candidate`: nothing a run may write with, strategy or not.
+  const why = (unavailable: string | null, best: unknown, rows: unknown[], excluded: ReadonlyArray<{ key: string }>, selectable: (key: string) => boolean) =>
+    best
+      ? null
+      : p.writerEvidence !== "measured"
+        ? p.writerEvidence
+        : (unavailable ?? (excluded.some((x) => selectable(x.key)) ? "strategy_excludes_every_candidate" : rows.length === 0 && excluded.length === 0 ? "no_candidate" : "no_selectable_candidate"));
   const pick = (rows: Array<TemplateRow | LlmRow>, best: WriterRankingRow | null) => (best && p.writerEvidence === "measured" ? (rows.find((r) => r.key === best.key) ?? null) : null);
   const tBest = pick(tRows, t.best);
   const lBest = pick(lRows, l.best);
   return {
-    templates: { rows: tRows, best: tBest, excluded: t.excluded, unavailableReason: why(p.templates.unavailableReason, tBest, tRows) },
-    llms: { rows: lRows, best: lBest, excluded: l.excluded, unavailableReason: why(p.llms.unavailableReason, lBest, lRows) },
+    templates: { rows: tRows, best: tBest, excluded: t.excluded, unavailableReason: why(p.templates.unavailableReason, tBest, tRows, t.excluded, (k) => tplOf.get(k)?.selectable === true) },
+    llms: { rows: lRows, best: lBest, excluded: l.excluded, unavailableReason: why(p.llms.unavailableReason, lBest, lRows, l.excluded, (k) => llmOf.get(k)?.selectable === true) },
   };
 }
 
