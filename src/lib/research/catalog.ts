@@ -160,6 +160,9 @@ export interface CatalogTemplate extends CatalogFigures {
   /** Its own icon (Phosphor name) + colour (MARKS-1022), keyed on `key`, the same on every read; set at serve time. */
   icon?: string;
   color?: string;
+  /** The template tactics it follows (TPL-TACTICS-ROWS-1022), read live at serve time; null with `tacticsUnavailableReason`. */
+  tactics?: Array<{ id: string; name: string }> | null;
+  tacticsUnavailableReason?: "tactics_unreadable" | "not_judged_yet" | null;
   /** The dynasty's name; a version on its own reads its version label. */
   label: string;
   /** The text shown: the head's on a dynasty (`/internal/research/templates` serves it under this key). */
@@ -328,10 +331,11 @@ export interface PipeCatalogInput {
   generationRuns: readonly GenerationRun[];
   templateTexts: ReadonlySet<string>;
   /**
-   * Every workflow a run may still pick on the pipe (the leg ranking's selectable rows): each has a page, an empty one
-   * until it sends. Null when the ranking could not be read (only the bars are listed then).
+   * Every workflow the leg ranking lists (TPL-TACTICS-ROWS-1022; was its selectable rows only, so a ranking row that
+   * cannot run had no page and no icon): each has a page, an empty one until it sends; `runnable` false = a run may not
+   * pick it (absent = runnable). Null when the ranking could not be read (only the bars are listed then).
    */
-  runnableWorkflows: ReadonlyArray<{ key: string; label: string; name: string | null }> | null;
+  runnableWorkflows: ReadonlyArray<{ key: string; label: string; name: string | null; runnable?: boolean }> | null;
   /** Dynasty → what its runnable version writes with now; a string when the definitions could not be read at all. */
   writerOf: ((dynasty: string) => DynastyWriter | null) | WriterReason;
   /** Dynasty → what its newest writing version (any status) writes with; a string when the definitions could not be read. */
@@ -436,7 +440,7 @@ function pipeExpectedRoi(w: PipeCatalogInput["workflowReturns"]): CatalogRoi {
 /** PURE. One pipe's catalogue. */
 export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]; templates: CatalogTemplate[]; models: CatalogModel[] } {
   // Every runnable workflow has a page, and so do the template and model it writes with now (empty until used).
-  const runnableKeys = new Set((p.runnableWorkflows ?? []).map((w) => w.key));
+  const runnableKeys = new Set((p.runnableWorkflows ?? []).filter((w) => w.runnable !== false).map((w) => w.key));
   const barKeys = new Set(p.workflows.map((r) => r.key));
   const pageNames = new Map((p.runnableWorkflows ?? []).map((w) => [w.key, w.name]));
   const allWorkflows = [...p.workflows, ...(p.runnableWorkflows ?? []).filter((w) => !barKeys.has(w.key)).map((w) => emptyBucket(w.key, w.label))];

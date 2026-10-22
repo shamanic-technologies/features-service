@@ -113,6 +113,12 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
     const noneLeft = servedRankings({ ...payload(), llms: { ...payload().llms, candidates: payload().llms.candidates.filter((x) => x.key !== "claude-opus-5.5") } }, c, strategy("anthropic-only", ["anthropic-models"], []));
     expect(noneLeft.llms.best).toBeNull();
     expect(noneLeft.llms.unavailableReason).toBe("strategy_excludes_every_candidate");
+    // Each template row serves its tactics (TPL-TACTICS-ROWS-1022): judged yes = listed, judged no = [], unjudged = null + reason.
+    const noStrategy = servedRankings(payload(), c, null);
+    expect(noStrategy.templates.rows.find((r) => r.key === "blind")).toMatchObject({ tactics: [{ id: "blind-text", name: "blind-text" }], tacticsUnavailableReason: null });
+    expect(noStrategy.templates.rows.find((r) => r.key === "offer")).toMatchObject({ tactics: [], tacticsUnavailableReason: null });
+    expect(noStrategy.templates.rows.find((r) => r.key === "retired")).toMatchObject({ tactics: null, tacticsUnavailableReason: "not_judged_yet" });
+    expect(noStrategy.templates.best && "tactics" in noStrategy.templates.best).toBe(true);
     // A template never judged on a tactic the strategy names is ruled out (the workflow rule).
     expect(served.templates.excluded.map((x) => x.key).sort()).toEqual(["offer", "old-v3", "retired"]);
   });
