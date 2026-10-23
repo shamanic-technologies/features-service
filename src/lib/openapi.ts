@@ -4582,6 +4582,40 @@ const customerHealthRowSchema = z.object({
     part: z.enum(["pricing", "revenue", "audiences", "best_workflow"]).describe("pricing = the offer terms / conversion counts (every economics field null); revenue = the ROI read (currentEconomics null); audiences = audience evidence (bestAudience null, audience rollup from the pool only); best_workflow = the workflow projection (bestWorkflow null)."),
     reason: z.string().describe("The downstream error, capped at 300 chars (e.g. an email-gateway timeout relayed from instantly-service)."),
   })).describe("The reads behind this row that FAILED, each named with its reason; [] when every read answered. Each part fails on its own (one failing never blanks another), and a named part's fields are null on the row: a blank ROI with a part named here is a read failure, never 'no data' and never a figure to keep from an older board."),
+  customerStatus: z.enum(["current", "churned", "never_paid"]).nullable().describe("The ORG's customer verdict, billing-service's own (GET /internal/absorbed-costs customerStatus, copied, never re-derived): current = a campaign running now; churned = paid before, nothing running; never_paid = never paid, nothing running. Same value on every row of the org; null = billing could not state it (see orgs[].customerStatusUnavailableReason)."),
+  ownOrg: z.boolean().nullable().describe("billing's flag: the org is one of OURS (a platform org, or a staff billing contact no client uses). null = billing's read failed or lists no such org."),
+});
+
+const customerHealthOrgSchema = z.object({
+  orgId: z.string(),
+  orgExternalId: z.string().nullable(),
+  orgName: z.string().nullable().describe("The org's name as billing serves it (client-service). null = none."),
+  ownerEmail: z.string().nullable(),
+  customerStatus: z.enum(["current", "churned", "never_paid"]).nullable().describe("billing-service's verdict for the org, copied (the Active / Churned tab): current = a campaign running now; churned = paid before, nothing running; never_paid = never paid, nothing running."),
+  customerStatusUnavailableReason: z.enum(["billing_customer_status_unavailable", "org_not_in_billing", "billing_could_not_read"]).nullable().describe("Why customerStatus is null: billing's read failed (every org), billing lists no such org, or billing could not read its campaigns / payments. null when a verdict is served."),
+  ownOrg: z.boolean().nullable().describe("billing's flag: one of OUR orgs (listed last, kept out of orgStats counts). null = not known."),
+  ownOrgReason: z.string().nullable().describe("billing's reason (platform_org | staff_billing_contact)."),
+  healthBadge: z.enum(["green", "yellow", "red"]).describe("The worst badge of the org's brands (red > yellow > green)."),
+  brandIds: z.array(z.string()).describe("The org's brands, each a row of customers[] (same orgId)."),
+  runningDailyBudgetUsd: z.number().describe("Σ the brands' running daily budgets (raw, never discounted)."),
+  configuredDailyBudgetUsd: z.number().describe("Σ the brands' configured daily budgets (raw)."),
+  orgBalanceUsd: z.number().nullable(),
+  orgActualBalanceUsd: z.number().nullable(),
+  autoTopupEnabled: z.boolean().nullable(),
+  orgCashPaidUsd: z.number().nullable(),
+  lastActiveDay: z.string().nullable(),
+  activeDays: z.array(z.string()),
+  paidActiveDays: z.array(z.string()).nullable(),
+  dashboardReturnFrequency: customerHealthRowSchema.shape.notTrackedYet.shape.dashboardReturnFrequency,
+});
+
+const customerHealthOrgStatsSchema = z.object({
+  totalOrgs: z.number().int(),
+  currentCount: z.number().int().describe("Orgs not ours with customerStatus current (equals billing's currentCustomers over the same orgs)."),
+  churnedCount: z.number().int(),
+  neverPaidCount: z.number().int(),
+  customerStatusUnknownCount: z.number().int(),
+  ownOrgCount: z.number().int(),
 });
 
 const customerHealthStatsSchema = z.object({
@@ -4604,8 +4638,14 @@ const customerHealthStatsSchema = z.object({
 const customerHealthResponseSchema = z.object({
   customers: z.array(customerHealthRowSchema).describe("One ready-composed health row per cold-email customer (org × brand), currently-active first."),
   stats: customerHealthStatsSchema,
+  orgs: z.array(customerHealthOrgSchema).describe("One row per customer ORG (CUSTOMER-HEALTH-OOM-1023): billing's verdict to tab on, org-level figures, its brands. Customers first by verdict (current, never_paid, churned, unknown), our own orgs last."),
+  orgStats: customerHealthOrgStatsSchema,
   unreadOrgReads: unreadOrgReadsSchema,
   asOf: z.string().describe("ISO timestamp the board was computed."),
+  freshness: z.object({
+    computedAt: z.string().describe("When this build finished (= asOf)."),
+    refreshEveryMinutes: z.number().int().describe("A build older than this is rebuilt behind the read that finds it (15). The read always answers at once with the last build."),
+  }).describe("How old the served build is. The board is built off the request path (in the view refresher), so a read never waits on it."),
 });
 
 const customerHealthResponseRef = registry.register("CustomerHealthResponse", customerHealthResponseSchema);
@@ -4624,12 +4664,48 @@ registry.registerPath({
     "coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
     "best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). " +
     "Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience " +
-    "near-exhausted. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
+    "near-exhausted. Served from the LAST BUILD at once (never built on the request path; rebuilt in the view refresher when older than 15 min; " +
+    "freshness states its age); 503 customer_health_not_computed_yet only before the first build after a deploy that changes this shape. orgs[] = one row per org with billing's customerStatus. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
   tags: ["Internal"],
   responses: {
     200: { description: "Per-customer health rows + fleet stats", content: { "application/json": { schema: customerHealthResponseRef } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    503: { description: "Never built yet (first build running): reason customer_health_not_computed_yet", content: { "application/json": { schema: errorResponse } } },
     500: { description: "Server error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/stats/customer-health/build",
+  summary: "Start one customer-health board build in this process (the view refresher's; internal, api-key)",
+  description: "Called by the server on its refresher. Answers 202 at once with the build id (an already-running build's id when one runs); 409 build_runs_in_refresher on a server that has a refresher.",
+  tags: ["Internal"],
+  responses: {
+    202: { description: "Build started or already running", content: { "application/json": { schema: z.object({ buildId: z.number().int() }) } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "This process never builds the board", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/customer-health/build-status",
+  summary: "Whether a customer-health board build runs in this process, and how the last one ended (internal, api-key)",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "Build status",
+      content: {
+        "application/json": {
+          schema: z.object({
+            running: z.boolean(),
+            lastFinished: z.object({ buildId: z.number().int(), finishedAt: z.string(), error: z.string().nullable() }).nullable(),
+          }),
+        },
+      },
+    },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

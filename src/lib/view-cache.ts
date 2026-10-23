@@ -194,7 +194,7 @@ function cacheEnabled(): boolean {
 }
 
 interface CachedViewArgs<T> {
-  /** Logical view family — "revenue" | "revenue-grouped" | "revenue-lens" | "stats" | "customer-health". */
+  /** Logical view family — "revenue" | "revenue-grouped" | "revenue-lens" | "stats" | … */
   view: string;
   /** Canonical key over ALL inputs that change the body (featureSlug + sorted query string). */
   scopeKey: string;

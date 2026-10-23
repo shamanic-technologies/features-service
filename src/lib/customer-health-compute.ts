@@ -54,6 +54,7 @@ import {
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
 import { fetchActiveAudiencePoolSoft, type AudiencePool } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { fetchCustomerStatuses, type CustomerStatus, type OrgCustomerStatus } from "./customer-status-client.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
 import { SALES_FUNNEL_GOAL_ECHO, type SalesFunnelKey } from "./sales-funnels.js";
@@ -69,7 +70,13 @@ import {
 } from "../routes/workflow-projection.js";
 
 /** Cap the per-customer enrichment fan-out so a cold-Neon sibling is not hit with N heavy composites at once. */
-const CUSTOMER_FANOUT_CONCURRENCY = 4;
+/**
+ * Customers enriched at once. Each enrichment runs three whole dashboard computes (brand revenue, audience
+ * stats, workflow projection); four at a time held ~760 MB of heap on 2026-10-23 and the process died at its
+ * 816 MB limit (CUSTOMER-HEALTH-OOM-1023). The board is built off the request path, so a longer build costs
+ * no reader any wait.
+ */
+const CUSTOMER_FANOUT_CONCURRENCY = 2;
 
 /** Audience is "near exhausted" (a yellow flag) once this % of the brand's active audience pool can no longer be served. */
 export const AUDIENCE_NEAR_EXHAUSTED_PCT = 80;
@@ -286,6 +293,61 @@ export interface CustomerHealthRow {
   /** The reads behind this row that failed, each with its reason; `[]` when every read answered. A part
    * named here has its fields null on the row (never a stale or substituted figure). */
   unreadParts: CustomerHealthUnreadPart[];
+
+  // ── The org's customer verdict, billing's (same value on every row of the org; see `CustomerHealthOrg`) ─
+  customerStatus: CustomerStatus | null;
+  ownOrg: boolean | null;
+}
+
+/** Why an org carries no customer verdict. */
+export type CustomerStatusUnavailableReason =
+  /** billing's absorbed-costs read failed (every org then carries this reason). */
+  | "billing_customer_status_unavailable"
+  /** billing lists no such org (no billing account, no spend, no fee). */
+  | "org_not_in_billing"
+  /** billing lists the org but could not read its campaigns or payments. */
+  | "billing_could_not_read";
+
+/**
+ * One row per customer ORG (CUSTOMER-HEALTH-OOM-1023): the verdict a page tabs on, billing's own
+ * `customerStatus` (`current` = a campaign running now, `churned` = paid before and nothing running,
+ * `never_paid` = never paid and nothing running), the org-level figures, and its brands (`brandIds`, each a
+ * row of `customers`). Our own orgs are listed with `ownOrg: true` and kept out of the counts.
+ */
+export interface CustomerHealthOrg {
+  orgId: string;
+  orgExternalId: string | null;
+  orgName: string | null;
+  ownerEmail: string | null;
+  customerStatus: CustomerStatus | null;
+  customerStatusUnavailableReason: CustomerStatusUnavailableReason | null;
+  /** billing's flag; null when billing's read failed or does not list the org. */
+  ownOrg: boolean | null;
+  ownOrgReason: string | null;
+  /** The worst badge of its brands (red > yellow > green). */
+  healthBadge: HealthBadge;
+  brandIds: string[];
+  /** Σ over its brands (raw ceilings, never discounted). */
+  runningDailyBudgetUsd: number;
+  configuredDailyBudgetUsd: number;
+  orgBalanceUsd: number | null;
+  orgActualBalanceUsd: number | null;
+  autoTopupEnabled: boolean | null;
+  orgCashPaidUsd: number | null;
+  lastActiveDay: string | null;
+  activeDays: string[];
+  paidActiveDays: string[] | null;
+  dashboardReturnFrequency: DashboardReturnSignal | null;
+}
+
+export interface CustomerHealthOrgStats {
+  totalOrgs: number;
+  /** Over the orgs that are not ours (ownOrg !== true). */
+  currentCount: number;
+  churnedCount: number;
+  neverPaidCount: number;
+  customerStatusUnknownCount: number;
+  ownOrgCount: number;
 }
 
 export interface CustomerHealthStats {
@@ -312,6 +374,8 @@ export interface CustomerHealthStats {
 export interface CustomerHealthBoard {
   customers: CustomerHealthRow[];
   stats: CustomerHealthStats;
+  orgs: CustomerHealthOrg[];
+  orgStats: CustomerHealthOrgStats;
   /** Per-org reads the accounts audit could not make (outlook / balance / identity); `[]` when healthy. Same list as `/internal/stats/accounts`. */
   unreadOrgReads: UnreadOrgRead[];
   asOf: string;
@@ -358,6 +422,8 @@ export interface CustomerHealthDeps {
   pauseHistory: (brandId: string, orgId: string) => Promise<PauseTransition[]>;
   /** One org's cash paid + the days cash funded its cold-email spend. Fail-loud; the builder wraps it soft (→ null), once per org. */
   orgPaidActivity: (orgId: string, coldEmailSlugsCsv: string, isAgency: boolean) => Promise<OrgPaidActivity>;
+  /** billing's per-org customer verdict. Absent = not read (every org then reads unavailable). */
+  customerStatuses?: () => Promise<Map<string, OrgCustomerStatus>>;
 }
 
 /**
@@ -406,6 +472,7 @@ const REAL_DEPS: CustomerHealthDeps = {
   budgetHistory: fetchBudgetChangeHistory,
   pauseHistory: fetchPauseHistory,
   orgPaidActivity: (orgId, csv, isAgency) => fetchOrgPaidActivity(orgId, csv, INCEPTION_ISO, isAgency),
+  customerStatuses: fetchCustomerStatuses,
   brandRevenue: boardBrandRevenue,
   audienceStats: async (featureSlug, brandId, orgId, funnel) => {
     // computeAudienceStats reads its inputs off an Express Request; a synthetic org-only req (no user)
@@ -603,7 +670,7 @@ export async function buildCustomerHealthBoard(
   //    to know which cold feature a pair belongs to we enumerate ONE call per cold slug (there are ~5) and
   //    tag each pair with the slug it matched — the feature drives the funnel + the feature-scoped cost reads.
   const coldSlugs = coldEmailSlugsCsv ? coldEmailSlugsCsv.split(",").filter((s) => s.length > 0).sort() : [];
-  const [audit, byUser, membershipsBySlug, dashboardReturns] = await Promise.all([
+  const [audit, byUser, membershipsBySlug, dashboardReturns, customerStatuses] = await Promise.all([
     deps.accountsAudit(coldEmailSlugsCsv, now),
     deps.activeUsersByUser(coldEmailSlugsCsv, now),
     mapWithConcurrency(coldSlugs, CUSTOMER_FANOUT_CONCURRENCY, async (slug): Promise<{ slug: string; memberships: FeatureMembership[] }> => ({
@@ -619,6 +686,13 @@ export async function buildCustomerHealthBoard(
       );
       return null;
     }),
+    // The org verdict is billing's; an unreadable read leaves every org without one (named), never a guess.
+    (deps.customerStatuses ? deps.customerStatuses() : Promise.reject(new Error("customer statuses not read"))).catch(
+      (error): Map<string, OrgCustomerStatus> | null => {
+        console.error(`[features-service] customer-health billing customer statuses unreadable (null verdicts): ${(error as Error).message}`);
+        return null;
+      },
+    ),
   ]);
 
   const recencyByOrg = new Map<string, ActiveUserRow>(byUser.users.map((u) => [u.orgId, u]));
@@ -839,6 +913,8 @@ export async function buildCustomerHealthBoard(
         pauseHistory,
       },
       unreadParts,
+      customerStatus: customerStatuses?.get(account.orgId)?.customerStatus ?? null,
+      ownOrg: customerStatuses?.get(account.orgId)?.ownOrg ?? null,
     };
   });
 
@@ -880,8 +956,12 @@ export async function buildCustomerHealthBoard(
     else redCount += 1;
   }
 
+  const { orgs, orgStats } = composeOrgs(rows, customerStatuses);
+
   return {
     customers: rows,
+    orgs,
+    orgStats,
     stats: {
       totalCustomers: rows.length,
       activeCount,
@@ -901,5 +981,78 @@ export async function buildCustomerHealthBoard(
     },
     unreadOrgReads: audit.unreadOrgReads ?? [],
     asOf: now.toISOString(),
+  };
+}
+
+const BADGE_RANK: Record<HealthBadge, number> = { green: 0, yellow: 1, red: 2 };
+const VERDICT_RANK: Record<string, number> = { current: 0, never_paid: 1, churned: 2, unknown: 3 };
+
+/** Fold the (org, brand) rows into one row per org, billing's verdict copied. Pure. */
+export function composeOrgs(
+  rows: CustomerHealthRow[],
+  statuses: Map<string, OrgCustomerStatus> | null,
+): { orgs: CustomerHealthOrg[]; orgStats: CustomerHealthOrgStats } {
+  const byOrg = new Map<string, CustomerHealthOrg>();
+  const sum2 = (a: number, b: number) => Math.round((a + b) * 100) / 100;
+  for (const r of rows) {
+    let o = byOrg.get(r.orgId);
+    if (!o) {
+      const billing = statuses?.get(r.orgId) ?? null;
+      const customerStatusUnavailableReason: CustomerStatusUnavailableReason | null =
+        statuses === null
+          ? "billing_customer_status_unavailable"
+          : billing === null
+            ? "org_not_in_billing"
+            : billing.customerStatus === null
+              ? "billing_could_not_read"
+              : null;
+      o = {
+        orgId: r.orgId,
+        orgExternalId: r.orgExternalId,
+        orgName: billing?.orgName ?? null,
+        ownerEmail: r.ownerEmail,
+        customerStatus: billing?.customerStatus ?? null,
+        customerStatusUnavailableReason,
+        ownOrg: billing ? billing.ownOrg : null,
+        ownOrgReason: billing?.ownOrgReason ?? null,
+        healthBadge: r.health.badge,
+        brandIds: [],
+        runningDailyBudgetUsd: 0,
+        configuredDailyBudgetUsd: 0,
+        // Org-level reads: the same value on every row of the org.
+        orgBalanceUsd: r.orgBalanceUsd,
+        orgActualBalanceUsd: r.orgActualBalanceUsd,
+        autoTopupEnabled: r.autoTopupEnabled,
+        orgCashPaidUsd: r.orgCashPaidUsd,
+        lastActiveDay: r.lastActiveDay,
+        activeDays: r.activeDays,
+        paidActiveDays: r.paidActiveDays,
+        dashboardReturnFrequency: r.notTrackedYet.dashboardReturnFrequency,
+      };
+      byOrg.set(r.orgId, o);
+    }
+    o.brandIds.push(r.brandId);
+    o.runningDailyBudgetUsd = sum2(o.runningDailyBudgetUsd, r.runningDailyBudgetUsd);
+    o.configuredDailyBudgetUsd = sum2(o.configuredDailyBudgetUsd, r.configuredDailyBudgetUsd);
+    if (BADGE_RANK[r.health.badge] > BADGE_RANK[o.healthBadge]) o.healthBadge = r.health.badge;
+  }
+  // Customers first by verdict (current, never paid, churned, unknown), ours last; the board's order within (stable sort).
+  const orgs = [...byOrg.values()].sort((a, b) => {
+    const ao = a.ownOrg === true ? 1 : 0;
+    const bo = b.ownOrg === true ? 1 : 0;
+    if (ao !== bo) return ao - bo;
+    return VERDICT_RANK[a.customerStatus ?? "unknown"] - VERDICT_RANK[b.customerStatus ?? "unknown"];
+  });
+  const counted = orgs.filter((o) => o.ownOrg !== true);
+  return {
+    orgs,
+    orgStats: {
+      totalOrgs: orgs.length,
+      currentCount: counted.filter((o) => o.customerStatus === "current").length,
+      churnedCount: counted.filter((o) => o.customerStatus === "churned").length,
+      neverPaidCount: counted.filter((o) => o.customerStatus === "never_paid").length,
+      customerStatusUnknownCount: counted.filter((o) => o.customerStatus === null).length,
+      ownOrgCount: orgs.length - counted.length,
+    },
   };
 }
