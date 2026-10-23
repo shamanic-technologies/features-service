@@ -55,6 +55,9 @@ import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResear
 import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
+import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
+import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
+import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
 import { readBookedAfterReply, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
@@ -532,6 +535,20 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   // ONE read of lead-service's meeting attribution, shared by the meeting-cost and country studies.
   const attribution = readMeetingAttribution();
   attribution.catch(() => undefined);
+  // The outcome ledger (COST-ACCOUNTING-1023-P2): every outcome section's every-path cost. Unreadable = its studies say so.
+  const ledgerP = Promise.all([
+    fetchOutcomeLedgerTotals(basis === "actual" ? "vendor" : "gross").catch((err): OutcomeLedgerTotals | null => {
+      console.error("[features-service] research: runs-service's outcome ledger totals unreadable this time (the cost studies say so):", err);
+      return null;
+    }),
+    listDeclaredSteps().catch((err) => {
+      console.error("[features-service] research: declared steps unreadable, step keys printed as is:", err);
+      return [];
+    }),
+  ]).then(([totals, declared]) => {
+    const names = new Map<string, string>([...Object.entries(CHANNEL_STEPS).map(([k, v]) => [k, v.label] as [string, string]), ...declared.map((d) => [d.key, d.label] as [string, string])]);
+    return { totals, labelOf: (k: string) => names.get(k) ?? k };
+  });
   const [sends, jev, replies, gens, reportingBrands, volume, replyDelay, countries, niche] = await Promise.all([
     sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross", view, now),
     readJevInputs(),
@@ -574,6 +591,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   );
   const file = assembleResearch({
     replyDelay,
+    outcomeLedger: await ledgerP,
     sends,
     generationStudies: gens.studies,
     countryStudies: countries,

@@ -286,6 +286,27 @@ describe("assembleResearch", () => {
     for (const o of read.outcomes) for (const p of o.pipes ?? []) expect(ids.has(p), p).toBe(true);
   });
 
+  it("COST-ACCOUNTING-1023-P2: every outcome section gets its every-path cost study off the ledger; unreadable says so", () => {
+    const totals = {
+      totals: [
+        { outcomeKey: "message_sent", produced: 2000, ownCostUsd: 40 },
+        { outcomeKey: "conversation", produced: 40, ownCostUsd: 4 },
+      ],
+      consumptions: [{ consumerKey: "conversation", consumedKey: "message_sent", count: 40 }],
+      coveragePct: 99,
+      daysMissing: [],
+    };
+    const labelOf = (k: string) => ({ message_sent: "Message sent", conversation: "Positive reply" })[k] ?? k;
+    const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf } });
+    const pr = read.studies.find((x) => x.id === "positive-reply-cost-every-path")!;
+    expect(pr).toMatchObject({ outcome: "positive-reply", pipe: null, topic: "cost", status: "measured" });
+    expect(pr.result?.display).toBe("$0.12");
+    const mb = read.studies.find((x) => x.id === "meeting-cost-every-path")!;
+    expect(mb).toMatchObject({ outcome: "meeting", status: "not_enough_data", headline: "No booked meeting declared to the ledger yet." });
+    const down = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals: null, labelOf } });
+    expect(down.studies.find((x) => x.id === "positive-reply-cost-every-path")?.headline).toBe("Not readable right now.");
+  });
+
   it("every one of today's 45 study ids is served or listed unavailable, never both, never neither", () => {
     const served = new Set(file.studies.map((s) => s.id));
     const waiting = new Set(file.unavailable.map((u) => u.id));
