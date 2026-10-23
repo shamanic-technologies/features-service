@@ -323,6 +323,13 @@
       "when": 1792944000000,
       "tag": "0045_catalogue_marks",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793030400000,
+      "tag": "0046_step_subject_kind",
+      "breakpoints": true
     }
   ]
 }

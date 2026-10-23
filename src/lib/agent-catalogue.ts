@@ -101,6 +101,7 @@
  * Pure: no IO, no clock.
  */
 import { TRIGGER_GLYPH } from "./outcome-vocabulary.js";
+import { codedStepSubjectKindOf, isOutcomeSubjectKind, type OutcomeSubjectKind } from "./outcome-subject.js";
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
 import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
@@ -197,6 +198,8 @@ export interface DeclaredStepInput {
   producedBy: string | null;
   /** Its rung on the lifecycle ladder or `none` (`lib/lifecycle-ladder.ts`); null/absent = never stated. */
   lifecycleRung?: string | null;
+  /** `person` | `object` (`lib/outcome-subject.ts`); null/absent = never stated. */
+  subjectKind?: string | null;
 }
 
 /** What the fleet measured for one pipe (the best workflow, `pickLegPrice`). Keyed by pipe id. */
@@ -324,6 +327,8 @@ export interface CatalogueStep {
   producedBy: string | null;
   /** Its rung on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`), `none` when on no rung; null = a declared step that never stated one. */
   lifecycleRung: StepLifecycleRung | null;
+  /** What one occurrence is about (`lib/outcome-subject.ts`); null = a declared step that never stated it. */
+  subjectKind: OutcomeSubjectKind | null;
 }
 
 export interface CataloguePipe {
@@ -806,6 +811,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
       valueVia: via,
       producedBy: d?.producedBy ?? null,
       lifecycleRung: d ? (isStepLifecycleRung(d.lifecycleRung) ? d.lifecycleRung : null) : (codedStepLifecycleRungOf(key) ?? null),
+      subjectKind: d ? (isOutcomeSubjectKind(d.subjectKind) ? d.subjectKind : null) : codedStepSubjectKindOf(key),
     });
   }
 

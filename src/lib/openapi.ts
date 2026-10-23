@@ -7493,6 +7493,10 @@ const catalogueLifecycleFields = {
       "The step's rung on the ONE lifecycle ladder (owner 2026-10-17, the same for every campaign, sales funnel, brand and channel): lead_found < contacted < engaged (post engaged, positive reply, website visit) < signup_or_form (Signup, Form submitted) < meeting_booked < meeting_attended < paid_client. `none` = on no rung, stated explicitly. Null = a step declared at run time that never stated one. A lead's Lifecycle = the highest rung of any step they reached.",
     ),
   lifecycleRank: z.number().int().nullable().describe("The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."),
+  subjectKind: z
+    .enum(["person", "object"])
+    .nullable()
+    .describe("What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."),
 };
 const catalogueLifecycleLadder = z
   .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
@@ -8004,23 +8008,23 @@ catalogueCreate(
   "/internal/catalogue/steps",
   "Declare a step (internal, api-key)",
   "A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
-  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
+  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), subjectKind: z.enum(["person", "object"]).describe("REQUIRED: what one occurrence is about. Absent = 400 `subjectKind_required`, anything else = 400 `subject_kind_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
   z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable(), ...catalogueLifecycleFields }),
 );
 
 registry.registerPath({
   method: "patch",
   path: "/internal/catalogue/steps/{id}",
-  summary: "State a declared step's lifecycle rung (internal, api-key)",
-  description: "Sets where a step DECLARED at run time stands on the lifecycle ladder, live, no deploy. A coded step's rung is code (409 `step_coded`). 400 `lifecycleRung_required` / `lifecycle_rung_invalid`; 404 `step_not_found`; a customer write is refused.",
+  summary: "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
+  description: "Sets where a step DECLARED at run time stands on the lifecycle ladder and/or what one occurrence is about, live, no deploy; an absent field is unchanged. A coded step's are code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("The declared step key.") }),
-    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
+    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).optional(), subjectKind: z.enum(["person", "object"]).optional(), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
   },
   responses: {
     200: { description: "The step's rung, as now served.", content: { "application/json": { schema: z.object({ object: z.literal("step"), id: z.string(), name: z.string(), declared: z.literal(true), ...catalogueLifecycleFields }) } } },
-    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`." },
+    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`." },
     401: { description: "Missing or wrong service key." },
     404: { description: "`step_not_found`." },
     409: { description: "`step_coded`." },
