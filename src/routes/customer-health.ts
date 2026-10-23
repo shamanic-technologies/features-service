@@ -21,6 +21,7 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
 import { buildCustomerHealthBoard, type CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { loadFleetCell, storeFleetCell, type StoredCell } from "../lib/fleet-cell-store.js";
+import { listDeclaredChannels } from "../lib/channel-declarations-store.js";
 import { refresherBaseUrl } from "../lib/view-refresher.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 
@@ -49,10 +50,12 @@ export interface CustomerHealthServingDeps {
 
 const REAL_DEPS: CustomerHealthServingDeps = {
   computeBoard: async () => {
-    const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+    // Seeded features AND channels declared as data (Email Sending is one: DefiniteJobs read no brand without it).
+    const [allFeatures, declared] = await Promise.all([db.query.features.findMany({ columns: { slug: true } }), listDeclaredChannels()]);
+    const slugs = [...new Set([...allFeatures.map((f) => f.slug), ...declared.map((c) => c.slug)])];
     // Every GTM channel (CUSTOMER-HEALTH-ALL-GTM-1023, owner « Oui ces tout GTM »). Only THIS board widens: the Accounts
     // audit, MRR, revenue history and send-forecast keep their cold-email universe.
-    return buildCustomerHealthBoard(allFeatures.map((f) => f.slug).join(","), new Date());
+    return buildCustomerHealthBoard(slugs.join(","), new Date());
   },
   loadCell: loadFleetCell,
   storeCell: storeFleetCell,

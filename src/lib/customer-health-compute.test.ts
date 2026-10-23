@@ -927,3 +927,12 @@ describe("every GTM channel (CUSTOMER-HEALTH-ALL-GTM-1023)", () => {
     expect(["lead-sourcing", "ai-meeting-booking", "email-sending"].sort(bySlugReadOrder)).toEqual(["ai-meeting-booking", "email-sending", "lead-sourcing"]);
   });
 });
+
+describe("a deleted org says so (CUSTOMER-HEALTH-ALL-GTM-1023)", () => {
+  it("billing's deleted org reads org_deleted, never billing_could_not_read", async () => {
+    const deps = makeDeps({ accounts: [account({ orgId: "gone", brandId: "g1", status: "inactive" })], recencies: [], perBrand: {} });
+    deps.customerStatuses = async () => new Map([["gone", { orgId: "gone", orgName: "Gone", customerStatus: null, ownOrg: false, ownOrgReason: null, orgDeleted: true }]]);
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    expect(board.orgs[0]).toMatchObject({ customerStatus: null, customerStatusUnavailableReason: "org_deleted" });
+  });
+});
