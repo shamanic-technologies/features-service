@@ -72232,6 +72232,13 @@
                             ],
                             "description": "Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."
                           },
+                          "rowsCover": {
+                            "type": "string",
+                            "enum": [
+                              "all_valid_combinations"
+                            ],
+                            "description": "Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."
+                          },
                           "outcomeNoun": {
                             "type": "string"
                           },
@@ -72356,6 +72363,10 @@
                                     "provider"
                                   ]
                                 },
+                                "written": {
+                                  "type": "boolean",
+                                  "description": "False = a technically valid combination (runnable workflow x live template dynasty x LLM served under an alias, none deprecated) that never wrote an email: zero figures, ranked on its parts' estimate (RESEARCH-ALL-COMBOS-1023)."
+                                },
                                 "writerSource": {
                                   "type": "string",
                                   "nullable": true,
@@ -72363,7 +72374,7 @@
                                     "sequences",
                                     "workflow_definition"
                                   ],
-                                  "description": "The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version)."
+                                  "description": "The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version); null when never written."
                                 },
                                 "writerUnavailableReason": {
                                   "type": "string",
@@ -72717,6 +72728,7 @@
                                 "workflow",
                                 "template",
                                 "llm",
+                                "written",
                                 "writerSource",
                                 "writerUnavailableReason",
                                 "maturity",
@@ -72732,7 +72744,7 @@
                                 "contacted"
                               ]
                             },
-                            "description": "One row per (workflow dynasty, template version, LLM dynasty) that wrote and sent the pipe's emails; Σ rows = totals."
+                            "description": "One row per (workflow dynasty, template dynasty, LLM dynasty) that wrote the pipe's emails, plus every technically valid combination that never wrote (`written: false`, zero figures); Σ rows = totals."
                           },
                           "totals": {
                             "type": "object",
@@ -73052,6 +73064,7 @@
                           "pipe",
                           "figuresBasis",
                           "rowOrder",
+                          "rowsCover",
                           "outcomeNoun",
                           "outcomeNounPlural",
                           "rows",

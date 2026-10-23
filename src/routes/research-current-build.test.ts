@@ -12,9 +12,11 @@ describe("isCurrentBuild", () => {
     expect(isCurrentBuild({ file, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars" } } as never })).toBe(false);
     // RESEARCH-COMBO-ESTIMATE-1023: rows in the nested pick order are rebuilt on each combination's estimate
     expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "pick_order" } } as never })).toBe(false);
+    // RESEARCH-ALL-COMBOS-1023: a build listing only the combinations that wrote is rebuilt with every valid one
+    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost" } } as never })).toBe(false);
   });
   it("a build on the workflow-bar rules, read on the asked view, is current (MATURITY-VIEW-1023)", () => {
-    const perf = { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost" } } as never;
+    const perf = { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost", rowsCover: "all_valid_combinations" } } as never;
     expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: perf })).toBe(true);
     expect(isCurrentBuild({ file: { view: "flash" } as never, catalog: null, texts: null, performance: perf }, "flash")).toBe(true);
     // a mixed build (stored before the views) or the other view is rebuilt

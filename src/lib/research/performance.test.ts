@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { deprecatedPartsOf, pipePerformance, type PipePerformanceInput } from "./performance.js";
+import { candidatePartsOf, deprecatedPartsOf, pipePerformance, type PipePerformanceInput } from "./performance.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -176,6 +176,45 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(wf.rows.find((r) => r.key === "azalea|borealis|gemini-flash")!.deprecatedParts).toEqual(["workflow", "template"]);
     expect(wf.rows[0]!.key).toBe("keel|-|-");
     expect(out.rows.every((r) => r.status === "active" && r.deprecatedParts.length === 0)).toBe(true);
+  });
+
+  it("every technically valid combination is listed and ranked, a never-written one on its parts (RESEARCH-ALL-COMBOS-1023)", () => {
+    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
+    // 2 x 2 x 2 candidates + keel's not-on-record row
+    expect(all.rows).toHaveLength(9);
+    const fresh = all.rows.find((r) => r.key === "azalea|aurora|claude-opus")!;
+    expect(fresh.written).toBe(false);
+    expect(fresh.writerSource).toBeNull();
+    expect(fresh.spentUsd.value).toBe(0);
+    expect(fresh.estimate.costPerOutcomeUsd).toBeCloseTo(fresh.estimate.priorCostPerOutcomeUsd!, 9);
+    expect(fresh.estimate.priorSource).toBe("own_parts");
+    expect(fresh.costPerOutcomeUsd).toMatchObject({ basis: "expected" });
+    expect(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.written).toBe(true);
+    // ranked on the estimate like every row; the totals and the series never move
+    const est = (r: (typeof all.rows)[number]) => r.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
+    for (let i = 1; i < all.rows.length; i++) expect(est(all.rows[i]!)).toBeGreaterThanOrEqual(est(all.rows[i - 1]!));
+    expect(all.totals).toEqual(out.totals);
+    expect(all.series).toEqual(out.series);
+  });
+
+  it("candidatePartsOf: runnable workflows, live template dynasties, LLMs served under an alias; never a deprecated part", () => {
+    const parts = candidatePartsOf(
+      {
+        workflows: [{ key: "keel", runnable: true }, { key: "old", runnable: false }],
+        templates: [
+          { key: "aurora", status: "active", dynasty: { head: "v35" } },
+          { key: "borealis", status: "deprecated", dynasty: { head: "v36" } },
+          { key: "loose-v1", status: null, dynasty: null },
+        ],
+        models: [
+          { key: "glm", aliases: ["glm-pro"], dynasty: { servedToday: true } },
+          { key: "deepseek-pro", aliases: [], dynasty: { servedToday: false } },
+          { key: "opus", aliases: ["opus"], dynasty: { servedToday: true } },
+        ],
+      },
+      { workflows: new Set(), templates: new Set(), llms: new Set(["opus"]) },
+    );
+    expect(parts).toEqual({ workflows: ["keel"], templates: ["aurora"], llms: ["glm"] });
   });
 
   it("deprecatedPartsOf: not runnable, deprecated dynasty, an LLM served under no alias or only deprecated ones", () => {
