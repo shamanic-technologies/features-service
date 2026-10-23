@@ -21,6 +21,10 @@
  * outcome of its own), `source: own_parts` + `parts`; no part measured = every combination of the pipe pooled; a return
  * still unknown = the money workflow's. The return is the catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline
  * shared on outcomes ÷ its workflow's billed spend shared on spend; never 0 when expected, null only with a reason.
+ *
+ * THE ROWS STAND IN THE ORDER THE PIPE PICKS BY (RESEARCH-PICK-ORDER-1023, owner 2026-10-23 « le tri réel que tu
+ * utiliserais en prod »): the workflow's leg ranking rank, then the template's and the LLM's place in their own leg
+ * order (`rankWriters`), never by ROI (the pick is on cost per outcome, each part on its own).
  */
 import { isMatureCount, legMaturity } from "../maturity.js";
 import { bucketOf, type SlugCell } from "./buckets.js";
@@ -100,6 +104,8 @@ export interface PipePerformance {
   pipe: ResearchPipeId;
   /** Each workflow's rows on its Workflows-tab bar's basis (mature for a mature workflow): the totals are that tab's sum. */
   figuresBasis: "workflow_bars";
+  /** The rows stand in the order the pipe PICKS by: workflow rank, then template, then LLM (RESEARCH-PICK-ORDER-1023). */
+  rowOrder: "pick_order";
   outcomeNoun: string;
   outcomeNounPlural: string;
   rows: PerformanceRow[];
@@ -146,9 +152,31 @@ export interface PipePerformanceInput {
     pipelineOf: ReadonlyMap<string, number | null>;
     billedOf: ReadonlyMap<string, number | null>;
   };
+  /**
+   * Where each part stands in the order the pipe picks it by (1 = picked first): workflow dynasty → its leg ranking
+   * `rank`; template page key and LLM key → their place in the catalogue's `rankWriters` order. The rows sort on it.
+   */
+  pickOrder: PickOrder;
   unpricedBilledUsd: number;
   now: Date;
 }
+
+export interface PickOrder {
+  workflows: ReadonlyMap<string, number>;
+  templates: ReadonlyMap<string, number>;
+  llms: ReadonlyMap<string, number>;
+}
+
+/** PURE. The pick order of a pipe: its leg ranking's workflow ranks, its catalogue's template and LLM order. */
+export function pickOrderOf(ranking: ReadonlyArray<{ workflowDynastySlug: string; rank: number }> | null, catalog: { templates: ReadonlyArray<{ key: string }>; models: ReadonlyArray<{ key: string }> }): PickOrder {
+  return {
+    workflows: new Map((ranking ?? []).map((r) => [r.workflowDynastySlug, r.rank])),
+    templates: new Map(catalog.templates.map((t, i) => [t.key, i + 1])),
+    llms: new Map(catalog.models.map((m, i) => [m.key, i + 1])),
+  };
+}
+
+const placeOf = (order: ReadonlyMap<string, number>, key: string | null | undefined) => (key != null ? (order.get(key) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER);
 
 const SEP = "\u001f";
 const NONE = "-";
@@ -194,7 +222,7 @@ const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym.s
 
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "pick_order" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
@@ -418,12 +446,16 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         contacted: count(d.acc.contacted, (v) => n(Math.round(v))),
       };
     })
-    // Best return first: measured, then expected, each by return desc; then outcomes, people, key.
+    // The order the pipe PICKS by (RESEARCH-PICK-ORDER-1023, owner « le tri réel que tu utiliserais en prod »): the
+    // workflow's place in the ONE leg order, then the template's and the LLM's in theirs (`rankWriters`); a part the
+    // order does not list stands after every listed one. Then outcomes, people, key.
     .sort((a, b) => {
-      const am = a.roi.basis === "measured";
-      const bm = b.roi.basis === "measured";
-      if (am !== bm) return am ? -1 : 1;
-      if ((a.roi.value ?? -1) !== (b.roi.value ?? -1)) return (b.roi.value ?? -1) - (a.roi.value ?? -1);
+      const byWorkflow = placeOf(p.pickOrder.workflows, a.workflow.key) - placeOf(p.pickOrder.workflows, b.workflow.key);
+      if (byWorkflow !== 0) return byWorkflow;
+      const byTemplate = placeOf(p.pickOrder.templates, a.template?.key) - placeOf(p.pickOrder.templates, b.template?.key);
+      if (byTemplate !== 0) return byTemplate;
+      const byLlm = placeOf(p.pickOrder.llms, a.llm?.key) - placeOf(p.pickOrder.llms, b.llm?.key);
+      if (byLlm !== 0) return byLlm;
       if (a.outcomes.value !== b.outcomes.value) return b.outcomes.value - a.outcomes.value;
       if (a.contacted.value !== b.contacted.value) return b.contacted.value - a.contacted.value;
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
