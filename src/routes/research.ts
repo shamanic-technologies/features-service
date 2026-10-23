@@ -33,7 +33,8 @@ import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.j
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
 import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
-import { readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
+import { readLiveTemplateDynasties, readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
+import { withLiveTemplateStatus } from "../lib/research/live-template-status.js";
 import { servedLegKeyOf } from "../lib/funnel-legs.js";
 import { dynastyLastWriters, dynastyWriters, versionWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
@@ -1212,15 +1213,22 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     // Workflows list prints, never the ranking its build held (up to 15 min older).
     const studied = new Set<string>(STUDIED_PIPES.map((x) => x.id));
     const others = build.file.pipes.filter((x) => !studied.has(x.id) && build.catalog?.[x.id]);
-    const [replyRanking, visitRanking, tacticsOf, otherRankings] = await Promise.all([
+    const catalogued = build.file.pipes.filter((x) => build.catalog?.[x.id]);
+    const [replyRanking, visitRanking, tacticsOf, otherRankings, liveDynasties] = await Promise.all([
       readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0),
       readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0),
       readTemplateTactics(),
       // Every other pipe's pages take its current ranking rows too (WA-PIPE-RESEARCH-1023); unreadable = the build's.
       Promise.all(others.map((x) => readLegWorkflowRanking(x.channel, x.leg, 0).catch(() => null))),
+      // Each pipe's template statuses as content-generation states them now (TPL-STATUS-LIVE-1023); unreadable = the build's.
+      Promise.all(catalogued.map((x) => readLiveTemplateDynasties(x.channel, x.leg))),
     ]);
-    // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022).
-    const withTactics = <P extends { templates: CatalogTemplate[] }>(p: P): P => ({ ...p, templates: withTemplateTactics(p.templates, tacticsOf) });
+    const liveOf = new Map(catalogued.map((x, i) => [x.id, liveDynasties[i]!]));
+    // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022), and its status (TPL-STATUS-LIVE-1023).
+    const withTactics = <P extends { templates: CatalogTemplate[] }>(id: string, p: P): P => ({
+      ...p,
+      templates: withTemplateTactics(withLiveTemplateStatus(p.templates, liveOf.get(id) ?? null), tacticsOf),
+    });
     res.json(
       await withResearchCatalogMarks(
         Object.fromEntries(
@@ -1229,7 +1237,7 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
             ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null, view)])),
             [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null, view),
             [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null, view),
-          }).map(([id, p]) => [id, withTactics(p)]),
+          }).map(([id, p]) => [id, withTactics(id, p)]),
         ) as ResearchCatalog,
       ),
     );
