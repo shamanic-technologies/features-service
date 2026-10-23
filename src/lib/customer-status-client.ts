@@ -22,6 +22,8 @@ export interface OrgCustomerStatus {
   ownOrg: boolean;
   /** Why billing calls the org ours (`platform_org` | `staff_billing_contact`), null when it is a customer. */
   ownOrgReason: string | null;
+  /** billing's flag: the org was deleted (its verdict is null on purpose). */
+  orgDeleted: boolean;
 }
 
 const STATUSES: ReadonlySet<string> = new Set(["current", "churned", "never_paid"]);
@@ -45,6 +47,7 @@ export function parseCustomerStatuses(body: unknown): Map<string, OrgCustomerSta
       customerStatus: status as CustomerStatus | null,
       ownOrg: c.ownOrg,
       ownOrgReason: typeof c.ownOrgReason === "string" ? c.ownOrgReason : null,
+      orgDeleted: c.orgDeleted === true,
     });
   }
   return out;

@@ -9,7 +9,7 @@ describe("parseCustomerStatuses", () => {
         { orgId: "b", orgName: null, customerStatus: null, ownOrg: true, ownOrgReason: "platform_org" },
       ],
     });
-    expect(m.get("a")).toEqual({ orgId: "a", orgName: "A", customerStatus: "churned", ownOrg: false, ownOrgReason: null });
+    expect(m.get("a")).toEqual({ orgId: "a", orgName: "A", customerStatus: "churned", ownOrg: false, ownOrgReason: null, orgDeleted: false });
     expect(m.get("b")?.customerStatus).toBeNull();
     expect(m.get("b")?.ownOrg).toBe(true);
   });

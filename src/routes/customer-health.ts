@@ -19,7 +19,6 @@
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
-import { coldEmailOutreachSlugs } from "../lib/send-forecast-compute.js";
 import { buildCustomerHealthBoard, type CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { loadFleetCell, storeFleetCell, type StoredCell } from "../lib/fleet-cell-store.js";
 import { refresherBaseUrl } from "../lib/view-refresher.js";
@@ -51,7 +50,9 @@ export interface CustomerHealthServingDeps {
 const REAL_DEPS: CustomerHealthServingDeps = {
   computeBoard: async () => {
     const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
-    return buildCustomerHealthBoard(coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(","), new Date());
+    // Every GTM channel (CUSTOMER-HEALTH-ALL-GTM-1023, owner « Oui ces tout GTM »). Only THIS board widens: the Accounts
+    // audit, MRR, revenue history and send-forecast keep their cold-email universe.
+    return buildCustomerHealthBoard(allFeatures.map((f) => f.slug).join(","), new Date());
   },
   loadCell: loadFleetCell,
   storeCell: storeFleetCell,
