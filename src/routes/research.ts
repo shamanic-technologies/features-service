@@ -56,6 +56,7 @@ import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
+import { workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
 import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
@@ -475,6 +476,34 @@ async function countryStudiesOf(reply: ColdEmailPipeRead, visit: ColdEmailPipeRe
   }
 }
 
+/**
+ * PURE. The reply pipe's people per workflow DYNASTY (every version pooled), by serve day, with each dynasty's lifetime
+ * billed spend (its ranking row). A bucket with no serve day has no age: left out, never counted as mature.
+ */
+export function workflowEstimateGroupsOf(
+  persons: ReadonlyArray<{ workflowSlug: string; servedDay: string; contacted: number; positiveReplies: number }>,
+  dynastyOf: ReadonlyMap<string, string>,
+  rows: ReadonlyArray<{ workflowDynastySlug: string; billedSpendUsd: number | null }>,
+  labelOf: (dynasty: string) => string,
+  now: Date,
+): WorkflowEstimateGroup[] {
+  const today = Date.parse(now.toISOString().slice(0, 10));
+  const by = new Map<string, WorkflowEstimateGroup>();
+  for (const p of persons) {
+    if (!p.servedDay) continue;
+    const d = dynastyOf.get(p.workflowSlug) ?? p.workflowSlug;
+    const g = by.get(d) ?? { key: d, label: labelOf(d), slices: [], outcomes: 0, spendUsd: 0 };
+    g.slices.push({ contacted: p.contacted, ageDays: (today - Date.parse(p.servedDay)) / 86_400_000 + 0.5 });
+    g.outcomes += p.positiveReplies;
+    by.set(d, g);
+  }
+  for (const r of rows) {
+    const g = by.get(r.workflowDynastySlug);
+    if (g) g.spendUsd = r.billedSpendUsd ?? 0;
+  }
+  return [...by.values()];
+}
+
 async function readReplyDelay(): Promise<ReplyDelayRead> {
   const rows = await fetchFleetCampaignRows();
   const ids = [
@@ -589,8 +618,20 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   const noRunStart = Math.round(
     [reply, visit].reduce((a, r) => a + r.persons.filter((b) => !b.servedDay).reduce((x, b) => x + (r.split.screened ? b.screenedContacted : b.contacted), 0), 0),
   );
+  // The estimated workflow study (COST-ACCOUNTING-1023-P3): billed basis only (it divides the ranking's billed spend).
+  const estimateStudies = reply.input.rankingRows
+    ? [
+        workflowEstimateStudy({
+          pipe: POSITIVE_REPLY_PIPE,
+          groups: workflowEstimateGroupsOf(reply.persons, reply.input.dynastyOf, reply.input.rankingRows, reply.input.labelOf, now),
+          dayBins: replyDelay ? replyDelay.metric.dailyDistribution : null,
+          outcomesRequired: reply.input.outcomesRequired,
+        }),
+      ]
+    : [];
   const file = assembleResearch({
     replyDelay,
+    estimateStudies,
     outcomeLedger: await ledgerP,
     sends,
     generationStudies: gens.studies,
@@ -741,6 +782,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       figuresBasis: "workflow_bars",
       rowOrder: "estimated_cost",
       rowsCover: "all_valid_combinations",
+      estimateModel: "part_effects",
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -810,7 +852,8 @@ const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): Pi
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
   rowOrder: "estimated_cost",
-      rowsCover: "all_valid_combinations",
+  rowsCover: "all_valid_combinations",
+  estimateModel: "part_effects",
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -1037,11 +1080,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: estimated_cost` since RESEARCH-COMBO-ESTIMATE-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: estimated_cost` since RESEARCH-COMBO-ESTIMATE-1023, priors on `estimateModel: part_effects` since PRIOR-PART-EFFECTS-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && p.rowsCover === "all_valid_combinations" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {

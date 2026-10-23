@@ -16,19 +16,28 @@
  *   Σ rows = the totals = Σ the Workflows tab's bars; the last point of each series = its card.
  *
  * EVERY ROW READS ITS OWN FIGURES. Spend, people and outcomes are measured; conversion is measured whenever it emailed
- * somebody (0% included). With no outcome, its ROI and cost per outcome are EXPECTED from ITS OWN PARTS: the geometric
- * mean of what its workflow, its template and its LLM measured on this pipe (each part = every row sharing it, with an
- * outcome of its own), `source: own_parts` + `parts`; no part measured = every combination of the pipe pooled; a return
- * still unknown = the money workflow's. The return is the catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline
- * shared on outcomes ÷ its workflow's billed spend shared on spend; never 0 when expected, null only with a reason.
+ * somebody (0% included). With no outcome, its cost per outcome is EXPECTED = its estimate (below), and its ROI is
+ * EXPECTED = the value of one outcome ÷ what that expected cost bills (PRIOR-PART-EFFECTS-1023): value per outcome and
+ * billed per dollar are its workflow's (`own_parts` + `parts: [workflow]`), else the pipe pooled; a return still unknown
+ * = the money workflow's. So an expected ROI and an expected cost never contradict each other (Keel x Flash-Lite read
+ * 0.0x at $37 beside Keel x GLM 9.6x at $55: each figure averaged its parts on its own). A measured ROI is the
+ * catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline shared on outcomes ÷ its workflow's billed spend shared on spend.
  *
  * THE ROWS STAND ON EACH COMBINATION'S OWN ESTIMATED COST PER OUTCOME (RESEARCH-COMBO-ESTIMATE-1023, owner 2026-10-23
  * « il faut que tu estimes les vrais stats de performance de chaque combinaison », supersedes the nested workflow ->
  * template -> LLM pick order of RESEARCH-PICK-ORDER-1023, « ordre pourri »): estimate = (its own spend + k x prior) ÷
- * (its own outcomes + k), prior = what its parts measured on the pipe WITHOUT it (geometric mean, then the pipe pooled),
- * k = the leg's maturity bar in outcomes. A combination with spend and no outcome climbs above its prior; one with many
- * outcomes reads its own figure. A combination any part of which can no longer run (workflow not runnable, template
- * dynasty deprecated, LLM served under no alias or only deprecated ones) is DEPRECATED and stands after every active one.
+ * (its own outcomes + k), k = the leg's maturity bar in outcomes. A combination with spend and no outcome climbs above
+ * its prior; one with many outcomes reads its own figure.
+ *
+ * THE PRIOR IS ONE MODEL OF THE PIPE (PRIOR-PART-EFFECTS-1023, owner 2026-10-23, supersedes the geometric mean of what
+ * each part measured): outcomes per dollar = the pipe's rate x the workflow's effect x the template's x the LLM's, every
+ * effect fitted TOGETHER on every OTHER combination (`fitPartEffects`) and pulled toward 1 by k outcomes of evidence. The
+ * mean squashed the gaps (three parts each twice as good read 2x, not 8x), counted the same replies once per part, took
+ * a part's single lucky reply at face value (Flash-Lite: 1 reply for $10 put all its combinations on top) and dropped an
+ * untested part (a bonus); here an untested part is neutral (effect 1).
+ *
+ * A combination any part of which can no longer run (workflow not runnable, template dynasty deprecated, LLM served
+ * under no alias or only deprecated ones) is DEPRECATED and stands after every active one.
  */
 import { isMatureCount, legMaturity } from "../maturity.js";
 import { bucketOf, type SlugCell } from "./buckets.js";
@@ -105,7 +114,11 @@ export interface PerformanceEstimate {
   display: string | null;
   ownSpentUsd: number;
   ownOutcomes: number;
-  /** What its parts measured on the pipe without it (`priorSource`), counted as `priorWeightOutcomes` outcomes. */
+  /**
+   * What the pipe's model of part effects, fitted WITHOUT it, predicts for its parts (`own_parts`, `priorParts` = the
+   * parts some other combination measured; an unmeasured part is neutral), else the pipe pooled; counted as
+   * `priorWeightOutcomes` outcomes.
+   */
   priorCostPerOutcomeUsd: number | null;
   priorSource: "own_parts" | "pipe_combinations" | null;
   priorParts?: PerformancePart[];
@@ -133,6 +146,8 @@ export interface PipePerformance {
   rowOrder: "estimated_cost";
   /** Every technically valid combination is a row, not only those that wrote (RESEARCH-ALL-COMBOS-1023). */
   rowsCover: "all_valid_combinations";
+  /** How each row's prior is read: one model of the pipe's part effects, fitted together (PRIOR-PART-EFFECTS-1023). */
+  estimateModel: "part_effects";
   outcomeNoun: string;
   outcomeNounPlural: string;
   rows: PerformanceRow[];
@@ -266,13 +281,6 @@ interface Acc {
   billedUsd: number;
 }
 const zero = (): Acc => ({ spentUsd: 0, contacted: 0, outcomes: 0, pipelineUsd: 0, billedUsd: 0 });
-const minus = (a: Acc, b: Acc): Acc => ({
-  spentUsd: Math.max(0, a.spentUsd - b.spentUsd),
-  contacted: Math.max(0, a.contacted - b.contacted),
-  outcomes: Math.max(0, a.outcomes - b.outcomes),
-  pipelineUsd: Math.max(0, a.pipelineUsd - b.pipelineUsd),
-  billedUsd: Math.max(0, a.billedUsd - b.billedUsd),
-});
 const addInto = (a: Acc, b: Acc) => {
   a.spentUsd += b.spentUsd;
   a.contacted += b.contacted;
@@ -291,7 +299,7 @@ const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym.s
 
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "estimated_cost" as const, rowsCover: "all_valid_combinations" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "estimated_cost" as const, rowsCover: "all_valid_combinations" as const, estimateModel: "part_effects" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
@@ -324,7 +332,8 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // Each workflow's rows on its bar's basis, scaled onto its bar (one figure per pipe, both tabs).
   const lastMonth = p.now.toISOString().slice(0, 7);
   const outcomesRequired = legMaturity(p.legKey).outcomesRequired;
-  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null; candidate?: true };
+  type Terms = { perOutcome: number; perSpent: number };
+  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null; terms: Terms | null; candidate?: true };
   const drafts: Draft[] = [];
   const combosOf = new Map<string, string[]>();
   for (const [key, e] of byCombo) combosOf.set(e.dynasty, [...(combosOf.get(e.dynasty) ?? []), key]);
@@ -369,6 +378,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         months,
         isMature: isMatureCount(r.matureOutcomes, p.legKey) === true,
         matureOutcomes: r.matureOutcomes,
+        terms,
       });
     }
     if (rest.spentUsd > 0 || rest.contacted > 0 || rest.outcomes > 0) {
@@ -381,7 +391,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         addInto(t, acc);
         existing.months.set(lastMonth, t);
       } else {
-        drafts.push({ key, e: { dynasty: bar.key, tpl: NONE, llm: NONE, sources: new Set(), cells: [] }, acc, months: new Map([[lastMonth, { ...acc }]]), isMature: false, matureOutcomes: null });
+        drafts.push({ key, e: { dynasty: bar.key, tpl: NONE, llm: NONE, sources: new Set(), cells: [] }, acc, months: new Map([[lastMonth, { ...acc }]]), isMature: false, matureOutcomes: null, terms });
       }
     }
   }
@@ -391,6 +401,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // estimate read on its parts. It adds nothing to the totals or the series.
   const written = new Set(drafts.map((d) => d.key));
   const c = p.candidates;
+  const termsOfWorkflow = new Map(p.bars.map((bar) => [bar.key, returnTerms(p, bar)] as const));
   if (c)
     for (const w of c.workflows)
       for (const t of c.templates)
@@ -398,7 +409,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
           const key = `${w}|${t}|${l}`;
           if (written.has(key)) continue;
           written.add(key);
-          drafts.push({ key, e: { dynasty: w, tpl: t, llm: l, sources: new Set(), cells: [] }, acc: zero(), months: new Map(), isMature: false, matureOutcomes: null, candidate: true });
+          drafts.push({ key, e: { dynasty: w, tpl: t, llm: l, sources: new Set(), cells: [] }, acc: zero(), months: new Map(), isMature: false, matureOutcomes: null, terms: termsOfWorkflow.get(w) ?? null, candidate: true });
         }
 
   // The series: every month from the first to this one, cumulative; its last point IS the totals (the cards).
@@ -442,14 +453,28 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   const measuredRoi = (a: Acc) => (printed(a.outcomes) && a.billedUsd > 0 ? a.pipelineUsd / a.billedUsd : null);
   const measuredCost = (a: Acc) => (printed(a.outcomes) && a.spentUsd > 0 ? a.spentUsd / a.outcomes : null);
   const measuredRate = (a: Acc) => (a.contacted > 0 ? (100 * a.outcomes) / a.contacted : null);
-  // `without` = read each part on every OTHER row sharing it (a combination's prior never counts its own evidence).
-  const fromParts = (d: Draft, read: (a: Acc) => number | null, without = false): { value: number; parts: PerformancePart[] } | null => {
+  // Conversion with no own population: the geometric mean of what its parts measured (people emailed, unchanged rule).
+  const rateFromParts = (d: Draft): { value: number; parts: PerformancePart[] } | null => {
     const got = partKeys(d).flatMap(([part, k]) => {
-      const t = partAcc.get(k)!;
-      const v = read(without ? minus(t, d.acc) : t);
+      const v = measuredRate(partAcc.get(k)!);
       return v != null && v > 0 ? [{ part, v }] : [];
     });
     return got.length ? { value: geoMean(got.map((g) => g.v)), parts: got.map((g) => g.part) } : null;
+  };
+
+  // The prior (PRIOR-PART-EFFECTS-1023): one model of the pipe's part effects. A row with evidence of its own is read on
+  // a model fitted WITHOUT it (its prior never counts its own evidence); a row with none on the model of every row.
+  const evidenceRows = drafts.filter((d) => d.acc.spentUsd > 0 || d.acc.outcomes > 0);
+  const modelRow = (d: Draft) => ({ parts: partKeys(d).map(([, k]) => k), spentUsd: d.acc.spentUsd, outcomes: d.acc.outcomes });
+  const modelOfAll = fitPartEffects(evidenceRows.map(modelRow), outcomesRequired);
+  const priorOf = (d: Draft): { value: number; source: "own_parts" | "pipe_combinations"; parts?: PerformancePart[] } | null => {
+    const own = d.acc.spentUsd > 0 || d.acc.outcomes > 0;
+    const model = own ? fitPartEffects(evidenceRows.filter((o) => o !== d).map(modelRow), outcomesRequired) : modelOfAll;
+    if (!model) return null;
+    const keys = partKeys(d);
+    const rate = keys.reduce((r, [, k]) => r * (model.effects.get(k) ?? 1), model.pipeRatePerUsd);
+    const measured = keys.filter(([, k]) => model.effects.has(k)).map(([part]) => part);
+    return measured.length ? { value: 1 / rate, source: "own_parts", parts: measured } : { value: 1 / rate, source: "pipe_combinations" };
   };
 
   // The pipe pooled, and the money workflow's return (the last resort of an expected return).
@@ -463,13 +488,13 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   const pooledRoi = measuredRoi(cum);
   const pooledCost = measuredCost(cum);
   const pooledRate = measuredRate(cum);
+  const pooledValuePerOutcome = cum.outcomes > 0 && cum.pipelineUsd > 0 ? cum.pipelineUsd / cum.outcomes : null;
+  const pooledBilledPerSpent = cum.spentUsd > 0 && cum.billedUsd > 0 ? cum.billedUsd / cum.spentUsd : null;
 
   // The estimate (RESEARCH-COMBO-ESTIMATE-1023): own spend and outcomes, plus the prior counted as `outcomesRequired` outcomes.
   const estimateOf = (d: Draft): PerformanceEstimate => {
     const a = d.acc;
-    const parts = fromParts(d, measuredCost, true);
-    const othersPooled = measuredCost(minus(cum, a));
-    const prior = parts ? { value: parts.value, source: "own_parts" as const, parts: parts.parts } : othersPooled != null ? { value: othersPooled, source: "pipe_combinations" as const } : null;
+    const prior = priorOf(d);
     const value = prior ? (a.spentUsd + outcomesRequired * prior.value) / (a.outcomes + outcomesRequired) : printed(a.outcomes) && a.spentUsd > 0 ? a.spentUsd / a.outcomes : null;
     return {
       costPerOutcomeUsd: value,
@@ -478,7 +503,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
       ownOutcomes: a.outcomes,
       priorCostPerOutcomeUsd: prior?.value ?? null,
       priorSource: prior?.source ?? null,
-      ...(prior && "parts" in prior ? { priorParts: prior.parts } : {}),
+      ...(prior?.parts ? { priorParts: prior.parts } : {}),
       priorWeightOutcomes: outcomesRequired,
       unavailableReason: value === null ? "no_outcome_on_pipe" : null,
     };
@@ -487,21 +512,20 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   const rowFigures = (d: Draft, est: PerformanceEstimate): Pick<PerformanceFigures, "roi" | "costPerOutcomeUsd" | "conversionRatePct"> => {
     const a = d.acc;
     const ownCost = measuredCost(a);
-    // With no outcome of its own, the expected cost IS the estimate (its prior raised by what it spent for nothing), and
-    // the expected return moves with it: same value per outcome, at the estimated cost.
+    // With no outcome of its own, the expected cost IS the estimate (its prior raised by what it spent for nothing).
     const expectedCost = ownCost === null && est.costPerOutcomeUsd !== null && est.priorCostPerOutcomeUsd !== null ? est.costPerOutcomeUsd : null;
-    const costScale = expectedCost !== null ? est.priorCostPerOutcomeUsd! / expectedCost : 1;
+    // The expected return = what one outcome is worth ÷ what that cost bills: never read apart from the cost.
     const ownRoi = measuredRoi(a);
-    const partsRoi = ownRoi === null ? fromParts(d, measuredRoi, true) : null;
+    const costForReturn = ownCost ?? expectedCost;
     const roi =
       ownRoi !== null
         ? figure(ownRoi, "measured", "own", roiText)
-        : partsRoi
-          ? figure(partsRoi.value * costScale, "expected", "own_parts", roiText, partsRoi.parts)
-          : pooledRoi != null && pooledRoi > 0
-            ? figure(pooledRoi * costScale, "expected", "pipe_combinations", roiText)
+        : costForReturn !== null && d.terms && d.terms.perOutcome > 0 && d.terms.perSpent > 0
+          ? figure(d.terms.perOutcome / (costForReturn * d.terms.perSpent), "expected", "own_parts", roiText, ["workflow"])
+          : costForReturn !== null && pooledValuePerOutcome !== null && pooledBilledPerSpent !== null
+            ? figure(pooledValuePerOutcome / (costForReturn * pooledBilledPerSpent), "expected", "pipe_combinations", roiText)
             : moneyRoi != null
-              ? figure(moneyRoi * costScale, "expected", "pipe_best_workflow", roiText)
+              ? figure(costForReturn !== null && pooledCost !== null ? (moneyRoi * pooledCost) / costForReturn : moneyRoi, "expected", "pipe_best_workflow", roiText)
               : missing("no_return_on_pipe");
     const cost =
       ownCost !== null
@@ -511,7 +535,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
           : missing("no_outcome_on_pipe");
     // Conversion is MEASURED whenever the row emailed somebody (a measured 0% included).
     const ownRate = measuredRate(a);
-    const partsRate = ownRate === null ? fromParts(d, measuredRate) : null;
+    const partsRate = ownRate === null ? rateFromParts(d) : null;
     const rate =
       ownRate !== null
         ? figure(ownRate, "measured", "own", pctText)
@@ -591,6 +615,62 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
     contacted: count(cum.contacted, (v) => n(Math.round(v))),
   };
   return { ...base, rows, totals, series: { grain: "month", points }, unavailableReason: null };
+}
+
+/**
+ * PURE (PRIOR-PART-EFFECTS-1023). One model of a pipe: outcomes per dollar of a combination = `pipeRatePerUsd` x the
+ * effect of each of its parts, every effect fitted TOGETHER on every row (a Poisson model with each row's spend as its
+ * exposure, fitted part by part until stable), each pulled toward 1 by `priorOutcomes` outcomes of evidence (a gamma
+ * prior: effect = (outcomes it saw + k) ÷ (outcomes the rest of the model expected there + k)). The effects of one
+ * dimension (the key prefix before `:`, e.g. `w:` / `t:` / `l:`) average 1 over their spend after every round and the
+ * pipe's rate takes the scale, so a dimension never drifts against another (one workflow read 1.5x and its LLM 0.65x,
+ * and a new LLM inherited the 1.5). A part no row spent on has no effect (read as 1). Null when the rows hold no
+ * outcome or no spend: nothing to read a rate from.
+ */
+export function fitPartEffects(
+  rows: ReadonlyArray<{ parts: readonly string[]; spentUsd: number; outcomes: number }>,
+  priorOutcomes: number,
+): { pipeRatePerUsd: number; effects: Map<string, number> } | null {
+  const spending = rows.filter((r) => r.spentUsd > 0);
+  const spent = spending.reduce((s, r) => s + r.spentUsd, 0);
+  const outcomes = rows.reduce((s, r) => s + r.outcomes, 0);
+  if (!(spent > 0) || !(outcomes > 0)) return null;
+  let pipeRatePerUsd = outcomes / spent;
+  const effects = new Map<string, number>();
+  const seen = new Map<string, number>();
+  const spendOf = new Map<string, number>();
+  for (const r of spending)
+    for (const k of r.parts) {
+      effects.set(k, 1);
+      seen.set(k, (seen.get(k) ?? 0) + r.outcomes);
+      spendOf.set(k, (spendOf.get(k) ?? 0) + r.spentUsd);
+    }
+  const keys = [...effects.keys()];
+  const dimensions = new Map<string, string[]>();
+  for (const k of keys) {
+    const d = k.slice(0, Math.max(0, k.indexOf(":")));
+    dimensions.set(d, [...(dimensions.get(d) ?? []), k]);
+  }
+  const rateOf = (r: { parts: readonly string[]; spentUsd: number }, without?: string) => r.parts.reduce((x, o) => (o === without ? x : x * effects.get(o)!), r.spentUsd * pipeRatePerUsd);
+  for (let round = 0; round < 500; round++) {
+    let moved = 0;
+    for (const k of keys) {
+      const expected = spending.reduce((x, r) => (r.parts.includes(k) ? x + rateOf(r, k) : x), 0);
+      const next = (seen.get(k)! + priorOutcomes) / (expected + priorOutcomes);
+      moved = Math.max(moved, Math.abs(Math.log(next / effects.get(k)!)));
+      effects.set(k, next);
+    }
+    for (const ks of dimensions.values()) {
+      const weight = ks.reduce((x, k) => x + spendOf.get(k)!, 0);
+      const mean = ks.reduce((x, k) => x + spendOf.get(k)! * effects.get(k)!, 0) / weight;
+      for (const k of ks) effects.set(k, effects.get(k)! / mean);
+    }
+    const next = outcomes / spending.reduce((x, r) => x + rateOf(r) / pipeRatePerUsd, 0);
+    moved = Math.max(moved, Math.abs(Math.log(next / pipeRatePerUsd)));
+    pipeRatePerUsd = next;
+    if (moved < 1e-10) break;
+  }
+  return { pipeRatePerUsd, effects };
 }
 
 /** A workflow's return terms per outcome and per dollar of its bar (its ranking pipeline and billed spend shared on them). */
