@@ -78,21 +78,39 @@ export async function readTemplateDynasties(featureSlug: string, legKey: string,
 /**
  * One pipe's dynasties as content-generation states them NOW, for the Research catalogue read (TPL-STATUS-LIVE-1023):
  * a template deprecated or upgraded shows on the next dashboard poll (5 s). Held 3 s per pipe, in-flight shared, so the
- * polls of every open page ask once; bounded at 5 s, past which (or on any failure, logged loud) the build's rows stand.
+ * polls of every open page ask once. A read never waits more than {@link LIVE_DYNASTIES_WAIT_MS} once a pipe has a good
+ * answer: a slower re-read (content-generation cold: 24 pipes took 1-1.5 s, prod 2026-10-23) serves the last good
+ * answer and lands behind for the next poll; an unreadable re-read (logged loud) also serves the last good answer. No
+ * good answer ever = the build's rows stand.
  */
 const LIVE_DYNASTIES_HOLD_MS = 3_000;
 const LIVE_DYNASTIES_TIMEOUT_MS = 5_000;
-const liveDynastiesHeld = new Map<string, { at: number; value: Promise<TemplateDynasty[] | TemplateDynastyReason> }>();
-export function readLiveTemplateDynasties(featureSlug: string, legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
+const LIVE_DYNASTIES_WAIT_MS = 400;
+type LiveDynasties = TemplateDynasty[] | TemplateDynastyReason;
+const liveDynastiesHeld = new Map<string, { at: number; value: Promise<LiveDynasties> }>();
+const liveDynastiesGood = new Map<string, TemplateDynasty[]>();
+export function readLiveTemplateDynasties(featureSlug: string, legKey: string): Promise<LiveDynasties> {
   const k = `${featureSlug}|${legKey}`;
   const held = liveDynastiesHeld.get(k);
-  if (held && Date.now() - held.at < LIVE_DYNASTIES_HOLD_MS) return held.value;
-  const value = readTemplateDynasties(featureSlug, legKey, LIVE_DYNASTIES_TIMEOUT_MS);
-  liveDynastiesHeld.set(k, { at: Date.now(), value });
-  return value;
+  const fresh =
+    held && Date.now() - held.at < LIVE_DYNASTIES_HOLD_MS
+      ? held.value
+      : (() => {
+          const value = readTemplateDynasties(featureSlug, legKey, LIVE_DYNASTIES_TIMEOUT_MS).then((r) => {
+            if (typeof r !== "string") liveDynastiesGood.set(k, r);
+            return r;
+          });
+          liveDynastiesHeld.set(k, { at: Date.now(), value });
+          return value;
+        })();
+  const good = liveDynastiesGood.get(k);
+  if (!good) return fresh;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([fresh.then((r) => (typeof r === "string" ? (liveDynastiesGood.get(k) ?? r) : r)), new Promise<LiveDynasties>((resolve) => (timer = setTimeout(() => resolve(liveDynastiesGood.get(k) ?? good), LIVE_DYNASTIES_WAIT_MS)))]).finally(() => clearTimeout(timer));
 }
 export function __resetLiveTemplateDynastiesForTest(): void {
   liveDynastiesHeld.clear();
+  liveDynastiesGood.clear();
 }
 
 /** One writer model alias content-generation accepts (`/internal/models`), with its staff status. */
