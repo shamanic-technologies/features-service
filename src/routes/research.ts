@@ -46,7 +46,7 @@ import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
-import type { ResearchFile, ResearchPipeId, ResearchStudy } from "../lib/research/types.js";
+import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries } from "../lib/fleet-index-store.js";
@@ -167,7 +167,7 @@ interface ColdEmailPipeRead {
  * the SAME evidence through `opts` (its own channel; no dated spend, which only spreads bars over months; a ranking not
  * built yet lists the bars alone instead of failing the file).
  */
-async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { featureSlug?: string; datedSpend?: boolean; requireRanking?: boolean } = {}): Promise<ColdEmailPipeRead> {
+async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { featureSlug?: string; datedSpend?: boolean; requireRanking?: boolean; view?: ResearchView } = {}): Promise<ColdEmailPipeRead> {
   const featureSlug = opts.featureSlug ?? COLD_EMAIL;
   const pricing: Pricing = basis === "actual" ? "vendor" : "gross";
   // The vendor-cost twin is read one aggregation at a time: runs-service's vendor-priced fleet read takes ~16 s on a leg
@@ -215,6 +215,8 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { fe
       dynastyOf: new Map(ev.workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug])),
       labelOf: labelFor(ev.workflows),
       rankingRows: ranking ? ranking.rows : null,
+      view: opts.view,
+      readDay: now.toISOString().slice(0, 10),
     },
     unpricedUsd: [...unpricedBySlug.values()].reduce((a, b) => a + b, 0),
     campaignIds,
@@ -348,6 +350,7 @@ async function generationInputs(
     naming: pipe === POSITIVE_REPLY_PIPE,
     templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
     llmDynasties: dynasties.llm,
+    view: r.input.view,
   });
   const partOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead): CatalogGen => {
     const g = generationBuckets(inputOf(pipe, r));
@@ -378,7 +381,13 @@ async function generationInputs(
 
 /** The studies read on each email sent; null while our copy of the outreach facts holds no send of these legs yet. */
 type SpendScope = { campaignIds: string[]; campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>; cutoffIso: string | null };
-async function sendsInputs(reply: SpendScope, visit: SpendScope, pricing: Pricing) {
+async function sendsInputs(reply: SpendScope, visit: SpendScope, pricing: Pricing, view: ResearchView, now: Date) {
+  // The flash view reads every send to date (MATURITY-VIEW-1023): no cutoff, the opens split cut at the read.
+  if (view === "flash") {
+    reply = { ...reply, cutoffIso: null };
+    visit = { ...visit, cutoffIso: null };
+  }
+  const opensCutoff = view === "flash" ? now.toISOString() : reply.cutoffIso;
   const [rg, vg] = await Promise.all([readSendGroups(reply.campaignIds, reply.cutoffIso), readSendGroups(visit.campaignIds, visit.cutoffIso)]);
   if (!rg.length && !vg.length) return null;
   const prices = Object.fromEntries(await readPerEmailPrices());
@@ -392,7 +401,7 @@ async function sendsInputs(reply: SpendScope, visit: SpendScope, pricing: Pricin
   };
   const rs = await splitOf(reply);
   const vs = await splitOf(visit);
-  const opens = reply.cutoffIso ? await readOpensArms(reply.cutoffIso) : null;
+  const opens = opensCutoff ? await readOpensArms(opensCutoff) : null;
   return { reply: { groups: rg, spend: rs }, visit: { groups: vg, spend: vs }, opens };
 }
 
@@ -423,7 +432,7 @@ async function countryStudiesOf(reply: ColdEmailPipeRead, visit: ColdEmailPipeRe
       booked,
     ]);
     const pipe = (id: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead) =>
-      countryStudies({ terms: termsOf(id, r.input, note), legKey: r.input.legKey, cells: r.input.cells, persons: r.persons, split: r.split, excludedOrgIds: ours });
+      countryStudies({ terms: termsOf(id, r.input, note), legKey: r.input.legKey, cells: r.input.cells, persons: r.persons, split: r.split, excludedOrgIds: ours, view: r.input.view });
     const repliers = [...replierCountries].map(([k, country]) => {
       const [orgId = "", brandId = "", leadId = ""] = k.split("|");
       return { orgId, brandId, leadId, country };
@@ -479,7 +488,7 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
 }
 
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
-export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
+export async function computeResearch(basis: Basis, view: ResearchView = "mature", now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
   // Every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023): unreadable = the three alone, logged.
   const otherPipesP = readOtherPipes().catch((err): OtherPipe[] => {
@@ -497,10 +506,10 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   const legs =
     basis === "actual"
       ? (async () => {
-          const r = await coldEmailPipe(REPLY_LEG, basis, now);
-          return [r, await coldEmailPipe(VISIT_LEG, basis, now)] as const;
+          const r = await coldEmailPipe(REPLY_LEG, basis, now, { view });
+          return [r, await coldEmailPipe(VISIT_LEG, basis, now, { view })] as const;
         })()
-      : Promise.all([coldEmailPipe(REPLY_LEG, basis, now), coldEmailPipe(VISIT_LEG, basis, now)]);
+      : Promise.all([coldEmailPipe(REPLY_LEG, basis, now, { view }), coldEmailPipe(VISIT_LEG, basis, now, { view })]);
   const [[reply, visit], meetingRanking, meetingFleet, beforeAfter, recordedBest, recordedMedian] = await Promise.all([
     legs,
     basis === "user" ? readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS) : Promise.resolve(null),
@@ -523,7 +532,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   const attribution = readMeetingAttribution();
   attribution.catch(() => undefined);
   const [sends, jev, replies, gens, reportingBrands, volume, replyDelay, countries, niche] = await Promise.all([
-    sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross"),
+    sendsInputs(reply, visit, basis === "actual" ? "vendor" : "gross", view, now),
     readJevInputs(),
     readReplyAuthors(),
     // A study family whose producer read fails stays waiting (logged), never fails the whole file.
@@ -549,8 +558,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   ]);
   const nicheNote = ruleNote(reply.input, visit.input);
   const niche_ = nicheStudies({
-    reply: { terms: termsOf(POSITIVE_REPLY_PIPE, reply.input, nicheNote), legKey: reply.input.legKey, cells: reply.input.cells, persons: reply.persons, split: reply.split },
-    visit: { terms: termsOf(WEBSITE_VISIT_PIPE, visit.input, nicheNote), legKey: visit.input.legKey, cells: visit.input.cells, persons: visit.persons, split: visit.split },
+    reply: { terms: termsOf(POSITIVE_REPLY_PIPE, reply.input, nicheNote), legKey: reply.input.legKey, cells: reply.input.cells, persons: reply.persons, split: reply.split, view },
+    visit: { terms: termsOf(WEBSITE_VISIT_PIPE, visit.input, nicheNote), legKey: visit.input.legKey, cells: visit.input.cells, persons: visit.persons, split: visit.split, view },
     grades: niche,
     ...(basis === "user"
       ? { meetings: { brands: reportingBrands, outcomesRequired: legMaturity("start_to_meeting_booked").outcomesRequired, note: nicheNote } }
@@ -698,8 +707,8 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     });
   };
   const catalog: ResearchCatalog = {
-    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking),
-    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking),
+    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking, view),
+    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking, view),
     [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
   const performance: ResearchPerformance = {
@@ -726,7 +735,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   );
   // Every other pipe's tabs, one pipe at a time on the vendor basis (its heaviest aggregation), two on the billed one.
   const others = await mapWithConcurrency(await otherPipesP, basis === "actual" ? 1 : 2, (p) =>
-    withTimeout(otherPipeSection(p, basis, now, { llm: dynasties.llm, servedModels, writersOf: readDynastyWriters }), OTHER_PIPE_TIMEOUT_MS, `research pipe ${p.entry.id}`).catch((err) => {
+    withTimeout(otherPipeSection(p, basis, now, { llm: dynasties.llm, servedModels, writersOf: readDynastyWriters }, view), OTHER_PIPE_TIMEOUT_MS, `research pipe ${p.entry.id}`).catch((err) => {
       console.error(`[features-service] research: pipe ${p.entry.id} could not be read this build, its tabs read Learning:`, err);
       return emptySection(p);
     }),
@@ -787,12 +796,13 @@ async function otherPipeSection(
   basis: Basis,
   now: Date,
   shared: { llm: LlmDynastyIndex; servedModels: Awaited<ReturnType<typeof readModelIds>> | "model_ids_unreadable"; writersOf: typeof readDynastyWriters },
+  view: ResearchView = "mature",
 ): Promise<OtherSection> {
   const { featureSlug, legKey } = p;
   const internal = (await internalPipeToStep(featureSlug, legKey)) !== null;
   const rule = legMaturity(legKey);
   const [read, tplRead, writers, ranking] = await Promise.all([
-    internal ? Promise.resolve(null) : coldEmailPipe(legKey, basis, now, { featureSlug, datedSpend: false, requireRanking: false }),
+    internal ? Promise.resolve(null) : coldEmailPipe(legKey, basis, now, { featureSlug, datedSpend: false, requireRanking: false, view }),
     readTemplateDynasties(featureSlug, legKey),
     shared.writersOf(featureSlug),
     readLegWorkflowRanking(featureSlug, legKey, RANKING_WAIT_MS).then(
@@ -816,6 +826,8 @@ async function otherPipeSection(
     dynastyOf: new Map(),
     labelOf: (d) => rankingNames.get(d) ?? d,
     rankingRows: basis === "user" ? ranking : null,
+    view,
+    readDay: now.toISOString().slice(0, 10),
   };
   const persons = read?.persons ?? [];
   const split = read?.split ?? { screened: false, signal: "other" as const, cutoffDay: null };
@@ -826,7 +838,7 @@ async function otherPipeSection(
     read ? readGenerationRuns(read.campaignIds).catch(() => []) : Promise.resolve([]),
     read ? readWorkflowRuns(read.campaigns, (slug) => input.dynastyOf.get(slug) ?? slug, basis) : Promise.resolve([]),
   ]);
-  const g = hasGen ? generationBuckets({ legKey, cells: input.cells, persons, split, models, templateDynasties: tplDyn, llmDynasties: shared.llm }) : null;
+  const g = hasGen ? generationBuckets({ legKey, cells: input.cells, persons, split, models, templateDynasties: tplDyn, llmDynasties: shared.llm, view }) : null;
   const gen: CatalogGen = g
     ? {
         templates: g.tpl.rows,
@@ -895,6 +907,7 @@ async function otherPipeSection(
       workflowVersionTotals: gen.workflowVersionTotals,
     }),
     ranking,
+    view,
   );
   const performance =
     read && hasGen
@@ -943,13 +956,16 @@ export interface ResearchBuild {
 
 // ── serving: last build, persisted; one background rebuild at a time per basis ─────────────────────────────
 
-const store = new Map<Basis, { value: StoredBuild; computedAt: number }>();
+/** One build per cost basis × view (MATURITY-VIEW-1023), keyed `<basis>:<view>`. */
+type BuildKey = `${Basis}:${ResearchView}`;
+const keyOf = (basis: Basis, view: ResearchView): BuildKey => `${basis}:${view}`;
+const store = new Map<BuildKey, { value: StoredBuild; computedAt: number }>();
 /** A build as stored; a copy persisted before the catalogue existed holds the file alone (`catalog` null until the next build). */
 type StoredBuild = { file: ResearchFile; catalog: ResearchCatalog | null; texts: Record<string, string> | null; performance?: ResearchPerformance | null };
-const warming = new Map<Basis, Promise<void>>();
-const failedAt = new Map<Basis, number>();
+const warming = new Map<BuildKey, Promise<void>>();
+const failedAt = new Map<BuildKey, number>();
 const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
-const cellKey = (basis: Basis) => `research:${basis}`;
+const cellKey = (basis: Basis, view: ResearchView) => `research:${basis}:${view}`;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -960,15 +976,15 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 /** Ask the refresher (whose fleet cells are warm) to compute; compute here when it cannot. */
-async function buildResearch(basis: Basis): Promise<ResearchBuild> {
+async function buildResearch(basis: Basis, view: ResearchView): Promise<ResearchBuild> {
   const base = refresherBaseUrl();
-  if (!base) return computeResearch(basis);
+  if (!base) return computeResearch(basis, view);
   let res: Response;
   try {
-    res = await fetch(`${base}/internal/research/compute?basis=${basis}`, { headers: { "x-api-key": process.env.FEATURES_SERVICE_API_KEY ?? "" } });
+    res = await fetch(`${base}/internal/research/compute?basis=${basis}&view=${view}`, { headers: { "x-api-key": process.env.FEATURES_SERVICE_API_KEY ?? "" } });
   } catch (error) {
-    console.error(`[features-service] refresher unreachable for research ${basis}; computing locally:`, error);
-    return computeResearch(basis);
+    console.error(`[features-service] refresher unreachable for research ${basis}/${view}; computing locally:`, error);
+    return computeResearch(basis, view);
   }
   if (res.ok) return (await res.json()) as ResearchBuild;
   // The refresher ran the build and it failed: never run it again on the serving loop (the retry is in 10 min).
@@ -982,54 +998,56 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
  * `figuresBasis: workflow_bars`, rows in `rowOrder: pick_order` since RESEARCH-PICK-ORDER-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
-export function isCurrentBuild(build: StoredBuild): boolean {
+export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "pick_order";
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "pick_order" && build.file.view === view;
 }
 
-export function warmResearch(basis: Basis): Promise<void> {
-  const entry = store.get(basis);
-  if (entry && isCurrentBuild(entry.value) && Date.now() - entry.computedAt < freshMsOf(basis)) return Promise.resolve();
+export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
+  const key = keyOf(basis, view);
+  const entry = store.get(key);
+  if (entry && isCurrentBuild(entry.value, view) && Date.now() - entry.computedAt < freshMsOf(basis)) return Promise.resolve();
   // A failed build is not retried on every read (each read would re-ask runs-service's heaviest aggregation).
-  if (Date.now() - (failedAt.get(basis) ?? 0) < RETRY_AFTER_FAILURE_MS) return Promise.resolve();
-  const inFlight = warming.get(basis);
+  if (Date.now() - (failedAt.get(key) ?? 0) < RETRY_AFTER_FAILURE_MS) return Promise.resolve();
+  const inFlight = warming.get(key);
   if (inFlight) return inFlight;
-  const p = withTimeout(buildResearch(basis), BUILD_TIMEOUT_MS, `research ${basis}`)
+  const p = withTimeout(buildResearch(basis, view), BUILD_TIMEOUT_MS, `research ${key}`)
     .then(async (value) => {
       const computedAt = Date.now();
-      store.set(basis, { value, computedAt });
-      await storeFleetCell(cellKey(basis), JSON.stringify(value), computedAt);
+      store.set(key, { value, computedAt });
+      await storeFleetCell(cellKey(basis, view), JSON.stringify(value), computedAt);
     })
     .catch((error) => {
-      failedAt.set(basis, Date.now());
-      console.error(`[features-service] research ${basis} build failed, keeping the previous one (next try in 10 min):`, error);
+      failedAt.set(key, Date.now());
+      console.error(`[features-service] research ${key} build failed, keeping the previous one (next try in 10 min):`, error);
     })
-    .finally(() => warming.delete(basis));
-  warming.set(basis, p);
+    .finally(() => warming.delete(key));
+  warming.set(key, p);
   return p;
 }
 
 /** The last build (the persisted copy on a fresh process); kicks a rebuild when stale. Null = never built. */
-export async function readResearchBuild(basis: Basis): Promise<StoredBuild | null> {
-  if (!store.has(basis)) {
-    const stored = await loadFleetCell(cellKey(basis));
-    if (stored && !store.has(basis)) {
+export async function readResearchBuild(basis: Basis, view: ResearchView = "mature"): Promise<StoredBuild | null> {
+  const key = keyOf(basis, view);
+  if (!store.has(key)) {
+    const stored = await loadFleetCell(cellKey(basis, view));
+    if (stored && !store.has(key)) {
       try {
         const raw = JSON.parse(stored.text) as ResearchBuild | ResearchFile;
         const value: StoredBuild = "file" in raw ? raw : { file: raw, catalog: null, texts: null };
-        store.set(basis, { value, computedAt: stored.computedAt });
+        store.set(key, { value, computedAt: stored.computedAt });
       } catch (error) {
-        console.error(`[features-service] research ${basis}: persisted copy unreadable, rebuilding:`, error);
+        console.error(`[features-service] research ${key}: persisted copy unreadable, rebuilding:`, error);
       }
     }
   }
-  void warmResearch(basis);
-  return store.get(basis)?.value ?? null;
+  void warmResearch(basis, view);
+  return store.get(key)?.value ?? null;
 }
 
 /** The last file (see {@link readResearchBuild}). */
-export async function readResearch(basis: Basis): Promise<ResearchFile | null> {
-  return (await readResearchBuild(basis))?.file ?? null;
+export async function readResearch(basis: Basis, view: ResearchView = "mature"): Promise<ResearchFile | null> {
+  return (await readResearchBuild(basis, view))?.file ?? null;
 }
 
 /** Test seam. */
@@ -1039,6 +1057,10 @@ export function __resetResearch(): void {
   failedAt.clear();
   closedWindows.clear();
 }
+
+/** `?view=`: absent = mature (MATURITY-VIEW-1023); anything else than mature / flash = null (400). */
+const viewOf = (raw: unknown): ResearchView | null => (raw === undefined || raw === "" || raw === "mature" ? "mature" : raw === "flash" ? "flash" : null);
+const badView = (res: import("express").Response) => res.status(400).json({ error: "view must be mature (default) or flash", reason: "view_unrecognised" });
 
 const basisOf = (raw: unknown): Basis | null => (raw === undefined || raw === "" || raw === "user" || raw === "billed" ? "user" : raw === "actual" ? "actual" : null);
 
@@ -1052,7 +1074,9 @@ router.get("/internal/research", apiKeyOnly, async (req, res) => {
     return;
   }
   try {
-    const file = await readResearch(basis);
+    const view = viewOf(req.query.view);
+    if (!view) return badView(res);
+    const file = await readResearch(basis, view);
     if (!file) return notYet(res);
     res.json(file);
   } catch (error) {
@@ -1061,9 +1085,11 @@ router.get("/internal/research", apiKeyOnly, async (req, res) => {
   }
 });
 
-router.get("/internal/research/conclusions", apiKeyOnly, async (_req, res) => {
+router.get("/internal/research/conclusions", apiKeyOnly, async (req, res) => {
+  const view = viewOf(req.query.view);
+  if (!view) return badView(res);
   try {
-    const file = await readResearch("user");
+    const file = await readResearch("user", view);
     if (!file) return notYet(res);
     res.json(researchConclusions(file));
   } catch (error) {
@@ -1072,9 +1098,11 @@ router.get("/internal/research/conclusions", apiKeyOnly, async (_req, res) => {
   }
 });
 
-router.get("/internal/research/studies", apiKeyOnly, async (_req, res) => {
+router.get("/internal/research/studies", apiKeyOnly, async (req, res) => {
+  const view = viewOf(req.query.view);
+  if (!view) return badView(res);
   try {
-    const file = await readResearch("user");
+    const file = await readResearch("user", view);
     if (!file) return notYet(res);
     res.json(researchMeasuredStudies(file));
   } catch (error) {
@@ -1089,8 +1117,10 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     res.status(400).json({ error: "basis must be user (billed, default) or actual", reason: "basis_unrecognised" });
     return;
   }
+  const view = viewOf(req.query.view);
+  if (!view) return badView(res);
   try {
-    const build = await readResearchBuild(basis);
+    const build = await readResearchBuild(basis, view);
     if (!build?.catalog) return notYet(res);
     // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
     // Workflows list prints, never the ranking its build held (up to 15 min older).
@@ -1110,9 +1140,9 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
         Object.fromEntries(
           Object.entries({
             ...build.catalog,
-            ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null)])),
-            [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
-            [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
+            ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null, view)])),
+            [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null, view),
+            [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null, view),
           }).map(([id, p]) => [id, withTactics(p)]),
         ) as ResearchCatalog,
       ),
@@ -1130,10 +1160,12 @@ router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
     return;
   }
   try {
-    const build = await readResearchBuild(basis);
+    const view = viewOf(req.query.view);
+    if (!view) return badView(res);
+    const build = await readResearchBuild(basis, view);
     // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
     if (!build?.performance) return notYet(res);
-    res.json({ computedAt: build.file.computedAt, costBasis: build.file.costBasis, pipes: await withPerformanceMarks(build.performance) });
+    res.json({ computedAt: build.file.computedAt, costBasis: build.file.costBasis, view, pipes: await withPerformanceMarks(build.performance) });
   } catch (error) {
     console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -1159,7 +1191,9 @@ router.get("/internal/research/compute", apiKeyOnly, async (req, res) => {
     return;
   }
   try {
-    res.json(await computeResearch(basis));
+    const view = viewOf(req.query.view);
+    if (!view) return badView(res);
+    res.json(await computeResearch(basis, view));
   } catch (error) {
     console.error(`[features-service] research compute (${basis}) failed:`, error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Internal server error" });

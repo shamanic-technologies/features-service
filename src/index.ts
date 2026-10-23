@@ -35,7 +35,7 @@ import channelDeclarationsRoutes from "./routes/channel-declarations.js";
 import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-catalogue.js";
 import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
-import researchRoutes, { readResearch } from "./routes/research.js";
+import researchRoutes, { readResearch, warmResearch } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
 import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import { startGenerationSequencesCopy } from "./lib/generation-sequences-copy.js";
@@ -209,7 +209,13 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startOutreachFactsCopy();
         // ... and of content-generation-service's sequence feed (lib/generation-sequences-copy.ts), every 2 minutes.
         startGenerationSequencesCopy();
-        setTimeout(() => void readResearch("user").catch((err) => console.error("[features-service] research boot warm failed:", err)), 120_000).unref();
+        setTimeout(() => {
+          // Both views of the billed basis (MATURITY-VIEW-1023), one after the other (each reads the same warm fleet cells).
+          void readResearch("user", "mature")
+            .then(() => warmResearch("user", "mature"))
+            .then(() => readResearch("user", "flash"))
+            .catch((err) => console.error("[features-service] research boot warm failed:", err));
+        }, 120_000).unref();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()

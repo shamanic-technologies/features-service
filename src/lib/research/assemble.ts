@@ -7,7 +7,7 @@ import { bucketOf, groupCells, type SlugCell } from "./buckets.js";
 import { cutoffText } from "./studies.js";
 import { costOverTimeStudy, dimensionStudies, notMeasuredStudy, sumFigures, type PipeTerms, type ResearchBucket } from "./studies.js";
 import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookingCostStudy, meetingCostStudy, type ReportingBrand } from "./meetings.js";
-import type { ResearchFile, ResearchPipeEntry, ResearchStudy, ResearchUnavailable } from "./types.js";
+import type { ResearchFile, ResearchPipeEntry, ResearchStudy, ResearchUnavailable, ResearchView } from "./types.js";
 import { MONTHS as MONTH_LABELS } from "./format.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
@@ -68,6 +68,10 @@ export interface ColdEmailPipeInput {
    * study can never state two figures. Null on the actual-cost basis (the ranking is billed): bars come from the cells.
    */
   rankingRows: readonly LegWorkflowRankingRow[] | null;
+  /** The half every figure is read on (MATURITY-VIEW-1023); absent = each bucket on its own maturity (tests, before). */
+  view?: ResearchView;
+  /** `YYYY-MM-DD` of the read: the month a FLASH figure is still filling. */
+  readDay?: string;
 }
 
 export interface MeetingPipeInput {
@@ -127,6 +131,24 @@ export interface ResearchInput {
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
 
 export function ruleNote(reply: ColdEmailPipeInput, visit: ColdEmailPipeInput): string {
+  const tail =
+    `A rate is per person emailed. ` +
+    `A website visit is a click our link-scanner check judged human, which only the emails we send ourselves can carry: website-visit figures count the people emailed through our own sender only.`;
+  if (reply.view === "flash")
+    return (
+      `Flash view: every bar reads everything to date, every person we wrote to and every positive reply and website visit they sent since. ` +
+      `The people written to in the last ${reply.durationDays} days have not had time to reply yet, so a recent figure reads low on outcomes. ` +
+      `A workflow short of ${reply.outcomesRequired} positive ${reply.outcomesRequired === 1 ? "reply" : "replies"} (${visit.outcomesRequired} website ${visit.outcomesRequired === 1 ? "visit" : "visits"}) on its mature people is marked Learning. ` +
+      tail
+    );
+  if (reply.view === "mature") {
+    const when = reply.cutoffDay ? `at least ${reply.durationDays} days before the read (before ${cutoffText(reply.cutoffDay)})` : `at least ${reply.durationDays} days before the read`;
+    return (
+      `Mature view: every bar is read on the people we started writing to ${when}, with every positive reply and website visit they sent since. ` +
+      `A workflow short of ${reply.outcomesRequired} positive ${reply.outcomesRequired === 1 ? "reply" : "replies"} (${visit.outcomesRequired} website ${visit.outcomesRequired === 1 ? "visit" : "visits"}) on them is marked Learning. ` +
+      tail
+    );
+  }
   const same = reply.durationDays === visit.durationDays && reply.cutoffDay === visit.cutoffDay;
   const when = same && reply.cutoffDay
     ? `at least ${reply.durationDays} days before the read (before ${cutoffText(reply.cutoffDay)})`
@@ -148,7 +170,7 @@ export function termsOf(pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_
     exposureNoun: reply ? "people emailed" : "people emailed through our sender",
     exposureNounOne: reply ? "person emailed" : "person emailed through our sender",
     outcomesRequired: input.outcomesRequired,
-    partialMonth: partialMonthOf(input.cutoffDay),
+    partialMonth: input.view === "flash" ? partialMonthOf(input.readDay ?? null) : partialMonthOf(input.cutoffDay),
     note,
   };
 }
@@ -159,21 +181,26 @@ export function workflowBuckets(input: ColdEmailPipeInput): ResearchBucket[] {
   if (input.rankingRows) {
     return input.rankingRows
       .filter((r) => r.spentUsd > 0 || r.contacted > 0)
-      .map((r) =>
-        bucketOf({
+      .map((r) => {
+        // On a view the row's figures are its ranking figures on the view's half; a ranking stored before it held none:
+        // the bar then reads the cells on that half (MATURITY-VIEW-1023).
+        const v = input.view ? r.figuresByView?.[input.view] : undefined;
+        const override = input.view
+          ? v
+            ? { basis: v.half, figures: { spentUsd: v.spentUsd.value ?? 0, contacted: v.contacted, outcomes: v.outcomes }, learning: r.isMature !== true }
+            : undefined
+          : { basis: r.basis, figures: { spentUsd: r.spentUsd, contacted: r.contacted, outcomes: r.outcomes }, learning: r.isMature !== true };
+        return bucketOf({
           key: r.workflowDynastySlug,
           label: input.labelOf(r.workflowDynastySlug),
           legKey: input.legKey,
           cells: groups.get(r.workflowDynastySlug) ?? [],
-          override: {
-            basis: r.basis,
-            figures: { spentUsd: r.spentUsd, contacted: r.contacted, outcomes: r.outcomes },
-            learning: r.isMature !== true,
-          },
-        }),
-      );
+          ...(override ? { override } : {}),
+          view: input.view,
+        });
+      });
   }
-  return [...groups].map(([dynasty, cells]) => bucketOf({ key: dynasty, label: input.labelOf(dynasty), legKey: input.legKey, cells }));
+  return [...groups].map(([dynasty, cells]) => bucketOf({ key: dynasty, label: input.labelOf(dynasty), legKey: input.legKey, cells, view: input.view }));
 }
 
 /** The meeting pipe's workflow bars (no month, no strata: its evidence is not dated per client yet). */
@@ -227,7 +254,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     [WEBSITE_VISIT_PIPE, input.visit],
   ] as const) {
     const t = termsOf(pipe, p, note);
-    const all = bucketOf({ key: "all", label: "All our emails", legKey: p.legKey, cells: p.cells });
+    const all = bucketOf({ key: "all", label: "All our emails", legKey: p.legKey, cells: p.cells, view: p.view });
     studies.push(
       costOverTimeStudy(t, all.months, sumFigures([all.figures]), pipe === WEBSITE_VISIT_PIPE ? " whose clicks are screened for bots" : ""),
     );
@@ -346,6 +373,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     generatedAt: iso,
     computedAt: iso,
     allOrgs: true,
+    ...(input.reply.view ? { view: input.reply.view } : {}),
     costBasis: input.costBasis,
     unpricedBilledUsd: input.costBasis === "actual" ? input.unpricedBilledUsd : 0,
     window: { from: firstMonth ?? iso.slice(0, 7), to: iso.slice(0, 7) },

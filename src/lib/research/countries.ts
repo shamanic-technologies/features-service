@@ -22,7 +22,7 @@ import { splitCellsByGroup, groupOfSplitSlug, type SlugCellsInput } from "./slug
 import { counts, costTitle, drawnSorted, judge, notMeasuredStudy, pricedSorted, rateTitle, strataOf, type BucketFigures, type PipeTerms, type ResearchBucket } from "./studies.js";
 import { compareVerdict, MIN_OUTCOMES, type Arm, type Strata, type StratumCounts, type Verdict } from "./verdict.js";
 import { n, pctText, usd } from "./format.js";
-import type { ResearchChart, ResearchGoal, ResearchPoint, ResearchStudy } from "./types.js";
+import type { ResearchChart, ResearchGoal, ResearchPoint, ResearchStudy, ResearchView } from "./types.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
 
 /** The United States as lead-service spells it, plus the spellings a source may use. */
@@ -40,6 +40,8 @@ export interface CountryPipeInput {
   split: Pick<SlugCellsInput, "screened" | "signal" | "cutoffDay">;
   /** Orgs left out of the population (our own: distribute.you, staff, test orgs). */
   excludedOrgIds: ReadonlySet<string>;
+  /** The page's view (MATURITY-VIEW-1023). */
+  view?: ResearchView;
 }
 
 const costOf = (f: BucketFigures): number | null => (f.outcomes > 0 && f.spentUsd > 0 ? f.spentUsd / f.outcomes : null);
@@ -55,7 +57,7 @@ export function countryBuckets(input: CountryPipeInput): { rows: ResearchBucket[
   for (const b of input.persons) if (input.excludedOrgIds.has(b.orgId)) ours += input.split.screened ? b.screenedContacted : b.contacted;
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, groupOf);
   const { groups } = groupCells(cells, groupOfSplitSlug);
-  const rows = [...groups].map(([g, cs]) => bucketOf({ key: g, label: g, legKey: input.legKey, cells: cs }));
+  const rows = [...groups].map(([g, cs]) => bucketOf({ key: g, label: g, legKey: input.legKey, cells: cs, view: input.view }));
   return { rows, leftOut: { contacted: Math.max(0, leftOut.contacted - ours), outcomes: leftOut.outcomes }, ourOrgs: { contacted: ours } };
 }
 
