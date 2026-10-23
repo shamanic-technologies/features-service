@@ -81,12 +81,20 @@ export interface WriterModelAlias {
   status: "active" | "deprecated";
 }
 
-/** Every writer model alias content-generation accepts. FAIL-LOUD (a failed read is never "no LLM"). Held 10 minutes. */
-let aliasesHeld: { at: number; value: Promise<WriterModelAlias[]> } | null = null;
-export function readWriterModelAliases(): Promise<WriterModelAlias[]> {
-  if (aliasesHeld && Date.now() - aliasesHeld.at < 10 * 60_000) return aliasesHeld.value;
+/**
+ * Every writer model alias content-generation accepts, with its status ON ONE PIPE (LLM-STATUS-PER-PIPE-1023, owner
+ * 2026-10-23: « Il faut que la deprecation manuelle soit par pipe »: GLM deprecated for Lead -> Website visit stays active on
+ * Lead -> Positive reply). `legKey` = the channel's SERVED spelling (`servedLegKeyOf`), content-generation's key.
+ * FAIL-LOUD (a failed read is never "no LLM"). Held 10 minutes per pipe.
+ */
+const aliasesHeld = new Map<string, { at: number; value: Promise<WriterModelAlias[]> }>();
+export function readWriterModelAliases(featureSlug: string, legKey: string): Promise<WriterModelAlias[]> {
+  const k = `${featureSlug}|${legKey}`;
+  const held = aliasesHeld.get(k);
+  if (held && Date.now() - held.at < 10 * 60_000) return held.value;
   const value = (async () => {
-    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/models`, { headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" } });
+    const q = new URLSearchParams({ featureSlug, legKey });
+    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/models?${q}`, { headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" } });
     if (!res.ok) throw new Error(`content-generation-service models ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const body = (await res.json()) as { models?: Array<{ model?: unknown; provider?: unknown; status?: unknown }> };
     if (!Array.isArray(body.models)) throw new Error("content-generation-service models: no models array");
@@ -94,15 +102,15 @@ export function readWriterModelAliases(): Promise<WriterModelAlias[]> {
       typeof m.model === "string" && m.model ? [{ alias: m.model, provider: typeof m.provider === "string" ? m.provider : "", status: m.status === "deprecated" ? ("deprecated" as const) : ("active" as const) }] : [],
     );
   })();
-  aliasesHeld = { at: Date.now(), value };
+  aliasesHeld.set(k, { at: Date.now(), value });
   value.catch(() => {
-    if (aliasesHeld?.value === value) aliasesHeld = null;
+    if (aliasesHeld.get(k)?.value === value) aliasesHeld.delete(k);
   });
   return value;
 }
 
 /** Test seam. */
 export function __resetWriterCatalogueForTest(): void {
-  aliasesHeld = null;
+  aliasesHeld.clear();
   templateTextHeld.clear();
 }
