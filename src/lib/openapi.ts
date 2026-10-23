@@ -8715,37 +8715,45 @@ const researchPerformanceFigureSchema = z.object({
   value: z.number().nullable(),
   display: z.string().nullable(),
   basis: z.enum(["measured", "expected"]).nullable(),
-  source: z.enum(["own", "pipe_combinations", "pipe_best_workflow"]).nullable().describe("measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."),
+  source: z
+    .enum(["own", "own_parts", "pipe_combinations", "pipe_best_workflow"])
+    .nullable()
+    .describe("measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."),
+  parts: z.array(z.enum(["workflow", "template", "llm"])).optional().describe("On `own_parts`: the parts the figure is read from."),
   unavailableReason: z.enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_return_on_pipe"]).nullable(),
 });
 const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
 const researchPerformanceFiguresShape = {
   roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."),
-  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."),
-  conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."),
+  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."),
+  conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."),
   outcomes: researchPerformanceCountSchema,
   spentUsd: researchPerformanceCountSchema,
   contacted: researchPerformanceCountSchema.describe("People emailed (a visit pipe: through our own sender)."),
 };
 const researchPerformancePipeSchema = z.object({
   pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]),
-  figuresBasis: z.literal("since_inception"),
+  figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),
   rows: z
     .array(
       z.object({
-        key: z.string().describe("`<workflow dynasty>|<template version or ->|<LLM dynasty or ->`."),
-        rank: z.number().int().describe("Served order: measured return desc, then outcomes, people emailed, key."),
+        key: z.string().describe("`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."),
+        rank: z.number().int().describe("Served order: measured returns desc, then expected returns desc; then outcomes, people emailed, key."),
         workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
         template: z
           .object({
-            key: z.string().describe("The template VERSION id."),
-            label: z.string(),
-            dynasty: z.object({ key: z.string(), label: z.string(), icon: z.string().optional(), color: z.string().optional() }).nullable().describe("The template dynasty = its Research template page; null = a version no dynasty of the pipe lists (its page is the version id)."),
+            key: z.string().describe("The Research template page key: the template DYNASTY slug, or a standalone version's id."),
+            label: z.string().describe("The dynasty's name (a standalone version: its label)."),
+            icon: z.string().optional(),
+            color: z.string().optional(),
+            dynasty: z.object({ key: z.string(), label: z.string(), icon: z.string().optional(), color: z.string().optional() }).nullable().describe("The dynasty ref (same key as `key`); null = a version no dynasty of the pipe lists."),
+            standaloneReason: z.enum(["no_dynasty_on_pipe"]).nullable(),
           })
           .nullable(),
         llm: z.object({ key: z.string().describe("The Research model page key (LLM dynasty slug, else a model key)."), label: z.string(), provider: z.string().nullable() }).nullable(),
+        writerSource: z.enum(["sequences", "workflow_definition"]).nullable().describe("The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version)."),
         writerUnavailableReason: z.enum(["not_on_record"]).nullable(),
         maturity: z.object({ isMature: z.boolean(), matureOutcomes: z.number().nullable(), outcomesRequired: z.number() }),
         learning: z.boolean(),
@@ -8770,7 +8778,7 @@ const researchPerformancePipeSchema = z.object({
       ),
     })
     .nullable()
-    .describe("Every month from the first to this one, cumulative since inception: the last point IS `totals`."),
+    .describe("Every month from the first to this one, cumulative: the last point IS `totals`."),
   unpricedBilledUsd: z.number(),
   unavailableReason: z.enum(["no_writer_recorded_on_pipe"]).nullable(),
 });
