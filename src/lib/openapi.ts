@@ -4595,10 +4595,11 @@ const customerHealthOrgSchema = z.object({
   customerStatusUnavailableReason: z.enum(["billing_customer_status_unavailable", "org_not_in_billing", "billing_could_not_read"]).nullable().describe("Why customerStatus is null: billing's read failed (every org), billing lists no such org, or billing could not read its campaigns / payments. null when a verdict is served."),
   ownOrg: z.boolean().nullable().describe("billing's flag: one of OUR orgs (listed last, kept out of orgStats counts). null = not known."),
   ownOrgReason: z.string().nullable().describe("billing's reason (platform_org | staff_billing_contact)."),
-  healthBadge: z.enum(["green", "yellow", "red"]).describe("The worst badge of the org's brands (red > yellow > green)."),
-  brandIds: z.array(z.string()).describe("The org's brands, each a row of customers[] (same orgId)."),
-  runningDailyBudgetUsd: z.number().describe("Σ the brands' running daily budgets (raw, never discounted)."),
-  configuredDailyBudgetUsd: z.number().describe("Σ the brands' configured daily budgets (raw)."),
+  healthBadge: z.enum(["green", "yellow", "red"]).nullable().describe("The worst badge of the org's brands (red > yellow > green). null when the org has no brand row (noBrandRowsReason)."),
+  brandIds: z.array(z.string()).describe("The org's brands, each a row of customers[] (same orgId). Empty only with noBrandRowsReason."),
+  noBrandRowsReason: z.enum(["no_lead_on_any_channel"]).nullable().describe("Why the org has no brand row: billing calls it current or churned (not ours, not deleted) but no channel ever served a lead for it, so every figure below is null (never 0)."),
+  runningDailyBudgetUsd: z.number().nullable().describe("Σ the brands' running daily budgets (raw, never discounted). null with no brand row."),
+  configuredDailyBudgetUsd: z.number().nullable().describe("Σ the brands' configured daily budgets (raw). null with no brand row."),
   orgBalanceUsd: z.number().nullable(),
   orgActualBalanceUsd: z.number().nullable(),
   autoTopupEnabled: z.boolean().nullable(),
@@ -4636,7 +4637,7 @@ const customerHealthStatsSchema = z.object({
 });
 
 const customerHealthResponseSchema = z.object({
-  customers: z.array(customerHealthRowSchema).describe("One ready-composed health row per cold-email customer (org × brand), currently-active first."),
+  customers: z.array(customerHealthRowSchema).describe("One ready-composed health row per customer (org × brand) on every GTM channel, currently-active first."),
   stats: customerHealthStatsSchema,
   orgs: z.array(customerHealthOrgSchema).describe("One row per customer ORG (CUSTOMER-HEALTH-OOM-1023): billing's verdict to tab on, org-level figures, its brands. Customers first by verdict (current, never_paid, churned, unknown), our own orgs last."),
   orgStats: customerHealthOrgStatsSchema,
@@ -4655,7 +4656,7 @@ registry.registerPath({
   path: "/internal/stats/customer-health",
   summary: "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
   description:
-    "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active " +
+    "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per customer (org × brand) on EVERY GTM channel (since CUSTOMER-HEALTH-ALL-GTM-1023; each pair read under its outbound channel first, sourcing last), currently-active " +
     "first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no " +
     "per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention " +
     "weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the " +

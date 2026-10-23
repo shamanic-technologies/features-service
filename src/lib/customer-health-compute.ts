@@ -54,6 +54,7 @@ import {
 import { computeAudienceStats, type AudienceStatsEnvelope } from "./audience-stats-compute.js";
 import { fetchActiveAudiencePoolSoft, type AudiencePool } from "./human-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { channelTypeOf, UntypedFeatureError } from "./channel-types.js";
 import { fetchCustomerStatuses, type CustomerStatus, type OrgCustomerStatus } from "./customer-status-client.js";
 import type { SalesEconomics } from "./funnel-registry.js";
 import type { Goal } from "./goals.js";
@@ -324,12 +325,14 @@ export interface CustomerHealthOrg {
   /** billing's flag; null when billing's read failed or does not list the org. */
   ownOrg: boolean | null;
   ownOrgReason: string | null;
-  /** The worst badge of its brands (red > yellow > green). */
-  healthBadge: HealthBadge;
+  /** The worst badge of its brands (red > yellow > green); null when it has no brand row. */
+  healthBadge: HealthBadge | null;
   brandIds: string[];
-  /** Σ over its brands (raw ceilings, never discounted). */
-  runningDailyBudgetUsd: number;
-  configuredDailyBudgetUsd: number;
+  /** Why `brandIds` is empty: no channel ever served a lead for the org (a customer billing still lists). */
+  noBrandRowsReason: "no_lead_on_any_channel" | null;
+  /** Σ over its brands (raw ceilings, never discounted); null with no brand row. */
+  runningDailyBudgetUsd: number | null;
+  configuredDailyBudgetUsd: number | null;
   orgBalanceUsd: number | null;
   orgActualBalanceUsd: number | null;
   autoTopupEnabled: boolean | null;
@@ -669,7 +672,10 @@ export async function buildCustomerHealthBoard(
   //    (org, brand). fetchFeatureMemberships returns {orgId, brandId, workflowSlug} WITHOUT the feature, so
   //    to know which cold feature a pair belongs to we enumerate ONE call per cold slug (there are ~5) and
   //    tag each pair with the slug it matched — the feature drives the funnel + the feature-scoped cost reads.
-  const coldSlugs = coldEmailSlugsCsv ? coldEmailSlugsCsv.split(",").filter((s) => s.length > 0).sort() : [];
+  // Every GTM channel since CUSTOMER-HEALTH-ALL-GTM-1023 (owner « Oui ces tout GTM »): a pair is read under its OUTBOUND
+  // channel first (the one that reaches people: audiences, workflows), then any other channel, a sourcing one last
+  // (it only finds people), by the catalogue's stated type, never a slug list.
+  const coldSlugs = coldEmailSlugsCsv ? coldEmailSlugsCsv.split(",").filter((s) => s.length > 0).sort(bySlugReadOrder) : [];
   const [audit, byUser, membershipsBySlug, dashboardReturns, customerStatuses] = await Promise.all([
     deps.accountsAudit(coldEmailSlugsCsv, now),
     deps.activeUsersByUser(coldEmailSlugsCsv, now),
@@ -714,7 +720,7 @@ export async function buildCustomerHealthBoard(
     return p;
   };
 
-  // Exact cold-email feature per (org, brand) — first sorted slug the pair appears under wins (deterministic).
+  // The feature a (org, brand) is read under — the first slug in read order the pair appears under (deterministic).
   const pairFeature = new Map<string, string>();
   for (const { slug, memberships } of membershipsBySlug) {
     for (const m of memberships) {
@@ -1017,6 +1023,7 @@ export function composeOrgs(
         ownOrgReason: billing?.ownOrgReason ?? null,
         healthBadge: r.health.badge,
         brandIds: [],
+        noBrandRowsReason: null,
         runningDailyBudgetUsd: 0,
         configuredDailyBudgetUsd: 0,
         // Org-level reads: the same value on every row of the org.
@@ -1032,9 +1039,38 @@ export function composeOrgs(
       byOrg.set(r.orgId, o);
     }
     o.brandIds.push(r.brandId);
-    o.runningDailyBudgetUsd = sum2(o.runningDailyBudgetUsd, r.runningDailyBudgetUsd);
-    o.configuredDailyBudgetUsd = sum2(o.configuredDailyBudgetUsd, r.configuredDailyBudgetUsd);
-    if (BADGE_RANK[r.health.badge] > BADGE_RANK[o.healthBadge]) o.healthBadge = r.health.badge;
+    o.runningDailyBudgetUsd = sum2(o.runningDailyBudgetUsd ?? 0, r.runningDailyBudgetUsd);
+    o.configuredDailyBudgetUsd = sum2(o.configuredDailyBudgetUsd ?? 0, r.configuredDailyBudgetUsd);
+    if (o.healthBadge === null || BADGE_RANK[r.health.badge] > BADGE_RANK[o.healthBadge]) o.healthBadge = r.health.badge;
+  }
+  // A customer billing calls current or churned (not ours, not deleted) that no channel ever served a lead for has no
+  // brand row: it is still listed, its figures null with the reason, never 0 (CUSTOMER-HEALTH-ALL-GTM-1023).
+  for (const b of statuses?.values() ?? []) {
+    if (byOrg.has(b.orgId) || b.ownOrg || b.orgDeleted) continue;
+    if (b.customerStatus !== "current" && b.customerStatus !== "churned") continue;
+    byOrg.set(b.orgId, {
+      orgId: b.orgId,
+      orgExternalId: null,
+      orgName: b.orgName,
+      ownerEmail: null,
+      customerStatus: b.customerStatus,
+      customerStatusUnavailableReason: null,
+      ownOrg: false,
+      ownOrgReason: null,
+      healthBadge: null,
+      brandIds: [],
+      noBrandRowsReason: "no_lead_on_any_channel",
+      runningDailyBudgetUsd: null,
+      configuredDailyBudgetUsd: null,
+      orgBalanceUsd: null,
+      orgActualBalanceUsd: null,
+      autoTopupEnabled: null,
+      orgCashPaidUsd: null,
+      lastActiveDay: null,
+      activeDays: [],
+      paidActiveDays: null,
+      dashboardReturnFrequency: null,
+    });
   }
   // Customers first by verdict (current, never paid, churned, unknown), ours last; the board's order within (stable sort).
   const orgs = [...byOrg.values()].sort((a, b) => {
@@ -1055,4 +1091,22 @@ export function composeOrgs(
       ownOrgCount: orgs.length - counted.length,
     },
   };
+}
+
+const READ_RANK: Record<string, number> = { outbound: 0, sourcing: 2 };
+/** A channel declared at run time states no seeded type: it reads between outbound and sourcing (ordering only). */
+function readRank(slug: string): number {
+  try {
+    return READ_RANK[channelTypeOf(slug)] ?? 1;
+  } catch (error) {
+    if (error instanceof UntypedFeatureError) return 1;
+    throw error;
+  }
+}
+
+/** Outbound channels first, sourcing last, every other type between; slug order within. */
+export function bySlugReadOrder(a: string, b: string): number {
+  const ra = readRank(a);
+  const rb = readRank(b);
+  return ra !== rb ? ra - rb : a.localeCompare(b);
 }

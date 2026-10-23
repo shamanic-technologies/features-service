@@ -872,9 +872,9 @@ describe("one row per org, billing's customer verdict (CUSTOMER-HEALTH-OOM-1023)
     account({ orgId: "unbilled", brandId: "u1", status: "inactive" }),
   ];
   const statuses = new Map([
-    ["current-org", { orgId: "current-org", orgName: "Current Co", customerStatus: "current" as const, ownOrg: false, ownOrgReason: null }],
-    ["gone-org", { orgId: "gone-org", orgName: "Gone Co", customerStatus: "churned" as const, ownOrg: false, ownOrgReason: null }],
-    ["ours", { orgId: "ours", orgName: "Us", customerStatus: "current" as const, ownOrg: true, ownOrgReason: "platform_org" }],
+    ["current-org", { orgId: "current-org", orgName: "Current Co", customerStatus: "current" as const, ownOrg: false, ownOrgReason: null, orgDeleted: false }],
+    ["gone-org", { orgId: "gone-org", orgName: "Gone Co", customerStatus: "churned" as const, ownOrg: false, ownOrgReason: null, orgDeleted: false }],
+    ["ours", { orgId: "ours", orgName: "Us", customerStatus: "current" as const, ownOrg: true, ownOrgReason: "platform_org", orgDeleted: false }],
   ]);
 
   it("copies billing's verdict onto every org and its brand rows, ours last and out of the counts", async () => {
@@ -903,5 +903,27 @@ describe("one row per org, billing's customer verdict (CUSTOMER-HEALTH-OOM-1023)
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
     expect(board.orgs.every((o) => o.customerStatus === null && o.customerStatusUnavailableReason === "billing_customer_status_unavailable")).toBe(true);
     expect(board.customers).toHaveLength(5);
+  });
+});
+
+describe("every GTM channel (CUSTOMER-HEALTH-ALL-GTM-1023)", () => {
+  it("a billing current/churned customer with no lead on any channel still gets an org row, figures null, never 0", async () => {
+    const deps = makeDeps({ accounts: [account({ orgId: "with-brand", brandId: "w1", status: "active" })], recencies: [], perBrand: {} });
+    const s = (orgId: string, customerStatus: "current" | "churned" | "never_paid", extra: Partial<{ ownOrg: boolean; orgDeleted: boolean }> = {}) =>
+      [orgId, { orgId, orgName: orgId, customerStatus, ownOrg: false, ownOrgReason: null, orgDeleted: false, ...extra }] as const;
+    deps.customerStatuses = async () =>
+      new Map([s("with-brand", "current"), s("no-lead", "churned"), s("signup-only", "never_paid"), s("deleted", "churned", { orgDeleted: true }), s("ours", "current", { ownOrg: true })]);
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    expect(board.orgs.map((o) => o.orgId).sort()).toEqual(["no-lead", "with-brand"]);
+    const o = board.orgs.find((x) => x.orgId === "no-lead")!;
+    expect(o).toMatchObject({ customerStatus: "churned", brandIds: [], noBrandRowsReason: "no_lead_on_any_channel", runningDailyBudgetUsd: null, healthBadge: null, orgBalanceUsd: null });
+    expect(board.orgs.find((x) => x.orgId === "with-brand")!.noBrandRowsReason).toBeNull();
+    expect(board.orgStats.churnedCount).toBe(1);
+  });
+
+  it("a pair is read under its outbound channel first, a sourcing channel last", async () => {
+    const { bySlugReadOrder } = await import("./customer-health-compute.js");
+    expect(["lead-sourcing", "sales-cold-email-outreach", "email-sending"].sort(bySlugReadOrder)[0]).toBe("sales-cold-email-outreach");
+    expect(["lead-sourcing", "ai-meeting-booking", "email-sending"].sort(bySlugReadOrder)).toEqual(["ai-meeting-booking", "email-sending", "lead-sourcing"]);
   });
 });
