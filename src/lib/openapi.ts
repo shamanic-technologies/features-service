@@ -8465,6 +8465,7 @@ const researchFileSchema = registry.register(
     generatedAt: z.string(),
     computedAt: z.string(),
     allOrgs: z.literal(true),
+    view: z.enum(["mature", "flash"]).optional().describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it."),
     costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
     unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
     window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
@@ -8512,6 +8513,12 @@ const researchFileSchema = registry.register(
   }),
 );
 const researchFactSchema = z.object({ statement: z.string(), sample: z.string().nullable() });
+const researchViewParam = z
+  .enum(["mature", "flash"])
+  .optional()
+  .describe(
+    "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+  );
 const researchNotYet = { description: "`research_not_computed_yet`: the first build after this deploy is running.", content: { "application/json": { schema: errorResponse } } };
 
 registry.registerPath({
@@ -8521,10 +8528,10 @@ registry.registerPath({
   description:
     "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed).") }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed)."), view: researchViewParam }) },
   responses: {
     200: { description: "The research file", content: { "application/json": { schema: researchFileSchema } } },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });
@@ -8535,6 +8542,7 @@ registry.registerPath({
   summary: "The quotable Research conclusions (api-key; social-service)",
   description: "Only measured studies whose verdict is `conclusion`, with their quotable facts (Learning points and value-less points left out). Billed basis only.",
   tags: ["Internal"],
+  request: { query: z.object({ view: researchViewParam }) },
   responses: {
     200: {
       description: "The conclusions",
@@ -8560,6 +8568,7 @@ registry.registerPath({
   summary: "Every measured Research study, quotable only on a conclusion (api-key; social-service)",
   description: "Same strings and facts as the conclusions, every measured study; `quotable` is true only for a conclusion. Billed basis only.",
   tags: ["Internal"],
+  request: { query: z.object({ view: researchViewParam }) },
   responses: {
     200: {
       description: "The measured studies",
@@ -8711,10 +8720,10 @@ registry.registerPath({
   summary: "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
   description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {
     200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(researchCatalogPipeSchema) } } },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });
@@ -8799,13 +8808,13 @@ registry.registerPath({
   description:
     "RESEARCH-PERFORMANCE-1023. Per Research pipe, fleet-wide (no org or brand named), the combinations that actually sent its emails (each person's template and LLM from content-generation's record, under the workflow that served them), each version's evidence shared on its people like the catalogue's template and model bars, so the rows partition the pipe. Since inception, on the billed basis (vendor cost on `basis=actual`). Same build cadence as /internal/research.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {
     200: {
       description: "The Performance tab per pipe",
-      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), pipes: z.record(researchPerformancePipeSchema) }) } },
+      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(researchPerformancePipeSchema) }) } },
     },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });

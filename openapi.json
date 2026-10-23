@@ -33014,6 +33014,14 @@
               true
             ]
           },
+          "view": {
+            "type": "string",
+            "enum": [
+              "mature",
+              "flash"
+            ],
+            "description": "The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it."
+          },
           "costBasis": {
             "type": "string",
             "enum": [
@@ -68471,6 +68479,20 @@
             "description": "Default `user` (billed).",
             "name": "basis",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
           }
         ],
         "responses": {
@@ -68485,7 +68507,7 @@
             }
           },
           "400": {
-            "description": "`basis_unrecognised`",
+            "description": "`basis_unrecognised` / `view_unrecognised`",
             "content": {
               "application/json": {
                 "schema": {
@@ -68529,6 +68551,22 @@
         "description": "Only measured studies whose verdict is `conclusion`, with their quotable facts (Learning points and value-less points left out). Billed basis only.",
         "tags": [
           "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
+          }
         ],
         "responses": {
           "200": {
@@ -68690,6 +68728,22 @@
         "description": "Same strings and facts as the conclusions, every measured study; `quotable` is true only for a conclusion. Billed basis only.",
         "tags": [
           "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
+          }
         ],
         "responses": {
           "200": {
@@ -68871,6 +68925,20 @@
             },
             "required": false,
             "name": "basis",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
             "in": "query"
           }
         ],
@@ -71634,7 +71702,7 @@
             }
           },
           "400": {
-            "description": "`basis_unrecognised`",
+            "description": "`basis_unrecognised` / `view_unrecognised`",
             "content": {
               "application/json": {
                 "schema": {
@@ -71691,6 +71759,20 @@
             "required": false,
             "name": "basis",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
           }
         ],
         "responses": {
@@ -71710,6 +71792,14 @@
                         "user",
                         "actual"
                       ]
+                    },
+                    "view": {
+                      "type": "string",
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ],
+                      "description": "The half every figure is read on (MATURITY-VIEW-1023)."
                     },
                     "pipes": {
                       "type": "object",
@@ -72479,6 +72569,7 @@
                   "required": [
                     "computedAt",
                     "costBasis",
+                    "view",
                     "pipes"
                   ]
                 }
@@ -72486,7 +72577,7 @@
             }
           },
           "400": {
-            "description": "`basis_unrecognised`",
+            "description": "`basis_unrecognised` / `view_unrecognised`",
             "content": {
               "application/json": {
                 "schema": {

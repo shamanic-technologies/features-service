@@ -751,9 +751,15 @@ export function catalogRoiOfFigure(f: LegWorkflowFigures["roi"]): CatalogRoi {
  * older, and a measured 30x on a workflow with no outcome). A row without `figures` (a ranking persisted before them)
  * leaves the page as built.
  */
-export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(pipe: T, rows: ReadonlyArray<{ workflowDynastySlug: string; figures?: LegWorkflowFigures }> | null): T {
+export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(
+  pipe: T,
+  rows: ReadonlyArray<{ workflowDynastySlug: string; figures?: LegWorkflowFigures; figuresByView?: { mature: LegWorkflowFigures; flash: LegWorkflowFigures } }> | null,
+  /** The page's view (MATURITY-VIEW-1023): the row's figures on that half; a ranking stored before held none (page as built). */
+  view?: "mature" | "flash",
+): T {
   if (!rows) return pipe;
-  const bySlug = new Map(rows.filter((r) => r.figures).map((r) => [r.workflowDynastySlug, r.figures!]));
+  const figuresOf = (r: (typeof rows)[number]) => (view ? r.figuresByView?.[view] : r.figures);
+  const bySlug = new Map(rows.filter((r) => figuresOf(r)).map((r) => [r.workflowDynastySlug, figuresOf(r)!]));
   return {
     ...pipe,
     workflows: pipe.workflows.map((w) => {

@@ -111,7 +111,16 @@ export interface ResearchUnavailable {
   reason: string;
 }
 
+/**
+ * Which half every figure of a Research build is read on (MATURITY-VIEW-1023, owner 2026-10-23: « tous ces graphes,
+ * tables, stats en deux versions tout le temps (mature et flash) »): `mature` = people we started writing to before the
+ * leg's cutoff, every outcome they sent since; `flash` = everything to date. The order a pipe picks by never moves.
+ */
+export type ResearchView = "mature" | "flash";
+
 export interface ResearchFile {
+  /** The half every figure of this file is read on (absent on a build stored before MATURITY-VIEW-1023). */
+  view?: ResearchView;
   generatedAt: string;
   /** When this body was computed (equals `generatedAt`; named for the live read). */
   computedAt: string;
