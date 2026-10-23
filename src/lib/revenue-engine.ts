@@ -238,6 +238,11 @@ export interface OrganizationRow {
   /** Company domain (no protocol, no www) for logo.dev. First non-null across the org's leads; null when none known. */
   orgDomain: string | null;
   topPerson: TopPerson;
+  /**
+   * How many distinct people (leads, deduped by lead id) of this organisation the row is built from: the same
+   * people whose expected value rolls up into `expectedRevenueUsd` (COMPANY-PEOPLE-COUNT-1023). Always >= 1.
+   */
+  peopleCount: number;
   tags: string[];
   expectedRevenueUsd: number;
   /** Most-advanced (max) event date for the org. Null when no event date is known. */
@@ -281,6 +286,7 @@ export function appendListedOrganizations(
       orgLogoUrl: top.orgLogoUrl,
       orgDomain: members.find((m) => m.orgDomain)?.orgDomain ?? null,
       topPerson: { firstName: top.firstName, lastName: top.lastName, photoUrl: top.photoUrl },
+      peopleCount: new Set(members.map((m) => m.leadId)).size,
       tags: [],
       expectedRevenueUsd: 0,
       mostAdvancedDate: null,
@@ -1041,6 +1047,7 @@ export function computeRevenue(
         orgLogoUrl: top.person.orgLogoUrl,
         orgDomain,
         topPerson: { firstName: top.person.firstName, lastName: top.person.lastName, photoUrl: top.person.photoUrl },
+        peopleCount: new Set(bucket.map((e) => e.person.leadId)).size,
         tags,
         expectedRevenueUsd: orgEv,
         mostAdvancedDate: orgDate,
