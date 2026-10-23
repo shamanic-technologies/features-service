@@ -14,12 +14,14 @@ export interface OtherPipe {
   featureSlug: string;
   /** The leg as computed on (stored spelling). */
   legKey: string;
+  /** The step the pipe lands on (the leg's `to` key): the outcome sections list the pipes landing on their step. */
+  toStep: string;
 }
 
 export interface CatalogueChannelLike {
   slug: string;
   shortDescription: string;
-  stepTransitions: ReadonlyArray<{ legKey: string; to: { label: string } }>;
+  stepTransitions: ReadonlyArray<{ legKey: string; to: { key: string; label: string } }>;
 }
 
 /**
@@ -43,7 +45,7 @@ export function otherPipesOf(
       const id = `${c.slug}|${served}`;
       if (seen.has(id) || skip.has(id) || !assigned.has(`${c.slug}|${legKey}`)) continue;
       seen.add(id);
-      out.push({ entry: { id, channel: c.slug, leg: served, outcome: t.to.label, description: c.shortDescription }, featureSlug: c.slug, legKey });
+      out.push({ entry: { id, channel: c.slug, leg: served, outcome: t.to.label, description: c.shortDescription }, featureSlug: c.slug, legKey, toStep: t.to.key });
     }
   }
   return out;

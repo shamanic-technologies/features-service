@@ -5,7 +5,7 @@ import { STUDIED_PIPES } from "./assemble.js";
 const channel = (slug: string, legs: Array<[string, string]>) => ({
   slug,
   shortDescription: `${slug} caption`,
-  stepTransitions: legs.map(([legKey, label]) => ({ legKey, to: { label } })),
+  stepTransitions: legs.map(([legKey, label]) => ({ legKey, to: { key: legKey.slice(legKey.lastIndexOf("_to_") + 4), label } })),
 });
 
 describe("every pipe on the Research page (WA-PIPE-RESEARCH-1023)", () => {
@@ -30,7 +30,7 @@ describe("every pipe on the Research page (WA-PIPE-RESEARCH-1023)", () => {
       "cold-whatsapp-outreach|lead_found_to_conversation",
       "cold-whatsapp-outreach|signup_to_paid_client",
     ]);
-    expect(out[0]).toMatchObject({ featureSlug: "cold-whatsapp-outreach", legKey: "start_to_signup", entry: { channel: "cold-whatsapp-outreach", leg: "start_to_signup", outcome: "Signup", description: "cold-whatsapp-outreach caption" } });
+    expect(out[0]).toMatchObject({ featureSlug: "cold-whatsapp-outreach", legKey: "start_to_signup", toStep: "signup", entry: { channel: "cold-whatsapp-outreach", leg: "start_to_signup", outcome: "Signup", description: "cold-whatsapp-outreach caption" } });
   });
 
   it("speaks the pipe's own outcome", () => {
