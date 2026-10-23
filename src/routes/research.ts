@@ -55,7 +55,7 @@ import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
-import { readBookedAfterReply, readGenerationRuns, readJevInputs, readLegSpendTotal, readMeetingAttribution, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
+import { readBookedAfterReply, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
 import { fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
@@ -106,58 +106,27 @@ export function spendWindows(now: Date, cutoffIso: string | null): Array<{ month
 }
 
 /**
- * Spend per workflow version over one run-start window, on ONE org's campaigns of the leg (incurred, like the ranking).
- * Read org by org with a single grouping key: the fleet aggregation co-grouping version AND campaign is runs-service's
- * vendor-priced one, which timed out under a deploy wave (2026-10-18); the single-key billed read answers in ~0.15 s.
- */
-async function fetchWindowSpend(featureSlug: string, ids: readonly string[], pricing: Pricing, from: string, to: string): Promise<CostGroup[]> {
-  const base = process.env.RUNS_SERVICE_URL;
-  const key = process.env.RUNS_SERVICE_API_KEY;
-  if (!base || !key) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  const params = new URLSearchParams({
-    groupBy: "workflowSlug",
-    featureSlugs: runsSpendSlugsParam(featureSlug, "own"),
-    campaignIds: ids.join(","),
-    startedAfter: from,
-    startedBefore: startedBeforeParam(to),
-  });
-  const res = await fetchWithRetry(runsCostsUrl(base, "public", pricing, params), { headers: { "x-api-key": key } });
-  if (!res.ok) throw new Error(`runs-service dated research spend failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  const body = (await res.json()) as { groups?: CostGroup[] };
-  if (!Array.isArray(body.groups)) throw new Error("runs-service dated research spend: no groups array");
-  return body.groups;
-}
-
-/**
  * A window that ENDED more than a day ago is read once a day (its runs are started; a late actualization is rare and
  * lands within the day): each build would otherwise re-read every month since February. Open windows are read every build.
  */
 const CLOSED_WINDOW_HOLD_MS = 24 * 60 * 60_000;
 const closedWindows = new Map<string, { at: number; groups: CostGroup[] }>();
-async function closedWindowSpend(featureSlug: string, ids: readonly string[], pricing: Pricing, from: string, to: string, now: Date): Promise<CostGroup[]> {
+async function closedWindowSpend(featureSlug: string, orgId: string, ids: readonly string[], pricing: Pricing, from: string, to: string, now: Date): Promise<CostGroup[]> {
   const closed = Date.parse(to) < now.getTime() - 24 * 60 * 60_000;
-  const key = `${featureSlug}|${pricing}|${from}|${to}|${ids.join(",")}`;
+  const key = `${featureSlug}|${pricing}|${orgId}|${from}|${to}|${ids.join(",")}`;
   const held = closedWindows.get(key);
   if (closed && held && now.getTime() - held.at < CLOSED_WINDOW_HOLD_MS) return held.groups;
-  const groups = await fetchWindowSpend(featureSlug, ids, pricing, from, to);
+  const groups = await readOrgWindowSpend(featureSlug, orgId, ids, pricing, { from, to });
   if (closed) closedWindows.set(key, { at: now.getTime(), groups });
   return groups;
 }
 
-async function fetchDatedSpend(featureSlug: string, campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>, pricing: Pricing, cutoffIso: string | null, now: Date): Promise<DatedSpendRow[]> {
-  const byOrg = new Map<string, string[]>();
-  for (const c of campaigns) byOrg.set(c.orgId, [...new Set([...(byOrg.get(c.orgId) ?? []), c.campaignId])]);
-  const reads = spendWindows(now, cutoffIso).flatMap((w) =>
-    [...byOrg].flatMap(([orgId, ids]) => {
-      const sorted = [...ids].sort();
-      const chunks: string[][] = [];
-      for (let i = 0; i < sorted.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) chunks.push(sorted.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
-      return chunks.map((c) => ({ w, orgId, c }));
-    }),
-  );
+export async function fetchDatedSpend(featureSlug: string, campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>, pricing: Pricing, cutoffIso: string | null, now: Date): Promise<DatedSpendRow[]> {
+  const chunks = orgChunks(campaigns);
+  const reads = spendWindows(now, cutoffIso).flatMap((w) => chunks.map(({ orgId, ids }) => ({ w, orgId, c: ids })));
   // the vendor-priced twin one read at a time (runs-service's heavy aggregation), the billed one three at a time
   const rows = await mapWithConcurrency(reads, pricing === "gross" ? 3 : 1, async ({ w, orgId, c }) => {
-    const groups = await closedWindowSpend(featureSlug, c, pricing, w.from, w.to, now);
+    const groups = await closedWindowSpend(featureSlug, orgId, c, pricing, w.from, w.to, now);
     return groups.flatMap((g): DatedSpendRow[] => {
       const slug = g.dimensions.workflowSlug;
       if (!slug || slug === "__total__") return [];
@@ -408,15 +377,16 @@ async function generationInputs(
 }
 
 /** The studies read on each email sent; null while our copy of the outreach facts holds no send of these legs yet. */
-async function sendsInputs(reply: { campaignIds: string[]; cutoffIso: string | null }, visit: { campaignIds: string[]; cutoffIso: string | null }, pricing: Pricing) {
+type SpendScope = { campaignIds: string[]; campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>; cutoffIso: string | null };
+async function sendsInputs(reply: SpendScope, visit: SpendScope, pricing: Pricing) {
   const [rg, vg] = await Promise.all([readSendGroups(reply.campaignIds, reply.cutoffIso), readSendGroups(visit.campaignIds, visit.cutoffIso)]);
   if (!rg.length && !vg.length) return null;
   const prices = Object.fromEntries(await readPerEmailPrices());
   // On the vendor basis the per-email charges are scaled by the leg's vendor ÷ billed spend (the rollup states billed).
-  const splitOf = async (r: { campaignIds: string[]; cutoffIso: string | null }) => {
-    const total = await readLegSpendTotal(COLD_EMAIL, r.campaignIds, pricing, r.cutoffIso);
+  const splitOf = async (r: SpendScope) => {
+    const total = await readLegSpendTotal(COLD_EMAIL, r.campaigns, pricing, r.cutoffIso);
     if (pricing === "gross") return { totalUsd: total, perEmailUsdByMonth: prices };
-    const billed = await readLegSpendTotal(COLD_EMAIL, r.campaignIds, "gross", r.cutoffIso);
+    const billed = await readLegSpendTotal(COLD_EMAIL, r.campaigns, "gross", r.cutoffIso);
     const k = billed > 0 ? total / billed : 0;
     return { totalUsd: total, perEmailUsdByMonth: Object.fromEntries(Object.entries(prices).map(([m, v]) => [m, v * k])) };
   };

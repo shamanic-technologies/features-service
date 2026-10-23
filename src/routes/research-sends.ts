@@ -164,21 +164,49 @@ export async function readPerEmailPrices(): Promise<Map<string, number>> {
   return value;
 }
 
-/** The leg's spend of runs started before the cutoff (incurred, the ranking's basis), on the read's pricing. */
-export async function readLegSpendTotal(featureSlug: string, campaignIds: readonly string[], pricing: Pricing, cutoffIso: string | null): Promise<number> {
+/**
+ * One ORG's spend per workflow version over a run-start window, on its campaigns of the leg. Read through the ORG-scoped
+ * aggregation (x-org-id): runs-service's no-auth public aggregation takes no window and answers LIFETIME whatever
+ * `startedAfter`/`startedBefore` say (2026-10-23: every month of the Research cost line read $9,026, the lifetime spend,
+ * so the study spread it evenly at ~$901 a month). The vendor twin is the same route either way.
+ */
+export async function readOrgWindowSpend(
+  featureSlug: string,
+  orgId: string,
+  campaignIds: readonly string[],
+  pricing: Pricing,
+  window: { from?: string; to?: string },
+): Promise<CostGroup[]> {
   const base = process.env.RUNS_SERVICE_URL;
   const key = process.env.RUNS_SERVICE_API_KEY;
   if (!base || !key) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  const ids = [...new Set(campaignIds)].sort();
+  const params = new URLSearchParams({ groupBy: "workflowSlug", featureSlugs: runsSpendSlugsParam(featureSlug, "own"), campaignIds: campaignIds.join(",") });
+  if (window.from) params.set("startedAfter", window.from);
+  if (window.to) params.set("startedBefore", startedBeforeParam(window.to));
+  const res = await fetchWithRetry(runsCostsUrl(base, "org", pricing, params), { headers: { "x-api-key": key, "x-org-id": orgId } });
+  if (!res.ok) throw new Error(`runs-service research spend (org ${orgId}) failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  const body = (await res.json()) as { groups?: CostGroup[] };
+  if (!Array.isArray(body.groups)) throw new Error("runs-service research spend: no groups array");
+  return body.groups;
+}
+
+/** Campaigns grouped per org, each org's ids sorted and chunked to runs-service's per-request cap. */
+export function orgChunks(campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>): Array<{ orgId: string; ids: string[] }> {
+  const byOrg = new Map<string, Set<string>>();
+  for (const c of campaigns) byOrg.set(c.orgId, (byOrg.get(c.orgId) ?? new Set()).add(c.campaignId));
+  return [...byOrg].flatMap(([orgId, set]) => {
+    const sorted = [...set].sort();
+    const out: Array<{ orgId: string; ids: string[] }> = [];
+    for (let i = 0; i < sorted.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) out.push({ orgId, ids: sorted.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST) });
+    return out;
+  });
+}
+
+/** The leg's spend of runs started before the cutoff (incurred, the ranking's basis), on the read's pricing. */
+export async function readLegSpendTotal(featureSlug: string, campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>, pricing: Pricing, cutoffIso: string | null): Promise<number> {
   let total = 0;
-  for (let i = 0; i < ids.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-    const params = new URLSearchParams({ groupBy: "workflowSlug", featureSlugs: runsSpendSlugsParam(featureSlug, "own"), campaignIds: ids.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST).join(",") });
-    if (cutoffIso) params.set("startedBefore", startedBeforeParam(cutoffIso));
-    const res = await fetchWithRetry(runsCostsUrl(base, "public", pricing, params), { headers: { "x-api-key": key } });
-    if (!res.ok) throw new Error(`runs-service research leg spend failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-    const body = (await res.json()) as { groups?: CostGroup[] };
-    if (!Array.isArray(body.groups)) throw new Error("runs-service research leg spend: no groups array");
-    for (const g of body.groups) {
+  for (const { orgId, ids } of orgChunks(campaigns)) {
+    for (const g of await readOrgWindowSpend(featureSlug, orgId, ids, pricing, { to: cutoffIso ?? undefined })) {
       if (!g.dimensions.workflowSlug || g.dimensions.workflowSlug === "__total__") continue;
       total += Number(selectCostCentsString(g, "totalCostInUsdCents", pricing, "incurred")) / 100;
     }
