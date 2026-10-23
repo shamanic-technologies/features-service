@@ -45,3 +45,33 @@ describe("estimated workflow study (COST-ACCOUNTING-1023-P3)", () => {
     expect(workflowEstimateStudy({ pipe: "p", outcomesRequired: 1, dayBins, groups: [] }).headline).toBe("No one emailed yet.");
   });
 });
+
+describe("estimate copy after the prod probe (2026-10-23)", () => {
+  it("names the cheapest workflow WITH an outcome, and says an unbounded range has no upper bound", () => {
+    const st = workflowEstimateStudy({
+      pipe: "cold-email-positive-reply",
+      outcomesRequired: 1,
+      dayBins,
+      groups: [
+        { key: "zero", label: "Zero", slices: [old(200)], outcomes: 0, spendUsd: 5 },
+        { key: "real", label: "Real", slices: [old(20_000)], outcomes: 40, spendUsd: 4000 },
+        { key: "other", label: "Other", slices: [old(20_000)], outcomes: 20, spendUsd: 4000 },
+      ],
+    });
+    expect(st.charts[0]!.points[0]!.key).toBe("zero");
+    expect(st.headline).toMatch(/^Estimated, young cohorts included: Real at/);
+    // a weak prior (rates far apart across workflows) leaves a 0-outcome workflow with no upper bound
+    const weak = workflowEstimateStudy({
+      pipe: "cold-email-positive-reply",
+      outcomesRequired: 1,
+      dayBins,
+      groups: [
+        { key: "zero", label: "Zero", slices: [old(30)], outcomes: 0, spendUsd: 3 },
+        { key: "hot", label: "Hot", slices: [old(1000)], outcomes: 100, spendUsd: 100 },
+        { key: "cold", label: "Cold", slices: [old(20_000)], outcomes: 4, spendUsd: 100 },
+      ],
+    });
+    expect(weak.charts[0]!.points.find((p) => p.key === "zero")!.note).toMatch(/no upper bound yet/);
+    expect(st.conclusion.join(" ")).toMatch(/1 workflow has no positive reply yet/);
+  });
+});

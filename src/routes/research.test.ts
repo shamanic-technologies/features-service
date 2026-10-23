@@ -79,7 +79,7 @@ describe("workflowEstimateGroupsOf (COST-ACCOUNTING-1023-P3)", () => {
         { workflowSlug: "keel-v3", servedDay: "", contacted: 5, positiveReplies: 1 },
       ],
       new Map([["keel-v2", "keel"], ["keel-v3", "keel"]]),
-      [{ workflowDynastySlug: "keel", billedSpendUsd: 12.5 }],
+      [{ workflowDynastySlug: "keel", basis: "mature", spentUsd: 3, figuresByView: { flash: { spentUsd: { value: 12.5 } } } }],
       (d) => d.toUpperCase(),
       new Date("2026-10-23T15:00:00Z"),
     );
