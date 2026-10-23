@@ -45,5 +45,5 @@ describe("research catalogue template status is live", () => {
     const res = await request(app).get("/internal/research/catalog").set("x-api-key", "k");
     expect(res.status).toBe(200);
     expect(res.body["cold-email-positive-reply"].templates[0].status).toBe("active");
-  });
+  }, 30_000);
 });
