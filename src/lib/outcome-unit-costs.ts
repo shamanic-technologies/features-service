@@ -3,82 +3,143 @@
  * skill `cost-accounting`). Pure.
  *
  * runs-service is the general ledger: each run states the outcome occurrences it produced and consumed, and every
- * produced occurrence carries its OWN production cost (its run's spend). This module rolls those totals up the graph
- * the declarations themselves draw (Leontief / bill of materials):
+ * produced occurrence carries its own production cost. This module prices one occurrence of an outcome S by the
+ * doctrine's three rules, on totals grouped by (outcome, campaign):
  *
- *   unit(S) = own(S) / n(S) + Σ_q  consumed(S, q) / n(S) × unit(q)
+ *  - Rule 3, the DECLARED output takes the pipe's whole cost: everything the campaigns whose leg ends on S produced
+ *    (leads found, emails checked, messages written and sent, follow-ups included) is S's production.
+ *  - Rule 2, normal loss is absorbed by the good units: the sends nobody answered are part of that production, so they
+ *    ride the replies (a positive reply carries the ~1,000 sends behind it, never only the one it answered).
+ *  - An input S's production consumed from ANOTHER pipe (a booked meeting consuming a positive reply) enters at that
+ *    input's own unit cost, every occurrence of it IN THE BRANDS WHERE S HAPPENED counted (rule 2 again: the replies
+ *    that never booked ride the meetings; a brand with no S is left out, so a brand that never reports a meeting is
+ *    never read as a brand that books none, the meeting-population rule made generic), solved over the whole graph (Leontief; a cycle is solved as a Neumann series, a diverging
+ *    one is named). A reused input is charged again (standard cost on reuse).
  *
- * where `consumed(S, q)` counts the occurrences of q that S's occurrences consumed. A reused input is charged its
- * unit cost again (standard cost on reuse: a past figure never moves); the gap with what was really spent is the
- * ledger's reuse gain, never folded in here. The provenance is MEASURED (who consumed what), never the catalogue's
- * guess. An input outcome nobody produced in the scope prices at nothing it has (`unpricedInputs`), stated, never 0.
+ *   unit(S) = [ own spend of S's production + Σ_q cross(S, q) × unit(q) ] ÷ n(S)
  *
- * The same walk splits a unit cost by STAGE: how much of one positive reply is lead finding, email checking,
- * writing, sending. `requirement(q)` = the occurrences of q one unit of S needs, along every path; contribution(q) =
- * requirement(q) × own(q) / n(q). The contributions add up to unit(S) exactly (up to float rounding).
+ * n(S) counts S's occurrences from S's own pipes and from runs on no campaign (a reply judged off any campaign); an S
+ * a pipe aimed elsewhere caused is a $0 BY-PRODUCT (rule 3), counted apart, never in n(S). Spend of a campaign whose leg
+ * is unknown, or with no campaign and an outcome that is no one's output (our newsletter's sends), is unattributed,
+ * stated, never spread.
  */
 
-export interface OutcomeTotals {
+export interface ProducedRow {
   outcomeKey: string;
-  /** Occurrences produced in the scope. */
+  campaignId: string | null;
+  /** The producing run's brand (null = none stated). */
+  brandId?: string | null;
   produced: number;
   /** Their own production cost (the producing runs' spend), USD, on the basis read. */
   ownCostUsd: number;
 }
 
-export interface OutcomeConsumption {
-  /** The outcome whose occurrences consumed. */
+export interface ConsumedRow {
+  /** The outcome whose occurrences consumed (the consuming run's output). */
   consumerKey: string;
-  /** The outcome consumed. */
   consumedKey: string;
-  /** Consumptions in the scope. */
+  /** The consuming run's campaign. */
+  campaignId: string | null;
+  brandId?: string | null;
   count: number;
 }
 
 export interface StageContribution {
   outcomeKey: string;
-  /** Occurrences of this stage one unit of the outcome needs, every path summed. */
+  /** Occurrences of this stage one unit of the outcome needs (losses included). */
   requirementPerUnit: number;
   /** USD of one unit of the outcome spent at this stage. */
   costPerUnitUsd: number;
+  /** `own` = done by the outcome's own pipes; `input` = bought from another pipe at its unit cost. */
+  source: "own" | "input";
 }
 
 export interface OutcomeUnitCost {
   outcomeKey: string;
+  /** Occurrences counted (own pipes + no campaign). */
   produced: number;
-  /** Full production cost of one occurrence, every upstream stage included. Null when nothing was produced. */
+  /** Occurrences a pipe aimed at another outcome caused: $0 by-products, never in the figure. */
+  byProducts: number;
+  /** Full production cost of one occurrence. Null when nothing was produced (or the cycle diverges). */
   unitCostUsd: number | null;
-  /** Its own stage only (the producing runs' spend per occurrence). */
+  /** Its own pipes' spend per occurrence, inputs from other pipes left out. */
   ownUnitCostUsd: number | null;
-  /** Every stage it stands on (itself first), largest cost first. */
+  /** Every stage it stands on, largest cost first; they add up to `unitCostUsd`. */
   stages: StageContribution[];
   /** Inputs consumed that nothing in the scope produced: their cost is unknown here, so `unitCostUsd` is a floor. */
   unpricedInputs: string[];
-  /** Why `unitCostUsd` is null though occurrences were produced: a consumption cycle needing one occurrence or more per pass. */
   unpricedReason?: "consumption_cycle_diverges";
 }
 
-/** PURE. Unit cost of every produced outcome of the scope. Never throws: a consumption cycle is solved, or named when it diverges. */
-export function rollUpOutcomeUnitCosts(totals: readonly OutcomeTotals[], consumptions: readonly OutcomeConsumption[]): Map<string, OutcomeUnitCost> {
-  const byKey = new Map(totals.map((t) => [t.outcomeKey, t]));
-  const inputsOf = new Map<string, Map<string, number>>();
-  for (const c of consumptions) {
+export interface RollUp {
+  units: Map<string, OutcomeUnitCost>;
+  /** Spend on no outcome's production (unknown leg, or no campaign and no one's output), USD. */
+  unattributedCostUsd: number;
+}
+
+/**
+ * PURE. `outputOf(campaignId)` = the step the campaign's leg ends on (null = unknown); `pipeOutputs` = every step a
+ * catalogue pipe ends on (the customer's own team's pipes included): only those are outcomes a pipe produces, so an
+ * occurrence on no campaign counts only for one of them (a reply judged off any campaign does; our newsletter's sends,
+ * no pipe's output, do not).
+ */
+export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consumed: readonly ConsumedRow[], outputOf: (campaignId: string) => string | null, pipeOutputs: ReadonlySet<string>): RollUp {
+  const out = (c: string | null) => (c ? outputOf(c) : null);
+  // n(S): own pipes + no campaign; by-products apart
+  const n = new Map<string, number>();
+  const nByBrand = new Map<string, Map<string, number>>();
+  const byProducts = new Map<string, number>();
+  for (const r of produced) {
+    const o = out(r.campaignId);
+    if ((r.campaignId === null && pipeOutputs.has(r.outcomeKey)) || o === r.outcomeKey) {
+      n.set(r.outcomeKey, (n.get(r.outcomeKey) ?? 0) + r.produced);
+      const b = r.brandId ?? "";
+      const m = nByBrand.get(r.outcomeKey) ?? new Map<string, number>();
+      m.set(b, (m.get(b) ?? 0) + r.produced);
+      nByBrand.set(r.outcomeKey, m);
+    } else byProducts.set(r.outcomeKey, (byProducts.get(r.outcomeKey) ?? 0) + r.produced);
+  }
+  const isOutput = (k: string) => (n.get(k) ?? 0) > 0;
+  // own spend of each S's production, by key; what each S's pipes produced inside
+  const ownByKey = new Map<string, Map<string, { count: number; cost: number }>>();
+  let unattributedCostUsd = 0;
+  const add = (s: string, key: string, count: number, cost: number) => {
+    const m = ownByKey.get(s) ?? new Map<string, { count: number; cost: number }>();
+    const e = m.get(key) ?? { count: 0, cost: 0 };
+    e.count += count;
+    e.cost += cost;
+    m.set(key, e);
+    ownByKey.set(s, m);
+  };
+  for (const r of produced) {
+    const o = out(r.campaignId);
+    if (o && isOutput(o)) add(o, r.outcomeKey, r.produced, r.ownCostUsd); // the campaign's pipe production (a by-product's spend too: rule 3)
+    else if (r.campaignId === null && isOutput(r.outcomeKey)) add(r.outcomeKey, r.outcomeKey, r.produced, r.ownCostUsd); // S's own stage off any campaign
+    else unattributedCostUsd += r.ownCostUsd;
+  }
+  // inputs from OTHER pipes: consumptions by S's production of a key S's pipes do not produce
+  const cross = new Map<string, Map<string, number>>();
+  for (const c of consumed) {
     if (c.count <= 0) continue;
-    const m = inputsOf.get(c.consumerKey) ?? new Map<string, number>();
+    const o = out(c.campaignId);
+    const s = o && isOutput(o) ? o : c.campaignId === null && isOutput(c.consumerKey) ? c.consumerKey : null;
+    if (!s || c.consumedKey === s || ownByKey.get(s)?.has(c.consumedKey)) continue;
+    const m = cross.get(s) ?? new Map<string, number>();
     m.set(c.consumedKey, (m.get(c.consumedKey) ?? 0) + c.count);
-    inputsOf.set(c.consumerKey, m);
+    cross.set(s, m);
+  }
+  // Normal loss on a cross-pipe input: every occurrence of it in the brands where S happened, never fewer than consumed.
+  for (const [s, inputs] of cross) {
+    const brands = new Set([...(nByBrand.get(s) ?? new Map<string, number>()).entries()].filter(([, v]) => v > 0).map(([b]) => b));
+    for (const [q, consumedCount] of inputs) {
+      const pool = [...(nByBrand.get(q) ?? new Map<string, number>()).entries()].reduce((a, [b, v]) => a + (brands.has(b) ? v : 0), 0);
+      inputs.set(q, Math.max(consumedCount, pool));
+    }
   }
 
-  const own = (k: string): number | null => {
-    const t = byKey.get(k);
-    return t && t.produced > 0 ? t.ownCostUsd / t.produced : null;
-  };
-
-  // Requirement vector of one unit of `root`: occurrences of every stage, every path. The Neumann series
-  // r = e + eA + eA² + ..., A(S, q) = consumed(S, q) / n(S): a cycle (a follow-up consuming the message before it, a
-  // meeting re-stated) is solved, not refused; it converges whenever each pass through the cycle needs less than one
-  // occurrence, else the root has no finite unit cost (`consumption_cycle_diverges`).
-  const requirementOf = (root: string): { req: Map<string, number>; unpriced: Set<string>; diverges: boolean } => {
+  const ownUnit = (s: string) => [...(ownByKey.get(s)?.values() ?? [])].reduce((a, e) => a + e.cost, 0) / n.get(s)!;
+  // Requirement of one unit of root over the cross-pipe graph (Neumann series; diverges = no finite cost).
+  const requirementOf = (root: string) => {
     const req = new Map<string, number>();
     const unpriced = new Set<string>();
     let term = new Map<string, number>([[root, 1]]);
@@ -92,44 +153,51 @@ export function rollUpOutcomeUnitCosts(totals: readonly OutcomeTotals[], consump
       if (size > 1e9) break;
       const next = new Map<string, number>();
       for (const [k, q] of term) {
-        const t = byKey.get(k);
-        if (!t || t.produced <= 0) {
+        if (!isOutput(k)) {
           if (k !== root) unpriced.add(k);
           continue;
         }
-        for (const [input, count] of inputsOf.get(k) ?? []) next.set(input, (next.get(input) ?? 0) + (q * count) / t.produced);
+        for (const [input, count] of cross.get(k) ?? []) next.set(input, (next.get(input) ?? 0) + (q * count) / n.get(k)!);
       }
       term = next;
     }
     return { req, unpriced, diverges: true };
   };
 
-  const out = new Map<string, OutcomeUnitCost>();
-  for (const t of totals) {
-    if (t.produced <= 0) {
-      out.set(t.outcomeKey, { outcomeKey: t.outcomeKey, produced: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] });
+  const units = new Map<string, OutcomeUnitCost>();
+  const keys = new Set([...produced.map((r) => r.outcomeKey), ...consumed.map((c) => c.consumerKey)]);
+  for (const s of keys) {
+    const bp = byProducts.get(s) ?? 0;
+    if (!isOutput(s)) {
+      units.set(s, { outcomeKey: s, produced: 0, byProducts: bp, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] });
       continue;
     }
-    const { req, unpriced, diverges } = requirementOf(t.outcomeKey);
+    const { req, unpriced, diverges } = requirementOf(s);
     if (diverges) {
-      out.set(t.outcomeKey, { outcomeKey: t.outcomeKey, produced: t.produced, unitCostUsd: null, ownUnitCostUsd: own(t.outcomeKey), stages: [], unpricedInputs: [], unpricedReason: "consumption_cycle_diverges" });
+      units.set(s, { outcomeKey: s, produced: n.get(s)!, byProducts: bp, unitCostUsd: null, ownUnitCostUsd: ownUnit(s), stages: [], unpricedInputs: [], unpricedReason: "consumption_cycle_diverges" });
       continue;
     }
-    const stages: StageContribution[] = [];
-    for (const [k, r] of req) {
-      const o = own(k);
-      if (o === null) continue;
-      stages.push({ outcomeKey: k, requirementPerUnit: r, costPerUnitUsd: r * o });
+    // stages: every pipe on the path, each split by the keys its production holds
+    const stages = new Map<string, StageContribution>();
+    for (const [pipeOut, r] of req) {
+      if (!isOutput(pipeOut)) continue;
+      for (const [key, e] of ownByKey.get(pipeOut) ?? []) {
+        const st = stages.get(key) ?? { outcomeKey: key, requirementPerUnit: 0, costPerUnitUsd: 0, source: pipeOut === s ? ("own" as const) : ("input" as const) };
+        st.requirementPerUnit += (r * e.count) / n.get(pipeOut)!;
+        st.costPerUnitUsd += (r * e.cost) / n.get(pipeOut)!;
+        stages.set(key, st);
+      }
     }
-    stages.sort((a, b) => b.costPerUnitUsd - a.costPerUnitUsd || a.outcomeKey.localeCompare(b.outcomeKey));
-    out.set(t.outcomeKey, {
-      outcomeKey: t.outcomeKey,
-      produced: t.produced,
-      unitCostUsd: stages.reduce((s, x) => s + x.costPerUnitUsd, 0),
-      ownUnitCostUsd: own(t.outcomeKey),
-      stages,
+    const list = [...stages.values()].sort((a, b) => b.costPerUnitUsd - a.costPerUnitUsd || a.outcomeKey.localeCompare(b.outcomeKey));
+    units.set(s, {
+      outcomeKey: s,
+      produced: n.get(s)!,
+      byProducts: bp,
+      unitCostUsd: list.reduce((a, x) => a + x.costPerUnitUsd, 0),
+      ownUnitCostUsd: ownUnit(s),
+      stages: list,
       unpricedInputs: [...unpriced].sort(),
     });
   }
-  return out;
+  return { units, unattributedCostUsd };
 }

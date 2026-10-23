@@ -27,6 +27,10 @@ export interface OutcomeCostInput {
   unit: OutcomeUnitCost | null;
   /** Share of the spend in scope whose run declared an outcome, 0..100; null = not served. */
   coveragePct: number | null;
+  /** Days since inception the ledger has not computed yet: the figure stands on the others. */
+  daysMissing?: number;
+  /** Fleet spend on no outcome's production (unknown leg, or no pipe's output: our newsletter), USD. */
+  unattributedCostUsd?: number;
   /** The maturity bar of the outcome (`lib/maturity.ts`): fewer occurrences read Learning. */
   outcomesRequired: number;
   /** A catalogue step key in words ("Email checked"). */
@@ -58,16 +62,17 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
     return notMeasuredStudy({ ...base, headline: "No cost carried yet.", reason: `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} declared to the ledger, but no spend is spread on ${u.produced === 1 ? "it" : "them"} yet: runs-service's ledger spreads each day's spend on its next pass.` });
   }
   const cov = input.coveragePct;
-  const floor = cov === null || cov < COVERAGE_BAR_PCT;
+  const missing = input.daysMissing ?? 0;
+  const floor = cov === null || cov < COVERAGE_BAR_PCT || missing > 0;
   const covText = cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`;
   const learning = u.produced < input.outcomesRequired;
   const verdict: Verdict = floor
-    ? { kind: "noise", reason: `The ledger holds ${covText} of the spend so far: the rest is not declared yet, so this is a floor, not a price.` }
+    ? { kind: "noise", reason: `The ledger holds ${covText} of the spend so far${missing > 0 ? `, and ${n(missing)} ${missing === 1 ? "day" : "days"} since inception ${missing === 1 ? "is" : "are"} still being computed` : ""}: the rest is not declared yet, so this is a floor, not a price.` }
     : learning
       ? { kind: "noise", reason: `Learning: ${n(u.produced)} of the ${n(input.outcomesRequired)} ${input.nounPlural} a figure needs.` }
       : { kind: "signal", reason: `A measurement on ${n(u.produced)} ${input.nounPlural}: one price, no rival to beat.` };
   const price = u.unitCostUsd;
-  const sample = `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} · every client, every path · ${covText} of the spend declared`;
+  const sample = `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} · every client, every path, since inception · ${covText} of the spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}`;
   const unpriced = u.unpricedInputs.length
     ? [`${u.unpricedInputs.map(input.labelOf).join(", ")} ${u.unpricedInputs.length === 1 ? "is" : "are"} consumed but declared by no run yet: ${u.unpricedInputs.length === 1 ? "its" : "their"} cost is missing from the figure.`]
     : [];
@@ -92,11 +97,13 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
           note: `${s.requirementPerUnit < 10 ? s.requirementPerUnit.toFixed(2) : n(Math.round(s.requirementPerUnit))} ${input.labelOf(s.outcomeKey).toLowerCase()} per ${input.noun}`,
           thin: floor || learning,
         })),
-        note: `Each stage's own production cost, times how many of it one ${input.noun} needs, along every path. The stages add up to the figure.`,
+        note: `Each stage's production cost per ${input.noun}: every occurrence the pipes ending on a ${input.noun} produced, the ones that led nowhere included (an unanswered send rides the replies), and what it bought from earlier pipes at their own unit cost. The stages add up to the figure.`,
       },
     ],
     conclusion: [
-      `One ${input.noun} costs ${usd(price)} to produce, its own stage ${usd(u.ownUnitCostUsd ?? 0)} and every stage before it at its own unit cost: a lead reused by a second campaign carries the price paid to find it.`,
+      `One ${input.noun} costs ${usd(price)} to produce: its own pipes ${usd(u.ownUnitCostUsd ?? 0)}, everything they produced included (what led nowhere rides what did), and what it bought from earlier pipes at their own unit cost.`,
+      ...(u.byProducts > 0 ? [`${n(u.byProducts)} more ${u.byProducts === 1 ? input.noun : input.nounPlural} came from pipes aimed at another outcome: by-products at $0, left out of the figure.`] : []),
+      ...((input.unattributedCostUsd ?? 0) > 0 ? [`${usd(input.unattributedCostUsd!)} of declared spend belongs to no pipe's outcome (our newsletter, a campaign with no stated leg): in no figure.`] : []),
       `Read on what each run declared it produced and consumed, on every client and every channel: ${covText} of the spend is declared so far.`,
       ...unpriced,
     ],

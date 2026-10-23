@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
+import { campaignOutputsOf, fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
 import { readLegSpendTotal } from "./research-sends.js";
 
 describe("research dated spend windows", () => {
@@ -86,5 +86,22 @@ describe("workflowEstimateGroupsOf (COST-ACCOUNTING-1023-P3)", () => {
     expect(g).toHaveLength(1);
     expect(g[0]).toMatchObject({ key: "keel", label: "KEEL", outcomes: 3, spendUsd: 12.5 });
     expect(g[0]!.slices).toEqual([{ contacted: 10, ageDays: 1.5 }, { contacted: 30, ageDays: 22.5 }]);
+  });
+});
+
+describe("campaignOutputsOf (COST-ACCOUNTING-1023-P2)", () => {
+  it("a campaign's output is its stated leg's catalogue to-step, either outbound spelling; no stated leg = none", () => {
+    const { outputOf, pipeOutputs } = campaignOutputsOf(
+      [
+        { id: "c1", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation" },
+        { id: "c2", featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit" },
+        { id: "c3", featureSlug: "sales-cold-email-outreach" },
+      ],
+      [{ slug: "sales-cold-email-outreach", stepTransitions: [{ legKey: "lead_found_to_conversation", to: { key: "conversation" } }, { legKey: "lead_found_to_website_visit", to: { key: "website_visit" } }] }],
+    );
+    expect(outputOf("c1")).toBe("conversation");
+    expect(outputOf("c2")).toBe("website_visit");
+    expect(outputOf("c3")).toBeNull();
+    expect([...pipeOutputs].sort()).toEqual(["conversation", "website_visit"]);
   });
 });
