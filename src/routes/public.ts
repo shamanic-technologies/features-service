@@ -100,7 +100,6 @@ import {
   type SendForecastSummary,
 } from "../lib/send-forecast-compute.js";
 import { buildAccountsAudit, type AccountsAudit } from "../lib/accounts-compute.js";
-import { buildCustomerHealthBoard, type CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { buildActiveUsersHistory, type ActiveUsersHistory } from "../lib/active-users-compute.js";
 import { buildRevenueHistory, type RevenueHistory } from "../lib/revenue-history-compute.js";
 import { buildActiveUsersByUser, type ActiveUsersByUser } from "../lib/active-users-by-user-compute.js";
@@ -165,7 +164,6 @@ import {
 } from "../lib/showcase-clients.js";
 import { servedReturnOf } from "../lib/served-return.js";
 import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
-import { servedCached, PLATFORM_SCOPE_ORG_ID } from "../lib/view-cache.js";
 import {
   channelStepCatalogue,
   funnelLegCatalogue,
@@ -3197,52 +3195,6 @@ export async function handleAccounts(res: import("express").Response): Promise<v
   res.json(payload);
 }
 
-// ── GET /internal/stats/customer-health ──────────────────────────────────────
-
-/**
- * FRESH window for the fleet health board. A COLD build fans out ~5 heavy composites (audience-stats,
- * revenue, workflow-projection) PER customer across every cold scale-to-zero sibling — tens of seconds.
- * So the board is served from the Gold `feature_view_snapshots` layer, and its freshness is tuned for a
- * slowly-changing FLEET AUDIT, NOT a per-request dashboard cell: a snapshot up to `TTL` old is served
- * instantly with NO recompute; between `TTL` and `MAX_STALE` it is served instantly + a single-flight
- * background refresh is kicked; only beyond `MAX_STALE` does a read recompute synchronously (correct-but-
- * slow ONCE). Documented as-of staleness: the board is at most `MAX_STALE` (10 min) old.
- */
-const CUSTOMER_HEALTH_TTL_MS = 120_000; // 2 min — fresh-serve window (no recompute)
-const CUSTOMER_HEALTH_MAX_STALE_MS = 600_000; // 10 min — hard cap before a blocking recompute
-
-/**
- * GET /internal/stats/customer-health — GLOBAL (cross-org, fleet-wide) "Customer Success" health board:
- * one ready-composed row per cold-email customer (org × brand), currently-active first, each with a
- * green/yellow/red health badge, identity, recency/retention, optimization goal, conversion-tracker
- * context, breakeven CAC (= LTR), full economics, realized CAC/ROI/%CAC, an audiences rollup + best
- * audience, best workflow, and current status. ALL metrics computed + owned here; the dashboard renders
- * only. See customer-health-compute.ts.
- *
- * Served through the Gold snapshot layer (`servedCached`, `feature_view_snapshots`) as an O(1) indexed
- * read on a warm/stale hit — the slow fleet fan-out runs in the BACKGROUND on the SWR refresh cycle,
- * never on the request path. GLOBAL scope (no per-org key): view="customer-health", scopeKey="global",
- * platform sentinel org. Per-row fail-soft (v0.92.2) lives INSIDE buildCustomerHealthBoard → the
- * background compute still degrades a failing customer, never 500s the persisted snapshot. If the
- * snapshot table is unreachable, servedCached logs loud + falls through to a live compute. `asOf` in the
- * body reflects the snapshot's compute time (the `now` passed at build) = the documented as-of semantic.
- */
-export async function handleCustomerHealth(res: import("express").Response): Promise<void> {
-  const board = await servedCached<CustomerHealthBoard>({
-    view: "customer-health",
-    scopeKey: "global",
-    orgId: PLATFORM_SCOPE_ORG_ID,
-    ttlMs: CUSTOMER_HEALTH_TTL_MS,
-    maxStaleMs: CUSTOMER_HEALTH_MAX_STALE_MS,
-    compute: async () => {
-      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
-      const coldCsv = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug)).join(",");
-      return buildCustomerHealthBoard(coldCsv, new Date());
-    },
-  });
-  res.json(board);
-}
-
 // ── GET /internal/stats/active-users ─────────────────────────────────────────
 
 const DEFAULT_ACTIVE_USERS_WINDOWS = { days: 90, weeks: 26, months: 12 };
@@ -4286,17 +4238,6 @@ router.get("/internal/stats/accounts", apiKeyOnly, async (_req, res) => {
     await handleAccounts(res);
   } catch (error) {
     console.error("[features-service] Internal stats accounts error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ── GET /internal/stats/customer-health (api-key only; staff-gated upstream at api-service) ───────
-
-router.get("/internal/stats/customer-health", apiKeyOnly, async (_req, res) => {
-  try {
-    await handleCustomerHealth(res);
-  } catch (error) {
-    console.error("[features-service] Internal stats customer-health error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -28678,6 +28678,21 @@
                     ]
                   },
                   "description": "The reads behind this row that FAILED, each named with its reason; [] when every read answered. Each part fails on its own (one failing never blanks another), and a named part's fields are null on the row: a blank ROI with a part named here is a read failure, never 'no data' and never a figure to keep from an older board."
+                },
+                "customerStatus": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "current",
+                    "churned",
+                    "never_paid"
+                  ],
+                  "description": "The ORG's customer verdict, billing-service's own (GET /internal/absorbed-costs customerStatus, copied, never re-derived): current = a campaign running now; churned = paid before, nothing running; never_paid = never paid, nothing running. Same value on every row of the org; null = billing could not state it (see orgs[].customerStatusUnavailableReason)."
+                },
+                "ownOrg": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "billing's flag: the org is one of OURS (a platform org, or a staff billing contact no client uses). null = billing's read failed or lists no such org."
                 }
               },
               "required": [
@@ -28719,7 +28734,9 @@
                 "bestWorkflow",
                 "health",
                 "notTrackedYet",
-                "unreadParts"
+                "unreadParts",
+                "customerStatus",
+                "ownOrg"
               ]
             },
             "description": "One ready-composed health row per cold-email customer (org × brand), currently-active first."
@@ -28799,6 +28816,213 @@
               "redCount"
             ]
           },
+          "orgs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string"
+                },
+                "orgExternalId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The org's name as billing serves it (client-service). null = none."
+                },
+                "ownerEmail": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "customerStatus": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "current",
+                    "churned",
+                    "never_paid"
+                  ],
+                  "description": "billing-service's verdict for the org, copied (the Active / Churned tab): current = a campaign running now; churned = paid before, nothing running; never_paid = never paid, nothing running."
+                },
+                "customerStatusUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "billing_customer_status_unavailable",
+                    "org_not_in_billing",
+                    "billing_could_not_read"
+                  ],
+                  "description": "Why customerStatus is null: billing's read failed (every org), billing lists no such org, or billing could not read its campaigns / payments. null when a verdict is served."
+                },
+                "ownOrg": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "billing's flag: one of OUR orgs (listed last, kept out of orgStats counts). null = not known."
+                },
+                "ownOrgReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "billing's reason (platform_org | staff_billing_contact)."
+                },
+                "healthBadge": {
+                  "type": "string",
+                  "enum": [
+                    "green",
+                    "yellow",
+                    "red"
+                  ],
+                  "description": "The worst badge of the org's brands (red > yellow > green)."
+                },
+                "brandIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The org's brands, each a row of customers[] (same orgId)."
+                },
+                "runningDailyBudgetUsd": {
+                  "type": "number",
+                  "description": "Σ the brands' running daily budgets (raw, never discounted)."
+                },
+                "configuredDailyBudgetUsd": {
+                  "type": "number",
+                  "description": "Σ the brands' configured daily budgets (raw)."
+                },
+                "orgBalanceUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "orgActualBalanceUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "autoTopupEnabled": {
+                  "type": "boolean",
+                  "nullable": true
+                },
+                "orgCashPaidUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "lastActiveDay": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "activeDays": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "paidActiveDays": {
+                  "type": "array",
+                  "nullable": true,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "dashboardReturnFrequency": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "sessions7d": {
+                      "type": "integer",
+                      "description": "Distinct dashboard sessions in the trailing 7 days."
+                    },
+                    "sessions30d": {
+                      "type": "integer",
+                      "description": "Distinct dashboard sessions in the trailing 30 days."
+                    },
+                    "pageviews7d": {
+                      "type": "integer",
+                      "description": "Dashboard pageviews in the trailing 7 days."
+                    },
+                    "pageviews30d": {
+                      "type": "integer",
+                      "description": "Dashboard pageviews in the trailing 30 days."
+                    },
+                    "lastSeen": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "ISO timestamp of the org's most recent dashboard pageview in the window. null when none."
+                    },
+                    "daysSinceLastSeen": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Whole days between lastSeen and the board's asOf. null when lastSeen is null."
+                    }
+                  },
+                  "required": [
+                    "sessions7d",
+                    "sessions30d",
+                    "pageviews7d",
+                    "pageviews30d",
+                    "lastSeen",
+                    "daysSinceLastSeen"
+                  ],
+                  "description": "Per-org dashboard-return frequency from PostHog (sessions 7d/30d + last-seen), keyed on the Clerk org id. null when PostHog has no data / is unreachable / is unconfigured — never fabricated."
+                }
+              },
+              "required": [
+                "orgId",
+                "orgExternalId",
+                "orgName",
+                "ownerEmail",
+                "customerStatus",
+                "customerStatusUnavailableReason",
+                "ownOrg",
+                "ownOrgReason",
+                "healthBadge",
+                "brandIds",
+                "runningDailyBudgetUsd",
+                "configuredDailyBudgetUsd",
+                "orgBalanceUsd",
+                "orgActualBalanceUsd",
+                "autoTopupEnabled",
+                "orgCashPaidUsd",
+                "lastActiveDay",
+                "activeDays",
+                "paidActiveDays",
+                "dashboardReturnFrequency"
+              ]
+            },
+            "description": "One row per customer ORG (CUSTOMER-HEALTH-OOM-1023): billing's verdict to tab on, org-level figures, its brands. Customers first by verdict (current, never_paid, churned, unknown), our own orgs last."
+          },
+          "orgStats": {
+            "type": "object",
+            "properties": {
+              "totalOrgs": {
+                "type": "integer"
+              },
+              "currentCount": {
+                "type": "integer",
+                "description": "Orgs not ours with customerStatus current (equals billing's currentCustomers over the same orgs)."
+              },
+              "churnedCount": {
+                "type": "integer"
+              },
+              "neverPaidCount": {
+                "type": "integer"
+              },
+              "customerStatusUnknownCount": {
+                "type": "integer"
+              },
+              "ownOrgCount": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "totalOrgs",
+              "currentCount",
+              "churnedCount",
+              "neverPaidCount",
+              "customerStatusUnknownCount",
+              "ownOrgCount"
+            ]
+          },
           "unreadOrgReads": {
             "type": "array",
             "items": {
@@ -28833,13 +29057,34 @@
           "asOf": {
             "type": "string",
             "description": "ISO timestamp the board was computed."
+          },
+          "freshness": {
+            "type": "object",
+            "properties": {
+              "computedAt": {
+                "type": "string",
+                "description": "When this build finished (= asOf)."
+              },
+              "refreshEveryMinutes": {
+                "type": "integer",
+                "description": "A build older than this is rebuilt behind the read that finds it (15). The read always answers at once with the last build."
+              }
+            },
+            "required": [
+              "computedAt",
+              "refreshEveryMinutes"
+            ],
+            "description": "How old the served build is. The board is built off the request path (in the view refresher), so a read never waits on it."
           }
         },
         "required": [
           "customers",
           "stats",
+          "orgs",
+          "orgStats",
           "unreadOrgReads",
-          "asOf"
+          "asOf",
+          "freshness"
         ]
       },
       "ActiveUsersHistoryResponse": {
@@ -44707,7 +44952,7 @@
     "/internal/stats/customer-health": {
       "get": {
         "summary": "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
+        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per cold-email customer (org × brand), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / ROI / %CAC (roiMultiple = pipeline/spend = LTR/CAC; cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND ROI ≥ 1 AND audience not near-exhausted; yellow = active but ROI < 1 (or unknown) OR audience near-exhausted. Served from the LAST BUILD at once (never built on the request path; rebuilt in the view refresher when older than 15 min; freshness states its age); 503 customer_health_not_computed_yet only before the first build after a deploy that changes this shape. orgs[] = one row per org with billing's customerStatus. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
         "tags": [
           "Internal"
         ],
@@ -44742,6 +44987,157 @@
           },
           "500": {
             "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Never built yet (first build running): reason customer_health_not_computed_yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/customer-health/build": {
+      "post": {
+        "summary": "Start one customer-health board build in this process (the view refresher's; internal, api-key)",
+        "description": "Called by the server on its refresher. Answers 202 at once with the build id (an already-running build's id when one runs); 409 build_runs_in_refresher on a server that has a refresher.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "202": {
+            "description": "Build started or already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "buildId": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "buildId"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This process never builds the board",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/customer-health/build-status": {
+      "get": {
+        "summary": "Whether a customer-health board build runs in this process, and how the last one ended (internal, api-key)",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Build status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "lastFinished": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "buildId": {
+                          "type": "integer"
+                        },
+                        "finishedAt": {
+                          "type": "string"
+                        },
+                        "error": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "buildId",
+                        "finishedAt",
+                        "error"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "running",
+                    "lastFinished"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
             "content": {
               "application/json": {
                 "schema": {
