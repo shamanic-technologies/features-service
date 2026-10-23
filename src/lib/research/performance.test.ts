@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { candidatePartsOf, deprecatedPartsOf, pipePerformance, type PipePerformanceInput } from "./performance.js";
+import { candidatePartsOf, deprecatedPartsOf, fitPartEffects, pipePerformance, type PipePerformanceInput } from "./performance.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -242,15 +242,33 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     const r = row("azalea|borealis|gemini-flash");
     expect(r.outcomes.value).toBe(0);
     expect(r.conversionRatePct).toMatchObject({ value: 0, basis: "measured", source: "own" });
-    expect(r.roi).toMatchObject({ basis: "expected", source: "own_parts", parts: ["workflow", "template", "llm"] });
+    expect(r.roi).toMatchObject({ basis: "expected", source: "own_parts", parts: ["workflow"] });
     expect(r.costPerOutcomeUsd).toMatchObject({ basis: "expected", source: "own_parts" });
-    // its prior reads its parts WITHOUT it: workflow azalea $300/6, template borealis $100/4, LLM gemini $200/2
-    expect(r.estimate.priorCostPerOutcomeUsd).toBeCloseTo(Math.cbrt((300 / 6) * (100 / 4) * (200 / 2)), 6);
+    // its prior = the pipe's model of part effects fitted on every OTHER row (PRIOR-PART-EFFECTS-1023)
+    const others = out.rows.filter((x) => x.key !== r.key && (x.spentUsd.value > 0 || x.outcomes.value > 0));
+    const keysOf = (x: (typeof out.rows)[number]) => [`w:${x.workflow.key}`, ...(x.template ? [`t:${x.template.key}`] : []), ...(x.llm ? [`l:${x.llm.key}`] : [])];
+    const model = fitPartEffects(others.map((x) => ({ parts: keysOf(x), spentUsd: x.spentUsd.value, outcomes: x.outcomes.value })), 1)!;
+    const rate = keysOf(r).reduce((acc, k) => acc * (model.effects.get(k) ?? 1), model.pipeRatePerUsd);
+    expect(r.estimate.priorCostPerOutcomeUsd).toBeCloseTo(1 / rate, 6);
     expect(r.estimate.priorSource).toBe("own_parts");
+    expect(r.estimate.priorParts).toEqual(["workflow", "template", "llm"]);
     // never the pipe pool copied on every row
     expect(r.roi.value).not.toBeCloseTo(out.totals!.roi.value!, 3);
     // a spend-only row (nobody emailed) still reads its parts
     expect(row("keel|-|-").conversionRatePct).toMatchObject({ basis: "expected" });
+  });
+
+  it("an expected ROI is read FROM the expected cost: value per outcome ÷ that cost billed, never averaged apart (PRIOR-PART-EFFECTS-1023)", () => {
+    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
+    // azalea: $1,200 pipeline over 6 outcomes = $200 per outcome, $400 billed on $400 spent = 1 per dollar
+    for (const r of all.rows.filter((x) => x.workflow.key === "azalea" && x.roi.basis === "expected")) expect(r.roi.value! * r.costPerOutcomeUsd.value!).toBeCloseTo(200, 6);
+    // keel's own terms are $0 per outcome: its rows read the pipe pooled ($1,200 / 6 per outcome, $450 billed / $450 spent)
+    const keel = all.rows.find((x) => x.key === "keel|aurora|gemini-flash")!;
+    expect(keel.roi).toMatchObject({ basis: "expected", source: "pipe_combinations" });
+    expect(keel.roi.value! * keel.costPerOutcomeUsd.value!).toBeCloseTo(200, 6);
+    // so a cheaper expected cost always reads a higher expected return on one workflow
+    const az = all.rows.filter((x) => x.workflow.key === "azalea" && x.roi.basis === "expected").sort((a, b) => a.costPerOutcomeUsd.value! - b.costPerOutcomeUsd.value!);
+    for (let i = 1; i < az.length; i++) expect(az[i]!.roi.value!).toBeLessThanOrEqual(az[i - 1]!.roi.value!);
   });
 
   it("the series is monthly, cumulative, and its last point IS the card", () => {
@@ -268,5 +286,53 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     const none = pipePerformance(input({ persons: persons.map((p) => ({ ...p, generation: null })) }));
     expect(none.rows).toEqual([]);
     expect(none.unavailableReason).toBe("no_writer_recorded_on_pipe");
+  });
+});
+
+// PRIOR-PART-EFFECTS-1023 (owner 2026-10-23): the prior is ONE model of the pipe, never the geometric mean of each part.
+describe("fitPartEffects", () => {
+  const cost = (m: NonNullable<ReturnType<typeof fitPartEffects>>, parts: string[]) => 1 / parts.reduce((r, k) => r * (m.effects.get(k) ?? 1), m.pipeRatePerUsd);
+
+  it("effects MULTIPLY: three parts each twice as good make a combination ~8x cheaper, not 2x", () => {
+    // every pair of a good and a plain part is tried on its own with plenty of evidence; the all-good triple never ran
+    const rows: Array<{ parts: string[]; spentUsd: number; outcomes: number }> = [];
+    for (const w of ["w:good", "w:plain"]) for (const t of ["t:good", "t:plain"]) for (const l of ["l:good", "l:plain"]) {
+      if (w === "w:good" && t === "t:good" && l === "l:good") continue;
+      const goods = [w, t, l].filter((k) => k.endsWith("good")).length;
+      rows.push({ parts: [w, t, l], spentUsd: 8000, outcomes: 40 * 2 ** goods });
+    }
+    const m = fitPartEffects(rows, 1)!;
+    const ratio = cost(m, ["w:plain", "t:plain", "l:plain"]) / cost(m, ["w:good", "t:good", "l:good"]);
+    expect(ratio).toBeGreaterThan(7.5);
+    expect(ratio).toBeLessThan(8.5);
+  });
+
+  it("one lucky outcome barely moves a part; thirty move it (each part pulled toward the pipe by k outcomes)", () => {
+    // the pipe: $200 per outcome on 30 outcomes; a new LLM got 1 reply for $10
+    const base = [{ parts: ["w:a", "l:old"], spentUsd: 6000, outcomes: 30 }];
+    const lucky = fitPartEffects([...base, { parts: ["w:a", "l:new"], spentUsd: 10, outcomes: 1 }], 1)!;
+    // the raw figure is $10; the model reads it about half the pipe's price, never $10
+    expect(cost(lucky, ["w:a", "l:new"])).toBeGreaterThan(90);
+    const proven = fitPartEffects([...base, { parts: ["w:a", "l:new"], spentUsd: 300, outcomes: 30 }], 1)!;
+    expect(cost(proven, ["w:a", "l:new"])).toBeLessThan(15);
+  });
+
+  it("a part nobody spent on is neutral (effect 1), never a bonus", () => {
+    const m = fitPartEffects([{ parts: ["w:a", "t:x"], spentUsd: 1000, outcomes: 10 }, { parts: ["w:b", "t:x"], spentUsd: 1000, outcomes: 2 }], 1)!;
+    expect(m.effects.has("t:never")).toBe(false);
+    expect(cost(m, ["w:a", "t:x", "t:never"])).toBeCloseTo(cost(m, ["w:a", "t:x"]), 9);
+  });
+
+  it("the same replies are not counted once per part: one great row lifts its parts less than three separate proofs would", () => {
+    const one = fitPartEffects([{ parts: ["w:a", "t:a", "l:a"], spentUsd: 100, outcomes: 10 }, { parts: ["w:b", "t:b", "l:b"], spentUsd: 1000, outcomes: 10 }], 1)!;
+    // its parts' product reproduces roughly its own rate (10 per $100), not that rate cubed
+    const fitted = cost(one, ["w:a", "t:a", "l:a"]);
+    expect(fitted).toBeGreaterThan(8);
+    expect(fitted).toBeLessThan(25);
+  });
+
+  it("nothing to read a rate from: null", () => {
+    expect(fitPartEffects([], 1)).toBeNull();
+    expect(fitPartEffects([{ parts: ["w:a"], spentUsd: 100, outcomes: 0 }], 1)).toBeNull();
   });
 });
