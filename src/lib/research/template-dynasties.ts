@@ -14,6 +14,7 @@
  * A template the pipe's dynasties list directly always wins over a copy's origin.
  */
 import { templateLabel } from "./format.js";
+import { servedLegKeyOf } from "../funnel-legs.js";
 
 export interface TemplateDynasty {
   slug: string;
@@ -72,9 +73,14 @@ export interface TemplateDynastyIndex {
   unavailableReason: TemplateDynastyReason | null;
 }
 
-/** The wave-2 spelling content-generation-service keys a cold email pipe on (`start_to_x` → `lead_found_to_x`). */
-export function dynastyLegKeyOf(legKey: string): string {
-  return legKey.replace(/^start_to_/, "lead_found_to_");
+/**
+ * The leg spelling content-generation-service keys a pipe's dynasties on: the channel's SERVED spelling (an outbound
+ * channel's two legacy keys `start_to_conversation` / `start_to_website_visit` → `lead_found_to_*`, every other leg
+ * verbatim). Was a blanket `start_to_` → `lead_found_to_`, which asked Cold WhatsApp's `start_to_signup` as
+ * `lead_found_to_signup` and found no template (WA-PIPE-RESEARCH-1023).
+ */
+export function dynastyLegKeyOf(featureSlug: string, legKey: string): string {
+  return servedLegKeyOf(featureSlug, legKey);
 }
 
 /**
