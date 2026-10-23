@@ -54,9 +54,11 @@ export interface OutcomeUnitCost {
   stages: StageContribution[];
   /** Inputs consumed that nothing in the scope produced: their cost is unknown here, so `unitCostUsd` is a floor. */
   unpricedInputs: string[];
+  /** Why `unitCostUsd` is null though occurrences were produced: a consumption cycle needing one occurrence or more per pass. */
+  unpricedReason?: "consumption_cycle_diverges";
 }
 
-/** PURE. Unit cost of every produced outcome of the scope. A consumption cycle throws (the ledger forbids none, but a cycle has no unique unit cost here). */
+/** PURE. Unit cost of every produced outcome of the scope. Never throws: a consumption cycle is solved, or named when it diverges. */
 export function rollUpOutcomeUnitCosts(totals: readonly OutcomeTotals[], consumptions: readonly OutcomeConsumption[]): Map<string, OutcomeUnitCost> {
   const byKey = new Map(totals.map((t) => [t.outcomeKey, t]));
   const inputsOf = new Map<string, Map<string, number>>();
@@ -72,25 +74,34 @@ export function rollUpOutcomeUnitCosts(totals: readonly OutcomeTotals[], consump
     return t && t.produced > 0 ? t.ownCostUsd / t.produced : null;
   };
 
-  // requirement vector of one unit of `root`: occurrences of every stage, every path (DFS, cycle-checked)
-  const requirementOf = (root: string): { req: Map<string, number>; unpriced: Set<string> } => {
+  // Requirement vector of one unit of `root`: occurrences of every stage, every path. The Neumann series
+  // r = e + eA + eA² + ..., A(S, q) = consumed(S, q) / n(S): a cycle (a follow-up consuming the message before it, a
+  // meeting re-stated) is solved, not refused; it converges whenever each pass through the cycle needs less than one
+  // occurrence, else the root has no finite unit cost (`consumption_cycle_diverges`).
+  const requirementOf = (root: string): { req: Map<string, number>; unpriced: Set<string>; diverges: boolean } => {
     const req = new Map<string, number>();
     const unpriced = new Set<string>();
-    const walk = (k: string, qty: number, path: Set<string>) => {
-      if (path.has(k)) throw new Error(`[features-service] outcome unit costs: consumption cycle through ${[...path, k].join(" -> ")}`);
-      req.set(k, (req.get(k) ?? 0) + qty);
-      const t = byKey.get(k);
-      if (!t || t.produced <= 0) {
-        if (k !== root) unpriced.add(k);
-        return;
+    let term = new Map<string, number>([[root, 1]]);
+    for (let step = 0; step < 10_000; step++) {
+      let size = 0;
+      for (const [k, q] of term) {
+        req.set(k, (req.get(k) ?? 0) + q);
+        size += q;
       }
-      const inputs = inputsOf.get(k);
-      if (!inputs) return;
-      const next = new Set(path).add(k);
-      for (const [q, count] of inputs) walk(q, (qty * count) / t.produced, next);
-    };
-    walk(root, 1, new Set());
-    return { req, unpriced };
+      if (size < 1e-12) return { req, unpriced, diverges: false };
+      if (size > 1e9) break;
+      const next = new Map<string, number>();
+      for (const [k, q] of term) {
+        const t = byKey.get(k);
+        if (!t || t.produced <= 0) {
+          if (k !== root) unpriced.add(k);
+          continue;
+        }
+        for (const [input, count] of inputsOf.get(k) ?? []) next.set(input, (next.get(input) ?? 0) + (q * count) / t.produced);
+      }
+      term = next;
+    }
+    return { req, unpriced, diverges: true };
   };
 
   const out = new Map<string, OutcomeUnitCost>();
@@ -99,7 +110,11 @@ export function rollUpOutcomeUnitCosts(totals: readonly OutcomeTotals[], consump
       out.set(t.outcomeKey, { outcomeKey: t.outcomeKey, produced: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] });
       continue;
     }
-    const { req, unpriced } = requirementOf(t.outcomeKey);
+    const { req, unpriced, diverges } = requirementOf(t.outcomeKey);
+    if (diverges) {
+      out.set(t.outcomeKey, { outcomeKey: t.outcomeKey, produced: t.produced, unitCostUsd: null, ownUnitCostUsd: own(t.outcomeKey), stages: [], unpricedInputs: [], unpricedReason: "consumption_cycle_diverges" });
+      continue;
+    }
     const stages: StageContribution[] = [];
     for (const [k, r] of req) {
       const o = own(k);
