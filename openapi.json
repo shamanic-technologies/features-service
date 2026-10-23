@@ -72240,6 +72240,13 @@
                             ],
                             "description": "Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."
                           },
+                          "estimateModel": {
+                            "type": "string",
+                            "enum": [
+                              "part_effects"
+                            ],
+                            "description": "Each row's prior is ONE model of the pipe (PRIOR-PART-EFFECTS-1023): outcomes per dollar = the pipe's rate × its workflow's, template's and LLM's effects, fitted together on every other combination, each pulled toward 1 by the leg's maturity bar in outcomes; an untested part is neutral."
+                          },
                           "outcomeNoun": {
                             "type": "string"
                           },
@@ -72428,7 +72435,7 @@
                                     "priorCostPerOutcomeUsd": {
                                       "type": "number",
                                       "nullable": true,
-                                      "description": "What the row's parts measured on the pipe WITHOUT it: geometric mean of its workflow, template and LLM (`own_parts`, named in `priorParts`), else every other combination pooled."
+                                      "description": "What the pipe's model of part effects, fitted WITHOUT the row, predicts for its workflow × template × LLM (`own_parts`, `priorParts` = the parts another combination measured; an unmeasured part is neutral), else the pipe pooled (`pipe_combinations`)."
                                     },
                                     "priorSource": {
                                       "type": "string",
@@ -72471,7 +72478,7 @@
                                     "priorWeightOutcomes",
                                     "unavailableReason"
                                   ],
-                                  "description": "The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is scaled by prior ÷ estimate."
+                                  "description": "The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."
                                 },
                                 "status": {
                                   "type": "string",
@@ -72521,7 +72528,7 @@
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                     },
                                     "parts": {
                                       "type": "array",
@@ -72552,7 +72559,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."
+                                  "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected = its workflow's value per outcome ÷ (the expected cost per outcome × its workflow's billed per dollar), so it moves with the expected cost (PRIOR-PART-EFFECTS-1023)."
                                 },
                                 "costPerOutcomeUsd": {
                                   "type": "object",
@@ -72582,7 +72589,7 @@
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                     },
                                     "parts": {
                                       "type": "array",
@@ -72643,7 +72650,7 @@
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                     },
                                     "parts": {
                                       "type": "array",
@@ -72779,7 +72786,7 @@
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                   },
                                   "parts": {
                                     "type": "array",
@@ -72810,7 +72817,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."
+                                "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected = its workflow's value per outcome ÷ (the expected cost per outcome × its workflow's billed per dollar), so it moves with the expected cost (PRIOR-PART-EFFECTS-1023)."
                               },
                               "costPerOutcomeUsd": {
                                 "type": "object",
@@ -72840,7 +72847,7 @@
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                   },
                                   "parts": {
                                     "type": "array",
@@ -72901,7 +72908,7 @@
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
                                   },
                                   "parts": {
                                     "type": "array",
@@ -73066,6 +73073,7 @@
                           "figuresBasis",
                           "rowOrder",
                           "rowsCover",
+                          "estimateModel",
                           "outcomeNoun",
                           "outcomeNounPlural",
                           "rows",
