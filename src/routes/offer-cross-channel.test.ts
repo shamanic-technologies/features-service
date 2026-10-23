@@ -288,7 +288,7 @@ describe("GET /offers/:offerId/revenue — the Companies page lists every organi
     expect(res.status).toBe(200);
     const rows = res.body.organizations as Array<{ organizationKey: string; expectedRevenueUsd: number }>;
     const row = rows.find((o) => o.organizationKey === "lead:s1");
-    expect(row).toMatchObject({ orgId: null, expectedRevenueUsd: 0, topPerson: { firstName: "S", lastName: "U", photoUrl: null } });
+    expect(row).toMatchObject({ orgId: null, expectedRevenueUsd: 0, peopleCount: 1, topPerson: { firstName: "S", lastName: "U", photoUrl: null } });
     expect(rows.some((o) => o.organizationKey === "lead:s2")).toBe(false);
     // The headline does not move: a $0 row adds nothing.
     expect(res.body.headline.totalPipelineUsd).toBeCloseTo(240, 6);
