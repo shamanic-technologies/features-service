@@ -288,22 +288,22 @@ describe("assembleResearch", () => {
 
   it("COST-ACCOUNTING-1023-P2: every outcome section gets its every-path cost study off the ledger; unreadable says so", () => {
     const totals = {
-      totals: [
-        { outcomeKey: "message_sent", produced: 2000, ownCostUsd: 40 },
-        { outcomeKey: "conversation", produced: 40, ownCostUsd: 4 },
+      produced: [
+        { outcomeKey: "message_sent", campaignId: "c1", produced: 2000, ownCostUsd: 40 },
+        { outcomeKey: "conversation", campaignId: null, produced: 40, ownCostUsd: 4 },
       ],
-      consumptions: [{ consumerKey: "conversation", consumedKey: "message_sent", count: 40 }],
+      consumed: [{ consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, count: 40 }],
       coveragePct: 99,
-      daysMissing: [],
+      daysMissing: 0,
     };
     const labelOf = (k: string) => ({ message_sent: "Message sent", conversation: "Positive reply" })[k] ?? k;
-    const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf } });
+    const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf, outputOf: (c: string) => (c === "c1" ? "conversation" : null), pipeOutputs: new Set(["conversation", "meeting_booked"]) } });
     const pr = read.studies.find((x) => x.id === "positive-reply-cost-every-path")!;
     expect(pr).toMatchObject({ outcome: "positive-reply", pipe: null, topic: "cost", status: "measured" });
-    expect(pr.result?.display).toBe("$0.12");
+    expect(pr.result?.display).toBe("$1.10");
     const mb = read.studies.find((x) => x.id === "meeting-cost-every-path")!;
     expect(mb).toMatchObject({ outcome: "meeting", status: "not_enough_data", headline: "No booked meeting declared to the ledger yet." });
-    const down = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals: null, labelOf } });
+    const down = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals: null, labelOf, outputOf: () => null, pipeOutputs: new Set<string>() } });
     expect(down.studies.find((x) => x.id === "positive-reply-cost-every-path")?.headline).toBe("Not readable right now.");
   });
 
