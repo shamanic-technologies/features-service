@@ -33,13 +33,13 @@ import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.j
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
 import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
-import { readTemplateDynasties, readTemplateTexts } from "../lib/writer-catalogue-client.js";
+import { readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
 import { dynastyLastWriters, dynastyWriters, versionWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { pickOrderOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { deprecatedPartsOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -621,6 +621,8 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     console.error("[features-service] research catalogue: chat-service model ids unreadable this time:", err);
     return "model_ids_unreadable";
   });
+  // content-generation's staff status per writer alias: an LLM served only under deprecated aliases is deprecated.
+  const aliasStatus = await readAliasStatus();
   // The text of every template a workflow writes with now, beside the ones its people were written with.
   // Every version's template too: a deprecated workflow's page names the template its newest writing version used.
   const dynasties = await dynastiesP;
@@ -701,7 +703,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
             billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
           }
         : undefined,
-      pickOrder: pickOrderOf(ranking, pipeCatalogue),
+      deprecated: deprecatedPartsOf(pipeCatalogue, aliasStatus),
       unpricedBilledUsd: r.unpricedUsd,
       now,
     });
@@ -718,7 +720,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
-      rowOrder: "pick_order",
+      rowOrder: "estimated_cost",
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -735,7 +737,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   );
   // Every other pipe's tabs, one pipe at a time on the vendor basis (its heaviest aggregation), two on the billed one.
   const others = await mapWithConcurrency(await otherPipesP, basis === "actual" ? 1 : 2, (p) =>
-    withTimeout(otherPipeSection(p, basis, now, { llm: dynasties.llm, servedModels, writersOf: readDynastyWriters }, view), OTHER_PIPE_TIMEOUT_MS, `research pipe ${p.entry.id}`).catch((err) => {
+    withTimeout(otherPipeSection(p, basis, now, { llm: dynasties.llm, servedModels, aliasStatus, writersOf: readDynastyWriters }, view), OTHER_PIPE_TIMEOUT_MS, `research pipe ${p.entry.id}`).catch((err) => {
       console.error(`[features-service] research: pipe ${p.entry.id} could not be read this build, its tabs read Learning:`, err);
       return emptySection(p);
     }),
@@ -753,6 +755,18 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
 
 const OTHER_PIPE_TIMEOUT_MS = 3 * 60_000;
 
+type AliasStatus = ReadonlyMap<string, "active" | "deprecated"> | null;
+
+/** content-generation's status per writer alias; unreadable = null (an LLM with aliases is then never called deprecated). */
+async function readAliasStatus(): Promise<AliasStatus> {
+  try {
+    return new Map((await readWriterModelAliases()).map((a) => [a.alias, a.status]));
+  } catch (err) {
+    console.error("[features-service] research performance: writer alias statuses unreadable, only an LLM served under no alias reads deprecated this time:", err);
+    return null;
+  }
+}
+
 /** The pipes the file serves beside the three studied ones: the published catalogue's pipes holding a workflow. */
 async function readOtherPipes(): Promise<OtherPipe[]> {
   const [cat, assignments] = await Promise.all([loadChannelCatalogue({ publishedOnly: true }), listLegAssignments()]);
@@ -769,7 +783,7 @@ interface OtherSection {
 const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
-  rowOrder: "pick_order",
+  rowOrder: "estimated_cost",
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -795,7 +809,7 @@ async function otherPipeSection(
   p: OtherPipe,
   basis: Basis,
   now: Date,
-  shared: { llm: LlmDynastyIndex; servedModels: Awaited<ReturnType<typeof readModelIds>> | "model_ids_unreadable"; writersOf: typeof readDynastyWriters },
+  shared: { llm: LlmDynastyIndex; servedModels: Awaited<ReturnType<typeof readModelIds>> | "model_ids_unreadable"; aliasStatus: AliasStatus; writersOf: typeof readDynastyWriters },
   view: ResearchView = "mature",
 ): Promise<OtherSection> {
   const { featureSlug, legKey } = p;
@@ -929,7 +943,7 @@ async function otherPipeSection(
           llmKeyOf: gen.llmKeyOf,
           llmLabelOf: gen.llmLabelOf,
           workflowReturns: returns,
-          pickOrder: pickOrderOf(ranking, catalog),
+          deprecated: deprecatedPartsOf(catalog, shared.aliasStatus),
           unpricedBilledUsd: read.unpricedUsd,
           now,
         })
@@ -996,11 +1010,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: pick_order` since RESEARCH-PICK-ORDER-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: estimated_cost` since RESEARCH-COMBO-ESTIMATE-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "pick_order" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
