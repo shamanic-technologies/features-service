@@ -488,6 +488,21 @@ describe("what wrote the emails", () => {
     expect(total).toBeCloseTo(300, 6);
   });
 
+  it("a month the version spent in but served nobody in keeps its spend on the split (MATURITY-VIEW-1023)", () => {
+    const two: SlugCell[] = [
+      {
+        slug: "wf-v1",
+        flash: { figures: { spentUsd: 400, contacted: 300, outcomes: 6 }, months: { "2026-08": { spentUsd: 100, contacted: 0, outcomes: 0 }, "2026-09": { spentUsd: 300, contacted: 300, outcomes: 6 } }, strata: {} },
+        mature: null,
+      },
+    ];
+    const { cells: split } = splitCellsByGroup(two, persons, { screened: false, signal: "positiveReply", cutoffDay: null }, (b) => b.generation!.model);
+    const aug = split.reduce((a, c) => a + (c.flash.months["2026-08"]?.spentUsd ?? 0), 0);
+    expect(aug).toBeCloseTo(100, 6);
+    const flashSide = split.find((c) => c.slug.endsWith("gemini-3.5-flash"))!;
+    expect(flashSide.flash.months["2026-08"]!.spentUsd).toBeCloseTo(100 * (200 / 300), 6);
+  });
+
   it("names models the chat-service way and splits shape studies by tier", () => {
     const studies = generationStudies({
       terms,

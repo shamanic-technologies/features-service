@@ -203,6 +203,13 @@ export function splitCellsByGroup(
       const figures = { spentUsd: h.figures.spentUsd * ks, contacted: h.figures.contacted * ks, outcomes: t.outcomes > 0 ? h.figures.outcomes * share(e.outcomes, t.outcomes) : 0 };
       const months: Record<string, BucketFigures> = {};
       for (const [m, f] of Object.entries(e.months)) months[m] = { spentUsd: (h.months[m]?.spentUsd ?? 0) * share(f.contacted, t.months[m] ?? 0), contacted: f.contacted, outcomes: f.outcomes };
+      // A month the version spent in but served nobody in (runs started, people served later) keeps its spend, shared
+      // on the group's whole share: dropped, it was spread over the other months and the curve moved off the study's.
+      for (const [m, hm] of Object.entries(h.months)) {
+        if ((t.months[m] ?? 0) > 0 || hm.spentUsd <= 0) continue;
+        const into = (months[m] ??= { spentUsd: 0, contacted: 0, outcomes: 0 });
+        into.spentUsd += hm.spentUsd * ks;
+      }
       const strata: Record<string, BucketFigures> = {};
       for (const [k, f] of Object.entries(e.strata)) {
         const m = k.slice(k.indexOf("|") + 1);
