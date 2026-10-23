@@ -585,7 +585,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     },
     beforeAfter,
     meetingOutcomesRequired: meetingRule.outcomesRequired,
-    otherPipes: (await otherPipesP).map((p) => p.entry),
+    otherPipes: await otherPipesP,
   });
   // The catalogue: one page per workflow, template and model, per pipe, from the same bars.
   const note = ruleNote(reply.input, visit.input);

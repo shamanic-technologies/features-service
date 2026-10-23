@@ -214,6 +214,20 @@ describe("assembleResearch", () => {
     expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "conversation", pipes: ["cold-email-positive-reply"] });
   });
 
+  it("OUTCOME-SECTION-PIPES-1023: an outcome section names EVERY pipe landing on its step, never one pipe", () => {
+    const otherPipes = [
+      { entry: { id: "email-sending|start_to_conversation", channel: "email-sending", leg: "start_to_conversation", outcome: "Positive reply", description: "x" }, toStep: "conversation" },
+      { entry: { id: "cold-whatsapp-outreach|start_to_signup", channel: "cold-whatsapp-outreach", leg: "start_to_signup", outcome: "Signup", description: "x" }, toStep: "signup" },
+      { entry: { id: "ai-follow-up-email|conversation_to_meeting_booked", channel: "ai-follow-up-email", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "x" }, toStep: "meeting_booked" },
+    ];
+    const read = assembleResearch({ ...input, replyDelay: null, otherPipes });
+    expect(read.outcomes.find((o) => o.id === "positive-reply")?.pipes).toEqual(["cold-email-positive-reply", "email-sending|start_to_conversation"]);
+    expect(read.outcomes.find((o) => o.id === "meeting")).toMatchObject({ step: "meeting_booked", pipes: ["meeting-booking", "ai-follow-up-email|conversation_to_meeting_booked"] });
+    // every pipe named by a section is a pipe of the file
+    const ids = new Set(read.pipes.map((p) => p.id));
+    for (const o of read.outcomes) for (const p of o.pipes ?? []) expect(ids.has(p), p).toBe(true);
+  });
+
   it("every one of today's 45 study ids is served or listed unavailable, never both, never neither", () => {
     const served = new Set(file.studies.map((s) => s.id));
     const waiting = new Set(file.unavailable.map((u) => u.id));
