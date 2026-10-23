@@ -479,12 +479,12 @@ async function countryStudiesOf(reply: ColdEmailPipeRead, visit: ColdEmailPipeRe
 
 /**
  * PURE. The reply pipe's people per workflow DYNASTY (every version pooled), by serve day, with each dynasty's lifetime
- * billed spend (its ranking row). A bucket with no serve day has no age: left out, never counted as mature.
+ * billed spend (its ranking row's flash gross spend). A bucket with no serve day has no age: left out, never counted as mature.
  */
 export function workflowEstimateGroupsOf(
   persons: ReadonlyArray<{ workflowSlug: string; servedDay: string; contacted: number; positiveReplies: number }>,
   dynastyOf: ReadonlyMap<string, string>,
-  rows: ReadonlyArray<{ workflowDynastySlug: string; billedSpendUsd: number | null }>,
+  rows: ReadonlyArray<{ workflowDynastySlug: string; basis: "mature" | "flash"; spentUsd: number; figuresByView?: { flash: { spentUsd: { value: number | null } } } }>,
   labelOf: (dynasty: string) => string,
   now: Date,
 ): WorkflowEstimateGroup[] {
@@ -500,7 +500,9 @@ export function workflowEstimateGroupsOf(
   }
   for (const r of rows) {
     const g = by.get(r.workflowDynastySlug);
-    if (g) g.spendUsd = r.billedSpendUsd ?? 0;
+    // Lifetime GROSS incurred spend, the measured workflow study's own basis (its flash half): never the net billed
+    // figure, which read Ballad $94 beside its measured $141 (probe 2026-10-23).
+    if (g) g.spendUsd = r.figuresByView?.flash.spentUsd.value ?? (r.basis === "flash" ? r.spentUsd : 0);
   }
   return [...by.values()];
 }
