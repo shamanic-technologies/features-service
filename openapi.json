@@ -55068,6 +55068,15 @@
                             "type": "integer",
                             "nullable": true,
                             "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                          },
+                          "subjectKind": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "person",
+                              "object"
+                            ],
+                            "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                           }
                         },
                         "required": [
@@ -55083,7 +55092,8 @@
                           "roiBasis",
                           "status",
                           "lifecycleRung",
-                          "lifecycleRank"
+                          "lifecycleRank",
+                          "subjectKind"
                         ]
                       }
                     },
@@ -55204,6 +55214,14 @@
                     ],
                     "description": "Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."
                   },
+                  "subjectKind": {
+                    "type": "string",
+                    "enum": [
+                      "person",
+                      "object"
+                    ],
+                    "description": "REQUIRED: what one occurrence is about. Absent = 400 `subjectKind_required`, anything else = 400 `subject_kind_invalid`."
+                  },
                   "runnableOnly": {
                     "type": "boolean",
                     "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a new outcome is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
@@ -55226,6 +55244,7 @@
                   "icon",
                   "towardStep",
                   "towardRatePct",
+                  "subjectKind",
                   "createdBy"
                 ]
               }
@@ -55291,6 +55310,15 @@
                       "type": "integer",
                       "nullable": true,
                       "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                    },
+                    "subjectKind": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "person",
+                        "object"
+                      ],
+                      "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                     }
                   },
                   "required": [
@@ -55303,7 +55331,8 @@
                     "declared",
                     "producedBy",
                     "lifecycleRung",
-                    "lifecycleRank"
+                    "lifecycleRank",
+                    "subjectKind"
                   ]
                 }
               }
@@ -55367,6 +55396,15 @@
                       "type": "integer",
                       "nullable": true,
                       "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                    },
+                    "subjectKind": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "person",
+                        "object"
+                      ],
+                      "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                     }
                   },
                   "required": [
@@ -55379,7 +55417,8 @@
                     "declared",
                     "producedBy",
                     "lifecycleRung",
-                    "lifecycleRank"
+                    "lifecycleRank",
+                    "subjectKind"
                   ]
                 }
               }
@@ -55484,6 +55523,15 @@
                       "type": "integer",
                       "nullable": true,
                       "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                    },
+                    "subjectKind": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "person",
+                        "object"
+                      ],
+                      "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                     },
                     "valueUsd": {
                       "type": "number",
@@ -55590,6 +55638,7 @@
                     "producedBy",
                     "lifecycleRung",
                     "lifecycleRank",
+                    "subjectKind",
                     "valueUsd",
                     "valueVia",
                     "valueBasis",
@@ -55624,8 +55673,8 @@
         }
       },
       "patch": {
-        "summary": "State a declared step's lifecycle rung (internal, api-key)",
-        "description": "Sets where a step DECLARED at run time stands on the lifecycle ladder, live, no deploy. A coded step's rung is code (409 `step_coded`). 400 `lifecycleRung_required` / `lifecycle_rung_invalid`; 404 `step_not_found`; a customer write is refused.",
+        "summary": "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
+        "description": "Sets where a step DECLARED at run time stands on the lifecycle ladder and/or what one occurrence is about, live, no deploy; an absent field is unchanged. A coded step's are code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
         "tags": [
           "Internal"
         ],
@@ -55660,6 +55709,13 @@
                       "none"
                     ]
                   },
+                  "subjectKind": {
+                    "type": "string",
+                    "enum": [
+                      "person",
+                      "object"
+                    ]
+                  },
                   "runnableOnly": {
                     "type": "boolean",
                     "description": "True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): a step is staff only, 403 `staff_only` (a new one is a feature request). Absent or false = staff. Anything else = 400 `runnable_only_invalid`."
@@ -55670,7 +55726,6 @@
                   }
                 },
                 "required": [
-                  "lifecycleRung",
                   "createdBy"
                 ]
               }
@@ -55722,6 +55777,15 @@
                       "type": "integer",
                       "nullable": true,
                       "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                    },
+                    "subjectKind": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "person",
+                        "object"
+                      ],
+                      "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                     }
                   },
                   "required": [
@@ -55730,14 +55794,15 @@
                     "name",
                     "declared",
                     "lifecycleRung",
-                    "lifecycleRank"
+                    "lifecycleRank",
+                    "subjectKind"
                   ]
                 }
               }
             }
           },
           "400": {
-            "description": "`lifecycleRung_required`, `lifecycle_rung_invalid`."
+            "description": "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`."
           },
           "401": {
             "description": "Missing or wrong service key."
@@ -68313,6 +68378,15 @@
                             "type": "integer",
                             "nullable": true,
                             "description": "The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."
+                          },
+                          "subjectKind": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "person",
+                              "object"
+                            ],
+                            "description": "What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."
                           }
                         },
                         "required": [
@@ -68321,7 +68395,8 @@
                           "pluralName",
                           "icon",
                           "lifecycleRung",
-                          "lifecycleRank"
+                          "lifecycleRank",
+                          "subjectKind"
                         ]
                       }
                     }
