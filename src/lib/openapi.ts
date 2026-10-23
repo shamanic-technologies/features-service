@@ -8828,7 +8828,7 @@ const researchPerformanceFiguresShape = {
 const researchPerformancePipeSchema = z.object({
   pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
-  rowOrder: z.literal("estimated_cost").describe("Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."),
+  rowOrder: z.literal("leg_order").describe("The pipe's pick order (PERF-LEG-ORDER-1023; supersedes RESEARCH-COMBO-ESTIMATE-1023's order on the estimate): the ONE leg order of writer-pick and the workflow ranking on each combination's own figures. Active first; learning combinations whose explore price (own spend ÷ max(own outcomes, 1), $0 never used) is below the best mature one's cost; the mature ones; the other learning ones. Same explore price (every $0 one): by `estimate.costPerOutcomeUsd`, cheapest first. `place` says why."),
   rowsCover: z.literal("all_valid_combinations").describe("Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."),
   estimateModel: z.literal("part_effects").describe("Each row's prior is ONE model of the pipe (PRIOR-PART-EFFECTS-1023): outcomes per dollar = the pipe's rate × its workflow's, template's and LLM's effects, fitted together on every other combination, each pulled toward 1 by the leg's maturity bar in outcomes; an untested part is neutral."),
   outcomeNoun: z.string(),
@@ -8837,7 +8837,8 @@ const researchPerformancePipeSchema = z.object({
     .array(
       z.object({
         key: z.string().describe("`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."),
-        rank: z.number().int().describe("Served order: active before deprecated, then `estimate.costPerOutcomeUsd` ascending (unestimable last), then outcomes, people emailed, key."),
+        rank: z.number().int().describe("Served order: the pipe's pick order (`rowOrder: leg_order`)."),
+        place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why it stands there: `explore` (learning, explore price below the best mature cost, or nothing mature), `money` (the best mature one), `mature`, `proven_worse` (learning, its spend already reached the best mature cost), `cannot_run` (deprecated)."),
         workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
         template: z
           .object({
@@ -8867,7 +8868,7 @@ const researchPerformancePipeSchema = z.object({
             priorWeightOutcomes: z.number().describe("The leg's maturity bar in outcomes: the prior counts as that many outcomes."),
             unavailableReason: z.enum(["no_outcome_on_pipe"]).nullable(),
           })
-          .describe("The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."),
+          .describe("Its best-guess cost per outcome (RESEARCH-COMBO-ESTIMATE-1023); orders combinations at the same explore price. With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."),
         status: z.enum(["active", "deprecated"]).describe("Deprecated as soon as one part can no longer run: workflow not runnable on the leg, template dynasty deprecated by content-generation, LLM served under no alias or only aliases content-generation deprecated."),
         deprecatedParts: z.array(z.enum(["workflow", "template", "llm"])).describe("Which parts made it deprecated; [] when active."),
         ...researchPerformanceFiguresShape,

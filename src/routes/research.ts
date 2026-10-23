@@ -780,7 +780,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
-      rowOrder: "estimated_cost",
+      rowOrder: "leg_order",
       rowsCover: "all_valid_combinations",
       estimateModel: "part_effects",
       outcomeNoun: "meeting",
@@ -851,7 +851,7 @@ interface OtherSection {
 const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
-  rowOrder: "estimated_cost",
+  rowOrder: "leg_order",
   rowsCover: "all_valid_combinations",
   estimateModel: "part_effects",
   outcomeNoun: noun,
@@ -1080,11 +1080,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: estimated_cost` since RESEARCH-COMBO-ESTIMATE-1023, priors on `estimateModel: part_effects` since PRIOR-PART-EFFECTS-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: leg_order` since PERF-LEG-ORDER-1023, priors on `estimateModel: part_effects` since PRIOR-PART-EFFECTS-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "leg_order" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
