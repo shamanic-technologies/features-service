@@ -5793,7 +5793,7 @@ registry.registerPath({
   path: "/internal/writer-pick",
   summary: "What one run writes with: the best template dynasty and LLM of its pipe (internal, api-key; workflow-service)",
   description:
-    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason. STRATEGY refusals (a run must not write): `strategy_excludes_every_candidate` (every candidate a run could write with is ruled out by the play's strategy), `play_not_catalogued_on_pipe`. Nothing measured / readable (a run may keep its workflow's own writer): `no_sequence_recorded_on_pipe` (no writer recorded on the pipe yet), `no_selectable_candidate`, `no_candidate`, `template_dynasties_unreadable`, `writer_models_unreadable`, `model_ids_unreadable`; `internal_pipe_not_measured_per_writer` is no longer served (internal pipes are measured on the follow-up ledger since v0.179.341).",
+    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. A pipe with no writer on record yet (`writerEvidence: no_sequence_recorded_on_pipe` on the ranking) still picks (WA-PIPE-RESEARCH-1023): every candidate is Learning at $0 (`place: explore`, `isMature: false`), rank 1 goes first and the next once it has spent. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason. STRATEGY refusals (a run must not write): `strategy_excludes_every_candidate` (every candidate a run could write with is ruled out by the play's strategy), `play_not_catalogued_on_pipe`. Nothing measured / readable (a run may keep its workflow's own writer): `no_selectable_candidate`, `no_candidate`, `template_dynasties_unreadable`, `writer_models_unreadable`, `model_ids_unreadable`; `internal_pipe_not_measured_per_writer` is no longer served (internal pipes are measured on the follow-up ledger since v0.179.341).",
   tags: ["Internal"],
   request: { query: z.object({ workflowSlug: z.string().describe("The VERSION executing (or its dynasty)."), campaignId: z.string().optional() }) },
   responses: {
@@ -8424,7 +8424,7 @@ const researchStudySchema = registry.register(
   "ResearchStudy",
   z.object({
     id: z.string().describe("Stable study id, e.g. `cold-email-website-visit-workflow-roi`."),
-    pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]).nullable().describe("The pipe (leg x channel) the study belongs to; null on an outcome study."),
+    pipe: z.string().nullable().describe("The pipe (leg x channel) the study belongs to (`cold-email-positive-reply`, `cold-email-website-visit`, `meeting-booking`; one of `pipes[].id`); null on an outcome study."),
     outcome: z.enum(["meeting", "judgment", "positive-reply"]).optional().describe("Set exactly when `pipe` is null."),
     topic: z.string(),
     goal: z.enum(["roi", "rate"]),
@@ -8488,7 +8488,11 @@ const researchFileSchema = registry.register(
       noRunStart: z.number().int().optional().describe("People no serve record dates: counted in the mature cohort, in no month."),
       note: z.string(),
     }),
-    pipes: z.array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() })),
+    pipes: z
+      .array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() }))
+      .describe(
+        "The three studied pipes (`cold-email-positive-reply`, `cold-email-website-visit`, `meeting-booking`), then every other pipe of the published channel catalogue holding a workflow assignment (WA-PIPE-RESEARCH-1023), in catalogue order, `id` = its catalogue pipe id `<channel slug>|<leg, served spelling>` (e.g. `cold-whatsapp-outreach|start_to_signup`), `outcome` = its leg's `to` step label. An other pipe carries no study: its Workflows / Templates / Models / Performance tabs are `/internal/research/catalog[id]` and `/internal/research/performance` `pipes[id]` (empty lists = Learning, nothing measured yet).",
+      ),
     outcomes: z.array(
       z.object({
         id: z.string(),
@@ -8732,7 +8736,7 @@ const researchPerformanceFiguresShape = {
   contacted: researchPerformanceCountSchema.describe("People emailed (a visit pipe: through our own sender)."),
 };
 const researchPerformancePipeSchema = z.object({
-  pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]),
+  pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),

@@ -62,6 +62,11 @@ import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
 import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
 import { readNicheGrades } from "../lib/research/niche-grades.js";
 import { nicheStudies } from "../lib/research/niche.js";
+import { otherPipesOf, otherPipeTerms, type OtherPipe } from "../lib/research/other-pipes.js";
+import { STUDIED_PIPES } from "../lib/research/assemble.js";
+import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
+import { internalPipeToStep } from "../lib/pipe-kind.js";
 
 const router = Router();
 
@@ -188,20 +193,26 @@ interface ColdEmailPipeRead {
   names: Map<string, string>;
 }
 
-async function coldEmailPipe(legKey: string, basis: Basis, now: Date): Promise<ColdEmailPipeRead> {
+/**
+ * One pipe's evidence. The two cold email pipes read it as they always did; every other pipe (WA-PIPE-RESEARCH-1023) reads
+ * the SAME evidence through `opts` (its own channel; no dated spend, which only spreads bars over months; a ranking not
+ * built yet lists the bars alone instead of failing the file).
+ */
+async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { featureSlug?: string; datedSpend?: boolean; requireRanking?: boolean } = {}): Promise<ColdEmailPipeRead> {
+  const featureSlug = opts.featureSlug ?? COLD_EMAIL;
   const pricing: Pricing = basis === "actual" ? "vendor" : "gross";
   // The vendor-cost twin is read one aggregation at a time: runs-service's vendor-priced fleet read takes ~16 s on a leg
   // (0.15 s billed) and timed out when asked several at once (2026-10-18).
   const [ev, ranking] = await Promise.all([
-    fetchFleetLegSlugEvidence(COLD_EMAIL, legKey, "own", pricing),
-    basis === "user" ? readLegWorkflowRanking(COLD_EMAIL, legKey, RANKING_WAIT_MS) : Promise.resolve(null),
+    fetchFleetLegSlugEvidence(featureSlug, legKey, "own", pricing),
+    basis === "user" ? readLegWorkflowRanking(featureSlug, legKey, RANKING_WAIT_MS) : Promise.resolve(null),
   ]);
-  const unpriced = basis === "actual" ? await fetchFleetLegSlugEvidence(COLD_EMAIL, legKey, "own", "vendorUnpriced") : null;
-  if (basis === "user" && !ranking) throw new Error(`leg workflow ranking ${COLD_EMAIL}|${legKey} not built yet`);
+  const unpriced = basis === "actual" ? await fetchFleetLegSlugEvidence(featureSlug, legKey, "own", "vendorUnpriced") : null;
+  if (basis === "user" && !ranking && opts.requireRanking !== false) throw new Error(`leg workflow ranking ${featureSlug}|${legKey} not built yet`);
   const campaignIds = ev.campaigns.map((c) => c.campaignId);
   const [persons, spend] = await Promise.all([
-    fetchFleetPersonBuckets(COLD_EMAIL, new Set(campaignIds)),
-    fetchDatedSpend(COLD_EMAIL, ev.campaigns, pricing, ev.cutoffIso, now),
+    fetchFleetPersonBuckets(featureSlug, new Set(campaignIds)),
+    opts.datedSpend === false ? Promise.resolve([] as DatedSpendRow[]) : fetchDatedSpend(featureSlug, ev.campaigns, pricing, ev.cutoffIso, now),
   ]);
   const rule = legMaturity(legKey);
   const screened = isScreenedVisitLeg(legKey);
@@ -255,9 +266,9 @@ async function readModelNames(): Promise<Map<string, ModelName>> {
  * What every cold email workflow's runnable version writes with now (RESEARCH-PAGES-ALL-1018). Unreadable = every
  * workflow states `workflow_definitions_unreadable` (logged), never a guessed template.
  */
-async function readDynastyWriters(): Promise<{ now: Map<string, DynastyWriter>; last: Map<string, DynastyWriter>; byVersion: Map<string, VersionWriter> } | WriterReason> {
+async function readDynastyWriters(featureSlug: string = COLD_EMAIL): Promise<{ now: Map<string, DynastyWriter>; last: Map<string, DynastyWriter>; byVersion: Map<string, VersionWriter> } | WriterReason> {
   try {
-    const [definitions, models] = await Promise.all([fetchWorkflowDefinitions(COLD_EMAIL), readModelIds()]);
+    const [definitions, models] = await Promise.all([fetchWorkflowDefinitions(featureSlug), readModelIds()]);
     const last = dynastyLastWriters(definitions, models);
     return { now: dynastyWriters(definitions, models), last, byVersion: versionWriters(definitions, models, last) };
   } catch (error) {
@@ -500,6 +511,11 @@ async function readReplyDelay(): Promise<ReplyDelayRead> {
 /** The whole file, computed IN THIS PROCESS (the refresher, or the server when it is off). */
 export async function computeResearch(basis: Basis, now = new Date()): Promise<ResearchBuild> {
   const meetingRule = legMaturity(MEETING_BOOKING_LEG_KEY);
+  // Every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023): unreadable = the three alone, logged.
+  const otherPipesP = readOtherPipes().catch((err): OtherPipe[] => {
+    console.error("[features-service] research: the channel catalogue or the workflow assignments could not be read, the other pipes are left out this build:", err);
+    return [];
+  });
   // Each pipe's template dynasties (never throws: unreadable = every version on its own page, said so).
   // And the LLM dynasties (chat-service, LLM-DYNASTY-1022-FS; unreadable = every model on its own page, said so).
   const dynastiesP = Promise.all([readTemplateDynasties(COLD_EMAIL, REPLY_LEG), readTemplateDynasties(COLD_EMAIL, VISIT_LEG), readLlmDynastiesSoft("research")]).then(([r, v, l]) => ({
@@ -599,6 +615,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     },
     beforeAfter,
     meetingOutcomesRequired: meetingRule.outcomesRequired,
+    otherPipes: (await otherPipesP).map((p) => p.entry),
   });
   // The catalogue: one page per workflow, template and model, per pipe, from the same bars.
   const note = ruleNote(reply.input, visit.input);
@@ -735,8 +752,208 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
   const headTexts = Object.values(catalog).flatMap((c) =>
     c.templates.flatMap((t) => (t.dynasty?.head && allTexts.has(t.dynasty.head.key) ? [[t.key, allTexts.get(t.dynasty.head.key)!] as [string, string]] : [])),
   );
-  const texts = Object.fromEntries([...[...allTexts].filter(([k]) => listed.has(k)), ...headTexts].sort(([a], [b]) => (a < b ? -1 : 1)));
+  // Every other pipe's tabs, one pipe at a time on the vendor basis (its heaviest aggregation), two on the billed one.
+  const others = await mapWithConcurrency(await otherPipesP, basis === "actual" ? 1 : 2, (p) =>
+    withTimeout(otherPipeSection(p, basis, now, { llm: dynasties.llm, servedModels, writersOf: readDynastyWriters }), OTHER_PIPE_TIMEOUT_MS, `research pipe ${p.entry.id}`).catch((err) => {
+      console.error(`[features-service] research: pipe ${p.entry.id} could not be read this build, its tabs read Learning:`, err);
+      return emptySection(p);
+    }),
+  );
+  const otherTexts: Array<[string, string]> = [];
+  for (const o of others) {
+    catalog[o.id] = o.catalog;
+    performance[o.id] = o.performance;
+    otherTexts.push(...o.texts);
+  }
+  // The other pipes' texts first: a key the studied pipes also list keeps their entry (the sort is stable).
+  const texts = Object.fromEntries([...otherTexts, ...[...allTexts].filter(([k]) => listed.has(k)), ...headTexts].sort(([a], [b]) => (a < b ? -1 : 1)));
   return { file, catalog, texts, performance };
+}
+
+const OTHER_PIPE_TIMEOUT_MS = 3 * 60_000;
+
+/** The pipes the file serves beside the three studied ones: the published catalogue's pipes holding a workflow. */
+async function readOtherPipes(): Promise<OtherPipe[]> {
+  const [cat, assignments] = await Promise.all([loadChannelCatalogue({ publishedOnly: true }), listLegAssignments()]);
+  return otherPipesOf(cat.channels, assignments, STUDIED_PIPES);
+}
+
+interface OtherSection {
+  id: string;
+  catalog: ResearchCatalog[string];
+  performance: PipePerformance;
+  texts: Array<[string, string]>;
+}
+
+const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
+  pipe: p.entry.id,
+  figuresBasis: "workflow_bars",
+  outcomeNoun: noun,
+  outcomeNounPlural: nounPlural,
+  rows: [],
+  totals: null,
+  series: null,
+  unpricedBilledUsd: 0,
+  unavailableReason: "no_writer_recorded_on_pipe",
+});
+
+/** A pipe whose evidence could not be read this build: listed, every tab empty (Learning), never hidden. */
+function emptySection(p: OtherPipe): OtherSection {
+  const t = otherPipeTerms(p.entry, legMaturity(p.legKey), null);
+  return { id: p.entry.id, catalog: { workflows: [], templates: [], models: [] }, performance: noWriterPerformance(p, t.noun, t.nounPlural), texts: [] };
+}
+
+/**
+ * One other pipe's tabs, read like the cold email pipes' (WA-PIPE-RESEARCH-1023): its leg workflow ranking (each
+ * workflow's bar IS its row), its people filed under the template and LLM that wrote them (the leg writer ranking's
+ * evidence), its template dynasties, what its workflows write with now. An INTERNAL pipe (it acts on people another
+ * campaign holds) has no per-person evidence here: its workflows are its ranking rows, its writers its definitions.
+ */
+async function otherPipeSection(
+  p: OtherPipe,
+  basis: Basis,
+  now: Date,
+  shared: { llm: LlmDynastyIndex; servedModels: Awaited<ReturnType<typeof readModelIds>> | "model_ids_unreadable"; writersOf: typeof readDynastyWriters },
+): Promise<OtherSection> {
+  const { featureSlug, legKey } = p;
+  const internal = (await internalPipeToStep(featureSlug, legKey)) !== null;
+  const rule = legMaturity(legKey);
+  const [read, tplRead, writers, ranking] = await Promise.all([
+    internal ? Promise.resolve(null) : coldEmailPipe(legKey, basis, now, { featureSlug, datedSpend: false, requireRanking: false }),
+    readTemplateDynasties(featureSlug, legKey),
+    shared.writersOf(featureSlug),
+    readLegWorkflowRanking(featureSlug, legKey, RANKING_WAIT_MS).then(
+      (x) => x?.rows ?? null,
+      (err) => {
+        console.error(`[features-service] research: leg ranking ${featureSlug}|${legKey} unreadable, only the bars are listed:`, err);
+        return null;
+      },
+    ),
+  ]);
+  const terms = otherPipeTerms(p.entry, rule, read?.input.cutoffDay ?? null);
+  const tplDyn = templateDynastyIndex(tplRead);
+  const rankingNames = new Map((ranking ?? []).filter((r) => r.workflowDynastyName).map((r) => [r.workflowDynastySlug, r.workflowDynastyName]));
+  // An internal pipe: its ranking rows are its bars (billed basis), like the meeting booking pipe's.
+  const input: ColdEmailPipeInput = read?.input ?? {
+    legKey,
+    durationDays: rule.durationDays,
+    outcomesRequired: rule.outcomesRequired,
+    cutoffDay: null,
+    cells: [],
+    dynastyOf: new Map(),
+    labelOf: (d) => rankingNames.get(d) ?? d,
+    rankingRows: basis === "user" ? ranking : null,
+  };
+  const persons = read?.persons ?? [];
+  const split = read?.split ?? { screened: false, signal: "other" as const, cutoffDay: null };
+  const nameOf = (d: string) => read?.names.get(d) ?? rankingNames.get(d) ?? null;
+  const hasGen = persons.some((b) => b.generation);
+  const [models, generationRuns, workflowRuns] = await Promise.all([
+    hasGen ? readModelNames() : Promise.resolve(new Map<string, ModelName>()),
+    read ? readGenerationRuns(read.campaignIds).catch(() => []) : Promise.resolve([]),
+    read ? readWorkflowRuns(read.campaigns, (slug) => input.dynastyOf.get(slug) ?? slug, basis) : Promise.resolve([]),
+  ]);
+  const g = hasGen ? generationBuckets({ legKey, cells: input.cells, persons, split, models, templateDynasties: tplDyn, llmDynasties: shared.llm }) : null;
+  const gen: CatalogGen = g
+    ? {
+        templates: g.tpl.rows,
+        models: g.llm.rows,
+        modelLabel: g.modelLabel,
+        modelVersions: g.llmModels,
+        llmKeyOf: g.llmKeyOf,
+        llmLabelOf: g.llmLabelOf,
+        mainOf: mainsByDynasty(persons, input.dynastyOf, split.screened, tplDyn.keyOf, g.llmKeyOf),
+        templateVersions: g.tplVersions,
+        templateFiguresByVersion: g.tplFiguresByVersion,
+        templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
+        modelFiguresByVersion: g.llmFiguresByVersion,
+        modelVersionFiguresByVersion: g.llmModelFiguresByVersion,
+        workflowVersionTotals: g.workflowVersionTotals,
+      }
+    : NO_GEN;
+  const writerOf = typeof writers === "string" ? writers : (d: string) => writers.now.get(d) ?? null;
+  const lastWriterOf = typeof writers === "string" ? writers : (d: string) => writers.last.get(d) ?? null;
+  const nowTemplates = [
+    ...(typeof writers === "string" ? [] : [...writers.now.values(), ...writers.last.values()].flatMap((w) => (w.ok && w.template ? [w.template] : []))),
+    ...tplDyn.dynasties.flatMap((d) => d.versions),
+    ...persons.flatMap((b) => (b.generation?.promptType ? [b.generation.promptType] : [])),
+  ];
+  const texts = nowTemplates.length
+    ? await readTemplateTexts([...new Set(nowTemplates)]).catch((err) => {
+        console.error(`[features-service] research: template texts of ${p.entry.id} unreadable this time:`, err);
+        return new Map<string, string>();
+      })
+    : new Map<string, string>();
+  const returns = ranking
+    ? {
+        roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
+        moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
+        pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
+        billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
+      }
+    : undefined;
+  const bars = workflowBuckets(input);
+  const catalog = withWorkflowFigures(
+    pipeCatalog({
+      terms,
+      workflows: bars,
+      templates: gen.templates,
+      models: gen.models,
+      nameOf,
+      mainOf: gen.mainOf,
+      modelLabel: gen.modelLabel,
+      dynastyOf: (slug) => input.dynastyOf.get(slug) ?? slug,
+      workflowRuns,
+      templateDynasties: tplDyn,
+      llmDynasties: shared.llm,
+      modelVersions: gen.modelVersions,
+      templateVersions: gen.templateVersions,
+      generationRuns,
+      templateTexts: new Set(texts.keys()),
+      runnableWorkflows: runnableWorkflowsOf(ranking),
+      writerOf,
+      lastWriterOf,
+      servedModels: shared.servedModels,
+      workflowReturns: returns,
+      templateFiguresByVersion: gen.templateFiguresByVersion,
+      templateVersionFiguresByVersion: gen.templateVersionFiguresByVersion,
+      modelFiguresByVersion: gen.modelFiguresByVersion,
+      modelVersionFiguresByVersion: gen.modelVersionFiguresByVersion,
+      workflowVersionTotals: gen.workflowVersionTotals,
+    }),
+    ranking,
+  );
+  const performance =
+    read && hasGen
+      ? pipePerformance({
+          pipe: p.entry.id,
+          noun: terms.noun,
+          nounPlural: terms.nounPlural,
+          legKey,
+          cells: input.cells,
+          persons,
+          split,
+          bars,
+          dynastyOf: (slug) => input.dynastyOf.get(slug) ?? slug,
+          workflowLabelOf: input.labelOf,
+          workflowNameOf: nameOf,
+          writerOfVersion: typeof writers === "string" ? undefined : (slug) => writers.byVersion.get(slug) ?? null,
+          templateDynasties: tplDyn,
+          llmDynasties: shared.llm,
+          llmKeyOf: gen.llmKeyOf,
+          llmLabelOf: gen.llmLabelOf,
+          workflowReturns: returns,
+          unpricedBilledUsd: read.unpricedUsd,
+          now,
+        })
+      : noWriterPerformance(p, terms.noun, terms.nounPlural);
+  // Every listed template page's text: a version's under its id, a dynasty's (its head's) under the dynasty's slug.
+  const listed = new Set(catalog.templates.flatMap((t) => [t.key, ...t.versions.map((v) => v.key)]));
+  const pageTexts: Array<[string, string]> = [
+    ...[...texts].filter(([k]) => listed.has(k)),
+    ...catalog.templates.flatMap((t) => (t.dynasty?.head && texts.has(t.dynasty.head.key) ? [[t.key, texts.get(t.dynasty.head.key)!] as [string, string]] : [])),
+  ];
+  return { id: p.entry.id, catalog, performance, texts: pageTexts };
 }
 
 /** The Performance tab of every Research pipe (RESEARCH-PERFORMANCE-1023). */
@@ -902,7 +1119,15 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     if (!build?.catalog) return notYet(res);
     // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
     // Workflows list prints, never the ranking its build held (up to 15 min older).
-    const [replyRanking, visitRanking, tacticsOf] = await Promise.all([readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0), readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0), readTemplateTactics()]);
+    const studied = new Set<string>(STUDIED_PIPES.map((x) => x.id));
+    const others = build.file.pipes.filter((x) => !studied.has(x.id) && build.catalog?.[x.id]);
+    const [replyRanking, visitRanking, tacticsOf, otherRankings] = await Promise.all([
+      readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0),
+      readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0),
+      readTemplateTactics(),
+      // Every other pipe's pages take its current ranking rows too (WA-PIPE-RESEARCH-1023); unreadable = the build's.
+      Promise.all(others.map((x) => readLegWorkflowRanking(x.channel, x.leg, 0).catch(() => null))),
+    ]);
     // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022).
     const withTactics = <P extends { templates: CatalogTemplate[] }>(p: P): P => ({ ...p, templates: withTemplateTactics(p.templates, tacticsOf) });
     res.json(
@@ -910,6 +1135,7 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
         Object.fromEntries(
           Object.entries({
             ...build.catalog,
+            ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null)])),
             [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null),
             [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null),
           }).map(([id, p]) => [id, withTactics(p)]),

@@ -7,7 +7,7 @@ import { bucketOf, groupCells, type SlugCell } from "./buckets.js";
 import { cutoffText } from "./studies.js";
 import { costOverTimeStudy, dimensionStudies, notMeasuredStudy, sumFigures, type PipeTerms, type ResearchBucket } from "./studies.js";
 import { meetingBeforeAfterStudy, meetingBookingComparisonStudies, meetingBookingCostStudy, meetingCostStudy, type ReportingBrand } from "./meetings.js";
-import type { ResearchFile, ResearchStudy, ResearchUnavailable } from "./types.js";
+import type { ResearchFile, ResearchPipeEntry, ResearchStudy, ResearchUnavailable } from "./types.js";
 import { MONTHS as MONTH_LABELS } from "./format.js";
 import type { MeetingBookingBeforeAfter } from "../meeting-booking-before-after.js";
 import type { LegWorkflowRankingRow } from "../leg-workflow-ranking.js";
@@ -23,6 +23,13 @@ import { POSITIVE_REPLY_OUTCOME, replyDelayStudy, type ReplyDelayRead } from "./
 export const POSITIVE_REPLY_PIPE = "cold-email-positive-reply" as const;
 export const WEBSITE_VISIT_PIPE = "cold-email-website-visit" as const;
 export const MEETING_BOOKING_PIPE = "meeting-booking" as const;
+
+/** The three pipes the file STUDIES (each with its own studies); every other pipe is served on its tabs alone. */
+export const STUDIED_PIPES: readonly ResearchPipeEntry[] = [
+  { id: POSITIVE_REPLY_PIPE, channel: "sales-cold-email-outreach", leg: "lead_found_to_conversation", outcome: "Positive reply", description: "Cold email that gets a prospect to answer with interest." },
+  { id: WEBSITE_VISIT_PIPE, channel: "sales-cold-email-outreach", leg: "lead_found_to_website_visit", outcome: "Website visit", description: "Cold email that brings a prospect to the website." },
+  { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
+];
 
 /** One cold email pipe's evidence, read on one cost basis. */
 export interface ColdEmailPipeInput {
@@ -90,6 +97,11 @@ export interface ResearchInput {
    * reply-pipe campaign; null = unreadable this build (the study says so); undefined = not asked (no study).
    */
   replyDelay?: ReplyDelayRead | null;
+  /**
+   * Every other pipe of the channel catalogue holding a workflow (WA-PIPE-RESEARCH-1023), listed after the three studied
+   * ones: its Workflows / Templates / Models / Performance tabs are served on the catalogue and performance reads.
+   */
+  otherPipes?: readonly ResearchPipeEntry[];
 }
 
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
@@ -342,11 +354,8 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       ...(input.volume ? { excludedEmails: input.volume.excludedEmails, noRunStart: input.volume.noRunStart } : {}),
       note,
     },
-    pipes: [
-      { id: POSITIVE_REPLY_PIPE, channel: "sales-cold-email-outreach", leg: "lead_found_to_conversation", outcome: "Positive reply", description: "Cold email that gets a prospect to answer with interest." },
-      { id: WEBSITE_VISIT_PIPE, channel: "sales-cold-email-outreach", leg: "lead_found_to_website_visit", outcome: "Website visit", description: "Cold email that brings a prospect to the website." },
-      { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
-    ],
+    // The three studied pipes, then every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023).
+    pipes: [...STUDIED_PIPES, ...(input.otherPipes ?? [])],
     outcomes: [
       ...(input.replyDelay !== undefined ? [POSITIVE_REPLY_OUTCOME] : []),
       JUDGMENT_OUTCOME,
