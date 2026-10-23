@@ -1004,9 +1004,17 @@ async function buildResearch(basis: Basis): Promise<ResearchBuild> {
 /** The vendor-cost twin reads runs-service's heaviest aggregation per org: rebuilt every 6 hours, not every 15 minutes. */
 const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRESH_MS);
 
+/**
+ * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
+ * `figuresBasis: workflow_bars`) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ */
+export function isCurrentBuild(build: StoredBuild): boolean {
+  return build.performance?.[POSITIVE_REPLY_PIPE]?.figuresBasis === "workflow_bars";
+}
+
 export function warmResearch(basis: Basis): Promise<void> {
   const entry = store.get(basis);
-  if (entry && Date.now() - entry.computedAt < freshMsOf(basis)) return Promise.resolve();
+  if (entry && isCurrentBuild(entry.value) && Date.now() - entry.computedAt < freshMsOf(basis)) return Promise.resolve();
   // A failed build is not retried on every read (each read would re-ask runs-service's heaviest aggregation).
   if (Date.now() - (failedAt.get(basis) ?? 0) < RETRY_AFTER_FAILURE_MS) return Promise.resolve();
   const inFlight = warming.get(basis);
