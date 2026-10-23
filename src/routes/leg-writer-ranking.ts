@@ -16,8 +16,8 @@
  * a workflow assignment is covered by the same code (no per-pipe branch). A chat `/complete` writer records no sequence:
  * its people are filed under the LLM their acting run stated on lead-service's follow-up ledger (an entry pipe through
  * the fleet person cell, an internal pipe, `lib/pipe-kind.ts`, through `ledgerLlmBars`). A pipe with no writer recorded
- * at all states WHY it picks nothing (`writerEvidence: no_sequence_recorded_on_pipe`): never a pick on zero evidence
- * (every candidate at $0 would be an alphabetical pick, not a measured one).
+ * at all says so (`writerEvidence: no_sequence_recorded_on_pipe`) and still picks: every candidate is LEARNING at $0, the
+ * learning rule explores them in turn (WA-PIPE-RESEARCH-1023, supersedes "never a pick on zero evidence").
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -469,13 +469,15 @@ export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue
   });
   // `strategy_excludes_every_candidate`: a run could have written with one of them, the strategy ruled every such one
   // out (workflow-service refuses to write). `no_selectable_candidate`: nothing a run may write with, strategy or not.
+  // A pipe with no writer on record yet still picks (WA-PIPE-RESEARCH-1023, owner 2026-10-23: the WhatsApp workflows read
+  // their pipe's best template and LLM, « Learning when there is no outcome yet »): every candidate is then LEARNING at
+  // $0, and the learning rule IS the exploration (rank 1 goes first, the next one once it has spent). Supersedes
+  // BEST-TPL-LLM-1022's "never a pick on zero evidence": a pipe nobody may write for could never record a writer.
   const why = (unavailable: string | null, best: unknown, rows: unknown[], excluded: ReadonlyArray<{ key: string }>, selectable: (key: string) => boolean) =>
     best
       ? null
-      : p.writerEvidence !== "measured"
-        ? p.writerEvidence
-        : (unavailable ?? (excluded.some((x) => selectable(x.key)) ? "strategy_excludes_every_candidate" : rows.length === 0 && excluded.length === 0 ? "no_candidate" : "no_selectable_candidate"));
-  const pick = (rows: Array<TemplateRow | LlmRow>, best: WriterRankingRow | null) => (best && p.writerEvidence === "measured" ? (rows.find((r) => r.key === best.key) ?? null) : null);
+      : (unavailable ?? (excluded.some((x) => selectable(x.key)) ? "strategy_excludes_every_candidate" : rows.length === 0 && excluded.length === 0 ? "no_candidate" : "no_selectable_candidate"));
+  const pick = (rows: Array<TemplateRow | LlmRow>, best: WriterRankingRow | null) => (best ? (rows.find((r) => r.key === best.key) ?? null) : null);
   const tBest = pick(tRows, t.best);
   const lBest = pick(lRows, l.best);
   return {

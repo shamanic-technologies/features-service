@@ -6,7 +6,12 @@
  */
 import type { VerdictKind } from "./verdict.js";
 
-export type ResearchPipeId = "cold-email-positive-reply" | "cold-email-website-visit" | "meeting-booking";
+/**
+ * The three studied pipes keep their historical ids; every other pipe of the channel catalogue holding a workflow
+ * (WA-PIPE-RESEARCH-1023) is served under its catalogue pipe id `<channel slug>|<leg key, served spelling>`.
+ */
+export type StudiedPipeId = "cold-email-positive-reply" | "cold-email-website-visit" | "meeting-booking";
+export type ResearchPipeId = StudiedPipeId | (string & {});
 export type ResearchOutcomeId = "meeting" | "judgment" | "positive-reply";
 export type ResearchTopic =
   | "llm"
