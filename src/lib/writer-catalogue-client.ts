@@ -33,12 +33,14 @@ export async function readTemplateTexts(types: readonly string[]): Promise<Map<s
  * One pipe's template dynasties, read from content-generation-service's deployed catalogue (TPL-DYNASTY-1021-FS2; api
  * key, no identity). Unreadable = every version is its own page this build, said on each (`template_dynasties_unreadable`).
  */
-export async function readTemplateDynasties(featureSlug: string, legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
+export async function readTemplateDynasties(featureSlug: string, legKey: string, timeoutMs?: number): Promise<TemplateDynasty[] | TemplateDynastyReason> {
   try {
     const q = new URLSearchParams({ featureSlug, legKey: dynastyLegKeyOf(featureSlug, legKey) });
-    const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/template-dynasties?${q}`, {
-      headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
-    });
+    const res = await fetchWithRetry(
+      `${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/template-dynasties?${q}`,
+      { headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" } },
+      timeoutMs === undefined ? undefined : { timeoutMs },
+    );
     if (!res.ok) throw new Error(`content-generation-service template-dynasties ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const body = (await res.json()) as { dynasties?: Array<Partial<Omit<TemplateDynasty, "status">> & { status?: unknown; versions?: Array<{ type?: string; position?: number; status?: unknown; statusInDynasty?: unknown; copiedFrom?: unknown }> }> };
     if (!Array.isArray(body.dynasties)) throw new Error("content-generation-service template-dynasties: no dynasties array");
@@ -73,6 +75,25 @@ export async function readTemplateDynasties(featureSlug: string, legKey: string)
   }
 }
 
+/**
+ * One pipe's dynasties as content-generation states them NOW, for the Research catalogue read (TPL-STATUS-LIVE-1023):
+ * a template deprecated or upgraded shows on the next dashboard poll (5 s). Held 3 s per pipe, in-flight shared, so the
+ * polls of every open page ask once; bounded at 5 s, past which (or on any failure, logged loud) the build's rows stand.
+ */
+const LIVE_DYNASTIES_HOLD_MS = 3_000;
+const LIVE_DYNASTIES_TIMEOUT_MS = 5_000;
+const liveDynastiesHeld = new Map<string, { at: number; value: Promise<TemplateDynasty[] | TemplateDynastyReason> }>();
+export function readLiveTemplateDynasties(featureSlug: string, legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
+  const k = `${featureSlug}|${legKey}`;
+  const held = liveDynastiesHeld.get(k);
+  if (held && Date.now() - held.at < LIVE_DYNASTIES_HOLD_MS) return held.value;
+  const value = readTemplateDynasties(featureSlug, legKey, LIVE_DYNASTIES_TIMEOUT_MS);
+  liveDynastiesHeld.set(k, { at: Date.now(), value });
+  return value;
+}
+export function __resetLiveTemplateDynastiesForTest(): void {
+  liveDynastiesHeld.clear();
+}
 
 /** One writer model alias content-generation accepts (`/internal/models`), with its staff status. */
 export interface WriterModelAlias {
