@@ -131,12 +131,24 @@ describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
     expect(strategyOnSubject(st, "llm", tactics)).toMatchObject({ requiresTacticIds: [], excludesTacticIds: [] });
   });
 
-  it("a pipe with no writer evidence picks nothing and says why (its runs keep the workflow's own writer)", () => {
-    const p = { ...payload(), writerEvidence: "no_sequence_recorded_on_pipe" as const };
+  it("a pipe with no writer on record yet still picks, every candidate Learning at $0 (WA-PIPE-RESEARCH-1023)", () => {
+    const zero = <T extends { figures: { spentUsd: number; contacted: number; outcomes: number }; basis: string }>(c: T): T => ({ ...c, basis: "flash", figures: { spentUsd: 0, contacted: 0, outcomes: 0 } });
+    const base = payload();
+    const p = {
+      ...base,
+      writerEvidence: "no_sequence_recorded_on_pipe" as const,
+      templates: { ...base.templates, candidates: base.templates.candidates.map(zero) },
+      llms: { ...base.llms, candidates: base.llms.candidates.map(zero) },
+    };
     const served = servedRankings(p, buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }), null);
-    expect(served.templates.best).toBeNull();
-    expect(served.templates.unavailableReason).toBe("no_sequence_recorded_on_pipe");
-    expect(served.llms.best).toBeNull();
+    // never used = explore at $0, ties on the key; a template / LLM nobody may write with is never picked
+    expect(served.templates.best).toMatchObject({ key: "blind", place: "explore", explorePriceUsd: 0, isMature: false });
+    expect(served.templates.unavailableReason).toBeNull();
+    expect(served.llms.best).toMatchObject({ key: "claude-opus-5.5", isMature: false });
+    // no template candidate at all (content-generation lists none for the pipe yet): no pick, named
+    const none = servedRankings({ ...p, templates: { candidates: [], unavailableReason: null } }, buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }), null);
+    expect(none.templates.best).toBeNull();
+    expect(none.templates.unavailableReason).toBe("no_candidate");
   });
 
   it("a chat /complete internal pipe: each campaign's spend shared on its acted people, filed under the LLM the ledger states", () => {
