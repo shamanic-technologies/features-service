@@ -71820,9 +71820,9 @@
                           "rowOrder": {
                             "type": "string",
                             "enum": [
-                              "pick_order"
+                              "estimated_cost"
                             ],
-                            "description": "The rows stand in the order the pipe PICKS by (RESEARCH-PICK-ORDER-1023): the workflow's leg ranking rank, then the template's place in its leg order, then the LLM's; never by ROI."
+                            "description": "Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."
                           },
                           "outcomeNoun": {
                             "type": "string"
@@ -71841,7 +71841,7 @@
                                 },
                                 "rank": {
                                   "type": "integer",
-                                  "description": "Served order = the pick order: the workflow's leg ranking `rank`, then the template's place in the pipe's template order, then the LLM's (both `rankWriters`, the Research catalogue's `templates[]` / `models[]` order); a part none lists stands last; then outcomes, people emailed, key."
+                                  "description": "Served order: active before deprecated, then `estimate.costPerOutcomeUsd` ascending (unestimable last), then outcomes, people emailed, key."
                                 },
                                 "workflow": {
                                   "type": "object",
@@ -71987,6 +71987,92 @@
                                 "learning": {
                                   "type": "boolean"
                                 },
+                                "estimate": {
+                                  "type": "object",
+                                  "properties": {
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "(ownSpentUsd + priorWeightOutcomes × priorCostPerOutcomeUsd) ÷ (ownOutcomes + priorWeightOutcomes); with no prior, own spend ÷ own outcomes; null only with `unavailableReason`."
+                                    },
+                                    "display": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "ownSpentUsd": {
+                                      "type": "number"
+                                    },
+                                    "ownOutcomes": {
+                                      "type": "number"
+                                    },
+                                    "priorCostPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "What the row's parts measured on the pipe WITHOUT it: geometric mean of its workflow, template and LLM (`own_parts`, named in `priorParts`), else every other combination pooled."
+                                    },
+                                    "priorSource": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own_parts",
+                                        "pipe_combinations"
+                                      ]
+                                    },
+                                    "priorParts": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "workflow",
+                                          "template",
+                                          "llm"
+                                        ]
+                                      }
+                                    },
+                                    "priorWeightOutcomes": {
+                                      "type": "number",
+                                      "description": "The leg's maturity bar in outcomes: the prior counts as that many outcomes."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "costPerOutcomeUsd",
+                                    "display",
+                                    "ownSpentUsd",
+                                    "ownOutcomes",
+                                    "priorCostPerOutcomeUsd",
+                                    "priorSource",
+                                    "priorWeightOutcomes",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is scaled by prior ÷ estimate."
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "active",
+                                    "deprecated"
+                                  ],
+                                  "description": "Deprecated as soon as one part can no longer run: workflow not runnable on the leg, template dynasty deprecated by content-generation, LLM served under no alias or only aliases content-generation deprecated."
+                                },
+                                "deprecatedParts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "workflow",
+                                      "template",
+                                      "llm"
+                                    ]
+                                  },
+                                  "description": "Which parts made it deprecated; [] when active."
+                                },
                                 "roi": {
                                   "type": "object",
                                   "properties": {
@@ -72107,7 +72193,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."
+                                  "description": "Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."
                                 },
                                 "conversionRatePct": {
                                   "type": "object",
@@ -72227,6 +72313,9 @@
                                 "writerUnavailableReason",
                                 "maturity",
                                 "learning",
+                                "estimate",
+                                "status",
+                                "deprecatedParts",
                                 "roi",
                                 "costPerOutcomeUsd",
                                 "conversionRatePct",
@@ -72361,7 +72450,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."
+                                "description": "Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."
                               },
                               "conversionRatePct": {
                                 "type": "object",

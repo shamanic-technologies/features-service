@@ -8742,7 +8742,7 @@ const researchPerformanceFigureSchema = z.object({
 const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
 const researchPerformanceFiguresShape = {
   roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."),
-  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."),
+  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."),
   conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."),
   outcomes: researchPerformanceCountSchema,
   spentUsd: researchPerformanceCountSchema,
@@ -8751,14 +8751,14 @@ const researchPerformanceFiguresShape = {
 const researchPerformancePipeSchema = z.object({
   pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
-  rowOrder: z.literal("pick_order").describe("The rows stand in the order the pipe PICKS by (RESEARCH-PICK-ORDER-1023): the workflow's leg ranking rank, then the template's place in its leg order, then the LLM's; never by ROI."),
+  rowOrder: z.literal("estimated_cost").describe("Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),
   rows: z
     .array(
       z.object({
         key: z.string().describe("`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."),
-        rank: z.number().int().describe("Served order = the pick order: the workflow's leg ranking `rank`, then the template's place in the pipe's template order, then the LLM's (both `rankWriters`, the Research catalogue's `templates[]` / `models[]` order); a part none lists stands last; then outcomes, people emailed, key."),
+        rank: z.number().int().describe("Served order: active before deprecated, then `estimate.costPerOutcomeUsd` ascending (unestimable last), then outcomes, people emailed, key."),
         workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
         template: z
           .object({
@@ -8775,6 +8775,21 @@ const researchPerformancePipeSchema = z.object({
         writerUnavailableReason: z.enum(["not_on_record"]).nullable(),
         maturity: z.object({ isMature: z.boolean(), matureOutcomes: z.number().nullable(), outcomesRequired: z.number() }),
         learning: z.boolean(),
+        estimate: z
+          .object({
+            costPerOutcomeUsd: z.number().nullable().describe("(ownSpentUsd + priorWeightOutcomes × priorCostPerOutcomeUsd) ÷ (ownOutcomes + priorWeightOutcomes); with no prior, own spend ÷ own outcomes; null only with `unavailableReason`."),
+            display: z.string().nullable(),
+            ownSpentUsd: z.number(),
+            ownOutcomes: z.number(),
+            priorCostPerOutcomeUsd: z.number().nullable().describe("What the row's parts measured on the pipe WITHOUT it: geometric mean of its workflow, template and LLM (`own_parts`, named in `priorParts`), else every other combination pooled."),
+            priorSource: z.enum(["own_parts", "pipe_combinations"]).nullable(),
+            priorParts: z.array(z.enum(["workflow", "template", "llm"])).optional(),
+            priorWeightOutcomes: z.number().describe("The leg's maturity bar in outcomes: the prior counts as that many outcomes."),
+            unavailableReason: z.enum(["no_outcome_on_pipe"]).nullable(),
+          })
+          .describe("The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is scaled by prior ÷ estimate."),
+        status: z.enum(["active", "deprecated"]).describe("Deprecated as soon as one part can no longer run: workflow not runnable on the leg, template dynasty deprecated by content-generation, LLM served under no alias or only aliases content-generation deprecated."),
+        deprecatedParts: z.array(z.enum(["workflow", "template", "llm"])).describe("Which parts made it deprecated; [] when active."),
         ...researchPerformanceFiguresShape,
       }),
     )

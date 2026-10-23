@@ -22,9 +22,13 @@
  * still unknown = the money workflow's. The return is the catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline
  * shared on outcomes ÷ its workflow's billed spend shared on spend; never 0 when expected, null only with a reason.
  *
- * THE ROWS STAND IN THE ORDER THE PIPE PICKS BY (RESEARCH-PICK-ORDER-1023, owner 2026-10-23 « le tri réel que tu
- * utiliserais en prod »): the workflow's leg ranking rank, then the template's and the LLM's place in their own leg
- * order (`rankWriters`), never by ROI (the pick is on cost per outcome, each part on its own).
+ * THE ROWS STAND ON EACH COMBINATION'S OWN ESTIMATED COST PER OUTCOME (RESEARCH-COMBO-ESTIMATE-1023, owner 2026-10-23
+ * « il faut que tu estimes les vrais stats de performance de chaque combinaison », supersedes the nested workflow ->
+ * template -> LLM pick order of RESEARCH-PICK-ORDER-1023, « ordre pourri »): estimate = (its own spend + k x prior) ÷
+ * (its own outcomes + k), prior = what its parts measured on the pipe WITHOUT it (geometric mean, then the pipe pooled),
+ * k = the leg's maturity bar in outcomes. A combination with spend and no outcome climbs above its prior; one with many
+ * outcomes reads its own figure. A combination any part of which can no longer run (workflow not runnable, template
+ * dynasty deprecated, LLM served under no alias or only deprecated ones) is DEPRECATED and stands after every active one.
  */
 import { isMatureCount, legMaturity } from "../maturity.js";
 import { bucketOf, type SlugCell } from "./buckets.js";
@@ -86,6 +90,25 @@ export interface PerformanceRow extends PerformanceFigures {
   writerUnavailableReason: "not_on_record" | null;
   maturity: { isMature: boolean; matureOutcomes: number | null; outcomesRequired: number };
   learning: boolean;
+  /** The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). */
+  estimate: PerformanceEstimate;
+  /** Deprecated as soon as one part can no longer run (`deprecatedParts` names which); deprecated rows stand last. */
+  status: "active" | "deprecated";
+  deprecatedParts: PerformancePart[];
+}
+
+/** A combination's estimated cost per outcome: its own spend and outcomes blended with what its parts predict. */
+export interface PerformanceEstimate {
+  costPerOutcomeUsd: number | null;
+  display: string | null;
+  ownSpentUsd: number;
+  ownOutcomes: number;
+  /** What its parts measured on the pipe without it (`priorSource`), counted as `priorWeightOutcomes` outcomes. */
+  priorCostPerOutcomeUsd: number | null;
+  priorSource: "own_parts" | "pipe_combinations" | null;
+  priorParts?: PerformancePart[];
+  priorWeightOutcomes: number;
+  unavailableReason: "no_outcome_on_pipe" | null;
 }
 
 export interface PerformancePoint {
@@ -104,8 +127,8 @@ export interface PipePerformance {
   pipe: ResearchPipeId;
   /** Each workflow's rows on its Workflows-tab bar's basis (mature for a mature workflow): the totals are that tab's sum. */
   figuresBasis: "workflow_bars";
-  /** The rows stand in the order the pipe PICKS by: workflow rank, then template, then LLM (RESEARCH-PICK-ORDER-1023). */
-  rowOrder: "pick_order";
+  /** Active rows first, each group by its estimated cost per outcome, cheapest first (RESEARCH-COMBO-ESTIMATE-1023). */
+  rowOrder: "estimated_cost";
   outcomeNoun: string;
   outcomeNounPlural: string;
   rows: PerformanceRow[];
@@ -152,31 +175,41 @@ export interface PipePerformanceInput {
     pipelineOf: ReadonlyMap<string, number | null>;
     billedOf: ReadonlyMap<string, number | null>;
   };
-  /**
-   * Where each part stands in the order the pipe picks it by (1 = picked first): workflow dynasty → its leg ranking
-   * `rank`; template page key and LLM key → their place in the catalogue's `rankWriters` order. The rows sort on it.
-   */
-  pickOrder: PickOrder;
+  /** The parts that can no longer run (keys as on the rows); a combination with any of them is deprecated. */
+  deprecated?: DeprecatedParts;
   unpricedBilledUsd: number;
   now: Date;
 }
 
-export interface PickOrder {
-  workflows: ReadonlyMap<string, number>;
-  templates: ReadonlyMap<string, number>;
-  llms: ReadonlyMap<string, number>;
+export interface DeprecatedParts {
+  workflows: ReadonlySet<string>;
+  templates: ReadonlySet<string>;
+  llms: ReadonlySet<string>;
 }
 
-/** PURE. The pick order of a pipe: its leg ranking's workflow ranks, its catalogue's template and LLM order. */
-export function pickOrderOf(ranking: ReadonlyArray<{ workflowDynastySlug: string; rank: number }> | null, catalog: { templates: ReadonlyArray<{ key: string }>; models: ReadonlyArray<{ key: string }> }): PickOrder {
+/**
+ * PURE. Which parts of a pipe's catalogue can no longer run: a workflow the leg ranking marks not runnable, a template
+ * dynasty content-generation deprecated, an LLM chat-service serves under no alias (or content-generation deprecated
+ * every alias it is served under). A status nobody could read deprecates nothing.
+ */
+export function deprecatedPartsOf(
+  catalog: {
+    workflows: ReadonlyArray<{ key: string; runnable: boolean }>;
+    templates: ReadonlyArray<{ key: string; status: string | null }>;
+    models: ReadonlyArray<{ key: string; aliases: readonly string[]; aliasesUnavailableReason: string | null }>;
+  },
+  aliasStatus: ReadonlyMap<string, "active" | "deprecated"> | null,
+): DeprecatedParts {
   return {
-    workflows: new Map((ranking ?? []).map((r) => [r.workflowDynastySlug, r.rank])),
-    templates: new Map(catalog.templates.map((t, i) => [t.key, i + 1])),
-    llms: new Map(catalog.models.map((m, i) => [m.key, i + 1])),
+    workflows: new Set(catalog.workflows.filter((w) => !w.runnable).map((w) => w.key)),
+    templates: new Set(catalog.templates.filter((t) => t.status === "deprecated").map((t) => t.key)),
+    llms: new Set(
+      catalog.models
+        .filter((m) => (m.aliases.length === 0 ? m.aliasesUnavailableReason === "no_alias_serves_it" : aliasStatus !== null && m.aliases.every((a) => aliasStatus.get(a) === "deprecated")))
+        .map((m) => m.key),
+    ),
   };
 }
-
-const placeOf = (order: ReadonlyMap<string, number>, key: string | null | undefined) => (key != null ? (order.get(key) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER);
 
 const SEP = "\u001f";
 const NONE = "-";
@@ -204,6 +237,13 @@ interface Acc {
   billedUsd: number;
 }
 const zero = (): Acc => ({ spentUsd: 0, contacted: 0, outcomes: 0, pipelineUsd: 0, billedUsd: 0 });
+const minus = (a: Acc, b: Acc): Acc => ({
+  spentUsd: Math.max(0, a.spentUsd - b.spentUsd),
+  contacted: Math.max(0, a.contacted - b.contacted),
+  outcomes: Math.max(0, a.outcomes - b.outcomes),
+  pipelineUsd: Math.max(0, a.pipelineUsd - b.pipelineUsd),
+  billedUsd: Math.max(0, a.billedUsd - b.billedUsd),
+});
 const addInto = (a: Acc, b: Acc) => {
   a.spentUsd += b.spentUsd;
   a.contacted += b.contacted;
@@ -222,7 +262,7 @@ const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym.s
 
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "pick_order" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "estimated_cost" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
@@ -358,9 +398,11 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   const measuredRoi = (a: Acc) => (printed(a.outcomes) && a.billedUsd > 0 ? a.pipelineUsd / a.billedUsd : null);
   const measuredCost = (a: Acc) => (printed(a.outcomes) && a.spentUsd > 0 ? a.spentUsd / a.outcomes : null);
   const measuredRate = (a: Acc) => (a.contacted > 0 ? (100 * a.outcomes) / a.contacted : null);
-  const fromParts = (d: Draft, read: (a: Acc) => number | null): { value: number; parts: PerformancePart[] } | null => {
+  // `without` = read each part on every OTHER row sharing it (a combination's prior never counts its own evidence).
+  const fromParts = (d: Draft, read: (a: Acc) => number | null, without = false): { value: number; parts: PerformancePart[] } | null => {
     const got = partKeys(d).flatMap(([part, k]) => {
-      const v = read(partAcc.get(k)!);
+      const t = partAcc.get(k)!;
+      const v = read(without ? minus(t, d.acc) : t);
       return v != null && v > 0 ? [{ part, v }] : [];
     });
     return got.length ? { value: geoMean(got.map((g) => g.v)), parts: got.map((g) => g.part) } : null;
@@ -378,30 +420,51 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   const pooledCost = measuredCost(cum);
   const pooledRate = measuredRate(cum);
 
-  const rowFigures = (d: Draft): Pick<PerformanceFigures, "roi" | "costPerOutcomeUsd" | "conversionRatePct"> => {
+  // The estimate (RESEARCH-COMBO-ESTIMATE-1023): own spend and outcomes, plus the prior counted as `outcomesRequired` outcomes.
+  const estimateOf = (d: Draft): PerformanceEstimate => {
     const a = d.acc;
+    const parts = fromParts(d, measuredCost, true);
+    const othersPooled = measuredCost(minus(cum, a));
+    const prior = parts ? { value: parts.value, source: "own_parts" as const, parts: parts.parts } : othersPooled != null ? { value: othersPooled, source: "pipe_combinations" as const } : null;
+    const value = prior ? (a.spentUsd + outcomesRequired * prior.value) / (a.outcomes + outcomesRequired) : printed(a.outcomes) && a.spentUsd > 0 ? a.spentUsd / a.outcomes : null;
+    return {
+      costPerOutcomeUsd: value,
+      display: value === null ? null : usd(value),
+      ownSpentUsd: a.spentUsd,
+      ownOutcomes: a.outcomes,
+      priorCostPerOutcomeUsd: prior?.value ?? null,
+      priorSource: prior?.source ?? null,
+      ...(prior && "parts" in prior ? { priorParts: prior.parts } : {}),
+      priorWeightOutcomes: outcomesRequired,
+      unavailableReason: value === null ? "no_outcome_on_pipe" : null,
+    };
+  };
+
+  const rowFigures = (d: Draft, est: PerformanceEstimate): Pick<PerformanceFigures, "roi" | "costPerOutcomeUsd" | "conversionRatePct"> => {
+    const a = d.acc;
+    const ownCost = measuredCost(a);
+    // With no outcome of its own, the expected cost IS the estimate (its prior raised by what it spent for nothing), and
+    // the expected return moves with it: same value per outcome, at the estimated cost.
+    const expectedCost = ownCost === null && est.costPerOutcomeUsd !== null && est.priorCostPerOutcomeUsd !== null ? est.costPerOutcomeUsd : null;
+    const costScale = expectedCost !== null ? est.priorCostPerOutcomeUsd! / expectedCost : 1;
     const ownRoi = measuredRoi(a);
-    const partsRoi = ownRoi === null ? fromParts(d, measuredRoi) : null;
+    const partsRoi = ownRoi === null ? fromParts(d, measuredRoi, true) : null;
     const roi =
       ownRoi !== null
         ? figure(ownRoi, "measured", "own", roiText)
         : partsRoi
-          ? figure(partsRoi.value, "expected", "own_parts", roiText, partsRoi.parts)
+          ? figure(partsRoi.value * costScale, "expected", "own_parts", roiText, partsRoi.parts)
           : pooledRoi != null && pooledRoi > 0
-            ? figure(pooledRoi, "expected", "pipe_combinations", roiText)
+            ? figure(pooledRoi * costScale, "expected", "pipe_combinations", roiText)
             : moneyRoi != null
-              ? figure(moneyRoi, "expected", "pipe_best_workflow", roiText)
+              ? figure(moneyRoi * costScale, "expected", "pipe_best_workflow", roiText)
               : missing("no_return_on_pipe");
-    const ownCost = measuredCost(a);
-    const partsCost = ownCost === null ? fromParts(d, measuredCost) : null;
     const cost =
       ownCost !== null
         ? figure(ownCost, "measured", "own", usd)
-        : partsCost
-          ? figure(partsCost.value, "expected", "own_parts", usd, partsCost.parts)
-          : pooledCost != null
-            ? figure(pooledCost, "expected", "pipe_combinations", usd)
-            : missing("no_outcome_on_pipe");
+        : expectedCost !== null
+          ? figure(expectedCost, "expected", est.priorSource!, usd, est.priorParts)
+          : missing("no_outcome_on_pipe");
     // Conversion is MEASURED whenever the row emailed somebody (a measured 0% included).
     const ownRate = measuredRate(a);
     const partsRate = ownRate === null ? fromParts(d, measuredRate) : null;
@@ -416,9 +479,20 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
     return { roi, costPerOutcomeUsd: cost, conversionRatePct: rate };
   };
 
+  const dep = p.deprecated;
+  const deprecatedOf = (e: Draft["e"]): PerformancePart[] =>
+    dep
+      ? ([
+          ["workflow", dep.workflows.has(e.dynasty)],
+          ["template", e.tpl !== NONE && dep.templates.has(dyn.keyOf(e.tpl))],
+          ["llm", e.llm !== NONE && dep.llms.has(e.llm)],
+        ] as Array<[PerformancePart, boolean]>).flatMap(([part, on]) => (on ? [part] : []))
+      : [];
   const rows: PerformanceRow[] = drafts
     .map((d) => {
       const e = d.e;
+      const est = estimateOf(d);
+      const deprecatedParts = deprecatedOf(e);
       const standalone = e.tpl !== NONE ? dyn.dynastyOf(e.tpl) === null : false;
       const tplDynasty = e.tpl !== NONE ? dyn.dynastyOf(e.tpl) : null;
       const llmDynasty = e.llm !== NONE ? llmDyn.bySlug(e.llm) : null;
@@ -440,22 +514,22 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         writerUnavailableReason: e.tpl === NONE && e.llm === NONE ? ("not_on_record" as const) : null,
         maturity: { isMature: d.isMature, matureOutcomes: d.matureOutcomes, outcomesRequired },
         learning: !d.isMature,
-        ...rowFigures(d),
+        estimate: est,
+        status: deprecatedParts.length ? ("deprecated" as const) : ("active" as const),
+        deprecatedParts,
+        ...rowFigures(d, est),
         outcomes: count(d.acc.outcomes, (v) => n(Math.round(v))),
         spentUsd: count(d.acc.spentUsd, usd),
         contacted: count(d.acc.contacted, (v) => n(Math.round(v))),
       };
     })
-    // The order the pipe PICKS by (RESEARCH-PICK-ORDER-1023, owner « le tri réel que tu utiliserais en prod »): the
-    // workflow's place in the ONE leg order, then the template's and the LLM's in theirs (`rankWriters`); a part the
-    // order does not list stands after every listed one. Then outcomes, people, key.
+    // Active first, then each combination's own estimated cost per outcome, cheapest first (RESEARCH-COMBO-ESTIMATE-1023);
+    // an unestimable row stands last of its group. Then outcomes, people, key.
     .sort((a, b) => {
-      const byWorkflow = placeOf(p.pickOrder.workflows, a.workflow.key) - placeOf(p.pickOrder.workflows, b.workflow.key);
-      if (byWorkflow !== 0) return byWorkflow;
-      const byTemplate = placeOf(p.pickOrder.templates, a.template?.key) - placeOf(p.pickOrder.templates, b.template?.key);
-      if (byTemplate !== 0) return byTemplate;
-      const byLlm = placeOf(p.pickOrder.llms, a.llm?.key) - placeOf(p.pickOrder.llms, b.llm?.key);
-      if (byLlm !== 0) return byLlm;
+      if (a.status !== b.status) return a.status === "active" ? -1 : 1;
+      const ea = a.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
+      const eb = b.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
+      if (ea !== eb) return ea < eb ? -1 : 1;
       if (a.outcomes.value !== b.outcomes.value) return b.outcomes.value - a.outcomes.value;
       if (a.contacted.value !== b.contacted.value) return b.contacted.value - a.contacted.value;
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
