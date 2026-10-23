@@ -862,3 +862,46 @@ describe("SHOCKWAVE-ROI-NET-1016: the board's ROI is the brand page's NET ROI", 
     expect(row.unreadParts).toEqual([{ part: "best_workflow", reason: timeout }]);
   });
 });
+
+describe("one row per org, billing's customer verdict (CUSTOMER-HEALTH-OOM-1023)", () => {
+  const accounts = [
+    account({ orgId: "current-org", brandId: "c1", status: "active" }),
+    account({ orgId: "current-org", brandId: "c2", status: "paused" }),
+    account({ orgId: "gone-org", brandId: "g1", status: "inactive" }),
+    account({ orgId: "ours", brandId: "o1", status: "active" }),
+    account({ orgId: "unbilled", brandId: "u1", status: "inactive" }),
+  ];
+  const statuses = new Map([
+    ["current-org", { orgId: "current-org", orgName: "Current Co", customerStatus: "current" as const, ownOrg: false, ownOrgReason: null }],
+    ["gone-org", { orgId: "gone-org", orgName: "Gone Co", customerStatus: "churned" as const, ownOrg: false, ownOrgReason: null }],
+    ["ours", { orgId: "ours", orgName: "Us", customerStatus: "current" as const, ownOrg: true, ownOrgReason: "platform_org" }],
+  ]);
+
+  it("copies billing's verdict onto every org and its brand rows, ours last and out of the counts", async () => {
+    const deps = makeDeps({ accounts, recencies: [], perBrand: {} });
+    deps.customerStatuses = async () => statuses;
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    const org = Object.fromEntries(board.orgs.map((o) => [o.orgId, o]));
+    expect(org["current-org"]).toMatchObject({ customerStatus: "current", orgName: "Current Co", brandIds: ["c1", "c2"], ownOrg: false });
+    expect(org["current-org"].healthBadge).toBe("red"); // worst of its brands (the paused one)
+    expect(org["gone-org"].customerStatus).toBe("churned");
+    expect(org["unbilled"]).toMatchObject({ customerStatus: null, customerStatusUnavailableReason: "org_not_in_billing", ownOrg: null });
+    expect(board.orgs[board.orgs.length - 1].orgId).toBe("ours");
+    expect(board.orgStats).toEqual({ totalOrgs: 4, currentCount: 1, churnedCount: 1, neverPaidCount: 0, customerStatusUnknownCount: 1, ownOrgCount: 1 });
+    const row = Object.fromEntries(board.customers.map((r) => [r.brandId, r]));
+    expect(row.c2.customerStatus).toBe("current");
+    expect(row.o1.ownOrg).toBe(true);
+    // Every org the board and billing both serve carries billing's verdict, byte for byte.
+    for (const o of board.orgs) if (statuses.has(o.orgId)) expect(o.customerStatus).toBe(statuses.get(o.orgId)!.customerStatus);
+  });
+
+  it("billing unreadable: every org has no verdict and says why, the board still answers", async () => {
+    const deps = makeDeps({ accounts, recencies: [], perBrand: {} });
+    deps.customerStatuses = async () => {
+      throw new Error("billing 502");
+    };
+    const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
+    expect(board.orgs.every((o) => o.customerStatus === null && o.customerStatusUnavailableReason === "billing_customer_status_unavailable")).toBe(true);
+    expect(board.customers).toHaveLength(5);
+  });
+});

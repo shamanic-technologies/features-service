@@ -37,6 +37,7 @@ import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import researchRoutes, { readResearch, warmResearch } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
+import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import { startGenerationSequencesCopy } from "./lib/generation-sequences-copy.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
@@ -124,6 +125,7 @@ app.use(livedSalesPathsRoutes);
 app.use(fleetIndexesRoutes);
 app.use(researchRoutes);
 app.use(legWriterRankingRoutes);
+app.use(customerHealthRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -229,6 +231,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // The best template and LLM of every pipe holding a workflow (routes/leg-writer-ranking.ts, BEST-TPL-LLM-1022),
         // one pipe at a time, three minutes in (after the fleet cells it shares with Research are warm).
         setTimeout(() => void warmEveryLegWriterRanking().catch((err) => console.error("[features-service] leg writer ranking boot warm failed:", err)), 180_000).unref();
+        // The staff customer-health board (routes/customer-health.ts): the persisted copy loaded and, when stale, rebuilt in the
+        // refresher four minutes in (after the boot warms it would otherwise pile its heap on top of).
+        setTimeout(() => void readCustomerHealthText().catch((err) => console.error("[features-service] customer-health boot warm failed:", err)), 240_000).unref();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
