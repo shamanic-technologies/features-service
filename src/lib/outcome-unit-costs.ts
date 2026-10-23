@@ -11,9 +11,10 @@
  *  - Rule 2, normal loss is absorbed by the good units: the sends nobody answered are part of that production, so they
  *    ride the replies (a positive reply carries the ~1,000 sends behind it, never only the one it answered).
  *  - An input S's production consumed from ANOTHER pipe (a booked meeting consuming a positive reply) enters at that
- *    input's own unit cost, every occurrence of it IN THE BRANDS WHERE S HAPPENED counted (rule 2 again: the replies
- *    that never booked ride the meetings; a brand with no S is left out, so a brand that never reports a meeting is
- *    never read as a brand that books none, the meeting-population rule made generic), solved over the whole graph (Leontief; a cycle is solved as a Neumann series, a diverging
+ *    input's own unit cost, every occurrence of it IN THE ORGS WHERE S HAPPENED counted (rule 2 again: the replies
+ *    that never booked ride the meetings; an org with no S is left out, so a client that never reports a meeting is
+ *    never read as one that books none, the meeting-population rule made generic, at the finest grain every
+ *    declaration states), solved over the whole graph (Leontief; a cycle is solved as a Neumann series, a diverging
  *    one is named). A reused input is charged again (standard cost on reuse).
  *
  *   unit(S) = [ own spend of S's production + Σ_q cross(S, q) × unit(q) ] ÷ n(S)
@@ -27,8 +28,11 @@
 export interface ProducedRow {
   outcomeKey: string;
   campaignId: string | null;
-  /** The producing run's brand (null = none stated). */
-  brandId?: string | null;
+  /**
+   * The producing run's org: the population an input's loss is counted in. Org, not brand: a reply judged on a run per
+   * org and day states no brand (prod 2026-10-24: 78 of 87 replies), so a brand pool found 9 of them.
+   */
+  orgId?: string | null;
   produced: number;
   /** Their own production cost (the producing runs' spend), USD, on the basis read. */
   ownCostUsd: number;
@@ -40,7 +44,7 @@ export interface ConsumedRow {
   consumedKey: string;
   /** The consuming run's campaign. */
   campaignId: string | null;
-  brandId?: string | null;
+  orgId?: string | null;
   count: number;
 }
 
@@ -87,16 +91,16 @@ export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consume
   const out = (c: string | null) => (c ? outputOf(c) : null);
   // n(S): own pipes + no campaign; by-products apart
   const n = new Map<string, number>();
-  const nByBrand = new Map<string, Map<string, number>>();
+  const nByOrg = new Map<string, Map<string, number>>();
   const byProducts = new Map<string, number>();
   for (const r of produced) {
     const o = out(r.campaignId);
     if ((r.campaignId === null && pipeOutputs.has(r.outcomeKey)) || o === r.outcomeKey) {
       n.set(r.outcomeKey, (n.get(r.outcomeKey) ?? 0) + r.produced);
-      const b = r.brandId ?? "";
-      const m = nByBrand.get(r.outcomeKey) ?? new Map<string, number>();
+      const b = r.orgId ?? "";
+      const m = nByOrg.get(r.outcomeKey) ?? new Map<string, number>();
       m.set(b, (m.get(b) ?? 0) + r.produced);
-      nByBrand.set(r.outcomeKey, m);
+      nByOrg.set(r.outcomeKey, m);
     } else byProducts.set(r.outcomeKey, (byProducts.get(r.outcomeKey) ?? 0) + r.produced);
   }
   const isOutput = (k: string) => (n.get(k) ?? 0) > 0;
@@ -128,11 +132,11 @@ export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consume
     m.set(c.consumedKey, (m.get(c.consumedKey) ?? 0) + c.count);
     cross.set(s, m);
   }
-  // Normal loss on a cross-pipe input: every occurrence of it in the brands where S happened, never fewer than consumed.
+  // Normal loss on a cross-pipe input: every occurrence of it in the orgs where S happened, never fewer than consumed.
   for (const [s, inputs] of cross) {
-    const brands = new Set([...(nByBrand.get(s) ?? new Map<string, number>()).entries()].filter(([, v]) => v > 0).map(([b]) => b));
+    const orgs = new Set([...(nByOrg.get(s) ?? new Map<string, number>()).entries()].filter(([, v]) => v > 0).map(([b]) => b));
     for (const [q, consumedCount] of inputs) {
-      const pool = [...(nByBrand.get(q) ?? new Map<string, number>()).entries()].reduce((a, [b, v]) => a + (brands.has(b) ? v : 0), 0);
+      const pool = [...(nByOrg.get(q) ?? new Map<string, number>()).entries()].reduce((a, [b, v]) => a + (orgs.has(b) ? v : 0), 0);
       inputs.set(q, Math.max(consumedCount, pool));
     }
   }

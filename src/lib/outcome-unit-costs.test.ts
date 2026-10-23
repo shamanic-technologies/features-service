@@ -49,18 +49,18 @@ describe("outcome unit costs, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(s.find((x) => x.outcomeKey === "email_checked")!.source).toBe("input");
   });
 
-  it("a brand where the outcome never happened is left out of the input's pool (the meeting-population rule)", () => {
+  it("an org where the outcome never happened is left out of the input's pool (the meeting-population rule)", () => {
     const r = rollUpOutcomeUnitCosts(
       [
-        { outcomeKey: "conversation", campaignId: null, brandId: "b1", produced: 10, ownCostUsd: 10 },
-        { outcomeKey: "conversation", campaignId: null, brandId: "b2", produced: 90, ownCostUsd: 90 },
-        { outcomeKey: "meeting_booked", campaignId: null, brandId: "b1", produced: 2, ownCostUsd: 0 },
+        { outcomeKey: "conversation", campaignId: null, orgId: "o1", produced: 10, ownCostUsd: 10 },
+        { outcomeKey: "conversation", campaignId: null, orgId: "o2", produced: 90, ownCostUsd: 90 },
+        { outcomeKey: "meeting_booked", campaignId: null, orgId: "o1", produced: 2, ownCostUsd: 0 },
       ],
-      [{ consumerKey: "meeting_booked", consumedKey: "conversation", campaignId: null, brandId: "b1", count: 2 }],
+      [{ consumerKey: "meeting_booked", consumedKey: "conversation", campaignId: null, orgId: "o1", count: 2 }],
       outputOf,
       pipeOutputs,
     );
-    // b2 reports no meeting: its 90 replies are not the meetings' loss. 10 replies / 2 meetings x $1
+    // o2 reports no meeting: its 90 replies are not the meetings' loss. 10 replies / 2 meetings x $1
     expect(r.units.get("meeting_booked")!.unitCostUsd).toBeCloseTo(5, 8);
   });
 
@@ -94,5 +94,30 @@ describe("outcome unit costs, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(r.units.get("meeting_attended")).toMatchObject({ unitCostUsd: null, unpricedReason: "consumption_cycle_diverges" });
     const none = rollUpOutcomeUnitCosts([{ outcomeKey: "conversation", campaignId: null, produced: 0, ownCostUsd: 0 }], [], outputOf, pipeOutputs);
     expect(none.units.get("conversation")).toMatchObject({ unitCostUsd: null, produced: 0 });
+  });
+});
+
+describe("normal loss on the prod shape (cairo-v15, 2026-10-24)", () => {
+  it("169k sends, 87 replies, 8 meetings: a reply carries ~1,942 sends, a meeting ~10.9 replies", () => {
+    // every send on reply pipes; replies judged off any campaign; meetings by the client's team (no campaign)
+    const r = rollUpOutcomeUnitCosts(
+      [
+        { outcomeKey: "message_sent", campaignId: "c1", orgId: "o1", produced: 168_933, ownCostUsd: 7_325 },
+        { outcomeKey: "conversation", campaignId: null, orgId: "o1", produced: 87, ownCostUsd: 0 },
+        { outcomeKey: "meeting_booked", campaignId: null, orgId: "o1", produced: 8, ownCostUsd: 0 },
+      ],
+      [
+        { consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, orgId: "o1", count: 86 },
+        { consumerKey: "meeting_booked", consumedKey: "conversation", campaignId: null, orgId: "o1", count: 8 },
+      ],
+      (c) => (c === "c1" ? "conversation" : null),
+      new Set(["conversation", "meeting_booked"]),
+    );
+    const reply = r.units.get("conversation")!;
+    expect(reply.unitCostUsd).toBeCloseTo(7_325 / 87, 6);
+    expect(reply.stages.find((s) => s.outcomeKey === "message_sent")!.requirementPerUnit).toBeCloseTo(168_933 / 87, 6);
+    const meeting = r.units.get("meeting_booked")!;
+    expect(meeting.unitCostUsd).toBeCloseTo((87 / 8) * (7_325 / 87), 6);
+    expect(meeting.stages.find((s) => s.outcomeKey === "message_sent")!.requirementPerUnit).toBeCloseTo(168_933 / 8, 6);
   });
 });
