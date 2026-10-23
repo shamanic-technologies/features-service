@@ -28853,9 +28853,10 @@
                   "enum": [
                     "billing_customer_status_unavailable",
                     "org_not_in_billing",
-                    "billing_could_not_read"
+                    "billing_could_not_read",
+                    "org_deleted"
                   ],
-                  "description": "Why customerStatus is null: billing's read failed (every org), billing lists no such org, or billing could not read its campaigns / payments. null when a verdict is served."
+                  "description": "Why customerStatus is null: billing's read failed (every org), billing lists no such org, billing could not read its campaigns / payments, or billing states the org was deleted. null when a verdict is served."
                 },
                 "ownOrg": {
                   "type": "boolean",

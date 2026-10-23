@@ -307,7 +307,9 @@ export type CustomerStatusUnavailableReason =
   /** billing lists no such org (no billing account, no spend, no fee). */
   | "org_not_in_billing"
   /** billing lists the org but could not read its campaigns or payments. */
-  | "billing_could_not_read";
+  | "billing_could_not_read"
+  /** billing states the org was deleted (its verdict is null on purpose). */
+  | "org_deleted";
 
 /**
  * One row per customer ORG (CUSTOMER-HEALTH-OOM-1023): the verdict a page tabs on, billing's own
@@ -1009,9 +1011,11 @@ export function composeOrgs(
           ? "billing_customer_status_unavailable"
           : billing === null
             ? "org_not_in_billing"
-            : billing.customerStatus === null
-              ? "billing_could_not_read"
-              : null;
+            : billing.orgDeleted
+              ? "org_deleted"
+              : billing.customerStatus === null
+                ? "billing_could_not_read"
+                : null;
       o = {
         orgId: r.orgId,
         orgExternalId: r.orgExternalId,
