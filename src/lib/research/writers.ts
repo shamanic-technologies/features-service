@@ -124,3 +124,27 @@ export function dynastyWriters(definitions: readonly WorkflowDefinition[], model
   }
   return out;
 }
+
+/**
+ * PURE (RESEARCH-PERFORMANCE-1023). Per workflow VERSION, what its own definition writes with (its DAG's
+ * content-generation step), else its dynasty's newest writing version (`dynastyLastWriters`, the catalogue's
+ * `wroteWith` fallback): the writer of a person no generated sequence records. `model` = the concrete id the alias
+ * resolves to, else the alias itself (the LLM dynasty index places both).
+ */
+export function versionWriters(
+  definitions: readonly WorkflowDefinition[],
+  models: readonly ModelIdRow[],
+  last: ReadonlyMap<string, DynastyWriter>,
+): Map<string, { template: string | null; model: string | null }> {
+  const out = new Map<string, { template: string | null; model: string | null }>();
+  for (const d of definitions) {
+    const own = writerOfDag(d.dag);
+    if (own) {
+      out.set(d.workflowSlug, { template: own.template, model: own.modelAlias ? (resolveModelAlias(own.modelAlias, models)?.id ?? own.modelAlias) : null });
+      continue;
+    }
+    const w = last.get(d.workflowDynastySlug);
+    if (w?.ok) out.set(d.workflowSlug, { template: w.template, model: w.model?.id ?? w.modelAlias });
+  }
+  return out;
+}

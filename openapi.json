@@ -71656,8 +71656,9 @@
                           "figuresBasis": {
                             "type": "string",
                             "enum": [
-                              "since_inception"
-                            ]
+                              "workflow_bars"
+                            ],
+                            "description": "Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."
                           },
                           "outcomeNoun": {
                             "type": "string"
@@ -71672,11 +71673,11 @@
                               "properties": {
                                 "key": {
                                   "type": "string",
-                                  "description": "`<workflow dynasty>|<template version or ->|<LLM dynasty or ->`."
+                                  "description": "`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."
                                 },
                                 "rank": {
                                   "type": "integer",
-                                  "description": "Served order: measured return desc, then outcomes, people emailed, key."
+                                  "description": "Served order: measured returns desc, then expected returns desc; then outcomes, people emailed, key."
                                 },
                                 "workflow": {
                                   "type": "object",
@@ -71711,9 +71712,16 @@
                                   "properties": {
                                     "key": {
                                       "type": "string",
-                                      "description": "The template VERSION id."
+                                      "description": "The Research template page key: the template DYNASTY slug, or a standalone version's id."
                                     },
                                     "label": {
+                                      "type": "string",
+                                      "description": "The dynasty's name (a standalone version: its label)."
+                                    },
+                                    "icon": {
+                                      "type": "string"
+                                    },
+                                    "color": {
                                       "type": "string"
                                     },
                                     "dynasty": {
@@ -71737,13 +71745,21 @@
                                         "key",
                                         "label"
                                       ],
-                                      "description": "The template dynasty = its Research template page; null = a version no dynasty of the pipe lists (its page is the version id)."
+                                      "description": "The dynasty ref (same key as `key`); null = a version no dynasty of the pipe lists."
+                                    },
+                                    "standaloneReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_dynasty_on_pipe"
+                                      ]
                                     }
                                   },
                                   "required": [
                                     "key",
                                     "label",
-                                    "dynasty"
+                                    "dynasty",
+                                    "standaloneReason"
                                   ]
                                 },
                                 "llm": {
@@ -71767,6 +71783,15 @@
                                     "label",
                                     "provider"
                                   ]
+                                },
+                                "writerSource": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "sequences",
+                                    "workflow_definition"
+                                  ],
+                                  "description": "The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version)."
                                 },
                                 "writerUnavailableReason": {
                                   "type": "string",
@@ -71822,10 +71847,23 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
+                                        "own_parts",
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "parts": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "workflow",
+                                          "template",
+                                          "llm"
+                                        ]
+                                      },
+                                      "description": "On `own_parts`: the parts the figure is read from."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -71870,10 +71908,23 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
+                                        "own_parts",
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "parts": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "workflow",
+                                          "template",
+                                          "llm"
+                                        ]
+                                      },
+                                      "description": "On `own_parts`: the parts the figure is read from."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -71892,7 +71943,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."
+                                  "description": "Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."
                                 },
                                 "conversionRatePct": {
                                   "type": "object",
@@ -71918,10 +71969,23 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
+                                        "own_parts",
                                         "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                      "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "parts": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "workflow",
+                                          "template",
+                                          "llm"
+                                        ]
+                                      },
+                                      "description": "On `own_parts`: the parts the figure is read from."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -71940,7 +72004,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."
+                                  "description": "100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."
                                 },
                                 "outcomes": {
                                   "type": "object",
@@ -71995,6 +72059,7 @@
                                 "workflow",
                                 "template",
                                 "llm",
+                                "writerSource",
                                 "writerUnavailableReason",
                                 "maturity",
                                 "learning",
@@ -72036,10 +72101,23 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
+                                      "own_parts",
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "parts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow",
+                                        "template",
+                                        "llm"
+                                      ]
+                                    },
+                                    "description": "On `own_parts`: the parts the figure is read from."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -72084,10 +72162,23 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
+                                      "own_parts",
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "parts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow",
+                                        "template",
+                                        "llm"
+                                      ]
+                                    },
+                                    "description": "On `own_parts`: the parts the figure is read from."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -72106,7 +72197,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."
+                                "description": "Spend ÷ outcomes; with no outcome, expected from the row's own parts (never the spend)."
                               },
                               "conversionRatePct": {
                                 "type": "object",
@@ -72132,10 +72223,23 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
+                                      "own_parts",
                                       "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    "description": "measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "parts": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "workflow",
+                                        "template",
+                                        "llm"
+                                      ]
+                                    },
+                                    "description": "On `own_parts`: the parts the figure is read from."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -72154,7 +72258,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."
+                                "description": "100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."
                               },
                               "outcomes": {
                                 "type": "object",
@@ -72270,7 +72374,7 @@
                               "grain",
                               "points"
                             ],
-                            "description": "Every month from the first to this one, cumulative since inception: the last point IS `totals`."
+                            "description": "Every month from the first to this one, cumulative: the last point IS `totals`."
                           },
                           "unpricedBilledUsd": {
                             "type": "number"
