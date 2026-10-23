@@ -18,7 +18,11 @@ import { imageJudgeRivalsStudy } from "./image-judge-rivals.js";
 import { bestWorkflowByMonth, clientMedianByMonth, overTimeStudies, type BestPoint, type MedianPoint } from "./pipe-series.js";
 import { dayText, monthLabel } from "./format.js";
 import { TIME_TO_REPLY_MIN_SAMPLE } from "../campaign-next-steps.js";
-import { POSITIVE_REPLY_OUTCOME, replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
+import { POSITIVE_REPLY_OUTCOME, POSITIVE_REPLY_OUTCOME_ID, replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
+import { legMaturity } from "../maturity.js";
+import { outcomeCostStudy } from "./outcome-cost.js";
+import { rollUpOutcomeUnitCosts } from "../outcome-unit-costs.js";
+import type { OutcomeLedgerTotals } from "../outcome-cost-totals-client.js";
 
 export const POSITIVE_REPLY_PIPE = "cold-email-positive-reply" as const;
 export const WEBSITE_VISIT_PIPE = "cold-email-website-visit" as const;
@@ -120,6 +124,11 @@ export interface ResearchInput {
    * reply-pipe campaign; null = unreadable this build (the study says so); undefined = not asked (no study).
    */
   replyDelay?: ReplyDelayRead | null;
+  /**
+   * runs-service's outcome ledger as totals (COST-ACCOUNTING-1023-P2): every outcome section gets its every-path cost
+   * study. Absent = not served; null = unreadable this build (each study says so).
+   */
+  outcomeLedger?: { totals: OutcomeLedgerTotals | null; labelOf: (stepKey: string) => string };
   /**
    * Every other pipe of the channel catalogue holding a workflow (WA-PIPE-RESEARCH-1023), listed after the three studied
    * ones: its Workflows / Templates / Models / Performance tabs are served on the catalogue and performance reads.
@@ -358,6 +367,16 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   studies.push(...(input.countryStudies ?? []));
   studies.push(...(input.nicheStudies ?? []));
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
+  if (input.outcomeLedger) {
+    const l = input.outcomeLedger;
+    const units = l.totals ? rollUpOutcomeUnitCosts(l.totals.totals, l.totals.consumptions) : null;
+    const unitOf = (step: string) => (units ? (units.get(step) ?? { outcomeKey: step, produced: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] }) : null);
+    const coveragePct = l.totals?.coveragePct ?? null;
+    if (input.replyDelay !== undefined) {
+      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "positive reply", nounPlural: "positive replies", unit: unitOf("conversation"), coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
+    }
+    studies.push(outcomeCostStudy({ outcome: "meeting", noun: "booked meeting", nounPlural: "booked meetings", unit: unitOf("meeting_booked"), coveragePct, outcomesRequired: input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, labelOf: l.labelOf }));
+  }
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
   // a one-off hand-checked benchmark, committed (IMAGE-JUDGE-STUDY-1021): the same on both bases, it prices nothing
   studies.push(imageJudgeStudy());
