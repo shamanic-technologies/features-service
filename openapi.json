@@ -72229,9 +72229,9 @@
                           "rowOrder": {
                             "type": "string",
                             "enum": [
-                              "estimated_cost"
+                              "leg_order"
                             ],
-                            "description": "Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."
+                            "description": "The pipe's pick order (PERF-LEG-ORDER-1023; supersedes RESEARCH-COMBO-ESTIMATE-1023's order on the estimate): the ONE leg order of writer-pick and the workflow ranking on each combination's own figures. Active first; learning combinations whose explore price (own spend ÷ max(own outcomes, 1), $0 never used) is below the best mature one's cost; the mature ones; the other learning ones. Same explore price (every $0 one): by `estimate.costPerOutcomeUsd`, cheapest first. `place` says why."
                           },
                           "rowsCover": {
                             "type": "string",
@@ -72264,7 +72264,18 @@
                                 },
                                 "rank": {
                                   "type": "integer",
-                                  "description": "Served order: active before deprecated, then `estimate.costPerOutcomeUsd` ascending (unestimable last), then outcomes, people emailed, key."
+                                  "description": "Served order: the pipe's pick order (`rowOrder: leg_order`)."
+                                },
+                                "place": {
+                                  "type": "string",
+                                  "enum": [
+                                    "explore",
+                                    "money",
+                                    "mature",
+                                    "proven_worse",
+                                    "cannot_run"
+                                  ],
+                                  "description": "Why it stands there: `explore` (learning, explore price below the best mature cost, or nothing mature), `money` (the best mature one), `mature`, `proven_worse` (learning, its spend already reached the best mature cost), `cannot_run` (deprecated)."
                                 },
                                 "workflow": {
                                   "type": "object",
@@ -72478,7 +72489,7 @@
                                     "priorWeightOutcomes",
                                     "unavailableReason"
                                   ],
-                                  "description": "The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."
+                                  "description": "Its best-guess cost per outcome (RESEARCH-COMBO-ESTIMATE-1023); orders combinations at the same explore price. With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."
                                 },
                                 "status": {
                                   "type": "string",
@@ -72733,6 +72744,7 @@
                               "required": [
                                 "key",
                                 "rank",
+                                "place",
                                 "workflow",
                                 "template",
                                 "llm",
