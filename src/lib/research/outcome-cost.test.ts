@@ -54,3 +54,10 @@ describe("a ledger loop never blanks the page (COST-ACCOUNTING-1023-P3 hotfix)",
     expect(st).toMatchObject({ status: "not_enough_data", headline: "Not priceable yet." });
   });
 });
+
+describe("a declared outcome with no spend yet never reads $0 (prod probe 2026-10-23)", () => {
+  it("says no cost carried yet", () => {
+    const u = rollUpOutcomeUnitCosts([{ outcomeKey: "conversation", produced: 5, ownCostUsd: 0 }], []).get("conversation")!;
+    expect(outcomeCostStudy({ ...base, unit: u, coveragePct: 0 })).toMatchObject({ status: "not_enough_data", headline: "No cost carried yet." });
+  });
+});

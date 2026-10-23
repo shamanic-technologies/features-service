@@ -53,6 +53,10 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
   if (u.produced === 0 || u.unitCostUsd === null) {
     return notMeasuredStudy({ ...base, headline: `No ${input.noun} declared to the ledger yet.`, reason: `No run has declared a ${input.noun} to runs-service's ledger yet, so nothing prices one. Every service that spends is being wired to declare what it produces.` });
   }
+  // Occurrences declared but no spend carried yet (the ledger spreads a day's spend on its next pass): never a $0 price.
+  if (u.unitCostUsd <= 0) {
+    return notMeasuredStudy({ ...base, headline: "No cost carried yet.", reason: `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} declared to the ledger, but no spend is spread on ${u.produced === 1 ? "it" : "them"} yet: runs-service's ledger spreads each day's spend on its next pass.` });
+  }
   const cov = input.coveragePct;
   const floor = cov === null || cov < COVERAGE_BAR_PCT;
   const covText = cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`;
