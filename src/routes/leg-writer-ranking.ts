@@ -288,7 +288,7 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
   const pipeId = `${featureSlug}|${servedLegKeyOf(featureSlug, legKey)}`;
   const [dynastiesRead, aliasesRead, modelsRead, llmDynRead, internal] = await Promise.all([
     readTemplateDynasties(featureSlug, legKey),
-    readWriterModelAliases().catch((error: Error) => error),
+    readWriterModelAliases(featureSlug, servedLegKeyOf(featureSlug, legKey)).catch((error: Error) => error),
     readModelIds().catch((error: Error) => error),
     readLlmDynastiesSoft(`leg writer ranking ${featureSlug}|${rawLegKey}`),
     internalPipeToStep(featureSlug, legKey),
