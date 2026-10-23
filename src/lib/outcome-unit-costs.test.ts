@@ -56,18 +56,26 @@ describe("outcome unit costs, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(r.get("conversation")).toMatchObject({ unitCostUsd: null, ownUnitCostUsd: null });
   });
 
-  it("a consumption cycle fails loud", () => {
-    expect(() =>
-      rollUpOutcomeUnitCosts(
-        [
-          { outcomeKey: "a", produced: 1, ownCostUsd: 1 },
-          { outcomeKey: "b", produced: 1, ownCostUsd: 1 },
-        ],
-        [
-          { consumerKey: "a", consumedKey: "b", count: 1 },
-          { consumerKey: "b", consumedKey: "a", count: 1 },
-        ],
-      ),
-    ).toThrow(/cycle/);
+  it("a self-consumption is solved, not refused (a follow-up consuming the message before it)", () => {
+    // 100 messages for $10, 40 of them consumed a previous message: unit = 0.10 / (1 - 0.4) = $0.1667
+    const r = rollUpOutcomeUnitCosts([{ outcomeKey: "message_sent", produced: 100, ownCostUsd: 10 }], [{ consumerKey: "message_sent", consumedKey: "message_sent", count: 40 }]);
+    expect(r.get("message_sent")!.unitCostUsd).toBeCloseTo(0.1 / 0.6, 8);
+  });
+
+  it("a two-step cycle that converges is solved; one needing a whole occurrence per pass is named, never thrown", () => {
+    const ok = rollUpOutcomeUnitCosts(
+      [
+        { outcomeKey: "a", produced: 10, ownCostUsd: 10 },
+        { outcomeKey: "b", produced: 10, ownCostUsd: 0 },
+      ],
+      [
+        { consumerKey: "a", consumedKey: "b", count: 5 },
+        { consumerKey: "b", consumedKey: "a", count: 5 },
+      ],
+    );
+    // u(a) = 1 + 0.5 u(b), u(b) = 0.5 u(a) -> u(a) = 4/3
+    expect(ok.get("a")!.unitCostUsd).toBeCloseTo(4 / 3, 8);
+    const bad = rollUpOutcomeUnitCosts([{ outcomeKey: "meeting_attended", produced: 3, ownCostUsd: 1 }], [{ consumerKey: "meeting_attended", consumedKey: "meeting_attended", count: 3 }]);
+    expect(bad.get("meeting_attended")).toMatchObject({ unitCostUsd: null, unpricedReason: "consumption_cycle_diverges" });
   });
 });
