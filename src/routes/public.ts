@@ -12,7 +12,7 @@ import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
-import { listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { listDeclaredChannels, listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
 import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
@@ -5357,8 +5357,10 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   }
   const pricing: "gross" | "net" = rawPricing === "net" ? "net" : "gross";
   try {
+    // A channel is a seeded feature row OR a declared channel (WA-PIPE-RESEARCH-1023: social-post, email-sending and
+    // ai-lead-proposal are declared, so their pipes 404'd while the ranking itself builds like any other pipe's).
     const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-    if (!feature) {
+    if (!feature && !(await listDeclaredChannels()).some((c) => c.slug === featureSlug)) {
       res.status(404).json({ error: "Feature not found" });
       return;
     }
