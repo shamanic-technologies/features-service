@@ -40,3 +40,31 @@ export async function withResearchCatalogMarks<W extends { key: string }, P exte
     Object.entries(catalog).map(([id, p]) => [id, { ...p, workflows: p.workflows.map((w) => withMark(w, wf.get(w.key))), templates: p.templates.map((t) => withMark(t, tpl.get(t.key))) }]),
   ) as T;
 }
+
+/**
+ * The Research Performance tab (RESEARCH-PERFORMANCE-1023) with each row's workflow mark (on `workflow`) and its template
+ * DYNASTY's mark (on `template.dynasty`, the page the template links to); LLM rows carry none (the dashboard's logos).
+ */
+export async function withPerformanceMarks<
+  R extends { workflow: { key: string }; template: { dynasty: { key: string } | null } | null },
+  T extends Record<string, { rows: R[] }>,
+>(pipes: T): Promise<T> {
+  const all = Object.values(pipes).flatMap((p) => p.rows);
+  const [wf, tpl] = await Promise.all([
+    marksFor("workflow", all.map((r) => r.workflow.key)),
+    marksFor("template", all.flatMap((r) => (r.template?.dynasty ? [r.template.dynasty.key] : []))),
+  ]);
+  return Object.fromEntries(
+    Object.entries(pipes).map(([id, p]) => [
+      id,
+      {
+        ...p,
+        rows: p.rows.map((r) => ({
+          ...r,
+          workflow: withMark(r.workflow, wf.get(r.workflow.key)),
+          template: r.template ? { ...r.template, dynasty: r.template.dynasty ? withMark(r.template.dynasty, tpl.get(r.template.dynasty.key)) : null } : null,
+        })),
+      },
+    ]),
+  ) as T;
+}
