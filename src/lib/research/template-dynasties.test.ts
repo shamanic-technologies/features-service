@@ -66,8 +66,11 @@ const input = (dynasties: readonly TemplateDynasty[] | "template_dynasties_unrea
 
 describe("template dynasties on the Research pages", () => {
   it("asks content-generation-service on the wave-2 leg spelling", () => {
-    expect(dynastyLegKeyOf("start_to_conversation")).toBe("lead_found_to_conversation");
-    expect(dynastyLegKeyOf("start_to_website_visit")).toBe("lead_found_to_website_visit");
+    expect(dynastyLegKeyOf("sales-cold-email-outreach", "start_to_conversation")).toBe("lead_found_to_conversation");
+    expect(dynastyLegKeyOf("sales-cold-email-outreach", "start_to_website_visit")).toBe("lead_found_to_website_visit");
+    // every other leg is asked verbatim (WA-PIPE-RESEARCH-1023: Cold WhatsApp's Start -> Signup has its own dynasty)
+    expect(dynastyLegKeyOf("cold-whatsapp-outreach", "start_to_signup")).toBe("start_to_signup");
+    expect(dynastyLegKeyOf("cold-whatsapp-outreach", "lead_found_to_conversation")).toBe("lead_found_to_conversation");
   });
 
   it("pools every version into its dynasty's bar; the versions add up to it exactly, on its basis", () => {

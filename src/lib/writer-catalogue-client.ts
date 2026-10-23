@@ -35,7 +35,7 @@ export async function readTemplateTexts(types: readonly string[]): Promise<Map<s
  */
 export async function readTemplateDynasties(featureSlug: string, legKey: string): Promise<TemplateDynasty[] | TemplateDynastyReason> {
   try {
-    const q = new URLSearchParams({ featureSlug, legKey: dynastyLegKeyOf(legKey) });
+    const q = new URLSearchParams({ featureSlug, legKey: dynastyLegKeyOf(featureSlug, legKey) });
     const res = await fetchWithRetry(`${process.env.CONTENT_GENERATION_SERVICE_URL}/internal/template-dynasties?${q}`, {
       headers: { "x-api-key": process.env.CONTENT_GENERATION_SERVICE_API_KEY ?? "" },
     });
