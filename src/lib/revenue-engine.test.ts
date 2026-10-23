@@ -78,6 +78,22 @@ describe("computeRevenue — org dedup (MAX inside, SUM between)", () => {
     expect(r.headline.totalPipelineUsd).toBe(140);
   });
 
+  it("peopleCount = distinct people the row is built from (COMPANY-PEOPLE-COUNT-1023)", () => {
+    const r = computeRevenue(PATHS, [
+      person({ leadId: "l1", firstName: "Click", orgId: "o1", signals: { clicked: true, positiveReply: false } }),
+      person({ leadId: "l2", firstName: "Reply", orgId: "o1", signals: { clicked: false, positiveReply: true } }),
+      person({ leadId: "l2", firstName: "Reply", orgId: "o1", signals: { clicked: false, positiveReply: true } }), // same lead twice: once
+      person({ leadId: "l3", orgId: "o1", signals: { clicked: false, positiveReply: false } }), // scored out: not behind the row
+      person({ leadId: "l4", orgId: "o2", signals: { clicked: true, positiveReply: false } }),
+      person({ leadId: "l5", orgId: null, signals: { clicked: true, positiveReply: false } }),
+    ]);
+    const byKey = new Map(r.organizations.map((o) => [o.organizationKey, o]));
+    expect(byKey.get("org:o1")?.peopleCount).toBe(2);
+    expect(byKey.get("org:o1")?.topPerson.firstName).toBe("Reply"); // pick unchanged
+    expect(byKey.get("org:o2")?.peopleCount).toBe(1);
+    expect(byKey.get("lead:l5")?.peopleCount).toBe(1);
+  });
+
   it("person with no org → own singleton org, still in pipeline", () => {
     const r = computeRevenue(PATHS, [person({ leadId: "l1", orgId: null, signals: { clicked: true, positiveReply: false } })]);
     expect(r.organizations).toHaveLength(1);

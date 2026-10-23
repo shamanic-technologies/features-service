@@ -517,6 +517,7 @@ const revenueOrganizationSchema = z.object({
   orgLogoUrl: z.string().nullable(),
   orgDomain: z.string().nullable().describe("Company domain (no protocol, e.g. \"acme.com\") for building a logo.dev URL. Null when no domain is known for the org."),
   topPerson: topPersonSchema,
+  peopleCount: z.number().int().describe("How many distinct people (leads, counted once per lead id) of this organisation the row is built from: the same people whose expected value rolls up into `expectedRevenueUsd` (every person of the company the read scores: worth something, or reached a delivery milestone such as contacted). `topPerson` is one of them, so a row reading 2 has one more person behind it. Always >= 1; a company-less row (`lead:<leadId>`) reads 1."),
   tags: z.array(z.string()),
   expectedRevenueUsd: z.number(),
   mostAdvancedDate: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway)."),
