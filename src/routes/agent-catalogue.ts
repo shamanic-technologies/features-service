@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { isOutcomeSubjectKind, OUTCOME_SUBJECT_KINDS, type OutcomeSubjectKind } from "../lib/outcome-subject.js";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { GLYPH_COLORS, MARK_FAMILIES, MARK_ICONS } from "../lib/catalogue-marks.js";
 import { marksFor } from "../lib/catalogue-marks-store.js";
@@ -71,7 +72,7 @@ import {
   insertSalesPath,
   insertSalesPathChain,
   insertStep,
-  updateStepLifecycleRung,
+  updateDeclaredStep,
   listDeclaredSalesPathChains,
   listDeclaredSalesPaths,
   listDeclaredSteps,
@@ -695,7 +696,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof f
 // ── Steps ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** A step's place on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`): rung key (or `none`) and its rank. */
-const lifecycleWire = (s: CatalogueStep) => ({ lifecycleRung: s.lifecycleRung, lifecycleRank: lifecycleRankOf(s.lifecycleRung) });
+const lifecycleWire = (s: CatalogueStep) => ({ lifecycleRung: s.lifecycleRung, lifecycleRank: lifecycleRankOf(s.lifecycleRung), subjectKind: s.subjectKind });
 
 router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   try {
@@ -1432,6 +1433,11 @@ function lifecycleRungOf(raw: unknown): StepLifecycleRung {
   return raw;
 }
 
+function subjectKindOf(raw: unknown): OutcomeSubjectKind {
+  if (!isOutcomeSubjectKind(raw)) throw bad("subject_kind_invalid", `subjectKind must be one of ${OUTCOME_SUBJECT_KINDS.join(", ")}, got ${JSON.stringify(raw)}`);
+  return raw;
+}
+
 function ratePct(raw: unknown, field: string): number {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > 100) throw bad(`${field}_invalid`, `${field} must be a percentage in (0, 100]`);
   return raw;
@@ -1458,6 +1464,9 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
     const towardRatePct = ratePct(body.towardRatePct, "towardRatePct");
     const producedBy = body.producedBy === undefined || body.producedBy === null ? null : text(body, "producedBy", 200);
     const lifecycleRung = body.lifecycleRung === undefined || body.lifecycleRung === null ? null : lifecycleRungOf(body.lifecycleRung);
+    // What one occurrence is about: the cost ledger's one per-outcome fact (COST-ACCOUNTING-1023), stated on every new outcome.
+    if (body.subjectKind === undefined || body.subjectKind === null) throw bad("subjectKind_required", `subjectKind is required: ${OUTCOME_SUBJECT_KINDS.join(" or ")}`);
+    const subjectKind = subjectKindOf(body.subjectKind);
     const created = await insertStep({
       key,
       label,
@@ -1468,6 +1477,7 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       towardRatePct,
       producedBy,
       lifecycleRung,
+      subjectKind,
       createdBy,
       requestedByOrgId,
     });
@@ -1482,21 +1492,23 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   }
 });
 
-/** States a DECLARED step's lifecycle rung (a coded step's rung is code, `lib/lifecycle-ladder.ts`). */
+/** States a DECLARED step's lifecycle rung and/or subject kind (a coded step's are code: `lib/lifecycle-ladder.ts`, `lib/outcome-subject.ts`). */
 router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
     refuseCustomer(body, "a step", "a step's place on the lifecycle ladder is ours to state");
     const updatedBy = actorOf(body);
-    if (body.lifecycleRung === undefined || body.lifecycleRung === null) throw bad("lifecycleRung_required", "lifecycleRung is required");
-    const lifecycleRung = lifecycleRungOf(body.lifecycleRung);
+    const hasRung = body.lifecycleRung !== undefined && body.lifecycleRung !== null;
+    const hasKind = body.subjectKind !== undefined && body.subjectKind !== null;
+    if (!hasRung && !hasKind) throw bad("lifecycleRung_required", "lifecycleRung or subjectKind is required");
+    const set = { ...(hasRung ? { lifecycleRung: lifecycleRungOf(body.lifecycleRung) } : {}), ...(hasKind ? { subjectKind: subjectKindOf(body.subjectKind) } : {}) };
     const key = req.params.id;
-    if (codedStepLifecycleRungOf(key) !== null) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its lifecycle rung is set in code`);
-    const updated = await updateStepLifecycleRung(key, lifecycleRung);
+    if (codedStepLifecycleRungOf(key) !== null) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its lifecycle rung and subject kind are set in code`);
+    const updated = await updateDeclaredStep(key, set);
     if (!updated) throw new DeclarationError(404, "step_not_found", `no declared step ${key}`);
     await registerStepDeclarations();
     invalidateChannelCatalogue();
-    console.log(`[features-service] agent catalogue: step ${key} lifecycle rung set to ${lifecycleRung} by ${updatedBy}`);
+    console.log(`[features-service] agent catalogue: step ${key} set ${JSON.stringify(set)} by ${updatedBy}`);
     const { model } = await loadModel();
     const s = model.steps.get(key)!;
     res.json({ object: "step", id: s.key, name: s.label, declared: true, ...lifecycleWire(s) });

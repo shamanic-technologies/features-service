@@ -82,6 +82,11 @@ export interface LegWorkflowRankingRow {
   color?: string;
   /** The same on the NET pricing, held in the build; the route serves it as `figures` on `?pricing=net`, never both. */
   figuresNet?: LegWorkflowFigures;
+  /**
+   * `figures` (gross) with the row read on ONE half whatever its maturity (MATURITY-VIEW-1023): the Research page's
+   * Mature / Flash view. `mature` falls to flash when the mature cut could not be made. Absent on a build stored before.
+   */
+  figuresByView?: { mature: LegWorkflowFigures; flash: LegWorkflowFigures };
 }
 
 export interface RankLegWorkflowsInput {
@@ -107,7 +112,7 @@ const EMPTY: OutcomeFigures = { spentUsd: 0, contacted: 0, outcomes: 0, costPerO
 
 /** PURE. The ordered list (see the owner rule above). */
 export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRankingRow[] {
-  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place" | "figures" | "figuresNet" | "lastRunAt" | "lastRunUnavailableReason" | "tactics" | "tacticsUnavailableReason">[] = [];
+  const rows: Omit<LegWorkflowRankingRow, "rank" | "goesFirst" | "moneyGoesHere" | "explorePriceUsd" | "place" | "figures" | "figuresNet" | "figuresByView" | "lastRunAt" | "lastRunUnavailableReason" | "tactics" | "tacticsUnavailableReason">[] = [];
   const figuresOf = new Map<string, LegMaturityFigures>();
   const byDynasty = new Map(input.byDynasty);
   for (const slug of input.assignments.keys()) {
@@ -152,10 +157,13 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
   const best = bestMatureSlug(entries);
   const places = legWorkflowPlaces(entries);
   const entryOf = new Map(entries.map((e) => [e.slug, e]));
-  const figureRows = (spendOf: (r: (typeof rows)[number]) => FigureRowInput["spend"]): FigureRowInput[] =>
+  const figureRows = (
+    spendOf: (r: (typeof rows)[number]) => FigureRowInput["spend"],
+    matureOf: (r: (typeof rows)[number]) => boolean = (r) => r.basis === "mature",
+  ): FigureRowInput[] =>
     rows.map((r) => ({
       slug: r.workflowDynastySlug,
-      mature: r.basis === "mature",
+      mature: matureOf(r),
       isMature: r.isMature,
       figures: figuresOf.get(r.workflowDynastySlug)!,
       spend: spendOf(r),
@@ -172,6 +180,14 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
     "gross",
     defaultConversion,
   );
+  // The same figures with every row on ONE half (MATURITY-VIEW-1023): the Research page's Mature / Flash view. A row with
+  // no mature cut reads flash on the mature view. The order above never reads them.
+  const grossSpend = (r: (typeof rows)[number]) => {
+    const f = figuresOf.get(r.workflowDynastySlug)!;
+    return { flash: f.flash?.spentUsd ?? 0, mature: f.mature ? f.mature.spentUsd : null };
+  };
+  const grossMature = legWorkflowFigures(figureRows(grossSpend, (r) => figuresOf.get(r.workflowDynastySlug)!.mature != null), "gross", defaultConversion);
+  const grossFlash = legWorkflowFigures(figureRows(grossSpend, () => false), "gross", defaultConversion);
   const netSpend = input.netSpend ?? null;
   const net = legWorkflowFigures(
     figureRows((r) => (netSpend ? (netSpend.get(r.workflowDynastySlug) ?? { flash: 0, mature: 0 }) : null)),
@@ -189,6 +205,7 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       explorePriceUsd: e.mature ? null : explorePriceUsd(e.fleet),
       place: places.get(slug)!,
       figures: gross.get(slug)!,
+      figuresByView: { mature: grossMature.get(slug)!, flash: grossFlash.get(slug)! },
       figuresNet: net.get(slug)!,
       ...lastRunOf(slug, input.lastRunAt ?? null, figuresOf.get(slug)!),
     };

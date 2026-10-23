@@ -155,3 +155,22 @@ describe("rankLegWorkflows", () => {
     expect(shared).toEqual(["aldhanab", "hamal", "lyonesse", "rampart", "albaldah", "acamar"]);
   });
 });
+
+// MATURITY-VIEW-1023: the Research page's Mature / Flash view reads every row on ONE half; the order never moves.
+describe("rankLegWorkflows figuresByView", () => {
+  it("serves each row's figures on both halves whatever its own basis", () => {
+    const rows = rank({
+      nobelium: wf([45, 1000, 1], [45, 1000, 1]), // mature
+      raven: wf([14, 400, 1], [0, 0, 0]), // learning, mature cut holds nothing yet
+      lone: wf([9, 50, 0], null), // no mature cut
+    });
+    const by = (s: string) => rows.find((r) => r.workflowDynastySlug === s)!;
+    expect(by("raven").basis).toBe("flash");
+    expect(by("raven").figuresByView!.flash).toMatchObject({ half: "flash", outcomes: 1, contacted: 400 });
+    expect(by("raven").figuresByView!.mature).toMatchObject({ half: "mature", outcomes: 0, contacted: 0 });
+    expect(by("nobelium").figuresByView!.flash.half).toBe("flash");
+    expect(by("lone").figuresByView!.mature.half).toBe("flash");
+    // the order is the one leg order, untouched
+    expect(rows.map((r) => r.workflowDynastySlug)).toEqual(orderLegWorkflows(rows.map((r) => ({ slug: r.workflowDynastySlug, selectable: r.selectable, mature: r.basis === "mature" && r.costPerOutcomeUsd ? { tier: 0, costPerOutcomeUsd: r.costPerOutcomeUsd } : null, fleet: { spentUsd: r.spentUsd, outcomes: r.outcomes } }))));
+  });
+});

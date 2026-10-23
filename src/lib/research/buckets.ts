@@ -14,6 +14,7 @@
 import { isMatureCount } from "../maturity.js";
 import type { StratumCounts } from "./verdict.js";
 import type { BucketFigures, BucketMonth, ResearchBucket } from "./studies.js";
+import type { ResearchView } from "./types.js";
 
 /** One half (flash or mature) of a slug's evidence. */
 export interface SlugHalf {
@@ -91,15 +92,24 @@ export function bucketOf(input: {
    * figures add up to the dynasty's exactly). `mature` falls to flash when the mature cut could not be made.
    */
   forceBasis?: "mature" | "flash";
+  /**
+   * The page's view (MATURITY-VIEW-1023): every figure on ONE half, whatever the bucket's own count says (`mature` falls
+   * to flash only when the mature cut could not be made). Wins over `forceBasis` and over the override's basis; the
+   * override's figures are then those of the view's half (the caller passes them). `learning` keeps the maturity rule.
+   */
+  view?: ResearchView;
 }): ResearchBucket {
   const flash = poolHalves(input.cells.map((c) => c.flash));
   const matureCut = input.cells.every((c) => c.mature !== null);
   const mature = matureCut ? poolHalves(input.cells.map((c) => c.mature!)) : null;
-  const isMature = input.override
-    ? input.override.basis === "mature"
-    : input.forceBasis
-      ? input.forceBasis === "mature" && mature !== null
-      : isMatureCount(mature ? mature.figures.outcomes : null, input.legKey) === true;
+  const ruleMature = isMatureCount(mature ? mature.figures.outcomes : null, input.legKey) === true;
+  const isMature = input.view
+    ? input.view === "mature" && mature !== null
+    : input.override
+      ? input.override.basis === "mature"
+      : input.forceBasis
+        ? input.forceBasis === "mature" && mature !== null
+        : ruleMature;
   const half = isMature && mature ? mature : flash;
   const figures = input.override ? input.override.figures : half.figures;
   const months = datedCovers(half.months, figures) ? scaled(half.months, figures) : null;
@@ -109,7 +119,7 @@ export function bucketOf(input: {
     label: input.label,
     basis: isMature ? "mature" : "flash",
     figures,
-    learning: input.override ? input.override.learning : !isMature,
+    learning: input.override ? input.override.learning : input.view ? !ruleMature : !isMature,
     months: months
       ? Object.entries(months)
           .sort(([a], [b]) => (a < b ? -1 : 1))

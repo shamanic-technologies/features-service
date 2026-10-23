@@ -323,6 +323,8 @@ export interface DeclaredStep {
   producedBy: string | null;
   /** Its rung on the lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */
   lifecycleRung: string | null;
+  /** `person` | `object` (`lib/outcome-subject.ts`); null = never stated. */
+  subjectKind: string | null;
   createdBy: string;
   requestedByOrgId: string | null;
   createdAt: string;
@@ -386,9 +388,9 @@ export async function insertStep(input: Omit<DeclaredStep, "createdAt">): Promis
   return { ...row, createdAt: row.createdAt.toISOString() };
 }
 
-/** Sets a DECLARED step's lifecycle rung (`lib/lifecycle-ladder.ts`); null when no declared step has the key. */
-export async function updateStepLifecycleRung(key: string, lifecycleRung: string): Promise<DeclaredStep | null> {
-  const [row] = await db.update(declaredSteps).set({ lifecycleRung }).where(eq(declaredSteps.key, key)).returning();
+/** Sets a DECLARED step's lifecycle rung and/or subject kind; null when no declared step has the key. */
+export async function updateDeclaredStep(key: string, set: { lifecycleRung?: string; subjectKind?: string }): Promise<DeclaredStep | null> {
+  const [row] = await db.update(declaredSteps).set(set).where(eq(declaredSteps.key, key)).returning();
   return row ? { ...row, createdAt: row.createdAt.toISOString() } : null;
 }
 

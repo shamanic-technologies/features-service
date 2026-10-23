@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { pipePerformance, type PipePerformanceInput } from "./performance.js";
+import { deprecatedPartsOf, pipePerformance, type PipePerformanceInput } from "./performance.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -84,8 +84,6 @@ const input = (over: Partial<PipePerformanceInput> = {}): PipePerformanceInput =
   llmLabelOf: (k) => llm.bySlug(k)?.name ?? k,
   // azalea: $1,200 pipeline on $400 billed (3x); keel: $0 on $50
   workflowReturns: { roiOf: new Map([["azalea", 3], ["keel", 0]]), moneyGoesHere: "azalea", pipelineOf: new Map([["azalea", 1200], ["keel", 0]]), billedOf: new Map([["azalea", 400], ["keel", 50]]) },
-  // The order the pipe picks by: azalea then keel; aurora then borealis; Gemini Flash then Claude Opus
-  pickOrder: { workflows: new Map([["azalea", 1], ["keel", 2]]), templates: new Map([["aurora", 1], ["borealis", 2]]), llms: new Map([["gemini-flash", 1], ["claude-opus", 2]]) },
   unpricedBilledUsd: 0,
   now: new Date("2026-10-23T12:00:00Z"),
   ...over,
@@ -142,16 +140,63 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(row("azalea|borealis|claude-opus").costPerOutcomeUsd).toMatchObject({ value: 25, basis: "measured" });
   });
 
-  it("rows stand in the order the pipe PICKS by, never by ROI (RESEARCH-PICK-ORDER-1023)", () => {
-    // workflow rank first, then the template's place, then the LLM's: the 8x Opus row is not first
-    expect(out.rows.map((r) => r.key)).toEqual(["azalea|aurora|gemini-flash", "azalea|borealis|gemini-flash", "azalea|borealis|claude-opus", "keel|-|-"]);
+  it("rows stand on each combination's OWN estimated cost per outcome, never a nested pick order (RESEARCH-COMBO-ESTIMATE-1023)", () => {
+    const est = (r: (typeof out.rows)[number]) => r.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
+    for (let i = 1; i < out.rows.length; i++) expect(est(out.rows[i]!)).toBeGreaterThanOrEqual(est(out.rows[i - 1]!));
+    expect(out.rowOrder).toBe("estimated_cost");
     expect(out.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
-    // the leg order puts keel first: every keel row comes before azalea's
-    const keelFirst = pipePerformance(input({ pickOrder: { ...input().pickOrder, workflows: new Map([["keel", 1], ["azalea", 2]]) } }));
-    expect(keelFirst.rows[0]!.key).toBe("keel|-|-");
-    // a workflow the ranking does not list stands after every listed one
-    const unlisted = pipePerformance(input({ pickOrder: { ...input().pickOrder, workflows: new Map([["keel", 1]]) } }));
-    expect(unlisted.rows.map((r) => r.workflow.key)).toEqual(["keel", "azalea", "azalea", "azalea"]);
+    // the 8x Opus row ($25 per reply on 4 replies) now leads: azalea's other rows read dearer
+    expect(out.rows[0]!.key).toBe("azalea|borealis|claude-opus");
+    // estimate = (own spend + k x prior) / (own outcomes + k), k = the leg's maturity bar (1 positive reply)
+    const opus = row("azalea|borealis|claude-opus");
+    expect(opus.estimate.priorWeightOutcomes).toBe(1);
+    expect(opus.estimate.costPerOutcomeUsd).toBeCloseTo((opus.estimate.ownSpentUsd + opus.estimate.priorCostPerOutcomeUsd!) / (opus.estimate.ownOutcomes + 1), 9);
+  });
+
+  it("a combination that spent with no outcome climbs above its prior; its expected cost IS that estimate, its return moves with it", () => {
+    const r = row("azalea|borealis|gemini-flash");
+    expect(r.estimate.ownOutcomes).toBe(0);
+    expect(r.estimate.ownSpentUsd).toBeGreaterThan(0);
+    expect(r.estimate.costPerOutcomeUsd).toBeCloseTo(r.estimate.ownSpentUsd + r.estimate.priorCostPerOutcomeUsd!, 9);
+    expect(r.costPerOutcomeUsd.value).toBeCloseTo(r.estimate.costPerOutcomeUsd!, 9);
+    // same value per outcome at a higher cost: return x (prior / estimate)
+    const noSpend = pipePerformance(input({ cells: cells.map((c) => (c.slug === "azalea-v2" ? { ...c, flash: half({ "2026-09": [0, 100, 0] }), mature: half({ "2026-09": [0, 100, 0] }) } : c)) }));
+    const free = noSpend.rows.find((x) => x.key === "azalea|borealis|gemini-flash")!;
+    expect(free.estimate.costPerOutcomeUsd).toBeCloseTo(free.estimate.priorCostPerOutcomeUsd!, 9);
+  });
+
+  it("a combination with ANY deprecated part is deprecated and stands after every active one", () => {
+    const dep = pipePerformance(input({ deprecated: { workflows: new Set(), templates: new Set(), llms: new Set(["claude-opus"]) } }));
+    const opus = dep.rows.find((r) => r.key === "azalea|borealis|claude-opus")!;
+    expect(opus.status).toBe("deprecated");
+    expect(opus.deprecatedParts).toEqual(["llm"]);
+    expect(dep.rows.at(-1)!.key).toBe("azalea|borealis|claude-opus");
+    expect(dep.rows.filter((r) => r.status === "active")).toHaveLength(3);
+    const wf = pipePerformance(input({ deprecated: { workflows: new Set(["azalea"]), templates: new Set(["borealis"]), llms: new Set() } }));
+    expect(wf.rows.find((r) => r.key === "azalea|borealis|gemini-flash")!.deprecatedParts).toEqual(["workflow", "template"]);
+    expect(wf.rows[0]!.key).toBe("keel|-|-");
+    expect(out.rows.every((r) => r.status === "active" && r.deprecatedParts.length === 0)).toBe(true);
+  });
+
+  it("deprecatedPartsOf: not runnable, deprecated dynasty, an LLM served under no alias or only deprecated ones", () => {
+    const parts = deprecatedPartsOf(
+      {
+        workflows: [{ key: "keel", runnable: true }, { key: "old", runnable: false }],
+        templates: [{ key: "aurora", status: "active" }, { key: "borealis", status: "deprecated" }, { key: "x", status: null }],
+        models: [
+          { key: "deepseek-pro", aliases: [], aliasesUnavailableReason: "no_alias_serves_it" },
+          { key: "unknown", aliases: [], aliasesUnavailableReason: "model_ids_unreadable" },
+          { key: "haiku", aliases: ["haiku"], aliasesUnavailableReason: null },
+          { key: "opus", aliases: ["opus", "opus-old"], aliasesUnavailableReason: null },
+        ],
+      },
+      new Map([["haiku", "deprecated"], ["opus", "active"], ["opus-old", "deprecated"]]),
+    );
+    expect([...parts.workflows]).toEqual(["old"]);
+    expect([...parts.templates]).toEqual(["borealis"]);
+    expect([...parts.llms]).toEqual(["deepseek-pro", "haiku"]);
+    // alias statuses unreadable: only the no-alias LLM is deprecated
+    expect([...deprecatedPartsOf({ workflows: [], templates: [], models: [{ key: "haiku", aliases: ["haiku"], aliasesUnavailableReason: null }, { key: "deepseek-pro", aliases: [], aliasesUnavailableReason: "no_alias_serves_it" }] }, null).llms]).toEqual(["deepseek-pro"]);
   });
 
   it("a row with no outcome reads its OWN figures: measured 0% conversion, expected ROI and cost from its own parts", () => {
@@ -160,8 +205,9 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(r.conversionRatePct).toMatchObject({ value: 0, basis: "measured", source: "own" });
     expect(r.roi).toMatchObject({ basis: "expected", source: "own_parts", parts: ["workflow", "template", "llm"] });
     expect(r.costPerOutcomeUsd).toMatchObject({ basis: "expected", source: "own_parts" });
-    // workflow azalea $400/6, template borealis $200/4, LLM gemini $300/2: geometric mean
-    expect(r.costPerOutcomeUsd.value).toBeCloseTo(Math.cbrt((400 / 6) * (200 / 4) * (300 / 2)), 6);
+    // its prior reads its parts WITHOUT it: workflow azalea $300/6, template borealis $100/4, LLM gemini $200/2
+    expect(r.estimate.priorCostPerOutcomeUsd).toBeCloseTo(Math.cbrt((300 / 6) * (100 / 4) * (200 / 2)), 6);
+    expect(r.estimate.priorSource).toBe("own_parts");
     // never the pipe pool copied on every row
     expect(r.roi.value).not.toBeCloseTo(out.totals!.roi.value!, 3);
     // a spend-only row (nobody emailed) still reads its parts

@@ -546,6 +546,8 @@ export const declaredSteps = pgTable("declared_steps", {
   producedBy: text("produced_by"),
   /** Its rung on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */
   lifecycleRung: text("lifecycle_rung"),
+  /** What one occurrence is about, `person` | `object` (`lib/outcome-subject.ts`); null = never stated. */
+  subjectKind: text("subject_kind"),
   createdBy: text("created_by").notNull(),
   requestedByOrgId: text("requested_by_org_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

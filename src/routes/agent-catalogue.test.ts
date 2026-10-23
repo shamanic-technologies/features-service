@@ -144,10 +144,10 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       mem.steps.push(row);
       return row;
     },
-    updateStepLifecycleRung: async (key: string, lifecycleRung: string) => {
+    updateDeclaredStep: async (key: string, set: Record<string, string>) => {
       const row = mem.steps.find((st: { key: string }) => st.key === key);
       if (!row) return null;
-      row.lifecycleRung = lifecycleRung;
+      Object.assign(row, set);
       return row;
     },
     insertSalesPathChain: async (pathId: string, legKeys: string[], createdBy: string) => {
@@ -481,7 +481,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(pub.body.object).toBe("step");
     const internal = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
     expect(internal.body.truncated).toBe(false);
-    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank }]));
+    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null; subjectKind: string | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank, subjectKind: r.subjectKind }]));
     expect(pub.body.total).toBe(staff.size);
     expect(pub.body.rows).toHaveLength(staff.size);
     for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
@@ -555,7 +555,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
     const step = await request(app)
       .post("/internal/catalogue/steps")
       .set(KEY)
-      .send({ key: "linkedin_post", label: "LinkedIn post", description: "A post published on LinkedIn.", shortDescription: "Posts on LinkedIn", icon: "linkedin-logo", towardStep: "conversation", towardRatePct: 2, createdBy: "agent" });
+      .send({ key: "linkedin_post", label: "LinkedIn post", description: "A post published on LinkedIn.", shortDescription: "Posts on LinkedIn", icon: "linkedin-logo", towardStep: "conversation", towardRatePct: 2, subjectKind: "object", createdBy: "agent" });
     expect(step.status).toBe(201);
     expect(step.body).toMatchObject({ id: "linkedin_post", valueUsd: 3, declared: true });
 
@@ -822,7 +822,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
   });
 
   it("a pipe on a leg nothing rates states its conversion rate", async () => {
-    await request(app).post("/internal/catalogue/steps").set(KEY).send({ key: "email_found", label: "Email found", description: "A work email is found for a person.", shortDescription: "Finds a work email", icon: "envelope", towardStep: "lead_found", towardRatePct: 90, producedBy: "apollo-service POST /people/match", createdBy: "agent" });
+    await request(app).post("/internal/catalogue/steps").set(KEY).send({ key: "email_found", label: "Email found", description: "A work email is found for a person.", shortDescription: "Finds a work email", icon: "envelope", towardStep: "lead_found", towardRatePct: 90, producedBy: "apollo-service POST /people/match", subjectKind: "person", createdBy: "agent" });
     const refused = await request(app).post("/internal/catalogue/pipes").set(KEY).send({ channelSlug: "sales-cold-email-outreach", fromStep: "email_found", toStep: "website_visit", mode: "proactive", createdBy: "agent" });
     expect(refused.status).toBe(400);
     expect(refused.body.reason).toBe("conversion_rate_required");
@@ -861,7 +861,7 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
   });
 
   it("a declared step states its rung as data, at creation or later, never through code", async () => {
-    const base = { label: "Post engaged", description: "A person engages with a post.", shortDescription: "Engages with a post", icon: "heart", towardStep: "conversation", towardRatePct: 5, createdBy: "agent" };
+    const base = { label: "Post engaged", description: "A person engages with a post.", shortDescription: "Engages with a post", icon: "heart", towardStep: "conversation", towardRatePct: 5, subjectKind: "person", createdBy: "agent" };
     const bad = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "post_engaged", lifecycleRung: "warm" });
     expect(bad.status).toBe(400);
     expect(bad.body.reason).toBe("lifecycle_rung_invalid");
@@ -879,6 +879,29 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(409);
     expect((await request(app).patch("/internal/catalogue/steps/nope").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(404);
     expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ createdBy: "staff" })).body.reason).toBe("lifecycleRung_required");
+  });
+
+  it("COST-ACCOUNTING-1023: every outcome states what one occurrence is about, a person or an object", async () => {
+    const base = { description: "d", shortDescription: "d", icon: "circle", towardStep: "conversation", towardRatePct: 5, createdBy: "staff" };
+    const missing = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "creative_made", label: "Creative made" });
+    expect(missing.status).toBe(400);
+    expect(missing.body.reason).toBe("subjectKind_required");
+    const wrong = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "creative_made", label: "Creative made", subjectKind: "unit" });
+    expect(wrong.body.reason).toBe("subject_kind_invalid");
+    const created = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key: "creative_made", label: "Creative made", subjectKind: "object" });
+    expect(created.status).toBe(201);
+    expect(created.body.subjectKind).toBe("object");
+    // every coded step is about a person, on the public list and the staff detail
+    const pub = await request(app).get("/public/catalogue/steps");
+    const coded = new Set<string>(CHANNEL_STEP_KEYS);
+    for (const r of pub.body.rows.filter((x: { key: string }) => coded.has(x.key))) expect(r.subjectKind, r.key).toBe("person");
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "creative_made").subjectKind).toBe("object");
+    expect((await request(app).get("/internal/catalogue/steps/meeting_booked").set(KEY)).body.subjectKind).toBe("person");
+    // a declared step states it later too, alone
+    const patched = await request(app).patch("/internal/catalogue/steps/creative_made").set(KEY).send({ subjectKind: "person", createdBy: "staff" });
+    expect(patched.status).toBe(200);
+    expect(patched.body).toMatchObject({ subjectKind: "person", lifecycleRung: null });
+    expect((await request(app).patch("/internal/catalogue/steps/creative_made").set(KEY).send({ subjectKind: "thing", createdBy: "staff" })).body.reason).toBe("subject_kind_invalid");
   });
 });
 
