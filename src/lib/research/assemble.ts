@@ -130,7 +130,14 @@ export interface ResearchInput {
    * runs-service's outcome ledger as totals (COST-ACCOUNTING-1023-P2): every outcome section gets its every-path cost
    * study. Absent = not served; null = unreadable this build (each study says so).
    */
-  outcomeLedger?: { totals: OutcomeLedgerTotals | null; labelOf: (stepKey: string) => string };
+  outcomeLedger?: {
+    totals: OutcomeLedgerTotals | null;
+    labelOf: (stepKey: string) => string;
+    /** The step a campaign's leg ends on (its declared output); null = unknown. */
+    outputOf: (campaignId: string) => string | null;
+    /** Every step a catalogue pipe ends on. */
+    pipeOutputs: ReadonlySet<string>;
+  };
   /**
    * Every other pipe of the channel catalogue holding a workflow (WA-PIPE-RESEARCH-1023), listed after the three studied
    * ones: its Workflows / Templates / Models / Performance tabs are served on the catalogue and performance reads.
@@ -375,16 +382,17 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     // The roll-up never fails the file: anything it cannot price, its study says so (a producer's bad read is that study's).
     let units: ReturnType<typeof rollUpOutcomeUnitCosts> | null = null;
     try {
-      units = l.totals ? rollUpOutcomeUnitCosts(l.totals.totals, l.totals.consumptions) : null;
+      units = l.totals ? rollUpOutcomeUnitCosts(l.totals.produced, l.totals.consumed, l.outputOf, l.pipeOutputs) : null;
     } catch (err) {
       console.error("[features-service] research: the outcome ledger roll-up failed this build (the cost studies say not readable):", err);
     }
-    const unitOf = (step: string) => (units ? (units.get(step) ?? { outcomeKey: step, produced: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] }) : null);
+    const unitOf = (step: string) => (units ? (units.units.get(step) ?? { outcomeKey: step, produced: 0, byProducts: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] }) : null);
     const coveragePct = l.totals?.coveragePct ?? null;
+    const ledgerFacts = { daysMissing: l.totals?.daysMissing ?? 0, unattributedCostUsd: units?.unattributedCostUsd ?? 0 };
     if (input.replyDelay !== undefined) {
-      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "positive reply", nounPlural: "positive replies", unit: unitOf("conversation"), coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
+      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "positive reply", nounPlural: "positive replies", unit: unitOf("conversation"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
     }
-    studies.push(outcomeCostStudy({ outcome: "meeting", noun: "booked meeting", nounPlural: "booked meetings", unit: unitOf("meeting_booked"), coveragePct, outcomesRequired: input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, labelOf: l.labelOf }));
+    studies.push(outcomeCostStudy({ outcome: "meeting", noun: "booked meeting", nounPlural: "booked meetings", unit: unitOf("meeting_booked"), ...ledgerFacts, coveragePct, outcomesRequired: input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, labelOf: l.labelOf }));
   }
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
   // a one-off hand-checked benchmark, committed (IMAGE-JUDGE-STUDY-1021): the same on both bases, it prices nothing
