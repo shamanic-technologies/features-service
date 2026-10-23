@@ -34,12 +34,12 @@ import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, 
 import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
 import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
 import { readTemplateDynasties, readTemplateTexts } from "../lib/writer-catalogue-client.js";
-import { dynastyLastWriters, dynastyWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
+import { dynastyLastWriters, dynastyWriters, versionWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { pipePerformance, type PipePerformance } from "../lib/research/performance.js";
+import { pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -255,10 +255,11 @@ async function readModelNames(): Promise<Map<string, ModelName>> {
  * What every cold email workflow's runnable version writes with now (RESEARCH-PAGES-ALL-1018). Unreadable = every
  * workflow states `workflow_definitions_unreadable` (logged), never a guessed template.
  */
-async function readDynastyWriters(): Promise<{ now: Map<string, DynastyWriter>; last: Map<string, DynastyWriter> } | WriterReason> {
+async function readDynastyWriters(): Promise<{ now: Map<string, DynastyWriter>; last: Map<string, DynastyWriter>; byVersion: Map<string, VersionWriter> } | WriterReason> {
   try {
     const [definitions, models] = await Promise.all([fetchWorkflowDefinitions(COLD_EMAIL), readModelIds()]);
-    return { now: dynastyWriters(definitions, models), last: dynastyLastWriters(definitions, models) };
+    const last = dynastyLastWriters(definitions, models);
+    return { now: dynastyWriters(definitions, models), last, byVersion: versionWriters(definitions, models, last) };
   } catch (error) {
     console.error("[features-service] research catalogue: what the workflows write with now could not be read this time:", error);
     return "workflow_definitions_unreadable";
@@ -686,12 +687,14 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       cells: r.input.cells,
       persons: r.persons,
       split: r.split,
+      // The Workflows tab's bars: each workflow's rows add up to its bar (one figure per pipe on both tabs).
+      bars: workflowBuckets(r.input),
       dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
       workflowLabelOf: r.input.labelOf,
       workflowNameOf: (d) => r.names.get(d) ?? null,
+      writerOfVersion: typeof writers === "string" ? undefined : (slug) => writers.byVersion.get(slug) ?? null,
       templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
       llmDynasties: dynasties.llm,
-      modelLabel: g.modelLabel,
       llmKeyOf: g.llmKeyOf,
       llmLabelOf: g.llmLabelOf,
       workflowReturns: ranking
@@ -712,7 +715,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     // The meeting pipe's writer is a chat /complete call: no sequence names its template, so no combination yet.
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
-      figuresBasis: "since_inception",
+      figuresBasis: "workflow_bars",
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
