@@ -23,11 +23,18 @@
  * 0.0x at $37 beside Keel x GLM 9.6x at $55: each figure averaged its parts on its own). A measured ROI is the
  * catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline shared on outcomes ÷ its workflow's billed spend shared on spend.
  *
- * THE ROWS STAND ON EACH COMBINATION'S OWN ESTIMATED COST PER OUTCOME (RESEARCH-COMBO-ESTIMATE-1023, owner 2026-10-23
- * « il faut que tu estimes les vrais stats de performance de chaque combinaison », supersedes the nested workflow ->
- * template -> LLM pick order of RESEARCH-PICK-ORDER-1023, « ordre pourri »): estimate = (its own spend + k x prior) ÷
- * (its own outcomes + k), k = the leg's maturity bar in outcomes. A combination with spend and no outcome climbs above
- * its prior; one with many outcomes reads its own figure.
+ * THE ROWS STAND IN THE PIPE'S PICK ORDER (PERF-LEG-ORDER-1023, owner 2026-10-23 « comme les deux premiers », the
+ * Templates tab where never-used templates stand on top; supersedes RESEARCH-COMBO-ESTIMATE-1023's order on the
+ * estimate, which put every untested combination at the pipe's average, under rows that had been lucky once): the ONE
+ * leg order (`orderLegWorkflows`, what writer-pick and the workflow ranking use) on each combination's own figures:
+ * active first; learning combinations whose explore price (own spend ÷ max(own outcomes, 1); $0 never used) is below
+ * the best mature one's cost, cheapest first; the mature ones; the other learning ones. Combinations at the same
+ * explore price (every $0 one) stand on their estimate, cheapest first. Each row serves its `place`.
+ *
+ * EACH ROW'S ESTIMATE (RESEARCH-COMBO-ESTIMATE-1023, owner 2026-10-23 « il faut que tu estimes les vrais stats de
+ * performance de chaque combinaison »): estimate = (its own spend + k x prior) ÷ (its own outcomes + k), k = the leg's
+ * maturity bar in outcomes. A combination with spend and no outcome climbs above its prior; one with many outcomes reads
+ * its own figure. It is the expected cost of a combination with no outcome, and orders ties.
  *
  * THE PRIOR IS ONE MODEL OF THE PIPE (PRIOR-PART-EFFECTS-1023, owner 2026-10-23, supersedes the geometric mean of what
  * each part measured): outcomes per dollar = the pipe's rate x the workflow's effect x the template's x the LLM's, every
@@ -40,6 +47,7 @@
  * under no alias or only deprecated ones) is DEPRECATED and stands after every active one.
  */
 import { isMatureCount, legMaturity } from "../maturity.js";
+import { explorePriceUsd, legWorkflowPlaces, orderLegWorkflows, type LegWorkflowOrderEntry, type LegWorkflowPlace } from "../leg-workflow-order.js";
 import { bucketOf, type SlugCell } from "./buckets.js";
 import { splitCellsByGroup, type SlugCellsInput } from "./slug-cells.js";
 import { MONTHS, n, pctText, templateLabel, usd } from "./format.js";
@@ -101,8 +109,10 @@ export interface PerformanceRow extends PerformanceFigures {
   writerUnavailableReason: "not_on_record" | null;
   maturity: { isMature: boolean; matureOutcomes: number | null; outcomesRequired: number };
   learning: boolean;
-  /** The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). */
+  /** Its best-guess cost per outcome (RESEARCH-COMBO-ESTIMATE-1023): the expected cost with no outcome; orders ties. */
   estimate: PerformanceEstimate;
+  /** Why it stands where it does in the pick order (PERF-LEG-ORDER-1023): `legWorkflowPlaces`' word. */
+  place: LegWorkflowPlace;
   /** Deprecated as soon as one part can no longer run (`deprecatedParts` names which); deprecated rows stand last. */
   status: "active" | "deprecated";
   deprecatedParts: PerformancePart[];
@@ -143,7 +153,7 @@ export interface PipePerformance {
   /** Each workflow's rows on its Workflows-tab bar's basis (mature for a mature workflow): the totals are that tab's sum. */
   figuresBasis: "workflow_bars";
   /** Active rows first, each group by its estimated cost per outcome, cheapest first (RESEARCH-COMBO-ESTIMATE-1023). */
-  rowOrder: "estimated_cost";
+  rowOrder: "leg_order";
   /** Every technically valid combination is a row, not only those that wrote (RESEARCH-ALL-COMBOS-1023). */
   rowsCover: "all_valid_combinations";
   /** How each row's prior is read: one model of the pipe's part effects, fitted together (PRIOR-PART-EFFECTS-1023). */
@@ -299,7 +309,7 @@ const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym.s
 
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "estimated_cost" as const, rowsCover: "all_valid_combinations" as const, estimateModel: "part_effects" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "leg_order" as const, rowsCover: "all_valid_combinations" as const, estimateModel: "part_effects" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
@@ -556,7 +566,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
           ["llm", e.llm !== NONE && dep.llms.has(e.llm)],
         ] as Array<[PerformancePart, boolean]>).flatMap(([part, on]) => (on ? [part] : []))
       : [];
-  const rows: PerformanceRow[] = drafts
+  const unordered = drafts
     .map((d) => {
       const e = d.e;
       const est = estimateOf(d);
@@ -567,6 +577,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
       return {
         key: d.key,
         rank: 0,
+        place: "explore" as LegWorkflowPlace,
         workflow: { key: e.dynasty, label: p.workflowLabelOf(e.dynasty), name: p.workflowNameOf(e.dynasty) },
         template:
           e.tpl === NONE
@@ -591,19 +602,35 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         spentUsd: count(d.acc.spentUsd, usd),
         contacted: count(d.acc.contacted, (v) => n(Math.round(v))),
       };
-    })
-    // Active first, then each combination's own estimated cost per outcome, cheapest first (RESEARCH-COMBO-ESTIMATE-1023);
-    // an unestimable row stands last of its group. Then outcomes, people, key.
-    .sort((a, b) => {
-      if (a.status !== b.status) return a.status === "active" ? -1 : 1;
-      const ea = a.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
-      const eb = b.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
-      if (ea !== eb) return ea < eb ? -1 : 1;
-      if (a.outcomes.value !== b.outcomes.value) return b.outcomes.value - a.outcomes.value;
-      if (a.contacted.value !== b.contacted.value) return b.contacted.value - a.contacted.value;
-      return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-    })
-    .map((r, i) => ({ ...r, rank: i + 1 }));
+    });
+  // The pipe's pick order (PERF-LEG-ORDER-1023): the ONE leg order on each combination's own figures.
+  const entries: LegWorkflowOrderEntry[] = unordered.map((r) => ({
+    slug: r.key,
+    selectable: r.status === "active",
+    mature: r.maturity.isMature && r.outcomes.value > 0 ? { tier: 0, costPerOutcomeUsd: r.spentUsd.value / r.outcomes.value } : null,
+    fleet: { spentUsd: r.spentUsd.value, outcomes: r.outcomes.value },
+  }));
+  const places = legWorkflowPlaces(entries);
+  const rowOf = new Map(unordered.map((r) => [r.key, r]));
+  const entryOf = new Map(entries.map((e) => [e.slug, e]));
+  const tieOf = (key: string) => {
+    const e = entryOf.get(key)!;
+    return e.mature ? null : `${e.selectable}|${explorePriceUsd(e.fleet)}`;
+  };
+  const ordered = orderLegWorkflows(entries).map((k) => rowOf.get(k)!);
+  // Learning combinations at the same explore price (every $0 one) stand on their estimate, cheapest first.
+  const byEstimate = (a: (typeof ordered)[number], b: (typeof ordered)[number]) =>
+    (a.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY) - (b.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  const rows: PerformanceRow[] = [];
+  for (let i = 0; i < ordered.length; ) {
+    const tie = tieOf(ordered[i]!.key);
+    let j = i + 1;
+    while (tie !== null && j < ordered.length && tieOf(ordered[j]!.key) === tie) j++;
+    rows.push(...ordered.slice(i, j).sort(byEstimate));
+    i = j;
+  }
+  const ranked = rows
+    .map((r, i) => ({ ...r, rank: i + 1, place: places.get(r.key)! }));
 
   const totalsRoi = pooledRoi !== null ? figure(pooledRoi, "measured", "own", roiText) : moneyRoi != null ? figure(moneyRoi, "expected", "pipe_best_workflow", roiText) : missing("no_return_on_pipe");
   const totals: PerformanceFigures = {
@@ -614,7 +641,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
     spentUsd: count(cum.spentUsd, usd),
     contacted: count(cum.contacted, (v) => n(Math.round(v))),
   };
-  return { ...base, rows, totals, series: { grain: "month", points }, unavailableReason: null };
+  return { ...base, rows: ranked, totals, series: { grain: "month", points }, unavailableReason: null };
 }
 
 /**

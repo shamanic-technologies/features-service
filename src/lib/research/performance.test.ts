@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
 import { candidatePartsOf, deprecatedPartsOf, fitPartEffects, pipePerformance, type PipePerformanceInput } from "./performance.js";
+import { legWorkflowPlaces, orderLegWorkflows } from "../leg-workflow-order.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -140,17 +141,41 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(row("azalea|borealis|claude-opus").costPerOutcomeUsd).toMatchObject({ value: 25, basis: "measured" });
   });
 
-  it("rows stand on each combination's OWN estimated cost per outcome, never a nested pick order (RESEARCH-COMBO-ESTIMATE-1023)", () => {
-    const est = (r: (typeof out.rows)[number]) => r.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
-    for (let i = 1; i < out.rows.length; i++) expect(est(out.rows[i]!)).toBeGreaterThanOrEqual(est(out.rows[i - 1]!));
-    expect(out.rowOrder).toBe("estimated_cost");
+  it("rows stand in the pipe's PICK order, the ONE leg order on each combination's own figures (PERF-LEG-ORDER-1023)", () => {
+    expect(out.rowOrder).toBe("leg_order");
     expect(out.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
-    // the 8x Opus row ($25 per reply on 4 replies) now leads: azalea's other rows read dearer
+    // the order IS the shared leg order on each row's own figures (the one writer-pick and the workflow ranking use)
+    const entries = out.rows.map((r) => ({
+      slug: r.key,
+      selectable: r.status === "active",
+      mature: r.maturity.isMature && r.outcomes.value > 0 ? { tier: 0, costPerOutcomeUsd: r.spentUsd.value / r.outcomes.value } : null,
+      fleet: { spentUsd: r.spentUsd.value, outcomes: r.outcomes.value },
+    }));
+    expect(out.rows.map((r) => r.key)).toEqual(orderLegWorkflows(entries));
+    expect(out.rows.map((r) => r.place)).toEqual(out.rows.map((r) => legWorkflowPlaces(entries).get(r.key)));
     expect(out.rows[0]!.key).toBe("azalea|borealis|claude-opus");
-    // estimate = (own spend + k x prior) / (own outcomes + k), k = the leg's maturity bar (1 positive reply)
+    // the estimate is still served: (own spend + k x prior) / (own outcomes + k), k = 1 positive reply
     const opus = row("azalea|borealis|claude-opus");
     expect(opus.estimate.priorWeightOutcomes).toBe(1);
     expect(opus.estimate.costPerOutcomeUsd).toBeCloseTo((opus.estimate.ownSpentUsd + opus.estimate.priorCostPerOutcomeUsd!) / (opus.estimate.ownOutcomes + 1), 9);
+  });
+
+  it("never used ($0) combinations go FIRST, ties on their estimate; a learning row proven worse than the best mature one goes after it", () => {
+    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
+    const fresh = all.rows.filter((r) => !r.written);
+    expect(all.rows.slice(0, fresh.length).every((r) => !r.written)).toBe(true);
+    for (let i = 1; i < fresh.length; i++) expect(fresh[i]!.estimate.costPerOutcomeUsd!).toBeGreaterThanOrEqual(fresh[i - 1]!.estimate.costPerOutcomeUsd!);
+    // a mature row sets the bar: learning rows that already spent more than its cost stand after it
+    const mature = pipePerformance(input({
+      candidates: { workflows: ["azalea"], templates: ["aurora"], llms: ["gemini-flash"] },
+      cells: cells.map((c) => (c.slug === "azalea-v1" ? { ...c, mature: half({ "2026-08": [100, 100, 2], "2026-09": [200, 200, 4] }) } : c)),
+    }));
+    const opus = mature.rows.find((r) => r.key === "azalea|borealis|claude-opus")!;
+    if (opus.maturity.isMature) {
+      expect(opus.place).toBe("money");
+      const worse = mature.rows.filter((r) => r.place === "proven_worse");
+      for (const w of worse) expect(w.rank).toBeGreaterThan(opus.rank);
+    }
   });
 
   it("a combination that spent with no outcome climbs above its prior; its expected cost IS that estimate, its return moves with it", () => {
@@ -190,9 +215,8 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(fresh.estimate.priorSource).toBe("own_parts");
     expect(fresh.costPerOutcomeUsd).toMatchObject({ basis: "expected" });
     expect(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.written).toBe(true);
-    // ranked on the estimate like every row; the totals and the series never move
-    const est = (r: (typeof all.rows)[number]) => r.estimate.costPerOutcomeUsd ?? Number.POSITIVE_INFINITY;
-    for (let i = 1; i < all.rows.length; i++) expect(est(all.rows[i]!)).toBeGreaterThanOrEqual(est(all.rows[i - 1]!));
+    // never used: explored first, before every row that spent; the totals and the series never move
+    expect(fresh.rank).toBeLessThan(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.rank);
     expect(all.totals).toEqual(out.totals);
     expect(all.series).toEqual(out.series);
   });
