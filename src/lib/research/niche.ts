@@ -17,7 +17,7 @@ import { groupOfSplitSlug, splitCellsByGroup, type SlugCellsInput } from "./slug
 import { counts, dimensionStudies, notMeasuredStudy, type PipeTerms, type ResearchBucket } from "./studies.js";
 import { n, pctText, usd } from "./format.js";
 import type { ReportingBrand } from "./meetings.js";
-import type { ResearchStudy } from "./types.js";
+import type { ResearchStudy, ResearchView } from "./types.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
 import { NICHE_CRITERIA, NICHE_GRADES, NICHE_LABEL, type GradedClient, type NicheGrade, type NicheGradesRead } from "./niche-grades.js";
 
@@ -27,6 +27,8 @@ export interface NichePipeInput {
   cells: readonly SlugCell[];
   persons: readonly FleetPersonBucket[];
   split: Pick<SlugCellsInput, "screened" | "signal" | "cutoffDay">;
+  /** The page's view (MATURITY-VIEW-1023). */
+  view?: ResearchView;
 }
 
 export interface NicheInput {
@@ -126,7 +128,7 @@ function pipeStudies(input: NichePipeInput, grades: NicheGradesRead): ResearchSt
   const t = input.terms;
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, (b) => grades.byCampaign.get(b.campaignId)?.grade ?? null);
   const { groups } = groupCells(cells, groupOfSplitSlug);
-  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: labelOfGrade(g), legKey: input.legKey, cells: cs }));
+  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: labelOfGrade(g), legKey: input.legKey, cells: cs, view: input.view }));
   const perClient = clientRates(input, grades.byCampaign);
   const onPipe = new Set([...perClient].filter(([, c]) => c.contacted > 0).map(([k]) => k));
   const lines = [...methodLines(grades), ...clientLines(grades.clients, onPipe)];

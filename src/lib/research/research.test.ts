@@ -96,6 +96,64 @@ describe("buckets", () => {
   });
 });
 
+// MATURITY-VIEW-1023: owner 2026-10-23, every Research figure on ONE half at a time (Mature / Flash toggle).
+describe("research view", () => {
+  const cells: SlugCell[] = [{ slug: "wf-a-v1", flash: half(100, 1000, 12), mature: half(60, 500, 4) }];
+  it("the mature view reads the mature half even below the bar, still marked Learning", () => {
+    const b = bucketOf({ key: "wf-a", label: "A", legKey: "start_to_website_visit", cells, view: "mature" });
+    expect(b.basis).toBe("mature");
+    expect(b.figures).toEqual({ spentUsd: 60, contacted: 500, outcomes: 4 });
+    expect(b.learning).toBe(true);
+  });
+  it("the flash view reads the flash half even above the bar, not Learning when the rule says mature", () => {
+    const big: SlugCell[] = [{ slug: "wf-b-v1", flash: half(300, 3000, 40), mature: half(200, 2000, 30) }];
+    const b = bucketOf({ key: "wf-b", label: "B", legKey: "start_to_website_visit", cells: big, view: "flash" });
+    expect(b.basis).toBe("flash");
+    expect(b.figures).toEqual({ spentUsd: 300, contacted: 3000, outcomes: 40 });
+    expect(b.learning).toBe(false);
+  });
+  it("the mature view falls to flash when the mature cut could not be made", () => {
+    const b = bucketOf({ key: "wf-c", label: "C", legKey: "start_to_website_visit", cells: [{ slug: "wf-c-v1", flash: half(10, 100, 2), mature: null }], view: "mature" });
+    expect(b.basis).toBe("flash");
+  });
+  it("a view wins over the ranking's own basis: the workflow bar takes the row's figures on that half", () => {
+    const r = row("rampart", { spentUsd: 127.1, contacted: 720, outcomes: 15 }, true);
+    const flashFig = { half: "flash", spentUsd: { value: 130, basis: "measured", unavailableReason: null }, outcomes: 16, contacted: 760 };
+    const matureFig = { half: "mature", spentUsd: { value: 127.1, basis: "measured", unavailableReason: null }, outcomes: 15, contacted: 720 };
+    const withViews = { ...r, figuresByView: { flash: flashFig, mature: matureFig } } as unknown as LegWorkflowRankingRow;
+    const p = { ...pipe("start_to_website_visit", [withViews]), view: "flash" as const };
+    const [bar] = workflowBuckets(p);
+    expect(bar!.figures).toEqual({ spentUsd: 130, contacted: 760, outcomes: 16 });
+    expect(bar!.basis).toBe("flash");
+    const [m] = workflowBuckets({ ...p, view: "mature" });
+    expect(m!.figures).toEqual({ spentUsd: 127.1, contacted: 720, outcomes: 15 });
+  });
+  it("the file states its view; the rule note says which view it reads", () => {
+    const base = pipe("start_to_conversation", [row("azalea", { spentUsd: 910.9, contacted: 3423, outcomes: 5 }, true)]);
+    const visit = pipe("start_to_website_visit", [row("rampart", { spentUsd: 127.1, contacted: 720, outcomes: 15 }, true)]);
+    const mk = (view: "mature" | "flash") =>
+      assembleResearch({
+        costBasis: "user",
+        now: new Date("2026-10-18T15:00:00Z"),
+        unpricedBilledUsd: 0,
+        reply: { ...base, view, readDay: "2026-10-18" },
+        visit: { ...visit, view, readDay: "2026-10-18" },
+        meeting: { outcomesRequired: 10, rankingRows: null, unattributableCampaigns: 0, series: null },
+        beforeAfter,
+        meetingOutcomesRequired: 10,
+        sends: null,
+        generationStudies: [],
+        volume: null,
+        jev: NO_JEV,
+      });
+    const f = mk("flash");
+    expect(f.view).toBe("flash");
+    expect(JSON.stringify(f)).toContain("Flash view:");
+    expect(mk("mature").view).toBe("mature");
+    expect(JSON.stringify(mk("mature"))).toContain("Mature view:");
+  });
+});
+
 describe("slug cells", () => {
   it("dates spend by run month and persons by serve month, mature cut at the cutoff day", () => {
     const cells = buildSlugCells({

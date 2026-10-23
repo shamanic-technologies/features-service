@@ -7493,6 +7493,10 @@ const catalogueLifecycleFields = {
       "The step's rung on the ONE lifecycle ladder (owner 2026-10-17, the same for every campaign, sales funnel, brand and channel): lead_found < contacted < engaged (post engaged, positive reply, website visit) < signup_or_form (Signup, Form submitted) < meeting_booked < meeting_attended < paid_client. `none` = on no rung, stated explicitly. Null = a step declared at run time that never stated one. A lead's Lifecycle = the highest rung of any step they reached.",
     ),
   lifecycleRank: z.number().int().nullable().describe("The rung's rank, 1 (lead_found) to 7 (paid_client); higher = further. Null when `lifecycleRung` is `none` or null."),
+  subjectKind: z
+    .enum(["person", "object"])
+    .nullable()
+    .describe("What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."),
 };
 const catalogueLifecycleLadder = z
   .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
@@ -8004,23 +8008,23 @@ catalogueCreate(
   "/internal/catalogue/steps",
   "Declare a step (internal, api-key)",
   "A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
-  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
+  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), subjectKind: z.enum(["person", "object"]).describe("REQUIRED: what one occurrence is about. Absent = 400 `subjectKind_required`, anything else = 400 `subject_kind_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
   z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable(), ...catalogueLifecycleFields }),
 );
 
 registry.registerPath({
   method: "patch",
   path: "/internal/catalogue/steps/{id}",
-  summary: "State a declared step's lifecycle rung (internal, api-key)",
-  description: "Sets where a step DECLARED at run time stands on the lifecycle ladder, live, no deploy. A coded step's rung is code (409 `step_coded`). 400 `lifecycleRung_required` / `lifecycle_rung_invalid`; 404 `step_not_found`; a customer write is refused.",
+  summary: "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
+  description: "Sets where a step DECLARED at run time stands on the lifecycle ladder and/or what one occurrence is about, live, no deploy; an absent field is unchanged. A coded step's are code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("The declared step key.") }),
-    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
+    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).optional(), subjectKind: z.enum(["person", "object"]).optional(), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
   },
   responses: {
     200: { description: "The step's rung, as now served.", content: { "application/json": { schema: z.object({ object: z.literal("step"), id: z.string(), name: z.string(), declared: z.literal(true), ...catalogueLifecycleFields }) } } },
-    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`." },
+    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`." },
     401: { description: "Missing or wrong service key." },
     404: { description: "`step_not_found`." },
     409: { description: "`step_coded`." },
@@ -8461,6 +8465,7 @@ const researchFileSchema = registry.register(
     generatedAt: z.string(),
     computedAt: z.string(),
     allOrgs: z.literal(true),
+    view: z.enum(["mature", "flash"]).optional().describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it."),
     costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
     unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
     window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
@@ -8508,6 +8513,12 @@ const researchFileSchema = registry.register(
   }),
 );
 const researchFactSchema = z.object({ statement: z.string(), sample: z.string().nullable() });
+const researchViewParam = z
+  .enum(["mature", "flash"])
+  .optional()
+  .describe(
+    "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+  );
 const researchNotYet = { description: "`research_not_computed_yet`: the first build after this deploy is running.", content: { "application/json": { schema: errorResponse } } };
 
 registry.registerPath({
@@ -8517,10 +8528,10 @@ registry.registerPath({
   description:
     "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed).") }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed)."), view: researchViewParam }) },
   responses: {
     200: { description: "The research file", content: { "application/json": { schema: researchFileSchema } } },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });
@@ -8531,6 +8542,7 @@ registry.registerPath({
   summary: "The quotable Research conclusions (api-key; social-service)",
   description: "Only measured studies whose verdict is `conclusion`, with their quotable facts (Learning points and value-less points left out). Billed basis only.",
   tags: ["Internal"],
+  request: { query: z.object({ view: researchViewParam }) },
   responses: {
     200: {
       description: "The conclusions",
@@ -8556,6 +8568,7 @@ registry.registerPath({
   summary: "Every measured Research study, quotable only on a conclusion (api-key; social-service)",
   description: "Same strings and facts as the conclusions, every measured study; `quotable` is true only for a conclusion. Billed basis only.",
   tags: ["Internal"],
+  request: { query: z.object({ view: researchViewParam }) },
   responses: {
     200: {
       description: "The measured studies",
@@ -8707,10 +8720,10 @@ registry.registerPath({
   summary: "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
   description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {
     200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(researchCatalogPipeSchema) } } },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });
@@ -8795,13 +8808,13 @@ registry.registerPath({
   description:
     "RESEARCH-PERFORMANCE-1023. Per Research pipe, fleet-wide (no org or brand named), the combinations that actually sent its emails (each person's template and LLM from content-generation's record, under the workflow that served them), each version's evidence shared on its people like the catalogue's template and model bars, so the rows partition the pipe. Since inception, on the billed basis (vendor cost on `basis=actual`). Same build cadence as /internal/research.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {
     200: {
       description: "The Performance tab per pipe",
-      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), pipes: z.record(researchPerformancePipeSchema) }) } },
+      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(researchPerformancePipeSchema) }) } },
     },
-    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });

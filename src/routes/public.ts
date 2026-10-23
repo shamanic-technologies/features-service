@@ -5096,7 +5096,7 @@ export function legRankingOnPricing(
     ...payload,
     pricing,
     rows: payload.rows.map((r) => {
-      const { figuresNet, ...row } = r;
+      const { figuresNet, figuresByView: _byView, ...row } = r;
       const priced = pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
       if (tacticsOf === undefined) return priced;
       if (!tacticsOf) return { ...priced, tactics: null, tacticsUnavailableReason: "tactics_unreadable" as const };

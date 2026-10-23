@@ -14,7 +14,7 @@ import { dimensionStudies, costBars, costTitle, counts, pricedSorted, rateBars, 
 import { compareVerdict, headlineFor } from "./verdict.js";
 import { modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { namingOf, namingStudies, NAMING_LABEL } from "./naming.js";
-import type { ResearchChart, ResearchStudy } from "./types.js";
+import type { ResearchChart, ResearchStudy, ResearchView } from "./types.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
 import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex } from "./template-dynasties.js";
 import { NO_LLM_DYNASTIES, type LlmDynastyIndex } from "../llm-dynasties.js";
@@ -40,6 +40,8 @@ export interface GenerationsInput {
   templateDynasties?: TemplateDynastyIndex;
   /** chat-service's LLM dynasties (LLM-DYNASTY-1022-FS): a model bar is a dynasty, its versions pooled. */
   llmDynasties?: LlmDynastyIndex;
+  /** The page's view (MATURITY-VIEW-1023): every bar on that half. */
+  view?: ResearchView;
 }
 
 const LAYOUT: Record<string, string> = { one_block: "One block", single_line_breaks: "Single line breaks", double_line_breaks: "Double line breaks" };
@@ -47,7 +49,7 @@ const OPENING: Record<string, string> = { greeting: "Greeting + first name", fir
 const DASH: Record<string, string> = { em: "Em dash", en: "En dash", both: "Both dashes", none: "No dash" };
 
 /** What the bars need (the studies' terms, texts and naming are not read to build them). */
-export type GenerationBucketsInput = Pick<GenerationsInput, "legKey" | "cells" | "persons" | "split" | "models" | "templateDynasties" | "llmDynasties">;
+export type GenerationBucketsInput = Pick<GenerationsInput, "legKey" | "cells" | "persons" | "split" | "models" | "templateDynasties" | "llmDynasties" | "view">;
 
 function bucketsBy(
   input: GenerationBucketsInput,
@@ -57,8 +59,8 @@ function bucketsBy(
 ) {
   const { cells, leftOut } = splitCellsByGroup(input.cells, input.persons, input.split, groupOf);
   const { groups } = groupCells(cells, groupOfSplitSlug);
-  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs, forceBasis: basisOf?.(g) }));
-  return { rows, leftOut, figuresByVersion: figuresByVersionOf(cells) };
+  const rows: ResearchBucket[] = [...groups].map(([g, cs]) => bucketOf({ key: g, label: label(g), legKey: input.legKey, cells: cs, forceBasis: basisOf?.(g), view: input.view }));
+  return { rows, leftOut, figuresByVersion: figuresByVersionOf(cells, input.view) };
 }
 
 /** What a page's people cost and produced under one workflow VERSION, all to date (the ranking's lifetime basis). */
@@ -71,7 +73,10 @@ export interface VersionShare {
  * Per group, what its people cost and produced under each workflow VERSION: the template's OWN share of each workflow's
  * pipeline and billed spend its return is read on (`lib/research/catalog.ts`, TPL-ROI-OWN-1022).
  */
-function figuresByVersionOf(cells: readonly SlugCell[]): Map<string, Map<string, VersionShare>> {
+/** A cell's half on the page's view (MATURITY-VIEW-1023): mature when asked and cut, else flash (the shares before it). */
+const halfOfView = (c: SlugCell, view?: ResearchView) => (view === "mature" && c.mature ? c.mature : c.flash);
+
+function figuresByVersionOf(cells: readonly SlugCell[], view?: ResearchView): Map<string, Map<string, VersionShare>> {
   const out = new Map<string, Map<string, VersionShare>>();
   for (const c of cells) {
     const tab = c.slug.indexOf("\t");
@@ -81,20 +86,22 @@ function figuresByVersionOf(cells: readonly SlugCell[]): Map<string, Map<string,
     const m = out.get(g) ?? new Map<string, VersionShare>();
     out.set(g, m);
     const f = m.get(version) ?? { spentUsd: 0, outcomes: 0 };
-    f.spentUsd += c.flash.figures.spentUsd;
-    f.outcomes += c.flash.figures.outcomes;
+    const h = halfOfView(c, view);
+    f.spentUsd += h.figures.spentUsd;
+    f.outcomes += h.figures.outcomes;
     m.set(version, f);
   }
   return out;
 }
 
 /** Per workflow VERSION, everything it cost and produced to date (every person, written-with on record or not). */
-function versionTotalsOf(cells: readonly SlugCell[]): Map<string, VersionShare> {
+function versionTotalsOf(cells: readonly SlugCell[], view?: ResearchView): Map<string, VersionShare> {
   const out = new Map<string, VersionShare>();
   for (const c of cells) {
     const f = out.get(c.slug) ?? { spentUsd: 0, outcomes: 0 };
-    f.spentUsd += c.flash.figures.spentUsd;
-    f.outcomes += c.flash.figures.outcomes;
+    const h = halfOfView(c, view);
+    f.spentUsd += h.figures.spentUsd;
+    f.outcomes += h.figures.outcomes;
     out.set(c.slug, f);
   }
   return out;
@@ -266,7 +273,7 @@ export function generationBuckets(input: GenerationBucketsInput) {
     llmFiguresByVersion: llm.figuresByVersion,
     llmModelFiguresByVersion: new Map([...llmModels.figuresByVersion].map(([label, m]) => [modelKey(label), m] as const)),
     /** Workflow version → everything it cost and produced (the whole of which a template's people are a share). */
-    workflowVersionTotals: versionTotalsOf(input.cells),
+    workflowVersionTotals: versionTotalsOf(input.cells, input.view),
     modelLabel,
   };
 }
