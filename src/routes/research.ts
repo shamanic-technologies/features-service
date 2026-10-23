@@ -1044,7 +1044,9 @@ export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promi
 export async function readResearchBuild(basis: Basis, view: ResearchView = "mature"): Promise<StoredBuild | null> {
   const key = keyOf(basis, view);
   if (!store.has(key)) {
-    const stored = await loadFleetCell(cellKey(basis, view));
+    // The mature view's first build after MATURITY-VIEW-1023 has no copy of its own yet: serve the copy stored before the
+    // views (`research:<basis>`, rebuilt behind as not current) rather than a 503 while builds time out under load.
+    const stored = (await loadFleetCell(cellKey(basis, view))) ?? (view === "mature" ? await loadFleetCell(`research:${basis}`) : null);
     if (stored && !store.has(key)) {
       try {
         const raw = JSON.parse(stored.text) as ResearchBuild | ResearchFile;

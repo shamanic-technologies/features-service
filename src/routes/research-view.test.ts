@@ -16,3 +16,21 @@ describe("research ?view=", () => {
     });
   }
 });
+
+// The mature view's first read after the deploy serves the copy stored before the views, never a 503 while builds run.
+describe("research view fallback", () => {
+  it("the mature view falls back to the legacy stored copy; the flash view does not", async () => {
+    vi.resetModules();
+    const legacy = JSON.stringify({ file: { computedAt: "2026-10-23T11:00:00Z", costBasis: "user" }, catalog: null, texts: null });
+    vi.doMock("../db/index.js", () => ({ db: {}, sql: {} }));
+    vi.doMock("../lib/fleet-cell-store.js", () => ({
+      loadFleetCell: vi.fn(async (k: string) => (k === "research:user" ? { text: legacy, computedAt: 1 } : null)),
+      storeFleetCell: vi.fn(async () => undefined),
+    }));
+    const m = await import("./research.js");
+    const warm = vi.spyOn(m, "warmResearch").mockResolvedValue(undefined);
+    expect((await m.readResearchBuild("user", "mature"))?.file.computedAt).toBe("2026-10-23T11:00:00Z");
+    expect(await m.readResearchBuild("user", "flash")).toBeNull();
+    warm.mockRestore();
+  });
+});
