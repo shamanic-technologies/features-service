@@ -372,7 +372,13 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   if (input.outcomeLedger) {
     const l = input.outcomeLedger;
-    const units = l.totals ? rollUpOutcomeUnitCosts(l.totals.totals, l.totals.consumptions) : null;
+    // The roll-up never fails the file: anything it cannot price, its study says so (a producer's bad read is that study's).
+    let units: ReturnType<typeof rollUpOutcomeUnitCosts> | null = null;
+    try {
+      units = l.totals ? rollUpOutcomeUnitCosts(l.totals.totals, l.totals.consumptions) : null;
+    } catch (err) {
+      console.error("[features-service] research: the outcome ledger roll-up failed this build (the cost studies say not readable):", err);
+    }
     const unitOf = (step: string) => (units ? (units.get(step) ?? { outcomeKey: step, produced: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] }) : null);
     const coveragePct = l.totals?.coveragePct ?? null;
     if (input.replyDelay !== undefined) {

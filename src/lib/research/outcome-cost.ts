@@ -47,6 +47,9 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
   };
   const u = input.unit;
   if (!u) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "runs-service's outcome ledger could not be read this time. The study comes back on the next build." });
+  if (u.unpricedReason === "consumption_cycle_diverges") {
+    return notMeasuredStudy({ ...base, headline: "Not priceable yet.", reason: `Each ${input.noun} declared consumes one ${input.noun} or more of the same kind, so the ledger's declarations draw a loop with no finite cost. The declaring service has to state what each one really consumed.` });
+  }
   if (u.produced === 0 || u.unitCostUsd === null) {
     return notMeasuredStudy({ ...base, headline: `No ${input.noun} declared to the ledger yet.`, reason: `No run has declared a ${input.noun} to runs-service's ledger yet, so nothing prices one. Every service that spends is being wired to declare what it produces.` });
   }

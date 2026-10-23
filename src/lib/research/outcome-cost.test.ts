@@ -46,3 +46,11 @@ describe("cost per outcome, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(outcomeCostStudy({ ...base, unit: none, coveragePct: 0 }).headline).toBe("No positive reply declared to the ledger yet.");
   });
 });
+
+describe("a ledger loop never blanks the page (COST-ACCOUNTING-1023-P3 hotfix)", () => {
+  it("a diverging self-consumption says why, never a 'nothing declared'", () => {
+    const loop = rollUpOutcomeUnitCosts([{ outcomeKey: "meeting_attended", produced: 3, ownCostUsd: 1 }], [{ consumerKey: "meeting_attended", consumedKey: "meeting_attended", count: 3 }]).get("meeting_attended")!;
+    const st = outcomeCostStudy({ ...base, unit: loop, coveragePct: 99 });
+    expect(st).toMatchObject({ status: "not_enough_data", headline: "Not priceable yet." });
+  });
+});
