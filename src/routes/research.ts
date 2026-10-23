@@ -39,7 +39,7 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { deprecatedPartsOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { candidatePartsOf, deprecatedPartsOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -703,7 +703,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
             billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
           }
         : undefined,
-      deprecated: deprecatedPartsOf(pipeCatalogue, aliasStatus),
+      ...partsOf(pipeCatalogue, aliasStatus),
       unpricedBilledUsd: r.unpricedUsd,
       now,
     });
@@ -721,6 +721,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
       rowOrder: "estimated_cost",
+      rowsCover: "all_valid_combinations",
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -757,6 +758,12 @@ const OTHER_PIPE_TIMEOUT_MS = 3 * 60_000;
 
 type AliasStatus = ReadonlyMap<string, "active" | "deprecated"> | null;
 
+/** What can no longer run on the pipe, and every combination a run may pick today (RESEARCH-ALL-COMBOS-1023). */
+function partsOf(catalog: ResearchCatalog[string], aliasStatus: AliasStatus) {
+  const deprecated = deprecatedPartsOf(catalog, aliasStatus);
+  return { deprecated, candidates: candidatePartsOf(catalog, deprecated) };
+}
+
 /** content-generation's status per writer alias; unreadable = null (an LLM with aliases is then never called deprecated). */
 async function readAliasStatus(): Promise<AliasStatus> {
   try {
@@ -784,6 +791,7 @@ const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): Pi
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
   rowOrder: "estimated_cost",
+      rowsCover: "all_valid_combinations",
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -943,7 +951,7 @@ async function otherPipeSection(
           llmKeyOf: gen.llmKeyOf,
           llmLabelOf: gen.llmLabelOf,
           workflowReturns: returns,
-          deprecated: deprecatedPartsOf(catalog, shared.aliasStatus),
+          ...partsOf(catalog, shared.aliasStatus),
           unpricedBilledUsd: read.unpricedUsd,
           now,
         })
@@ -1014,7 +1022,7 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "estimated_cost" && p.rowsCover === "all_valid_combinations" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {

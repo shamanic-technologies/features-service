@@ -8828,6 +8828,7 @@ const researchPerformancePipeSchema = z.object({
   pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
   rowOrder: z.literal("estimated_cost").describe("Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."),
+  rowsCover: z.literal("all_valid_combinations").describe("Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),
   rows: z
@@ -8847,7 +8848,8 @@ const researchPerformancePipeSchema = z.object({
           })
           .nullable(),
         llm: z.object({ key: z.string().describe("The Research model page key (LLM dynasty slug, else a model key)."), label: z.string(), provider: z.string().nullable() }).nullable(),
-        writerSource: z.enum(["sequences", "workflow_definition"]).nullable().describe("The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version)."),
+        written: z.boolean().describe("False = a technically valid combination (runnable workflow x live template dynasty x LLM served under an alias, none deprecated) that never wrote an email: zero figures, ranked on its parts' estimate (RESEARCH-ALL-COMBOS-1023)."),
+        writerSource: z.enum(["sequences", "workflow_definition"]).nullable().describe("The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version); null when never written."),
         writerUnavailableReason: z.enum(["not_on_record"]).nullable(),
         maturity: z.object({ isMature: z.boolean(), matureOutcomes: z.number().nullable(), outcomesRequired: z.number() }),
         learning: z.boolean(),
@@ -8869,7 +8871,7 @@ const researchPerformancePipeSchema = z.object({
         ...researchPerformanceFiguresShape,
       }),
     )
-    .describe("One row per (workflow dynasty, template version, LLM dynasty) that wrote and sent the pipe's emails; Σ rows = totals."),
+    .describe("One row per (workflow dynasty, template dynasty, LLM dynasty) that wrote the pipe's emails, plus every technically valid combination that never wrote (`written: false`, zero figures); Σ rows = totals."),
   totals: z.object(researchPerformanceFiguresShape).nullable(),
   series: z
     .object({
