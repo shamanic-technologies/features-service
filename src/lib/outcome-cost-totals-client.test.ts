@@ -25,10 +25,10 @@ describe("runs-service outcome ledger totals (COST-ACCOUNTING-1023-P2)", () => {
   it("reads per-campaign rows on the billed basis, coverage over every scope row, the days still missing", () => {
     const r = parseOutcomeLedgerTotals(body, "gross");
     expect(r.produced).toEqual([
-      { outcomeKey: "message_sent", campaignId: "c1", brandId: null, produced: 2000, ownCostUsd: 40 },
-      { outcomeKey: "conversation", campaignId: null, brandId: null, produced: 4, ownCostUsd: 0.4 },
+      { outcomeKey: "message_sent", campaignId: "c1", orgId: null, produced: 2000, ownCostUsd: 40 },
+      { outcomeKey: "conversation", campaignId: null, orgId: null, produced: 4, ownCostUsd: 0.4 },
     ]);
-    expect(r.consumed).toEqual([{ consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, brandId: null, count: 4 }]);
+    expect(r.consumed).toEqual([{ consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, orgId: null, count: 4 }]);
     expect(r.coveragePct).toBeCloseTo(50, 10);
     expect(r.daysMissing).toBe(2);
   });
