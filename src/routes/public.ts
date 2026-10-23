@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { servedFleetPipelines } from "../lib/fleet-pipelines-served.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { fetchReplyLatencyByCampaignGroups } from "../lib/campaign-next-steps-io.js";
 import type { LatencyMetric } from "../lib/campaign-next-steps.js";
@@ -4499,7 +4500,8 @@ async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: strin
     ];
   }
   let pairsFailed = 0;
-  const computed = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async ({ orgId, brandId, campaignScope }) => {
+  const failedPairs: typeof pairs = [];
+  const pricePair = async ({ orgId, brandId, campaignScope }: (typeof pairs)[number], lastTry: boolean): Promise<PairDynastyPipeline[] | null | "failed"> => {
     const headers: DownstreamHeaders = { orgId, featureSlug };
     try {
       // The pair's OWN pricing — its funnels on its offer's terms — exactly as its own
@@ -4528,17 +4530,37 @@ async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: strin
       );
     } catch (error) {
       if (error instanceof BrandOwnershipError) return null; // stale membership: the brand moved orgs
-      pairsFailed += 1;
       console.error(
-        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, leg=${legKey ?? "all"}, orgId=${orgId}, brandId=${brandId}) — the value leg is a partial sum:`,
+        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, leg=${legKey ?? "all"}, orgId=${orgId}, brandId=${brandId})${lastTry ? " again: the value leg is a partial sum" : ", retried once after the others"}:`,
         error,
       );
-      return null;
+      return "failed";
     }
+  };
+  const first = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async (pair) => {
+    const r = await pricePair(pair, false);
+    if (r === "failed") failedPairs.push(pair);
+    return r;
   });
-  const priced = computed.filter((c): c is PairDynastyPipeline[] => c !== null);
+  // A failed pair (a sibling timing out under a deploy wave) is asked once more, alone, after the others.
+  const retried = await mapWithConcurrency(failedPairs, 1, async (pair) => {
+    const r = await pricePair(pair, true);
+    if (r === "failed") pairsFailed += 1;
+    return r;
+  });
+  const priced = [...first, ...retried].filter((c): c is PairDynastyPipeline[] => c !== null && c !== "failed");
   return { byDynasty: foldFleetPipelines(priced), pairsPriced: priced.length, pairsFailed };
 }
+
+/**
+ * The last COMPLETE value leg per key (no pair failed). A partial sum never replaces it (RESEARCH-PERFORMANCE-1023: a
+ * ranking built on a partial sum read Ballad 0.09x for 3.47x, and every template / combination return the Research
+ * build read off it): a refresh still partial after its retry serves the last complete one, loud. A key never complete
+ * serves its partial sum, `pairsFailed` stated.
+ */
+const lastCompleteFleetPipelines = new Map<string, FleetWorkflowPipelines>();
+
+
 
 function getFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promise<FleetWorkflowPipelines> {
   return servedPublicCached({
@@ -4547,7 +4569,13 @@ function getFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promis
     key: legKey ? `${featureSlug}:leg=${legKey}` : featureSlug,
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "fleet workflow pipelines",
-    compute: () => computeFleetWorkflowPipelines(featureSlug, legKey),
+    compute: async () => {
+      const key = legKey ? `${featureSlug}:leg=${legKey}` : featureSlug;
+      const computed = await computeFleetWorkflowPipelines(featureSlug, legKey);
+      if (computed.pairsFailed === 0) lastCompleteFleetPipelines.set(key, computed);
+      else if (lastCompleteFleetPipelines.has(key)) console.error(`[features-service] fleet workflow pipelines ${key}: ${computed.pairsFailed} pair(s) still failed after a retry; serving the last complete value leg.`);
+      return servedFleetPipelines(computed, lastCompleteFleetPipelines.get(key));
+    },
   });
 }
 
@@ -4603,6 +4631,7 @@ export interface WorkflowActualCostHistoryPayload extends WorkflowReturnHistoryB
 /** Test seam: drop both fleet workflow-return caches. */
 export function __resetWorkflowReturnHistoryCache(): void {
   clearPublicCache(fleetWorkflowPipelineCache);
+  lastCompleteFleetPipelines.clear();
   clearPublicCache(fleetWorkflowSpendCache);
   clearPublicCache(fleetLegCampaignsCache);
 }
