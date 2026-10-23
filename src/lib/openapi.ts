@@ -8738,13 +8738,14 @@ const researchPerformanceFiguresShape = {
 const researchPerformancePipeSchema = z.object({
   pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
+  rowOrder: z.literal("pick_order").describe("The rows stand in the order the pipe PICKS by (RESEARCH-PICK-ORDER-1023): the workflow's leg ranking rank, then the template's place in its leg order, then the LLM's; never by ROI."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),
   rows: z
     .array(
       z.object({
         key: z.string().describe("`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."),
-        rank: z.number().int().describe("Served order: measured returns desc, then expected returns desc; then outcomes, people emailed, key."),
+        rank: z.number().int().describe("Served order = the pick order: the workflow's leg ranking `rank`, then the template's place in the pipe's template order, then the LLM's (both `rankWriters`, the Research catalogue's `templates[]` / `models[]` order); a part none lists stands last; then outcomes, people emailed, key."),
         workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
         template: z
           .object({

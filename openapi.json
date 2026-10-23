@@ -71652,6 +71652,13 @@
                             ],
                             "description": "Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."
                           },
+                          "rowOrder": {
+                            "type": "string",
+                            "enum": [
+                              "pick_order"
+                            ],
+                            "description": "The rows stand in the order the pipe PICKS by (RESEARCH-PICK-ORDER-1023): the workflow's leg ranking rank, then the template's place in its leg order, then the LLM's; never by ROI."
+                          },
                           "outcomeNoun": {
                             "type": "string"
                           },
@@ -71669,7 +71676,7 @@
                                 },
                                 "rank": {
                                   "type": "integer",
-                                  "description": "Served order: measured returns desc, then expected returns desc; then outcomes, people emailed, key."
+                                  "description": "Served order = the pick order: the workflow's leg ranking `rank`, then the template's place in the pipe's template order, then the LLM's (both `rankWriters`, the Research catalogue's `templates[]` / `models[]` order); a part none lists stands last; then outcomes, people emailed, key."
                                 },
                                 "workflow": {
                                   "type": "object",
@@ -72382,6 +72389,7 @@
                         "required": [
                           "pipe",
                           "figuresBasis",
+                          "rowOrder",
                           "outcomeNoun",
                           "outcomeNounPlural",
                           "rows",

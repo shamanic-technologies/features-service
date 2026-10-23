@@ -39,7 +39,7 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { pickOrderOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -694,7 +694,7 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       workflowVersionTotals: g.workflowVersionTotals,
     });
   // The Performance tab (RESEARCH-PERFORMANCE-1023): every (workflow, template, LLM) combination of each pipe, same evidence.
-  const performanceOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, ranking: readonly LegWorkflowRankingRow[] | null): PipePerformance => {
+  const performanceOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, ranking: readonly LegWorkflowRankingRow[] | null, pipeCatalogue: ResearchCatalog[string]): PipePerformance => {
     const t = termsOf(pipe, r.input, note);
     return pipePerformance({
       pipe,
@@ -722,17 +722,24 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
             billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
           }
         : undefined,
+      pickOrder: pickOrderOf(ranking, pipeCatalogue),
       unpricedBilledUsd: r.unpricedUsd,
       now,
     });
   };
+  const catalog: ResearchCatalog = {
+    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking),
+    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking),
+    [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
+  };
   const performance: ResearchPerformance = {
-    [POSITIVE_REPLY_PIPE]: performanceOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRanking),
-    [WEBSITE_VISIT_PIPE]: performanceOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRanking),
+    [POSITIVE_REPLY_PIPE]: performanceOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRanking, catalog[POSITIVE_REPLY_PIPE]),
+    [WEBSITE_VISIT_PIPE]: performanceOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRanking, catalog[WEBSITE_VISIT_PIPE]),
     // The meeting pipe's writer is a chat /complete call: no sequence names its template, so no combination yet.
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
+      rowOrder: "pick_order",
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -741,11 +748,6 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       unpricedBilledUsd: 0,
       unavailableReason: "no_writer_recorded_on_pipe",
     },
-  };
-  const catalog: ResearchCatalog = {
-    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking),
-    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking),
-    [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
   // Every listed page's text: a version's under its id, a dynasty's (its head's) under the dynasty's slug.
   const listed = new Set(Object.values(catalog).flatMap((c) => c.templates.flatMap((t) => [t.key, ...t.versions.map((v) => v.key)])));
@@ -788,6 +790,7 @@ interface OtherSection {
 const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
+  rowOrder: "pick_order",
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -943,6 +946,7 @@ async function otherPipeSection(
           llmKeyOf: gen.llmKeyOf,
           llmLabelOf: gen.llmLabelOf,
           workflowReturns: returns,
+          pickOrder: pickOrderOf(ranking, catalog),
           unpricedBilledUsd: read.unpricedUsd,
           now,
         })
@@ -1006,10 +1010,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: pick_order` since RESEARCH-PICK-ORDER-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild): boolean {
-  return build.performance?.[POSITIVE_REPLY_PIPE]?.figuresBasis === "workflow_bars";
+  const p = build.performance?.[POSITIVE_REPLY_PIPE];
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "pick_order";
 }
 
 export function warmResearch(basis: Basis): Promise<void> {
