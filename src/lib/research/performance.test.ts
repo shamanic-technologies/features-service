@@ -84,6 +84,8 @@ const input = (over: Partial<PipePerformanceInput> = {}): PipePerformanceInput =
   llmLabelOf: (k) => llm.bySlug(k)?.name ?? k,
   // azalea: $1,200 pipeline on $400 billed (3x); keel: $0 on $50
   workflowReturns: { roiOf: new Map([["azalea", 3], ["keel", 0]]), moneyGoesHere: "azalea", pipelineOf: new Map([["azalea", 1200], ["keel", 0]]), billedOf: new Map([["azalea", 400], ["keel", 50]]) },
+  // The order the pipe picks by: azalea then keel; aurora then borealis; Gemini Flash then Claude Opus
+  pickOrder: { workflows: new Map([["azalea", 1], ["keel", 2]]), templates: new Map([["aurora", 1], ["borealis", 2]]), llms: new Map([["gemini-flash", 1], ["claude-opus", 2]]) },
   unpricedBilledUsd: 0,
   now: new Date("2026-10-23T12:00:00Z"),
   ...over,
@@ -134,12 +136,22 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(dagOnly.rows.find((r) => r.key === "azalea|aurora|gemini-flash")!.writerSource).toBe("workflow_definition");
   });
 
-  it("ROI: own outcomes' pipeline over own billed; best first", () => {
+  it("ROI: own outcomes' pipeline over own billed", () => {
     // 4 of azalea's 6 outcomes = $800 pipeline; $100 of azalea's $400 = $100 billed: 8x
     expect(row("azalea|borealis|claude-opus").roi).toMatchObject({ value: 8, basis: "measured", source: "own" });
     expect(row("azalea|borealis|claude-opus").costPerOutcomeUsd).toMatchObject({ value: 25, basis: "measured" });
-    expect(out.rows[0]!.key).toBe("azalea|borealis|claude-opus");
+  });
+
+  it("rows stand in the order the pipe PICKS by, never by ROI (RESEARCH-PICK-ORDER-1023)", () => {
+    // workflow rank first, then the template's place, then the LLM's: the 8x Opus row is not first
+    expect(out.rows.map((r) => r.key)).toEqual(["azalea|aurora|gemini-flash", "azalea|borealis|gemini-flash", "azalea|borealis|claude-opus", "keel|-|-"]);
     expect(out.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
+    // the leg order puts keel first: every keel row comes before azalea's
+    const keelFirst = pipePerformance(input({ pickOrder: { ...input().pickOrder, workflows: new Map([["keel", 1], ["azalea", 2]]) } }));
+    expect(keelFirst.rows[0]!.key).toBe("keel|-|-");
+    // a workflow the ranking does not list stands after every listed one
+    const unlisted = pipePerformance(input({ pickOrder: { ...input().pickOrder, workflows: new Map([["keel", 1]]) } }));
+    expect(unlisted.rows.map((r) => r.workflow.key)).toEqual(["keel", "azalea", "azalea", "azalea"]);
   });
 
   it("a row with no outcome reads its OWN figures: measured 0% conversion, expected ROI and cost from its own parts", () => {
