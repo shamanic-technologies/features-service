@@ -72233,6 +72233,13 @@
                             ],
                             "description": "The pipe's pick order (PERF-LEG-ORDER-1023; supersedes RESEARCH-COMBO-ESTIMATE-1023's order on the estimate): the ONE leg order of writer-pick and the workflow ranking on each combination's own figures. Active first; learning combinations whose explore price (own spend ÷ max(own outcomes, 1), $0 never used) is below the best mature one's cost; the mature ones; the other learning ones. Same explore price (every $0 one): by `estimate.costPerOutcomeUsd`, cheapest first. `place` says why."
                           },
+                          "orderView": {
+                            "type": "string",
+                            "enum": [
+                              "flash"
+                            ],
+                            "description": "The order is read on the FLASH figures whatever `?view=` (PERF-ORDER-FLASH-1023, owner 2026-10-23: the pipe picks on one order): `rank` and `place` are the flash tab's, only the figures are the view's. On the mature view a young combination reads $0 (nothing old enough) and would otherwise stand first as never used."
+                          },
                           "rowsCover": {
                             "type": "string",
                             "enum": [
@@ -73084,6 +73091,7 @@
                           "pipe",
                           "figuresBasis",
                           "rowOrder",
+                          "orderView",
                           "rowsCover",
                           "estimateModel",
                           "outcomeNoun",

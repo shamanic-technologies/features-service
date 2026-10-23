@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { candidatePartsOf, deprecatedPartsOf, fitPartEffects, pipePerformance, type PipePerformanceInput } from "./performance.js";
+import { candidatePartsOf, deprecatedPartsOf, fitPartEffects, inFlashOrder, pipePerformance, type PipePerformanceInput } from "./performance.js";
 import { legWorkflowPlaces, orderLegWorkflows } from "../leg-workflow-order.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
@@ -143,6 +143,7 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
 
   it("rows stand in the pipe's PICK order, the ONE leg order on each combination's own figures (PERF-LEG-ORDER-1023)", () => {
     expect(out.rowOrder).toBe("leg_order");
+    expect(out.orderView).toBe("flash");
     expect(out.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
     // the order IS the shared leg order on each row's own figures (the one writer-pick and the workflow ranking use)
     const entries = out.rows.map((r) => ({
@@ -358,5 +359,26 @@ describe("fitPartEffects", () => {
   it("nothing to read a rate from: null", () => {
     expect(fitPartEffects([], 1)).toBeNull();
     expect(fitPartEffects([{ parts: ["w:a"], spentUsd: 100, outcomes: 0 }], 1)).toBeNull();
+  });
+});
+
+// PERF-ORDER-FLASH-1023 (owner 2026-10-23 « pourquoi ce ranking change si on choisit flash ou mature »): the view moves the
+// figures, never the rows. On the mature view a young combination read $0 and stood first as never used.
+describe("inFlashOrder", () => {
+  const perf = (rows: Array<[string, number, string, number]>) =>
+    ({ pipe: "p", orderView: "flash", rows: rows.map(([key, rank, place, spent]) => ({ key, rank, place, spentUsd: { value: spent } })) }) as never as Parameters<typeof inFlashOrder>[0];
+  // mature view: "young" read $0 (nothing old enough) and stands first
+  const mature = perf([["young", 1, "explore", 0], ["old", 2, "money", 900], ["gone", 3, "cannot_run", 10]]);
+  // flash view: "young" spent $150 for nothing, the proven one leads
+  const flash = perf([["old", 1, "money", 1000], ["young", 2, "explore", 150], ["gone", 3, "cannot_run", 10]]);
+  it("rows stand in the flash tab's order, with its rank and place, on the view's own figures", () => {
+    const out = inFlashOrder(mature, flash);
+    expect(out.rows.map((r) => [r.key, r.rank, r.place])).toEqual([["old", 1, "money"], ["young", 2, "explore"], ["gone", 3, "cannot_run"]]);
+    expect(out.rows.map((r) => r.spentUsd.value)).toEqual([900, 0, 10]);
+    expect(out.orderView).toBe("flash");
+  });
+  it("a row the flash tab lacks keeps its place, after the others", () => {
+    const out = inFlashOrder(perf([["extra", 1, "explore", 0], ["old", 2, "money", 900]]), flash);
+    expect(out.rows.map((r) => [r.key, r.rank])).toEqual([["old", 1], ["extra", 2]]);
   });
 });
