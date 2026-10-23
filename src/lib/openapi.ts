@@ -8711,6 +8711,88 @@ registry.registerPath({
   },
 });
 
+const researchPerformanceFigureSchema = z.object({
+  value: z.number().nullable(),
+  display: z.string().nullable(),
+  basis: z.enum(["measured", "expected"]).nullable(),
+  source: z.enum(["own", "pipe_combinations", "pipe_best_workflow"]).nullable().describe("measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."),
+  unavailableReason: z.enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_return_on_pipe"]).nullable(),
+});
+const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
+const researchPerformanceFiguresShape = {
+  roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."),
+  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."),
+  conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."),
+  outcomes: researchPerformanceCountSchema,
+  spentUsd: researchPerformanceCountSchema,
+  contacted: researchPerformanceCountSchema.describe("People emailed (a visit pipe: through our own sender)."),
+};
+const researchPerformancePipeSchema = z.object({
+  pipe: z.enum(["cold-email-positive-reply", "cold-email-website-visit", "meeting-booking"]),
+  figuresBasis: z.literal("since_inception"),
+  outcomeNoun: z.string(),
+  outcomeNounPlural: z.string(),
+  rows: z
+    .array(
+      z.object({
+        key: z.string().describe("`<workflow dynasty>|<template version or ->|<LLM dynasty or ->`."),
+        rank: z.number().int().describe("Served order: measured return desc, then outcomes, people emailed, key."),
+        workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
+        template: z
+          .object({
+            key: z.string().describe("The template VERSION id."),
+            label: z.string(),
+            dynasty: z.object({ key: z.string(), label: z.string(), icon: z.string().optional(), color: z.string().optional() }).nullable().describe("The template dynasty = its Research template page; null = a version no dynasty of the pipe lists (its page is the version id)."),
+          })
+          .nullable(),
+        llm: z.object({ key: z.string().describe("The Research model page key (LLM dynasty slug, else a model key)."), label: z.string(), provider: z.string().nullable() }).nullable(),
+        writerUnavailableReason: z.enum(["not_on_record"]).nullable(),
+        maturity: z.object({ isMature: z.boolean(), matureOutcomes: z.number().nullable(), outcomesRequired: z.number() }),
+        learning: z.boolean(),
+        ...researchPerformanceFiguresShape,
+      }),
+    )
+    .describe("One row per (workflow dynasty, template version, LLM dynasty) that wrote and sent the pipe's emails; Σ rows = totals."),
+  totals: z.object(researchPerformanceFiguresShape).nullable(),
+  series: z
+    .object({
+      grain: z.literal("month"),
+      points: z.array(
+        z.object({
+          month: z.string(),
+          label: z.string(),
+          roi: z.number().nullable(),
+          costPerOutcomeUsd: z.number().nullable(),
+          conversionRatePct: z.number().nullable(),
+          outcomes: z.number().describe("Cumulated."),
+          spentUsd: z.number().describe("Cumulated."),
+        }),
+      ),
+    })
+    .nullable()
+    .describe("Every month from the first to this one, cumulative since inception: the last point IS `totals`."),
+  unpricedBilledUsd: z.number(),
+  unavailableReason: z.enum(["no_writer_recorded_on_pipe"]).nullable(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/performance",
+  summary: "The Research Performance tab: every workflow x template x LLM combination of each pipe, its totals and since-inception series (staff, api-key)",
+  description:
+    "RESEARCH-PERFORMANCE-1023. Per Research pipe, fleet-wide (no org or brand named), the combinations that actually sent its emails (each person's template and LLM from content-generation's record, under the workflow that served them), each version's evidence shared on its people like the catalogue's template and model bars, so the rows partition the pipe. Since inception, on the billed basis (vendor cost on `basis=actual`). Same build cadence as /internal/research.",
+  tags: ["Internal"],
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional() }) },
+  responses: {
+    200: {
+      description: "The Performance tab per pipe",
+      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), pipes: z.record(researchPerformancePipeSchema) }) } },
+    },
+    400: { description: "`basis_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    503: researchNotYet,
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/internal/research/templates",

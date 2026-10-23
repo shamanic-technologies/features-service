@@ -71601,6 +71601,750 @@
         }
       }
     },
+    "/internal/research/performance": {
+      "get": {
+        "summary": "The Research Performance tab: every workflow x template x LLM combination of each pipe, its totals and since-inception series (staff, api-key)",
+        "description": "RESEARCH-PERFORMANCE-1023. Per Research pipe, fleet-wide (no org or brand named), the combinations that actually sent its emails (each person's template and LLM from content-generation's record, under the workflow that served them), each version's evidence shared on its people like the catalogue's template and model bars, so the rows partition the pipe. Since inception, on the billed basis (vendor cost on `basis=actual`). Same build cadence as /internal/research.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ]
+            },
+            "required": false,
+            "name": "basis",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Performance tab per pipe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "actual"
+                      ]
+                    },
+                    "pipes": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "pipe": {
+                            "type": "string",
+                            "enum": [
+                              "cold-email-positive-reply",
+                              "cold-email-website-visit",
+                              "meeting-booking"
+                            ]
+                          },
+                          "figuresBasis": {
+                            "type": "string",
+                            "enum": [
+                              "since_inception"
+                            ]
+                          },
+                          "outcomeNoun": {
+                            "type": "string"
+                          },
+                          "outcomeNounPlural": {
+                            "type": "string"
+                          },
+                          "rows": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "description": "`<workflow dynasty>|<template version or ->|<LLM dynasty or ->`."
+                                },
+                                "rank": {
+                                  "type": "integer",
+                                  "description": "Served order: measured return desc, then outcomes, people emailed, key."
+                                },
+                                "workflow": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "icon": {
+                                      "type": "string"
+                                    },
+                                    "color": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "name"
+                                  ],
+                                  "description": "`key` = the Research workflow page key (dynasty slug); its mark."
+                                },
+                                "template": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The template VERSION id."
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "dynasty": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "key": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        },
+                                        "icon": {
+                                          "type": "string"
+                                        },
+                                        "color": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "key",
+                                        "label"
+                                      ],
+                                      "description": "The template dynasty = its Research template page; null = a version no dynasty of the pipe lists (its page is the version id)."
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "dynasty"
+                                  ]
+                                },
+                                "llm": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The Research model page key (LLM dynasty slug, else a model key)."
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "provider": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "label",
+                                    "provider"
+                                  ]
+                                },
+                                "writerUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "not_on_record"
+                                  ]
+                                },
+                                "maturity": {
+                                  "type": "object",
+                                  "properties": {
+                                    "isMature": {
+                                      "type": "boolean"
+                                    },
+                                    "matureOutcomes": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "outcomesRequired": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "isMature",
+                                    "matureOutcomes",
+                                    "outcomesRequired"
+                                  ]
+                                },
+                                "learning": {
+                                  "type": "boolean"
+                                },
+                                "roi": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "display": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ]
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own",
+                                        "pipe_combinations",
+                                        "pipe_best_workflow"
+                                      ],
+                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_on_pipe",
+                                        "nobody_emailed_on_pipe",
+                                        "no_return_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display",
+                                    "basis",
+                                    "source",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."
+                                },
+                                "costPerOutcomeUsd": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "display": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ]
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own",
+                                        "pipe_combinations",
+                                        "pipe_best_workflow"
+                                      ],
+                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_on_pipe",
+                                        "nobody_emailed_on_pipe",
+                                        "no_return_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display",
+                                    "basis",
+                                    "source",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."
+                                },
+                                "conversionRatePct": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "display": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "basis": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "measured",
+                                        "expected"
+                                      ]
+                                    },
+                                    "source": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "own",
+                                        "pipe_combinations",
+                                        "pipe_best_workflow"
+                                      ],
+                                      "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_on_pipe",
+                                        "nobody_emailed_on_pipe",
+                                        "no_return_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display",
+                                    "basis",
+                                    "source",
+                                    "unavailableReason"
+                                  ],
+                                  "description": "100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."
+                                },
+                                "outcomes": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number"
+                                    },
+                                    "display": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display"
+                                  ]
+                                },
+                                "spentUsd": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number"
+                                    },
+                                    "display": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display"
+                                  ]
+                                },
+                                "contacted": {
+                                  "type": "object",
+                                  "properties": {
+                                    "value": {
+                                      "type": "number"
+                                    },
+                                    "display": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "value",
+                                    "display"
+                                  ],
+                                  "description": "People emailed (a visit pipe: through our own sender)."
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "rank",
+                                "workflow",
+                                "template",
+                                "llm",
+                                "writerUnavailableReason",
+                                "maturity",
+                                "learning",
+                                "roi",
+                                "costPerOutcomeUsd",
+                                "conversionRatePct",
+                                "outcomes",
+                                "spentUsd",
+                                "contacted"
+                              ]
+                            },
+                            "description": "One row per (workflow dynasty, template version, LLM dynasty) that wrote and sent the pipe's emails; Σ rows = totals."
+                          },
+                          "totals": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "roi": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "own",
+                                      "pipe_combinations",
+                                      "pipe_best_workflow"
+                                    ],
+                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_outcome_on_pipe",
+                                      "nobody_emailed_on_pipe",
+                                      "no_return_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display",
+                                  "basis",
+                                  "source",
+                                  "unavailableReason"
+                                ],
+                                "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."
+                              },
+                              "costPerOutcomeUsd": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "own",
+                                      "pipe_combinations",
+                                      "pipe_best_workflow"
+                                    ],
+                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_outcome_on_pipe",
+                                      "nobody_emailed_on_pipe",
+                                      "no_return_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display",
+                                  "basis",
+                                  "source",
+                                  "unavailableReason"
+                                ],
+                                "description": "Spend ÷ outcomes; with no outcome, expected = the pipe pooled (never the spend)."
+                              },
+                              "conversionRatePct": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "display": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected"
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "own",
+                                      "pipe_combinations",
+                                      "pipe_best_workflow"
+                                    ],
+                                    "description": "measured: `own`. expected: `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "no_outcome_on_pipe",
+                                      "nobody_emailed_on_pipe",
+                                      "no_return_on_pipe"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display",
+                                  "basis",
+                                  "source",
+                                  "unavailableReason"
+                                ],
+                                "description": "100 × outcomes ÷ people emailed; measured with an outcome or once mature, else expected = the pipe pooled."
+                              },
+                              "outcomes": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number"
+                                  },
+                                  "display": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display"
+                                ]
+                              },
+                              "spentUsd": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number"
+                                  },
+                                  "display": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display"
+                                ]
+                              },
+                              "contacted": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "number"
+                                  },
+                                  "display": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "value",
+                                  "display"
+                                ],
+                                "description": "People emailed (a visit pipe: through our own sender)."
+                              }
+                            },
+                            "required": [
+                              "roi",
+                              "costPerOutcomeUsd",
+                              "conversionRatePct",
+                              "outcomes",
+                              "spentUsd",
+                              "contacted"
+                            ]
+                          },
+                          "series": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "grain": {
+                                "type": "string",
+                                "enum": [
+                                  "month"
+                                ]
+                              },
+                              "points": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "month": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "roi": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "conversionRatePct": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "outcomes": {
+                                      "type": "number",
+                                      "description": "Cumulated."
+                                    },
+                                    "spentUsd": {
+                                      "type": "number",
+                                      "description": "Cumulated."
+                                    }
+                                  },
+                                  "required": [
+                                    "month",
+                                    "label",
+                                    "roi",
+                                    "costPerOutcomeUsd",
+                                    "conversionRatePct",
+                                    "outcomes",
+                                    "spentUsd"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "grain",
+                              "points"
+                            ],
+                            "description": "Every month from the first to this one, cumulative since inception: the last point IS `totals`."
+                          },
+                          "unpricedBilledUsd": {
+                            "type": "number"
+                          },
+                          "unavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "no_writer_recorded_on_pipe"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "pipe",
+                          "figuresBasis",
+                          "outcomeNoun",
+                          "outcomeNounPlural",
+                          "rows",
+                          "totals",
+                          "series",
+                          "unpricedBilledUsd",
+                          "unavailableReason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "costBasis",
+                    "pipes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/research/templates": {
       "get": {
         "summary": "The text of every template the Research catalogue lists (staff, api-key)",

@@ -39,13 +39,14 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
+import { pipePerformance, type PipePerformance } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
-import { withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
+import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
-import type { ResearchFile, ResearchStudy } from "../lib/research/types.js";
+import type { ResearchFile, ResearchPipeId, ResearchStudy } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries } from "../lib/fleet-index-store.js";
@@ -288,6 +289,8 @@ interface CatalogGen {
   modelVersions: Array<ResearchBucket & { dynastyKey: string }>;
   /** Model id / alias → its LLM bar key (dynasty slug, else model key). */
   llmKeyOf: (id: string) => string;
+  /** LLM bar key → its label. */
+  llmLabelOf: (key: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
   templateVersions: ResearchBucket[];
   templateFiguresByVersion: Map<string, Map<string, VersionShare>>;
@@ -303,6 +306,7 @@ const NO_GEN: CatalogGen = {
   modelLabel: (id) => id,
   modelVersions: [],
   llmKeyOf: (id) => id,
+  llmLabelOf: (key) => key,
   mainOf: () => ({ model: null, template: null }),
   templateVersions: [],
   templateFiguresByVersion: new Map(),
@@ -373,6 +377,7 @@ async function generationInputs(
       modelLabel: g.modelLabel,
       modelVersions: g.llmModels,
       llmKeyOf: g.llmKeyOf,
+      llmLabelOf: g.llmLabelOf,
       mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf, g.llmKeyOf),
       templateVersions: g.tplVersions,
       templateFiguresByVersion: g.tplFiguresByVersion,
@@ -670,6 +675,53 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
       modelVersionFiguresByVersion: g.modelVersionFiguresByVersion,
       workflowVersionTotals: g.workflowVersionTotals,
     });
+  // The Performance tab (RESEARCH-PERFORMANCE-1023): every (workflow, template, LLM) combination of each pipe, same evidence.
+  const performanceOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, ranking: readonly LegWorkflowRankingRow[] | null): PipePerformance => {
+    const t = termsOf(pipe, r.input, note);
+    return pipePerformance({
+      pipe,
+      noun: t.noun,
+      nounPlural: t.nounPlural,
+      legKey: r.input.legKey,
+      cells: r.input.cells,
+      persons: r.persons,
+      split: r.split,
+      dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
+      workflowLabelOf: r.input.labelOf,
+      workflowNameOf: (d) => r.names.get(d) ?? null,
+      templateDynasties: pipe === POSITIVE_REPLY_PIPE ? dynasties.reply : dynasties.visit,
+      llmDynasties: dynasties.llm,
+      modelLabel: g.modelLabel,
+      llmKeyOf: g.llmKeyOf,
+      llmLabelOf: g.llmLabelOf,
+      workflowReturns: ranking
+        ? {
+            roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
+            moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
+            pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
+            billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
+          }
+        : undefined,
+      unpricedBilledUsd: r.unpricedUsd,
+      now,
+    });
+  };
+  const performance: ResearchPerformance = {
+    [POSITIVE_REPLY_PIPE]: performanceOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRanking),
+    [WEBSITE_VISIT_PIPE]: performanceOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRanking),
+    // The meeting pipe's writer is a chat /complete call: no sequence names its template, so no combination yet.
+    [MEETING_BOOKING_PIPE]: {
+      pipe: MEETING_BOOKING_PIPE,
+      figuresBasis: "since_inception",
+      outcomeNoun: "meeting",
+      outcomeNounPlural: "meetings",
+      rows: [],
+      totals: null,
+      series: null,
+      unpricedBilledUsd: 0,
+      unavailableReason: "no_writer_recorded_on_pipe",
+    },
+  };
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking),
     [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking),
@@ -681,21 +733,25 @@ export async function computeResearch(basis: Basis, now = new Date()): Promise<R
     c.templates.flatMap((t) => (t.dynasty?.head && allTexts.has(t.dynasty.head.key) ? [[t.key, allTexts.get(t.dynasty.head.key)!] as [string, string]] : [])),
   );
   const texts = Object.fromEntries([...[...allTexts].filter(([k]) => listed.has(k)), ...headTexts].sort(([a], [b]) => (a < b ? -1 : 1)));
-  return { file, catalog, texts };
+  return { file, catalog, texts, performance };
 }
+
+/** The Performance tab of every Research pipe (RESEARCH-PERFORMANCE-1023). */
+export type ResearchPerformance = Record<ResearchPipeId, PipePerformance>;
 
 /** One build: the file, its catalogue and the text of every listed template. */
 export interface ResearchBuild {
   file: ResearchFile;
   catalog: ResearchCatalog;
   texts: Record<string, string>;
+  performance: ResearchPerformance;
 }
 
 // ── serving: last build, persisted; one background rebuild at a time per basis ─────────────────────────────
 
 const store = new Map<Basis, { value: StoredBuild; computedAt: number }>();
 /** A build as stored; a copy persisted before the catalogue existed holds the file alone (`catalog` null until the next build). */
-type StoredBuild = { file: ResearchFile; catalog: ResearchCatalog | null; texts: Record<string, string> | null };
+type StoredBuild = { file: ResearchFile; catalog: ResearchCatalog | null; texts: Record<string, string> | null; performance?: ResearchPerformance | null };
 const warming = new Map<Basis, Promise<void>>();
 const failedAt = new Map<Basis, number>();
 const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
@@ -851,6 +907,23 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] research catalogue read failed:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
+  const basis = basisOf(req.query.basis);
+  if (!basis) {
+    res.status(400).json({ error: "basis must be user (billed, default) or actual", reason: "basis_unrecognised" });
+    return;
+  }
+  try {
+    const build = await readResearchBuild(basis);
+    // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
+    if (!build?.performance) return notYet(res);
+    res.json({ computedAt: build.file.computedAt, costBasis: build.file.costBasis, pipes: await withPerformanceMarks(build.performance) });
+  } catch (error) {
+    console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
