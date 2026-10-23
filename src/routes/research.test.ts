@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { fetchDatedSpend, spendWindows } from "./research.js";
+import { fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
 import { readLegSpendTotal } from "./research-sends.js";
 
 describe("research dated spend windows", () => {
@@ -67,5 +67,24 @@ describe("research spend reads honour the run-start window (RESEARCH-DATED-SPEND
       ["/v1/stats/costs", "orgB", "2026-02-28T23:59:59.999999Z"],
     ]);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("workflowEstimateGroupsOf (COST-ACCOUNTING-1023-P3)", () => {
+  it("pools every version on its dynasty, ages each serve day, leaves out an undated bucket, takes the billed spend", () => {
+    const g = workflowEstimateGroupsOf(
+      [
+        { workflowSlug: "keel-v2", servedDay: "2026-10-22", contacted: 10, positiveReplies: 1 },
+        { workflowSlug: "keel-v3", servedDay: "2026-10-01", contacted: 30, positiveReplies: 2 },
+        { workflowSlug: "keel-v3", servedDay: "", contacted: 5, positiveReplies: 1 },
+      ],
+      new Map([["keel-v2", "keel"], ["keel-v3", "keel"]]),
+      [{ workflowDynastySlug: "keel", billedSpendUsd: 12.5 }],
+      (d) => d.toUpperCase(),
+      new Date("2026-10-23T15:00:00Z"),
+    );
+    expect(g).toHaveLength(1);
+    expect(g[0]).toMatchObject({ key: "keel", label: "KEEL", outcomes: 3, spendUsd: 12.5 });
+    expect(g[0]!.slices).toEqual([{ contacted: 10, ageDays: 1.5 }, { contacted: 30, ageDays: 22.5 }]);
   });
 });
