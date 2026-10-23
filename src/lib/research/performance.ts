@@ -154,6 +154,8 @@ export interface PipePerformance {
   figuresBasis: "workflow_bars";
   /** Active rows first, each group by its estimated cost per outcome, cheapest first (RESEARCH-COMBO-ESTIMATE-1023). */
   rowOrder: "leg_order";
+  /** The order is read on the FLASH figures whatever the view (PERF-ORDER-FLASH-1023): the view moves figures, never rows. */
+  orderView: "flash";
   /** Every technically valid combination is a row, not only those that wrote (RESEARCH-ALL-COMBOS-1023). */
   rowsCover: "all_valid_combinations";
   /** How each row's prior is read: one model of the pipe's part effects, fitted together (PRIOR-PART-EFFECTS-1023). */
@@ -307,9 +309,23 @@ const nextMonth = (ym: string) => {
 };
 const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym.slice(5, 7)} ${ym.slice(0, 4)}`;
 
+/**
+ * PURE. The tab on a view, in the FLASH tab's order (PERF-ORDER-FLASH-1023, owner 2026-10-23 « pourquoi ce ranking change si
+ * on choisit flash ou mature, alors que c'est l'ordre de features-service qui n'est pas censé changer »): the pipe picks on
+ * one order, so `rank` and `place` are the flash tab's; only the figures are the view's. On the mature view a young
+ * combination read $0 (nothing old enough) and stood first as never used. A row the flash tab lacks keeps its own order, last.
+ */
+export function inFlashOrder(shown: PipePerformance, flash: PipePerformance): PipePerformance {
+  const at = new Map(flash.rows.map((r) => [r.key, r] as const));
+  const listed = shown.rows.filter((r) => at.has(r.key)).sort((a, b) => at.get(a.key)!.rank - at.get(b.key)!.rank);
+  const rest = shown.rows.filter((r) => !at.has(r.key));
+  const rows = [...listed, ...rest].map((r, i) => ({ ...r, rank: i + 1, place: at.get(r.key)?.place ?? r.place }));
+  return { ...shown, rows };
+}
+
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "leg_order" as const, rowsCover: "all_valid_combinations" as const, estimateModel: "part_effects" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "leg_order" as const, orderView: "flash" as const, rowsCover: "all_valid_combinations" as const, estimateModel: "part_effects" as const, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;

@@ -41,7 +41,7 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { candidatePartsOf, deprecatedPartsOf, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -736,7 +736,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   // The Performance tab (RESEARCH-PERFORMANCE-1023): every (workflow, template, LLM) combination of each pipe, same evidence.
   const performanceOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, ranking: readonly LegWorkflowRankingRow[] | null, pipeCatalogue: ResearchCatalog[string], aliasStatus: AliasStatus): PipePerformance => {
     const t = termsOf(pipe, r.input, note);
-    return pipePerformance({
+    const onBars = (bars: ResearchBucket[]) => pipePerformance({
       pipe,
       noun: t.noun,
       nounPlural: t.nounPlural,
@@ -745,7 +745,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       persons: r.persons,
       split: r.split,
       // The Workflows tab's bars: each workflow's rows add up to its bar (one figure per pipe on both tabs).
-      bars: workflowBuckets(r.input),
+      bars,
       dynastyOf: (slug) => r.input.dynastyOf.get(slug) ?? slug,
       workflowLabelOf: r.input.labelOf,
       workflowNameOf: (d) => r.names.get(d) ?? null,
@@ -766,6 +766,9 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       unpricedBilledUsd: r.unpricedUsd,
       now,
     });
+    // The Workflows tab's bars on the view; the order on the flash ones (PERF-ORDER-FLASH-1023).
+    const shown = onBars(workflowBuckets(r.input));
+    return view === "flash" ? shown : inFlashOrder(shown, onBars(workflowBuckets({ ...r.input, view: "flash" })));
   };
   const catalog: ResearchCatalog = {
     [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking, view),
@@ -782,6 +785,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
       rowOrder: "leg_order",
+      orderView: "flash",
       rowsCover: "all_valid_combinations",
       estimateModel: "part_effects",
       outcomeNoun: "meeting",
@@ -853,6 +857,7 @@ const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): Pi
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
   rowOrder: "leg_order",
+  orderView: "flash",
   rowsCover: "all_valid_combinations",
   estimateModel: "part_effects",
   outcomeNoun: noun,
@@ -994,7 +999,7 @@ async function otherPipeSection(
     ranking,
     view,
   );
-  const performance =
+  const performanceOn = (pipeBars: ResearchBucket[]) =>
     read && hasGen
       ? pipePerformance({
           pipe: p.entry.id,
@@ -1004,7 +1009,7 @@ async function otherPipeSection(
           cells: input.cells,
           persons,
           split,
-          bars,
+          bars: pipeBars,
           dynastyOf: (slug) => input.dynastyOf.get(slug) ?? slug,
           workflowLabelOf: input.labelOf,
           workflowNameOf: nameOf,
@@ -1014,11 +1019,15 @@ async function otherPipeSection(
           llmKeyOf: gen.llmKeyOf,
           llmLabelOf: gen.llmLabelOf,
           workflowReturns: returns,
-          ...partsOf(catalog, await readAliasStatus(featureSlug, legKey)),
+          ...partsOf(catalog, aliasStatus!),
           unpricedBilledUsd: read.unpricedUsd,
           now,
         })
       : noWriterPerformance(p, terms.noun, terms.nounPlural);
+  const aliasStatus = read && hasGen ? await readAliasStatus(featureSlug, legKey) : null;
+  // The bars on the view; the order on the flash ones (PERF-ORDER-FLASH-1023).
+  const shownPerf = performanceOn(bars);
+  const performance = view === "flash" || !read || !hasGen ? shownPerf : inFlashOrder(shownPerf, performanceOn(workflowBuckets({ ...input, view: "flash" })));
   // Every listed template page's text: a version's under its id, a dynasty's (its head's) under the dynasty's slug.
   const listed = new Set(catalog.templates.flatMap((t) => [t.key, ...t.versions.map((v) => v.key)]));
   const pageTexts: Array<[string, string]> = [
@@ -1085,7 +1094,7 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "leg_order" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "leg_order" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
