@@ -31,6 +31,25 @@ export const STUDIED_PIPES: readonly ResearchPipeEntry[] = [
   { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
 ];
 
+/** The step each studied pipe lands on (its leg's `to` step). */
+const STUDIED_PIPE_TO_STEP: Readonly<Record<string, string>> = {
+  [POSITIVE_REPLY_PIPE]: "conversation",
+  [WEBSITE_VISIT_PIPE]: "website_visit",
+  [MEETING_BOOKING_PIPE]: "meeting_booked",
+};
+
+/**
+ * PURE. The pipes of the file landing on a step, in the file's order: what an outcome section names. An outcome
+ * section is never one pipe's (owner 2026-10-23: the Positive reply section read "Pipe: Dotterel" while its study read
+ * every pipe ending on a positive reply).
+ */
+export function pipesLandingOn(step: string, otherPipes: ReadonlyArray<{ entry: ResearchPipeEntry; toStep: string }>): string[] {
+  return [
+    ...STUDIED_PIPES.filter((p) => STUDIED_PIPE_TO_STEP[p.id] === step).map((p) => p.id),
+    ...otherPipes.filter((p) => p.toStep === step).map((p) => p.entry.id),
+  ];
+}
+
 /** One cold email pipe's evidence, read on one cost basis. */
 export interface ColdEmailPipeInput {
   /** The leg as computed on (`start_to_conversation`...) — the maturity rule's key. */
@@ -101,7 +120,8 @@ export interface ResearchInput {
    * Every other pipe of the channel catalogue holding a workflow (WA-PIPE-RESEARCH-1023), listed after the three studied
    * ones: its Workflows / Templates / Models / Performance tabs are served on the catalogue and performance reads.
    */
-  otherPipes?: readonly ResearchPipeEntry[];
+  /** Every other pipe of the catalogue holding a workflow, with the step it lands on. */
+  otherPipes?: ReadonlyArray<{ entry: ResearchPipeEntry; toStep: string }>;
 }
 
 const partialMonthOf = (cutoffDay: string | null): string | null => (cutoffDay && cutoffDay.slice(8, 10) !== "01" ? cutoffDay.slice(0, 7) : null);
@@ -355,13 +375,15 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       note,
     },
     // The three studied pipes, then every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023).
-    pipes: [...STUDIED_PIPES, ...(input.otherPipes ?? [])],
+    pipes: [...STUDIED_PIPES, ...(input.otherPipes ?? []).map((p) => p.entry)],
     outcomes: [
-      ...(input.replyDelay !== undefined ? [POSITIVE_REPLY_OUTCOME] : []),
+      ...(input.replyDelay !== undefined ? [{ ...POSITIVE_REPLY_OUTCOME, pipes: pipesLandingOn("conversation", input.otherPipes ?? []) }] : []),
       JUDGMENT_OUTCOME,
       {
         id: "meeting",
         outcome: "Meeting booked",
+        step: "meeting_booked",
+        pipes: pipesLandingOn("meeting_booked", input.otherPipes ?? []),
         description: "One outcome across every leg, from the first cold email to the meeting.",
         population: "The brands whose AI Meeting Booking went live, each split at its own go-live.",
       },

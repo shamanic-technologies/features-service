@@ -106,12 +106,14 @@ export function firstDayClaim(k: number, total: number): { lowPct: number; highP
   return { lowPct: Math.round(low * 100), highPct: Math.round(high * 100), floorPct: Math.floor((low * 100) / 5) * 5 };
 }
 
-/** The outcome section the study sits in: every pipe whose leg ends on a positive reply. */
+/**
+ * The outcome section the study sits in. Its `pipes` are every pipe of the file landing on the step, added where the
+ * file is assembled (`assembleResearch`): an outcome section is never one pipe's.
+ */
 export const POSITIVE_REPLY_OUTCOME: ResearchOutcomeEntry = {
   id: POSITIVE_REPLY_OUTCOME_ID,
   outcome: "Positive reply",
   step: "conversation",
-  pipes: ["cold-email-positive-reply"],
   description: "A prospect answers one of our messages with interest, on any pipe whose leg ends on a positive reply.",
   population: "Every client's campaigns on a pipe ending on a positive reply, since the first message we sent.",
 };
