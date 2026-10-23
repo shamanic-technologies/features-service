@@ -8812,13 +8812,13 @@ const researchPerformanceFigureSchema = z.object({
   source: z
     .enum(["own", "own_parts", "pipe_combinations", "pipe_best_workflow"])
     .nullable()
-    .describe("measured: `own`. expected: `own_parts` (geometric mean of what the row's workflow, template and LLM measured on the pipe, named in `parts`), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."),
+    .describe("measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."),
   parts: z.array(z.enum(["workflow", "template", "llm"])).optional().describe("On `own_parts`: the parts the figure is read from."),
   unavailableReason: z.enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_return_on_pipe"]).nullable(),
 });
 const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
 const researchPerformanceFiguresShape = {
-  roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected."),
+  roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected = its workflow's value per outcome ÷ (the expected cost per outcome × its workflow's billed per dollar), so it moves with the expected cost (PRIOR-PART-EFFECTS-1023)."),
   costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."),
   conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."),
   outcomes: researchPerformanceCountSchema,
@@ -8830,6 +8830,7 @@ const researchPerformancePipeSchema = z.object({
   figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
   rowOrder: z.literal("estimated_cost").describe("Active rows first, then deprecated; within each, by the row's own `estimate.costPerOutcomeUsd`, cheapest first (RESEARCH-COMBO-ESTIMATE-1023; supersedes the nested workflow -> template -> LLM pick order)."),
   rowsCover: z.literal("all_valid_combinations").describe("Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."),
+  estimateModel: z.literal("part_effects").describe("Each row's prior is ONE model of the pipe (PRIOR-PART-EFFECTS-1023): outcomes per dollar = the pipe's rate × its workflow's, template's and LLM's effects, fitted together on every other combination, each pulled toward 1 by the leg's maturity bar in outcomes; an untested part is neutral."),
   outcomeNoun: z.string(),
   outcomeNounPlural: z.string(),
   rows: z
@@ -8860,13 +8861,13 @@ const researchPerformancePipeSchema = z.object({
             display: z.string().nullable(),
             ownSpentUsd: z.number(),
             ownOutcomes: z.number(),
-            priorCostPerOutcomeUsd: z.number().nullable().describe("What the row's parts measured on the pipe WITHOUT it: geometric mean of its workflow, template and LLM (`own_parts`, named in `priorParts`), else every other combination pooled."),
+            priorCostPerOutcomeUsd: z.number().nullable().describe("What the pipe's model of part effects, fitted WITHOUT the row, predicts for its workflow × template × LLM (`own_parts`, `priorParts` = the parts another combination measured; an unmeasured part is neutral), else the pipe pooled (`pipe_combinations`)."),
             priorSource: z.enum(["own_parts", "pipe_combinations"]).nullable(),
             priorParts: z.array(z.enum(["workflow", "template", "llm"])).optional(),
             priorWeightOutcomes: z.number().describe("The leg's maturity bar in outcomes: the prior counts as that many outcomes."),
             unavailableReason: z.enum(["no_outcome_on_pipe"]).nullable(),
           })
-          .describe("The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is scaled by prior ÷ estimate."),
+          .describe("The figure the rows are ordered on (RESEARCH-COMBO-ESTIMATE-1023). With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."),
         status: z.enum(["active", "deprecated"]).describe("Deprecated as soon as one part can no longer run: workflow not runnable on the leg, template dynasty deprecated by content-generation, LLM served under no alias or only aliases content-generation deprecated."),
         deprecatedParts: z.array(z.enum(["workflow", "template", "llm"])).describe("Which parts made it deprecated; [] when active."),
         ...researchPerformanceFiguresShape,
