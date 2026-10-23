@@ -4592,7 +4592,7 @@ const customerHealthOrgSchema = z.object({
   orgName: z.string().nullable().describe("The org's name as billing serves it (client-service). null = none."),
   ownerEmail: z.string().nullable(),
   customerStatus: z.enum(["current", "churned", "never_paid"]).nullable().describe("billing-service's verdict for the org, copied (the Active / Churned tab): current = a campaign running now; churned = paid before, nothing running; never_paid = never paid, nothing running."),
-  customerStatusUnavailableReason: z.enum(["billing_customer_status_unavailable", "org_not_in_billing", "billing_could_not_read"]).nullable().describe("Why customerStatus is null: billing's read failed (every org), billing lists no such org, or billing could not read its campaigns / payments. null when a verdict is served."),
+  customerStatusUnavailableReason: z.enum(["billing_customer_status_unavailable", "org_not_in_billing", "billing_could_not_read", "org_deleted"]).nullable().describe("Why customerStatus is null: billing's read failed (every org), billing lists no such org, billing could not read its campaigns / payments, or billing states the org was deleted. null when a verdict is served."),
   ownOrg: z.boolean().nullable().describe("billing's flag: one of OUR orgs (listed last, kept out of orgStats counts). null = not known."),
   ownOrgReason: z.string().nullable().describe("billing's reason (platform_org | staff_billing_contact)."),
   healthBadge: z.enum(["green", "yellow", "red"]).nullable().describe("The worst badge of the org's brands (red > yellow > green). null when the org has no brand row (noBrandRowsReason)."),
