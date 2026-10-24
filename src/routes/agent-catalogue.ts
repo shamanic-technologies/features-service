@@ -1,3 +1,4 @@
+import { leadStateFamilyOf, leadStateRankOf } from "../lib/lead-states.js";
 import { Router, type Request, type Response } from "express";
 import { isOutcomeSubjectKind, OUTCOME_SUBJECT_KINDS, type OutcomeSubjectKind } from "../lib/outcome-subject.js";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -696,7 +697,7 @@ const funnelRowOf = (f: CatalogueFunnel, name: string, copy: ReturnType<typeof f
 // ── Steps ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** A step's place on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`): rung key (or `none`) and its rank. */
-const lifecycleWire = (s: CatalogueStep) => ({ lifecycleRung: s.lifecycleRung, lifecycleRank: lifecycleRankOf(s.lifecycleRung), subjectKind: s.subjectKind });
+const lifecycleWire = (s: CatalogueStep) => ({ lifecycleRung: s.lifecycleRung, lifecycleRank: lifecycleRankOf(s.lifecycleRung), subjectKind: s.subjectKind, leadState: s.leadState, leadStateFamily: leadStateFamilyOf(s.leadState), leadStateRank: leadStateRankOf(s.leadState) });
 
 router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   try {

@@ -100,6 +100,7 @@
  *
  * Pure: no IO, no clock.
  */
+import { leadStateOf, NEW_LEAD_STATE_STEPS, type LeadStateKey } from "./lead-states.js";
 import { TRIGGER_GLYPH } from "./outcome-vocabulary.js";
 import { codedStepSubjectKindOf, isOutcomeSubjectKind, type OutcomeSubjectKind } from "./outcome-subject.js";
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
@@ -329,6 +330,8 @@ export interface CatalogueStep {
   lifecycleRung: StepLifecycleRung | null;
   /** What one occurrence is about (`lib/outcome-subject.ts`); null = a declared step that never stated it. */
   subjectKind: OutcomeSubjectKind | null;
+  /** The lead STATE reaching the step puts the lead in (`lib/lead-states.ts`, LEAD-STATES-1024); null = none. */
+  leadState: LeadStateKey | null;
 }
 
 export interface CataloguePipe {
@@ -812,7 +815,14 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
       producedBy: d?.producedBy ?? null,
       lifecycleRung: d ? (isStepLifecycleRung(d.lifecycleRung) ? d.lifecycleRung : null) : (codedStepLifecycleRungOf(key) ?? null),
       subjectKind: d ? (isOutcomeSubjectKind(d.subjectKind) ? d.subjectKind : null) : codedStepSubjectKindOf(key),
+      leadState: leadStateOf(key),
     });
+  }
+  // The lead states no coded step names (Lead interested, Lead visited): outcomes of the cost ledger, reached once per
+  // lead, never a pipe's leg (LEAD-STATES-1024). A step of the same key declared at run time wins.
+  for (const s of NEW_LEAD_STATE_STEPS) {
+    if (steps.has(s.key)) continue;
+    steps.set(s.key, { key: s.key, label: s.label, description: s.description, shortDescription: s.shortDescription, icon: s.icon, declared: false, valueUsd: null, valueVia: null, producedBy: "lead-service", lifecycleRung: "engaged", subjectKind: "person", leadState: s.key });
   }
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);

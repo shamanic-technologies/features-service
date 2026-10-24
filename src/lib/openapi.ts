@@ -7575,6 +7575,12 @@ const catalogueLifecycleFields = {
     .enum(["person", "object"])
     .nullable()
     .describe("What one occurrence of this outcome is about (owner 2026-10-23, COST-ACCOUNTING-1023): a `person` (Lead found, Email checked, Positive reply) or an `object` (Audience built, Post published, Creative made). The cost ledger keys an occurrence on (outcome, subject id). Every coded step is `person`. Null = a step declared before the field that never stated it."),
+  leadState: z
+    .enum(["lead_interested", "meeting_booked", "meeting_attended", "paid_client", "lead_visited"])
+    .nullable()
+    .describe("The lead STATE reaching this step puts the lead in (owner 2026-10-24, LEAD-STATES-1024): a state is reached ONCE per lead x brand, never counted per event (3 positive replies = 1 `lead_interested`, 12 clicks = 1 `lead_visited`). A yes (positive reply, form, signup, booking call) = `lead_interested`, a click = `lead_visited`, never the other. The cost ledger charges a run to the next state its lead had not reached. Null = the step reaches no lead state (Lead found, technical steps). The steps `lead_interested` and `lead_visited` are the states themselves."),
+  leadStateFamily: z.enum(["interest", "visit"]).nullable().describe("The family of `leadState`: `interest` (lead_interested < meeting_booked < meeting_attended < paid_client, a higher state reaches the lower ones) or `visit` (lead_visited, implied by nothing). Two families, never summed. Null when `leadState` is null."),
+  leadStateRank: z.number().int().nullable().describe("The state's rank within its family, 1 = first (interest: 1..4; visit: 1). Null when `leadState` is null."),
 };
 const catalogueLifecycleLadder = z
   .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
