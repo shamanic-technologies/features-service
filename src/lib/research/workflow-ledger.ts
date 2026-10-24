@@ -26,7 +26,7 @@ export interface WorkflowLedgerRow {
 }
 
 /** PURE. `floorReason` = why every figure is a floor (coverage under the bar, ledger days computing), null when none. */
-export function workflowLedgerStudy(input: { pipe: string; rows: readonly WorkflowLedgerRow[] | null; floorReason: string | null }): ResearchStudy {
+export function workflowLedgerStudy(input: { pipe: string; rows: readonly WorkflowLedgerRow[] | null; floorReason: string | null; daysMissing?: number }): ResearchStudy {
   const base = {
     id: WORKFLOW_LEDGER_STUDY_ID,
     pipe: input.pipe,
@@ -35,6 +35,8 @@ export function workflowLedgerStudy(input: { pipe: string; rows: readonly Workfl
     question: "On the ledger: which workflow gets a positive reply cheapest, every stage counted?",
   };
   if (!input.rows) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "runs-service's outcome ledger, by workflow, could not be read this time. The study comes back on the next build." });
+  const days = input.daysMissing ?? 0;
+  if (days > 0) return notMeasuredStudy({ ...base, headline: "Being recomputed.", reason: `runs-service is recomputing ${n(days)} ledger ${days === 1 ? "day" : "days"} since inception: no figure until every day is in, since a figure read on part of the days is neither a price nor a floor.` });
   const priced = input.rows.filter((r) => r.unitCostUsd !== null && r.unitCostUsd > 0).sort((a, b) => a.unitCostUsd! - b.unitCostUsd! || a.label.localeCompare(b.label));
   if (priced.length === 0) return notMeasuredStudy({ ...base, headline: "No workflow priced on the ledger yet.", reason: "No positive reply on the ledger names the workflow whose send it answered yet." });
   const floor = input.floorReason !== null;

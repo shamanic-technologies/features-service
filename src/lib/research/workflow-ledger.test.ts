@@ -3,6 +3,12 @@ import { workflowLedgerStudy } from "./workflow-ledger.js";
 
 const row = (key: string, unitCostUsd: number | null, todayCostUsd: number | null) => ({ key, label: key.toUpperCase(), outcomes: 5, ownCostUsd: 100, unitCostUsd, todayCostUsd, todayBasis: "mature" as const });
 
+describe("RESEARCH-LEDGER-RECOMPUTING-1024", () => {
+  it("ledger days still being recomputed price no workflow", () => {
+    expect(workflowLedgerStudy({ pipe: "p", rows: [], floorReason: null, daysMissing: 3 }).headline).toBe("Being recomputed.");
+  });
+});
+
 describe("workflow ledger study (COST-ACCOUNTING-1023-P4)", () => {
   it("sits on the pipe beside the ranking, cheapest first, never crowned", () => {
     const st = workflowLedgerStudy({ pipe: "cold-email-positive-reply", rows: [row("keel", 30, 25), row("ballad", 12, 141), row("idle", null, null)], floorReason: null });
