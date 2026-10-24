@@ -15,6 +15,7 @@ describe("workflow ledger study (COST-ACCOUNTING-1023-P4)", () => {
   it("a floor is said on every bar; unreadable / nothing priced = not measured", () => {
     const st = workflowLedgerStudy({ pipe: "p", rows: [row("keel", 30, 25)], floorReason: "The ledger holds 33% of the spend: every figure is a floor." });
     expect(st.charts[0]!.points[0]!.display).toBe("≥ $30");
+    expect(st.headline).toMatch(/^On the ledger, KEEL at least \$30 per positive reply/);
     expect(st.verdict.reason).toMatch(/33%/);
     expect(workflowLedgerStudy({ pipe: "p", rows: null, floorReason: null }).headline).toBe("Not readable right now.");
     expect(workflowLedgerStudy({ pipe: "p", rows: [row("x", null, 3)], floorReason: null }).headline).toBe("No workflow priced on the ledger yet.");

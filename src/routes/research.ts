@@ -71,7 +71,7 @@ import { pipeLegKeyOf } from "../lib/funnel-legs.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
 import { readBookedAfterReply, readGenerationCosts, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
-import { fetchBrandsBasic, fetchOrgUserEmails } from "../lib/accounts-client.js";
+import { fetchBrandsBasic, fetchOrgName, fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
 import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
 import { readNicheGrades } from "../lib/research/niche-grades.js";
@@ -565,6 +565,8 @@ async function workflowLedgerStudyOf(
     fleet,
   );
   const ranking = new Map((input.rankingRows ?? []).map((r) => [r.workflowDynastySlug, r]));
+  // Only this pipe's workflows: a send another pipe made (a follow-up, a PR email) is no cold email workflow's figure.
+  const ownDynasties = new Set([...input.dynastyOf.values(), ...ranking.keys()]);
   const cov = ledger.totals.coveragePct;
   const missing = Math.max(ledger.totals.daysMissing, byWorkflow.daysMissing);
   const floorReason =
@@ -574,7 +576,7 @@ async function workflowLedgerStudyOf(
   return workflowLedgerStudy({
     pipe: POSITIVE_REPLY_PIPE,
     floorReason,
-    rows: rows.map((r) => {
+    rows: rows.filter((r) => ownDynasties.has(r.workflowSlug) && r.ownCostUsd > 0).map((r) => {
       const rank = ranking.get(r.workflowSlug);
       return { key: r.workflowSlug, label: input.labelOf(r.workflowSlug), outcomes: r.outcomes, ownCostUsd: r.ownCostUsd, unitCostUsd: r.unitCostUsd, todayCostUsd: rank?.costPerOutcomeUsd ?? null, todayBasis: rank ? rank.basis : null };
     }),
@@ -598,14 +600,24 @@ async function clientCostStudyOf(
   }
   const mainBrand = new Map([...brandOf].map(([o, m]) => [o, [...m].sort((a, b) => b[1] - a[1])[0]![0]] as [string, string]));
   const names = await fetchBrandsBasic([...mainBrand.values()]).catch((err) => {
-    console.error("[features-service] research: brand names unreadable, clients named by their org id:", err);
+    console.error("[features-service] research: brand names unreadable, clients named by their org:", err);
     return new Map<string, { name: string | null }>();
   });
+  // A client none of whose people the reply pipe holds (its replies came another way) is named by its org record.
+  const unnamed = [...byOrg.keys()].filter((o) => !mainBrand.has(o));
+  const orgNames = new Map(
+    await Promise.all(
+      unnamed.map(async (o) => [o, await fetchOrgName(o).catch((err): null => {
+        console.error(`[features-service] research: org ${o} name unreadable:`, err);
+        return null;
+      })] as [string, string | null]),
+    ),
+  );
   const labelOf = (org: string) => {
     const b = mainBrand.get(org);
-    const name = b ? names.get(b)?.name : null;
+    const name = b ? names.get(b)?.name : orgNames.get(org);
     const more = (brandOf.get(org)?.size ?? 1) - 1;
-    return name ? `${name}${more > 0 ? ` +${more}` : ""}` : `Client ${org.slice(0, 8)}`;
+    return name ? `${name}${more > 0 ? ` +${more}` : ""}` : "Unnamed client";
   };
   return outcomeCostByClientStudy(clientCostRowsOf(byOrg, t.coverageByOrg, persons, spend, labelOf), t.daysMissing);
 }
