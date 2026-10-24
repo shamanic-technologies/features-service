@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { campaignOutputsOf, fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
+import { campaignOutputsOf, clientCostRowsOf, fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
 import { readLegSpendTotal } from "./research-sends.js";
 
 describe("research dated spend windows", () => {
@@ -103,5 +103,30 @@ describe("campaignOutputsOf (COST-ACCOUNTING-1023-P2)", () => {
     expect(outputOf("c2")).toBe("website_visit");
     expect(outputOf("c3")).toBeNull();
     expect([...pipeOutputs].sort()).toEqual(["conversation", "website_visit"]);
+  });
+});
+
+describe("clientCostRowsOf (COST-ACCOUNTING-1023-P4)", () => {
+  it("one row per client with a ledger figure or a positive reply, today's spend and replies summed per org", () => {
+    const unit = { outcomeKey: "conversation", produced: 2, byProducts: 0, unitCostUsd: 5, ownUnitCostUsd: 5, stages: [], unpricedInputs: [] };
+    const rows = clientCostRowsOf(
+      new Map([["o1", { units: new Map([["conversation", unit]]) }]]),
+      new Map([["o1", 50]]),
+      [
+        { orgId: "o1", positiveReplies: 1 },
+        { orgId: "o1", positiveReplies: 1 },
+        { orgId: "o2", positiveReplies: 3 },
+        { orgId: "o3", positiveReplies: 0 },
+      ],
+      [
+        { orgId: "o1", spentUsd: 4 },
+        { orgId: "o1", spentUsd: 6 },
+        { orgId: "o2", spentUsd: 9 },
+      ],
+      (o) => o.toUpperCase(),
+    );
+    expect(rows.map((r) => r.orgId).sort()).toEqual(["o1", "o2"]);
+    expect(rows.find((r) => r.orgId === "o1")).toMatchObject({ label: "O1", coveragePct: 50, todaySpendUsd: 10, todayReplies: 2, ledger: unit });
+    expect(rows.find((r) => r.orgId === "o2")).toMatchObject({ ledger: null, coveragePct: null, todaySpendUsd: 9, todayReplies: 3 });
   });
 });

@@ -87,7 +87,14 @@ export interface RollUp {
  * occurrence on no campaign counts only for one of them (a reply judged off any campaign does; our newsletter's sends,
  * no pipe's output, do not).
  */
-export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consumed: readonly ConsumedRow[], outputOf: (campaignId: string) => string | null, pipeOutputs: ReadonlySet<string>): RollUp {
+export function rollUpOutcomeUnitCosts(
+  produced: readonly ProducedRow[],
+  consumed: readonly ConsumedRow[],
+  outputOf: (campaignId: string) => string | null,
+  pipeOutputs: ReadonlySet<string>,
+  /** A scope's input produced OUTSIDE it (a lead another client paid for) at its standard cost: the fleet unit cost. */
+  externalUnitCost: (outcomeKey: string) => number | null = () => null,
+): RollUp {
   const out = (c: string | null) => (c ? outputOf(c) : null);
   // n(S): own pipes + no campaign; by-products apart
   const n = new Map<string, number>();
@@ -158,7 +165,7 @@ export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consume
       const next = new Map<string, number>();
       for (const [k, q] of term) {
         if (!isOutput(k)) {
-          if (k !== root) unpriced.add(k);
+          if (k !== root && externalUnitCost(k) === null) unpriced.add(k);
           continue;
         }
         for (const [input, count] of cross.get(k) ?? []) next.set(input, (next.get(input) ?? 0) + (q * count) / n.get(k)!);
@@ -184,7 +191,11 @@ export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consume
     // stages: every pipe on the path, each split by the keys its production holds
     const stages = new Map<string, StageContribution>();
     for (const [pipeOut, r] of req) {
-      if (!isOutput(pipeOut)) continue;
+      if (!isOutput(pipeOut)) {
+        const ext = pipeOut === s ? null : externalUnitCost(pipeOut);
+        if (ext !== null) stages.set(pipeOut, { outcomeKey: pipeOut, requirementPerUnit: r, costPerUnitUsd: r * ext, source: "input" });
+        continue;
+      }
       for (const [key, e] of ownByKey.get(pipeOut) ?? []) {
         const st = stages.get(key) ?? { outcomeKey: key, requirementPerUnit: 0, costPerUnitUsd: 0, source: pipeOut === s ? ("own" as const) : ("input" as const) };
         st.requirementPerUnit += (r * e.count) / n.get(pipeOut)!;
@@ -204,4 +215,20 @@ export function rollUpOutcomeUnitCosts(produced: readonly ProducedRow[], consume
     });
   }
   return { units, unattributedCostUsd };
+}
+
+/**
+ * PURE. Per ORG (a client), the same roll-up on its own rows; an input produced outside the org (a lead another client's
+ * run paid for) enters at the fleet unit cost (standard cost on reuse). The per-client figure of the doctrine's "two
+ * figures per customer": production cost at standard.
+ */
+export function rollUpByOrg(produced: readonly ProducedRow[], consumed: readonly ConsumedRow[], outputOf: (campaignId: string) => string | null, pipeOutputs: ReadonlySet<string>): Map<string, RollUp> {
+  const fleet = rollUpOutcomeUnitCosts(produced, consumed, outputOf, pipeOutputs);
+  const ext = (k: string) => fleet.units.get(k)?.unitCostUsd ?? null;
+  const orgs = new Set([...produced.map((r) => r.orgId ?? ""), ...consumed.map((c) => c.orgId ?? "")].filter((o) => o !== ""));
+  const out = new Map<string, RollUp>();
+  for (const org of orgs) {
+    out.set(org, rollUpOutcomeUnitCosts(produced.filter((r) => r.orgId === org), consumed.filter((c) => c.orgId === org), outputOf, pipeOutputs, ext));
+  }
+  return out;
 }
