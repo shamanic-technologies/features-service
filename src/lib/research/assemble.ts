@@ -392,7 +392,11 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     }
     const unitOf = (step: string) => (units ? (units.units.get(step) ?? { outcomeKey: step, produced: 0, byProducts: 0, unitCostUsd: null, ownUnitCostUsd: null, stages: [], unpricedInputs: [] }) : null);
     const coveragePct = l.totals?.coveragePct ?? null;
-    const ledgerFacts = { daysMissing: l.totals?.daysMissing ?? 0, unattributedCostUsd: units?.unattributedCostUsd ?? 0 };
+    const ledgerFacts = {
+      daysMissing: l.totals?.daysMissing ?? 0,
+      unattributedCostUsd: units?.unattributedCostUsd ?? 0,
+      ...(l.totals ? { support: { byFunction: l.totals.supportByFunction, daysMissing: l.totals.supportDaysMissing } } : {}),
+    };
     if (input.replyDelay !== undefined) {
       studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "positive reply", nounPlural: "positive replies", unit: unitOf("conversation"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
     }

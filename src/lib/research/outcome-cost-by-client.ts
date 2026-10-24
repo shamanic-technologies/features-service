@@ -21,14 +21,14 @@ export interface ClientCostRow {
   label: string;
   /** The org's ledger roll-up of the positive reply (null = nothing declared for it). */
   ledger: OutcomeUnitCost | null;
-  /** Share of the org's spend its declarations carry, 0..100; null = it spent nothing on the ledger's days. */
+  /** Share of the org's OUTCOME spend (support apart) its declarations carry, 0..100; null = it spent nothing on the ledger's days. */
   coveragePct: number | null;
   /** Today's figure: spend on the reply pipes and positive replies of the client. */
   todaySpendUsd: number;
   todayReplies: number;
 }
 
-const covText = (c: number | null) => (c === null ? "no spend on record" : `${c < 10 ? c.toFixed(1) : Math.round(c)}% of its spend declared`);
+const covText = (c: number | null) => (c === null ? "no spend on record" : `${c < 10 ? c.toFixed(1) : Math.round(c)}% of its outcome spend declared`);
 
 /** PURE. The study. `rows` = null when the ledger could not be read this build. */
 export function outcomeCostByClientStudy(rows: readonly ClientCostRow[] | null, daysMissing: number): ResearchStudy {
