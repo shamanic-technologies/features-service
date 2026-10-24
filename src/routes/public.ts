@@ -2351,9 +2351,13 @@ export async function fetchFleetLegSlugEvidence(featureSlug: string, legKey: str
   // COST-ACCOUNTING-1023-SWITCH: the flash half priced on the outcome ledger (lib/ledger-leg-overlay.ts).
   const ledgerFlash = await withLedgerFlash(`${featureSlug}|${legKey}`, legKey, pricing, { costGroups: flash.costGroups, emailStats: flash.emailStats }, legSet);
   const cutoffIso = legCutoffIso(legKey);
-  const mature = cutoffIso
-    ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, null, legSet, slugs)
-    : ledgerFlash;
+  const runsMature = cutoffIso ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, null, legSet, slugs) : null;
+  const mature =
+    cutoffIso && runsMature
+      ? await withLedgerFlash(`${featureSlug}|${legKey} mature`, legKey, pricing, { costGroups: runsMature.costGroups, emailStats: runsMature.emailStats }, legSet, cutoffIso)
+      : cutoffIso
+        ? runsMature
+        : ledgerFlash;
   return {
     legKey,
     cutoffIso,
