@@ -59,7 +59,10 @@ import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
 import { workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
 import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
-import { rollUpByOrg } from "../lib/outcome-unit-costs.js";
+import { rollUpByOrg, rollUpOutcomeUnitCosts, workflowUnitCosts } from "../lib/outcome-unit-costs.js";
+import { fetchOutcomeLedgerByWorkflow } from "../lib/outcome-cost-totals-client.js";
+import { workflowLedgerStudy } from "../lib/research/workflow-ledger.js";
+import { COVERAGE_BAR_PCT } from "../lib/research/outcome-cost.js";
 import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import { pipeLegKeyOf } from "../lib/funnel-legs.js";
@@ -537,6 +540,45 @@ export function clientCostRowsOf(
   }));
 }
 
+/** The per-workflow ledger study of the positive reply pipe, beside its ranking (COST-ACCOUNTING-1023-P4). */
+async function workflowLedgerStudyOf(
+  ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
+  input: ColdEmailPipeInput,
+) {
+  const byWorkflow = ledger.totals
+    ? await fetchOutcomeLedgerByWorkflow("gross").catch((err): null => {
+        console.error("[features-service] research: the outcome ledger by workflow is unreadable this time (its study says so):", err);
+        return null;
+      })
+    : null;
+  if (!ledger.totals || !byWorkflow) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: null, floorReason: null });
+  const fleet = rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("conversation");
+  if (!fleet) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: [], floorReason: null });
+  const dyn = (slug: string | null) => (slug ? (input.dynastyOf.get(slug) ?? slug) : null);
+  const rows = workflowUnitCosts(
+    "conversation",
+    byWorkflow.produced.map((r) => ({ ...r, workflowSlug: dyn(r.workflowSlug) })),
+    byWorkflow.sourced.map((c) => ({ ...c, sourceWorkflowSlug: dyn(c.sourceWorkflowSlug) })),
+    ledger.outputOf,
+    fleet,
+  );
+  const ranking = new Map((input.rankingRows ?? []).map((r) => [r.workflowDynastySlug, r]));
+  const cov = ledger.totals.coveragePct;
+  const missing = Math.max(ledger.totals.daysMissing, byWorkflow.daysMissing);
+  const floorReason =
+    cov === null || cov < COVERAGE_BAR_PCT || missing > 0
+      ? `The ledger holds ${cov === null ? "an unknown share" : `${Math.round(cov)}%`} of the spend${missing > 0 ? `, ${missing} days still computing` : ""}: every figure is a floor.`
+      : null;
+  return workflowLedgerStudy({
+    pipe: POSITIVE_REPLY_PIPE,
+    floorReason,
+    rows: rows.map((r) => {
+      const rank = ranking.get(r.workflowSlug);
+      return { key: r.workflowSlug, label: input.labelOf(r.workflowSlug), outcomes: r.outcomes, ownCostUsd: r.ownCostUsd, unitCostUsd: r.unitCostUsd, todayCostUsd: rank?.costPerOutcomeUsd ?? null, todayBasis: rank ? rank.basis : null };
+    }),
+  });
+}
+
 /** The per-client study; a client is named by the brand most of its people were contacted for (brand-service names). */
 async function clientCostStudyOf(
   ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
@@ -731,6 +773,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
   const ledger = await ledgerP;
   const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
+  if (basis === "user" && reply.input.rankingRows) estimateStudies.push(await workflowLedgerStudyOf(ledger, reply.input));
   const file = assembleResearch({
     replyDelay,
     estimateStudies,

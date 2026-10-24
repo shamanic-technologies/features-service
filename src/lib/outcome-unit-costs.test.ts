@@ -145,3 +145,39 @@ describe("per client (COST-ACCOUNTING-1023-P4)", () => {
     expect(by.get("o3")!.units.get("meeting_booked")!.unitCostUsd).toBeCloseTo(6, 8);
   });
 });
+
+describe("per workflow (COST-ACCOUNTING-1023-P4)", () => {
+  it("a workflow's replies carry its whole production on the reply pipes, plus the shared stage per reply", async () => {
+    const { workflowUnitCosts } = await import("./outcome-unit-costs.js");
+    // fleet: $120 of sends by two workflows, $2 of judging off any campaign, 20 replies
+    const fleet = { outcomeKey: "conversation", produced: 20, byProducts: 0, unitCostUsd: 122 / 20, ownUnitCostUsd: 122 / 20, stages: [], unpricedInputs: [] };
+    const rows = workflowUnitCosts(
+      "conversation",
+      [
+        { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2", ownCostUsd: 100 },
+        { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "ballad-v4", ownCostUsd: 20 },
+        { outcomeKey: "message_sent", campaignId: "v1", workflowSlug: "visit-wf", ownCostUsd: 50 },
+      ],
+      [
+        { consumerKey: "conversation", consumedKey: "message_sent", sourceWorkflowSlug: "keel-v2", count: 5 },
+        { consumerKey: "conversation", consumedKey: "message_sent", sourceWorkflowSlug: "ballad-v4", count: 10 },
+        { consumerKey: "conversation", consumedKey: "message_sent", sourceWorkflowSlug: null, count: 5 },
+      ],
+      (c) => (c === "c1" ? "conversation" : c === "v1" ? "website_visit" : null),
+      fleet,
+    );
+    // shared = 122/20 - 120/20 = $0.10 per reply
+    expect(rows.find((r) => r.workflowSlug === "keel-v2")!.unitCostUsd).toBeCloseTo(100 / 5 + 0.1, 8);
+    expect(rows.find((r) => r.workflowSlug === "ballad-v4")!.unitCostUsd).toBeCloseTo(20 / 10 + 0.1, 8);
+    // a visit pipe's workflow is no reply workflow
+    expect(rows.some((r) => r.workflowSlug === "visit-wf")).toBe(false);
+    expect(rows[0]!.workflowSlug).toBe("ballad-v4");
+  });
+
+  it("a workflow that spent and got no reply has no unit cost (null), never 0", async () => {
+    const { workflowUnitCosts } = await import("./outcome-unit-costs.js");
+    const fleet = { outcomeKey: "conversation", produced: 1, byProducts: 0, unitCostUsd: 10, ownUnitCostUsd: 10, stages: [], unpricedInputs: [] };
+    const rows = workflowUnitCosts("conversation", [{ outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "w", ownCostUsd: 5 }], [], (c) => (c === "c1" ? "conversation" : null), fleet);
+    expect(rows[0]).toMatchObject({ workflowSlug: "w", outcomes: 0, unitCostUsd: null, ownCostUsd: 5 });
+  });
+});

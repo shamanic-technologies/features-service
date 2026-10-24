@@ -42,3 +42,17 @@ describe("runs-service outcome ledger totals (COST-ACCOUNTING-1023-P2)", () => {
     expect(() => parseOutcomeLedgerTotals({ produced: [{ dimensions: {}, occurrences: 1, cost: cost("1", "1") }] }, "gross")).toThrow(/outcomeKey/);
   });
 });
+
+describe("outcome ledger by workflow (COST-ACCOUNTING-1023-P4)", () => {
+  it("reads produced per campaign x workflow and consumptions per producing workflow; the larger missing-day count stands", async () => {
+    const { parseOutcomeLedgerByWorkflow } = await import("./outcome-cost-totals-client.js");
+    const r = parseOutcomeLedgerByWorkflow(
+      { daysMissing: ["d1"], produced: [{ dimensions: { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2" }, occurrences: 10, cost: { grossCents: "500", vendorCents: "100" } }] },
+      { daysMissing: ["d1", "d2"], consumed: [{ dimensions: { consumingOutcomeKey: "conversation", consumedOutcomeKey: "message_sent", sourceWorkflowSlug: "keel-v2" }, consumptions: "2" }, { dimensions: { consumingOutcomeKey: null, consumedOutcomeKey: "lead_found", sourceWorkflowSlug: null }, consumptions: "9" }] },
+      "gross",
+    );
+    expect(r.produced).toEqual([{ outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2", ownCostUsd: 5 }]);
+    expect(r.sourced).toEqual([{ consumerKey: "conversation", consumedKey: "message_sent", sourceWorkflowSlug: "keel-v2", count: 2 }]);
+    expect(r.daysMissing).toBe(2);
+  });
+});
