@@ -51,6 +51,11 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
     });
     expect(pluralLabelOf("Email sent")).toBe("Emails sent");
     expect(pluralLabelOf("Industry update video")).toBe("Industry update videos");
+    // Irregular participles (declared steps): the noun takes the plural, never the participle.
+    expect(pluralLabelOf("Ad shown")).toBe("Ads shown");
+    expect(pluralLabelOf("Audience built")).toBe("Audiences built");
+    expect(pluralLabelOf("Email found")).toBe("Emails found");
+    expect(pluralLabelOf("Message written")).toBe("Messages written");
   });
 
   it("gives every coded outcome exactly one outcome trigger, named by the outcome's label", () => {

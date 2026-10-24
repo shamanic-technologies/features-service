@@ -30,6 +30,34 @@ import type { MeetingFact, MeetingHistoryInputs } from "./meeting-pipe-history.j
 const RUNS_CONCURRENCY = 2;
 const RUNS_ATTEMPTS = 4;
 const RUNS_RETRY_WAIT_MS = 20_000;
+/** Tries of a version's whole-history dated read before it is asked month by month. */
+const WHOLE_READ_ATTEMPTS = 2;
+/** The first month a run can have started in (runs-service's ledger starts 2026-02-02; one month of margin). */
+const HISTORY_FIRST_MONTH = "2026-01";
+
+/** A runs-service read that failed; `status` null = no HTTP answer (connection refused, timeout). */
+class RunsReadError extends Error {
+  constructor(message: string, readonly status: number | null) {
+    super(message);
+  }
+}
+
+/** Every [first instant of a month, first instant of the next) from `firstMonth` (YYYY-MM) through the month of `now`. */
+export function monthWindows(firstMonth: string, now: Date): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  let y = Number(firstMonth.slice(0, 4));
+  let m = Number(firstMonth.slice(5, 7));
+  const endY = now.getUTCFullYear();
+  const endM = now.getUTCMonth() + 1;
+  while (y < endY || (y === endY && m <= endM)) {
+    const ny = m === 12 ? y + 1 : y;
+    const nm = m === 12 ? 1 : m + 1;
+    out.push([`${y}-${String(m).padStart(2, "0")}-01T00:00:00.000Z`, `${ny}-${String(nm).padStart(2, "0")}-01T00:00:00.000Z`]);
+    y = ny;
+    m = nm;
+  }
+  return out;
+}
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -85,16 +113,49 @@ export async function readDatedSlugSpend(
     for (const c of leg.campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
     return [...byOrg].flatMap(([orgId, ids]) => chunk([...new Set(ids)].sort(), RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => ({ legKey: leg.legKey, orgId, ids: c })));
   });
-  // A big org's dated read can hit runs-service's statement timeout on a busy box (500, 2 runs of 7 on 2026-10-19):
-  // the run is one-off and off any request, so it waits and asks again before failing loud.
-  const get = async (path: string, params: URLSearchParams, orgId: string): Promise<unknown> => {
+  // A big org's dated read can hit runs-service's statement timeout on a busy box (500, 2 runs of 7 on 2026-10-19), and a
+  // deploy can restart runs-service mid-run (connection refused, 2026-10-24): the run is one-off and off any request, so
+  // it waits and asks again before failing loud.
+  const get = async (path: string, params: URLSearchParams, orgId: string, attempts = RUNS_ATTEMPTS): Promise<unknown> => {
     for (let attempt = 1; ; attempt++) {
-      const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers: { "x-api-key": apiKey, "x-org-id": orgId } });
-      if (res.ok) return res.json();
-      const body = await res.text();
-      if (res.status < 500 || attempt >= RUNS_ATTEMPTS) throw new Error(`runs-service ${path} (org ${orgId}) failed (${res.status}) after ${attempt} attempt(s): ${body}`);
-      console.warn(`[fleet-index-backfill] runs-service ${path} (org ${orgId}) answered ${res.status}, attempt ${attempt}/${RUNS_ATTEMPTS}; retrying`);
+      let failure: string;
+      let status: number | null = null;
+      try {
+        const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers: { "x-api-key": apiKey, "x-org-id": orgId } });
+        if (res.ok) return res.json();
+        status = res.status;
+        failure = `${res.status}: ${await res.text()}`;
+        if (res.status < 500) throw new RunsReadError(`runs-service ${path} (org ${orgId}) failed (${failure})`, res.status);
+      } catch (err) {
+        if (err instanceof RunsReadError) throw err;
+        failure = (err as Error).message;
+      }
+      if (attempt >= attempts) throw new RunsReadError(`runs-service ${path} (org ${orgId}) failed (${failure}) after ${attempt} attempt(s)`, status);
+      console.warn(`[fleet-index-backfill] runs-service ${path} (org ${orgId}) failed (${failure.slice(0, 120)}), attempt ${attempt}/${attempts}; retrying`);
       await new Promise((r) => setTimeout(r, RUNS_RETRY_WAIT_MS * attempt));
+    }
+  };
+  // One version's dated spend: the whole history in one read; when runs-service cannot answer it in time (statement
+  // timeout on a big org), the same read month by month (run-start windows, disjoint: each run lands in one day).
+  const datedBuckets = async (params: URLSearchParams, orgId: string): Promise<Array<Record<string, unknown>>> => {
+    const bucketsOf = (data: unknown): Array<Record<string, unknown>> => {
+      const b = (data as { buckets?: unknown }).buckets;
+      if (!Array.isArray(b)) throw new Error("runs-service /v1/stats/costs/timeseries returned no buckets array");
+      return b as Array<Record<string, unknown>>;
+    };
+    try {
+      return bucketsOf(await get("/v1/stats/costs/timeseries", params, orgId, WHOLE_READ_ATTEMPTS));
+    } catch (err) {
+      if (!(err instanceof RunsReadError) || (err.status !== null && err.status < 500)) throw err;
+      console.warn(`[fleet-index-backfill] org ${orgId}: whole-history dated read failed, reading month by month`);
+      const out: Array<Record<string, unknown>> = [];
+      for (const [after, before] of monthWindows(HISTORY_FIRST_MONTH, new Date())) {
+        const p = new URLSearchParams(params);
+        p.set("startedAfter", after);
+        p.set("startedBefore", before);
+        out.push(...bucketsOf(await get("/v1/stats/costs/timeseries", p, orgId)));
+      }
+      return out;
     }
   };
   // Which versions spent on these campaigns, then each version's spend per run-start day.
@@ -107,9 +168,7 @@ export async function readDatedSlugSpend(
   ).flat();
   const out = await mapWithConcurrency(slugReads, RUNS_CONCURRENCY, async (r) => {
     const params = new URLSearchParams({ interval: "day", tz: "UTC", workflowSlug: r.slug, featureSlugs, campaignIds: r.ids.join(",") });
-    const data = (await get("/v1/stats/costs/timeseries", params, r.orgId)) as { buckets?: Array<Record<string, unknown>> };
-    if (!Array.isArray(data.buckets)) throw new Error("runs-service /v1/stats/costs/timeseries returned no buckets array");
-    return data.buckets.map((b): DatedSlugSpend => {
+    return (await datedBuckets(params, r.orgId)).map((b): DatedSlugSpend => {
       if (typeof b.period !== "string") throw new Error("runs-service costs/timeseries bucket missing period");
       return {
         legKey: r.legKey,
