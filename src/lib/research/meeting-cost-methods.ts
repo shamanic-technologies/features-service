@@ -20,6 +20,7 @@
  */
 import { MONTHS, dayText, n, usd } from "./format.js";
 import { clientMedian } from "./pipe-series.js";
+import { addDays, dayRange } from "../fleet-index-history.js";
 import { COVERAGE_BAR_PCT } from "./outcome-cost.js";
 import type { ResearchChart, ResearchPoint } from "./types.js";
 import type { FleetIndexPoint } from "../fleet-indexes.js";
@@ -30,6 +31,7 @@ export const MEETING_COST_INDEX_SLUG = "cold-email-cost-per-meeting";
 export const MEETING_COST_OUTCOME_PRICES_SLUG = "research:meeting-cost:outcome-prices";
 export const MEETING_COST_LEDGER_SLUG = "research:meeting-cost:ledger";
 
+
 /** One stored day of a method (a `fleet_index_points` row, the fields a chart reads). */
 export interface MethodDay {
   day: string;
@@ -38,6 +40,10 @@ export interface MethodDay {
   outcomes: number;
   unavailableReason: string | null;
   inputs: Record<string, unknown>;
+  /** `recorded` = written live that day; `recomputed` = rebuilt later as of the end of that day. */
+  basis?: string;
+  /** When the row was written (ISO). */
+  recordedAt?: string;
 }
 
 /** The recorded methods; null = could not be read this build (the row says so). */
@@ -117,6 +123,33 @@ export function ledgerPoint(unit: OutcomeUnitCost | null, coveragePct: number | 
   };
 }
 
+/**
+ * PURE. The past days the ledger history must (re)compute now: every day from the first day the ledger holds a booked
+ * meeting to yesterday, except a recorded day and a recomputed one already written today (UTC). Oldest first.
+ */
+export function ledgerHistoryDays(firstDay: string | null, today: string, stored: readonly MethodDay[]): string[] {
+  if (!firstDay || firstDay >= today) return [];
+  const fresh = new Set(stored.filter((r) => r.basis === "recorded" || (r.recordedAt ?? "").slice(0, 10) >= today).map((r) => r.day));
+  return dayRange(firstDay, addDays(today, -1)).filter((d) => !fresh.has(d));
+}
+
+/** PURE. A past day's ledger point (recomputed): the priced point, else a null one so the day is not asked again. */
+export function ledgerHistoryPoint(unit: OutcomeUnitCost | null, coveragePct: number | null, daysMissing: number, outcomesRequired: number): FleetIndexPoint {
+  return (
+    ledgerPoint(unit, coveragePct, daysMissing, outcomesRequired) ?? {
+      indexSlug: MEETING_COST_LEDGER_SLUG,
+      value: null,
+      status: "noise",
+      outcomes: Math.round(unit?.produced ?? 0),
+      contacted: null,
+      workflowDynastySlug: null,
+      workflowDynastyName: null,
+      unavailableReason: "no_meeting_priced_yet",
+      inputs: { coveragePct, daysMissing },
+    }
+  );
+}
+
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /**
@@ -178,7 +211,10 @@ function dayPoints(rows: readonly MethodDay[], display: (r: MethodDay) => string
     .map((r) => ({ label: dayText(r.day), value: Number(r.value!.toFixed(2)), display: display(r), note: note(r), thin: thin(r) }));
 }
 
-const firstDayText = (rows: readonly MethodDay[]) => (rows.length ? dayText(rows[0]!.day) : null);
+const firstDayText = (rows: readonly MethodDay[]) => {
+  const first = rows.find((r) => r.value !== null && Number.isFinite(r.value));
+  return first ? dayText(first.day) : null;
+};
 
 /** PURE. Method 3: the outcome prices' meeting price, day by day from its first recorded day. */
 export function outcomePricesChart(rows: readonly MethodDay[]): ResearchChart | null {
@@ -239,7 +275,7 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
     (r) => {
       const cov = num(r.inputs.coveragePct);
       const missing = num(r.inputs.daysMissing) ?? 0;
-      return `${meetingsText(r.outcomes)} · ${cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`} of the outcome spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}${floor(r) ? " · a floor" : ""}`;
+      return `${meetingsText(r.outcomes)} · ${cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`} of the outcome spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}${floor(r) ? " · a floor" : ""}${r.basis === "recomputed" ? " · recomputed as of that day" : ""}`;
     },
     (r) => floor(r) || r.status === "noise",
   );
@@ -249,7 +285,7 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
     title: `Ledger, production cost every path: cost per meeting booked, day by day from ${firstDayText(rows)}`,
     lowerIsBetter: true,
     points,
-    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared. A since-inception total with no history: recorded day by day since this row existed, no earlier day is recomputed.`,
+    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared. Each day reads the ledger as of the end of that day (since inception up to it), rolled up with today's rules: past days recomputed, recorded live from Oct 24, 2026.`,
   };
 }
 
