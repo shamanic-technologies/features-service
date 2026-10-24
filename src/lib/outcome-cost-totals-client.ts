@@ -6,7 +6,7 @@
  * what produced none (coverage). FAIL-LOUD: a 422 (too many groups) or any non-OK throws.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import type { ConsumedRow, ProducedRow } from "./outcome-unit-costs.js";
+import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
 
 export type LedgerBasis = "gross" | "vendor";
 
@@ -85,4 +85,42 @@ export async function fetchOutcomeLedgerTotals(basis: LedgerBasis): Promise<Outc
   });
   if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return parseOutcomeLedgerTotals((await r.json()) as WireTotals, basis);
+}
+
+export interface OutcomeLedgerByWorkflow {
+  produced: WorkflowProducedRow[];
+  sourced: SourcedConsumption[];
+  /** Days since inception either read does not hold yet: the per-workflow figures stand on the others. */
+  daysMissing: number;
+}
+
+/** PURE. The two wire bodies (produced by campaign x workflow; consumed by the consumed occurrence's producing workflow). */
+export function parseOutcomeLedgerByWorkflow(producedBody: WireTotals, sourcedBody: WireTotals, basis: LedgerBasis): OutcomeLedgerByWorkflow {
+  const produced: WorkflowProducedRow[] = (producedBody.produced ?? []).map((g) => {
+    const key = g.dimensions?.outcomeKey;
+    if (!key) throw new Error("[features-service] outcome ledger by workflow: a produced group names no outcomeKey");
+    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, ownCostUsd: usdOf(g.cost, basis) };
+  });
+  const sourced: SourcedConsumption[] = [];
+  for (const g of sourcedBody.consumed ?? []) {
+    const consumer = g.dimensions?.consumingOutcomeKey;
+    const key = g.dimensions?.consumedOutcomeKey;
+    if (!key) throw new Error("[features-service] outcome ledger by workflow: a consumed group names no consumedOutcomeKey");
+    if (!consumer) continue;
+    sourced.push({ consumerKey: consumer, consumedKey: key, sourceWorkflowSlug: g.dimensions?.sourceWorkflowSlug ?? null, count: Number(g.consumptions ?? 0) });
+  }
+  return { produced, sourced, daysMissing: Math.max((producedBody.daysMissing ?? []).length, (sourcedBody.daysMissing ?? []).length) };
+}
+
+/** The fleet reads, since runs-service's own inception (no `since`, RESEARCH-STALE-1024). */
+export async function fetchOutcomeLedgerByWorkflow(basis: LedgerBasis): Promise<OutcomeLedgerByWorkflow> {
+  const get = async (groupBy: string) => {
+    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}`, {
+      headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
+    });
+    if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return (await r.json()) as WireTotals;
+  };
+  const [p, s] = await Promise.all([get("outcomeKey,campaignId,workflowSlug"), get("outcomeKey,sourceWorkflowSlug")]);
+  return parseOutcomeLedgerByWorkflow(p, s, basis);
 }
