@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { campaignOutputsOf, clientCostRowsOf, fetchDatedSpend, spendWindows, workflowEstimateGroupsOf } from "./research.js";
+import { campaignOutputsOf, clientCostRowsOf, fetchDatedSpend, partEstimateGroupsOf, replayBucketsOf, spendWindows, workflowEstimateGroupsOf } from "./research.js";
 import { readLegSpendTotal } from "./research-sends.js";
 
 describe("research dated spend windows", () => {
@@ -128,5 +128,36 @@ describe("clientCostRowsOf (COST-ACCOUNTING-1023-P4)", () => {
     expect(rows.map((r) => r.orgId).sort()).toEqual(["o1", "o2"]);
     expect(rows.find((r) => r.orgId === "o1")).toMatchObject({ label: "O1", coveragePct: 50, todaySpendUsd: 10, todayReplies: 2, ledger: unit });
     expect(rows.find((r) => r.orgId === "o2")).toMatchObject({ ledger: null, coveragePct: null, todaySpendUsd: 9, todayReplies: 3 });
+  });
+});
+
+describe("partEstimateGroupsOf + replayBucketsOf (PERF-ESTIMATE-DISCUSS-1024)", () => {
+  const persons = [
+    { workflowSlug: "keel-v2", servedDay: "2026-10-01", contacted: 30, positiveReplies: 1, tpl: "blind", positiveReplyDay: "2026-10-03" },
+    { workflowSlug: "keel-v2", servedDay: "2026-10-01", contacted: 10, positiveReplies: 0, tpl: "named", positiveReplyDay: null },
+    { workflowSlug: "keel-v2", servedDay: "2026-10-02", contacted: 10, positiveReplies: 0, tpl: null, positiveReplyDay: null },
+    { workflowSlug: "keel-v2", servedDay: "", contacted: 50, positiveReplies: 0, tpl: "blind", positiveReplyDay: null },
+  ];
+  const partOf = (p: (typeof persons)[number]) => (p.tpl ? { key: p.tpl, label: p.tpl.toUpperCase() } : null);
+  it("groups by part, shares each workflow's spend on its people, states the people with no writer", () => {
+    const { groups, peopleLeftOut } = partEstimateGroupsOf(
+      persons,
+      partOf,
+      new Map([["keel-v2", "keel"]]),
+      [{ workflowDynastySlug: "keel", basis: "flash", spentUsd: 100 }],
+      new Date("2026-10-23T15:00:00Z"),
+    );
+    expect(peopleLeftOut).toBe(10);
+    // $100 over the dynasty's 100 people (undated ones included): $1 a person
+    expect(groups.map((g) => [g.key, g.label, g.outcomes, g.spendUsd])).toEqual([
+      ["blind", "BLIND", 1, 30],
+      ["named", "NAMED", 0, 10],
+    ]);
+  });
+  it("replay buckets carry the reply day, served people only", () => {
+    expect(replayBucketsOf(persons, partOf)).toEqual([
+      { key: "blind", label: "BLIND", servedDay: "2026-10-01", contacted: 30, positiveReplies: 1, positiveReplyDay: "2026-10-03" },
+      { key: "named", label: "NAMED", servedDay: "2026-10-01", contacted: 10, positiveReplies: 0, positiveReplyDay: null },
+    ]);
   });
 });

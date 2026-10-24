@@ -59,7 +59,8 @@ import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
-import { workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
+import { estimateStudy, LLM_DIMENSION, TEMPLATE_DIMENSION, workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
+import { estimateReplayStudy, type ReplayBucket } from "../lib/research/estimate-replay.js";
 import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
 import { rollUpByOrg, rollUpOutcomeUnitCosts, workflowUnitCosts } from "../lib/outcome-unit-costs.js";
 import { fetchOutcomeLedgerByWorkflow } from "../lib/outcome-cost-totals-client.js";
@@ -652,6 +653,54 @@ export function workflowEstimateGroupsOf(
   return [...by.values()];
 }
 
+type EstimatePerson = { workflowSlug: string; servedDay: string; contacted: number; positiveReplies: number };
+type SpendRow = { workflowDynastySlug: string; basis: "mature" | "flash"; spentUsd: number; figuresByView?: { flash: { spentUsd: { value: number | null } } } };
+
+/**
+ * PURE. The reply pipe's people per PART (a template dynasty, an LLM dynasty: `partOf`, null = no writer on record), by
+ * serve day (PERF-ESTIMATE-DISCUSS-1024). Spend: each workflow dynasty's lifetime gross spend (the workflow card's) shared
+ * on its people, so the parts add up to the workflows. A person with no writer is left out and counted, never spread.
+ */
+export function partEstimateGroupsOf<P extends EstimatePerson>(
+  persons: readonly P[],
+  partOf: (p: P) => { key: string; label: string } | null,
+  dynastyOf: ReadonlyMap<string, string>,
+  rows: readonly SpendRow[],
+  now: Date,
+): { groups: WorkflowEstimateGroup[]; peopleLeftOut: number } {
+  const today = Date.parse(now.toISOString().slice(0, 10));
+  const dyn = (slug: string) => dynastyOf.get(slug) ?? slug;
+  const spendOf = new Map(rows.map((r) => [r.workflowDynastySlug, r.figuresByView?.flash.spentUsd.value ?? (r.basis === "flash" ? r.spentUsd : 0)]));
+  const people = new Map<string, number>();
+  for (const p of persons) people.set(dyn(p.workflowSlug), (people.get(dyn(p.workflowSlug)) ?? 0) + p.contacted);
+  const by = new Map<string, WorkflowEstimateGroup>();
+  let peopleLeftOut = 0;
+  for (const p of persons) {
+    if (!p.servedDay) continue;
+    const part = partOf(p);
+    if (!part) {
+      peopleLeftOut += p.contacted;
+      continue;
+    }
+    const d = dyn(p.workflowSlug);
+    const g = by.get(part.key) ?? { key: part.key, label: part.label, slices: [], outcomes: 0, spendUsd: 0 };
+    g.slices.push({ contacted: p.contacted, ageDays: (today - Date.parse(p.servedDay)) / 86_400_000 + 0.5 });
+    g.outcomes += p.positiveReplies;
+    const all = people.get(d) ?? 0;
+    if (all > 0) g.spendUsd += ((spendOf.get(d) ?? 0) * p.contacted) / all;
+    by.set(part.key, g);
+  }
+  return { groups: [...by.values()], peopleLeftOut };
+}
+
+/** PURE. The replay's buckets of one part (ESTIMATE-REPLAY-1024): every served person bucket with its reply day. */
+export function replayBucketsOf<P extends EstimatePerson & { positiveReplyDay?: string | null }>(persons: readonly P[], partOf: (p: P) => { key: string; label: string } | null): ReplayBucket[] {
+  return persons.flatMap((p) => {
+    const part = p.servedDay ? partOf(p) : null;
+    return part ? [{ ...part, servedDay: p.servedDay, contacted: p.contacted, positiveReplies: p.positiveReplies, positiveReplyDay: p.positiveReplyDay ?? null }] : [];
+  });
+}
+
 async function readReplyDelay(): Promise<ReplyDelayRead> {
   const rows = await fetchFleetCampaignRows();
   const ids = [
@@ -784,6 +833,41 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
         }),
       ]
     : [];
+  // The template and LLM estimates beside the workflow's, and the replay of all three (PERF-ESTIMATE-DISCUSS-1024).
+  if (reply.input.rankingRows) {
+    const rows = reply.input.rankingRows;
+    const dayBins = replyDelay ? replyDelay.metric.dailyDistribution : null;
+    const tplDyn = (await dynastiesP).reply;
+    const workflowOf = (p: FleetPersonBucket) => {
+      const d = reply.input.dynastyOf.get(p.workflowSlug) ?? p.workflowSlug;
+      return { key: d, label: reply.input.labelOf(d) };
+    };
+    const templateOf = (p: FleetPersonBucket) => {
+      const t = p.generation?.promptType;
+      return t ? { key: tplDyn.keyOf(t), label: tplDyn.labelOf(tplDyn.keyOf(t)) } : null;
+    };
+    const llmOf = (p: FleetPersonBucket) => (p.generation ? { key: gens.reply.llmKeyOf(p.generation.model), label: gens.reply.llmLabelOf(gens.reply.llmKeyOf(p.generation.model)) } : null);
+    for (const [dim, partOf] of [
+      [TEMPLATE_DIMENSION, templateOf],
+      [LLM_DIMENSION, llmOf],
+    ] as const) {
+      const { groups, peopleLeftOut } = partEstimateGroupsOf(reply.persons, partOf, reply.input.dynastyOf, rows, now);
+      estimateStudies.push(estimateStudy(dim, { pipe: POSITIVE_REPLY_PIPE, groups, peopleLeftOut, dayBins, outcomesRequired: reply.input.outcomesRequired }));
+    }
+    estimateStudies.push(
+      estimateReplayStudy({
+        pipe: POSITIVE_REPLY_PIPE,
+        dims: [
+          { label: "Workflows", buckets: replayBucketsOf(reply.persons, workflowOf) },
+          { label: "Templates", buckets: replayBucketsOf(reply.persons, templateOf) },
+          { label: "LLMs", buckets: replayBucketsOf(reply.persons, llmOf) },
+        ],
+        dayBins,
+        outcomesRequired: reply.input.outcomesRequired,
+        now,
+      }),
+    );
+  }
   // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
   const ledger = await ledgerP;
   const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
