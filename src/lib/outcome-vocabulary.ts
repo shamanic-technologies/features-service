@@ -97,7 +97,7 @@ export function pluralLabelOf(label: string): string {
   const words = label.trim().split(/\s+/);
   if (words.length === 0 || words[0] === "") return label;
   const last = words[words.length - 1];
-  const participle = words.length > 1 && (/ed$/i.test(last) || /^(sent|done|won|lost|held|paid|made|seen)$/i.test(last));
+  const participle = words.length > 1 && (/ed$/i.test(last) || /^(sent|done|won|lost|held|paid|made|seen|shown|built|found|written|given|taken|known|chosen|drawn|grown|sold|bought|kept|told|run)$/i.test(last));
   if (participle) return [pluralWord(words[0]), ...words.slice(1)].join(" ");
   return [...words.slice(0, -1), pluralWord(last)].join(" ");
 }
