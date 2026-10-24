@@ -77,12 +77,55 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
   return { book: { produced, noOutput, consumed }, daysMissing };
 }
 
-async function read(groupBy: string, runStartUntil?: string): Promise<Wire> {
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}${matureCutParams(runStartUntil)}`, {
+/** The ledger's first month (runs-service states its own inception, 2026-02-02). */
+export const LEDGER_FIRST_DAY = "2026-02-01";
+
+/** PURE. Calendar months from `first` to `last` (inclusive UTC days), each as [since, until]. */
+export function monthRanges(first: string, last: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  let d = new Date(`${first.slice(0, 7)}-01T00:00:00Z`);
+  while (d.toISOString().slice(0, 10) <= last) {
+    const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+    const since = d.toISOString().slice(0, 10) < first ? first : d.toISOString().slice(0, 10);
+    const end = new Date(next.getTime() - 86_400_000).toISOString().slice(0, 10);
+    out.push([since, end > last ? last : end]);
+    d = next;
+  }
+  return out;
+}
+
+async function readRange(groupBy: string, since: string, until: string, runStartUntil?: string): Promise<Wire> {
+  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}&since=${since}&until=${until}${matureCutParams(runStartUntil)}`, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
   });
-  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  // over runs-service's group cap: the range splits in halves (every section is additive over disjoint days)
+  if (r.status === 422 && since < until) {
+    const mid = new Date((Date.parse(`${since}T00:00:00Z`) + Date.parse(`${until}T00:00:00Z`)) / 2).toISOString().slice(0, 10);
+    const after = new Date(Date.parse(`${mid}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    return concatWire([await readRange(groupBy, since, mid, runStartUntil), await readRange(groupBy, after, until, runStartUntil)]);
+  }
+  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy} ${since}..${until}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return (await r.json()) as Wire;
+}
+
+/** PURE. Disjoint day ranges of one read as one body: rows concatenated (every reader sums them), missing days unioned. */
+export function concatWire(parts: readonly Wire[]): Wire {
+  return {
+    daysMissing: [...new Set(parts.flatMap((p) => p.daysMissing ?? []))],
+    produced: parts.flatMap((p) => p.produced ?? []),
+    consumed: parts.flatMap((p) => p.consumed ?? []),
+    scope: parts.flatMap((p) => p.scope ?? []),
+  };
+}
+
+/** One grouping since inception, read month by month (runs-service's group cap holds per read, never per history). */
+async function read(groupBy: string, runStartUntil?: string): Promise<Wire> {
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const months = monthRanges(LEDGER_FIRST_DAY, today > yesterday ? today : yesterday);
+  const parts: Wire[] = [];
+  for (const [since, until] of months) parts.push(await readRange(groupBy, since, until, runStartUntil));
+  return concatWire(parts);
 }
 
 const HELD_MS = 15 * 60_000;
