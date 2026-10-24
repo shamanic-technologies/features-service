@@ -15,7 +15,7 @@
  * Data dated after D never moves D's figures. An act or a meeting with no date is in no past day.
  */
 import { buildMeetingLegFleet, MEETING_BOOKING_LEG_KEY, type MeetingLegFleet, type PairActed } from "./meeting-leg-fleet.js";
-import { meetingReportingFrom } from "./meeting-population.js";
+import { isMeasuringMeetingFact, meetingReportingFrom } from "./meeting-population.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 import type { FleetLegCampaign } from "./fleet-leg-campaigns.js";
 import type { CostGroup, WorkflowMetadata } from "./public-stats-clients.js";
@@ -45,6 +45,8 @@ export interface MeetingAct {
  */
 export interface MeetingFact {
   brandId: string;
+  /** lead-service's meeting source (`crm`, `manual`, `tracker`...); the acted-person reading states `acted_person`. */
+  source: string;
   leadId: string | null;
   event: string;
   occurredAt: string | null;
@@ -123,7 +125,7 @@ export function meetingPipeOn(inputs: MeetingHistoryInputs, day: string): { flee
   const reporting = new Set<string>();
   for (const m of inputs.meetings) {
     if (!m.occurredAt || m.occurredAt > end) continue;
-    if (m.event === "meeting_booked" || m.event === "meeting_attended") reporting.add(m.brandId);
+    if ((m.event === "meeting_booked" || m.event === "meeting_attended") && isMeasuringMeetingFact(m)) reporting.add(m.brandId);
     if (m.event === "acted_person_meeting" && m.leadId) {
       const s = booked.get(m.brandId) ?? new Set<string>();
       s.add(m.leadId);

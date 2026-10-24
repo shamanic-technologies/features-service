@@ -179,6 +179,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
     readBrandEngagement(),
     readClientReturn(),
   ]);
+  // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024, owner 2026-10-24 « go ledger accounting direct »).
+  const meetingLedger = await (await import("./research.js")).readLedgerMeetingCost();
   if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
   if (!reply) console.warn("[features-service] fleet indexes: positive-reply ranking unreadable, its indexes not recorded this tick");
   const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
@@ -189,6 +191,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
     meetingPipe,
     brandEngagement,
     clientReturn,
+    meetingLedger,
   });
   // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
   if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
+import type { LedgerMeetingCost } from "../lib/fleet-indexes.js";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 const store = vi.hoisted(() => ({
@@ -24,6 +25,9 @@ vi.mock("../lib/meeting-leg-fleet.js", () => ({ ...meeting, MEETING_BOOKING_FEAT
 const persons = vi.hoisted(() => ({ fetchFleetEngagementByBrand: vi.fn(async () => new Map<string, { contacted: number; positiveReplies: number; screenedContacted: number; humanClicks: number }>()) }));
 vi.mock("../lib/fleet-positive-repliers.js", () => persons);
 
+// MEETING-COST-METHODS-1024: the Cost Per Meeting Index reads the ledger's booked meeting.
+const ledger = { readLedgerMeetingCost: vi.fn(async (): Promise<LedgerMeetingCost | null> => ({ unitCostUsd: 866.47, produced: 8, coveragePct: 90.5, daysMissing: 0, unpricedInputs: 1 })) };
+vi.mock("./research.js", () => ledger);
 const { default: router, recordFleetIndexesNow } = await import("./fleet-indexes.js");
 const app = express().use(router);
 
@@ -140,7 +144,8 @@ describe("recording", () => {
     expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
-    expect((bySlug.get("cold-email-cost-per-meeting") as { value: number }).value).toBeCloseTo(128.8 / 0.25 + 17, 6);
+    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 866.47, status: "noise", inputs: { method: "ledger_every_path", floor: "yes" } });
+    expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.15 * 0.25, 6);
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
     // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting
     expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
@@ -153,7 +158,7 @@ describe("recording", () => {
     meeting.getInternalPipeFleet.mockRejectedValue(new Error("lead-service down"));
     await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
-    expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["cold-email-cost-per-positive-reply", "cold-email-positive-reply-rate"]);
+    expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["cold-email-cost-per-meeting", "cold-email-cost-per-positive-reply", "cold-email-positive-reply-rate"]);
   });
 });
 
@@ -161,6 +166,7 @@ describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
   beforeEach(() => {
     ranking.readLegWorkflowRanking.mockResolvedValue(null);
     meeting.getInternalPipeFleet.mockResolvedValue(null);
+    ledger.readLedgerMeetingCost.mockResolvedValue(null);
   });
 
   it("records the median cost per engaged lead on HUMAN clicks (never the provider's click count) and the median client ROI", async () => {

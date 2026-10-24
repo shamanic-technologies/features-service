@@ -54,7 +54,7 @@ import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking, readOutcomePricesMeetingBooked } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries, recordFleetIndexPoints, utcDay, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
-import type { FleetIndexPoint } from "../lib/fleet-indexes.js";
+import { ledgerMeetingIndexPoint, type FleetIndexPoint, type LedgerMeetingCost } from "../lib/fleet-indexes.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import {
   ledgerHistoryDays,
@@ -1694,19 +1694,27 @@ let ledgerHistoryInFlight = false;
 function backfillMeetingLedgerHistory(
   ledger: { outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
   stored: readonly MethodDay[],
+  storedIndex: readonly MethodDay[],
   today: string,
 ): void {
   if (ledgerHistoryInFlight) return;
   ledgerHistoryInFlight = true;
   void (async () => {
     const first = await fetchFirstOutcomeDay("meeting_booked");
-    const days = ledgerHistoryDays(first, today, stored).slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
+    // The public Cost Per Meeting Index IS this figure (MEETING-COST-METHODS-1024): its past days are written beside it.
+    const days = [...new Set([...ledgerHistoryDays(first, today, stored), ...ledgerHistoryDays(first, today, storedIndex)])].sort().slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
     if (!days.length) return;
     const outcomesRequired = legMaturity("start_to_meeting_booked").outcomesRequired;
     for (const day of days) {
       const totals = await fetchOutcomeLedgerTotals("gross", day);
       const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null;
-      await writeRecomputedFleetIndexPoints([{ day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) }], new Date());
+      await writeRecomputedFleetIndexPoints(
+        [
+          { day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) },
+          { day, point: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)), inputs: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)).inputs, asOfDay: day } } },
+        ],
+        new Date(),
+      );
     }
     console.log(`[features-service] research meeting-cost: ledger history recomputed for ${days.length} day(s), ${days[0]}..${days[days.length - 1]}`);
   })()
@@ -1753,10 +1761,38 @@ async function meetingCostMethodsOf(
     series(MEETING_COST_INDEX_SLUG, null),
     series(MEETING_COST_LEDGER_SLUG, ledgerToday),
   ]);
-  if (ledger.totals && ledgerDays) backfillMeetingLedgerHistory(ledger, ledgerDays, day);
+  if (ledger.totals && ledgerDays && index) backfillMeetingLedgerHistory(ledger, ledgerDays, index, day);
   return {
     outcomePrices: prices && (prices.length || price) ? prices : null,
-    index,
     ledger: ledgerDays && (ledgerDays.length || ledger.totals) ? ledgerDays : null,
   };
+}
+
+/** The ledger's booked meeting as the Cost Per Meeting Index reads it (an unpriced unit reads 0 meetings, no cost). */
+function ledgerMeetingCostOf(unit: OutcomeUnitCost | null, totals: Pick<OutcomeLedgerTotals, "coveragePct" | "daysMissing">): LedgerMeetingCost {
+  const priced = unit && !unit.unpricedReason ? unit : null;
+  return {
+    unitCostUsd: priced?.unitCostUsd ?? null,
+    produced: unit?.produced ?? 0,
+    coveragePct: totals.coveragePct,
+    daysMissing: totals.daysMissing,
+    unpricedInputs: priced?.unpricedInputs.length ?? 0,
+  };
+}
+
+/**
+ * The ledger's cost of one booked meeting today, every path (the `meeting-cost-every-path` study's figure): the public
+ * Cost Per Meeting Index's input (owner 2026-10-24 « go ledger accounting direct »). Null (logged) when the ledger, the
+ * campaigns or the catalogue cannot be read: the recorder then records nothing for that index.
+ */
+export async function readLedgerMeetingCost(): Promise<LedgerMeetingCost | null> {
+  try {
+    const [totals, rows, catalogue] = await Promise.all([fetchOutcomeLedgerTotals("gross"), fetchFleetCampaignRows(), loadChannelCatalogue({ publishedOnly: false })]);
+    const { outputOf, pipeOutputs } = campaignOutputsOf(rows, catalogue.channels);
+    const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, outputOf, pipeOutputs).units.get("meeting_booked") ?? null;
+    return ledgerMeetingCostOf(unit, totals);
+  } catch (err) {
+    console.error("[features-service] fleet indexes: the ledger's booked meeting unreadable, Cost Per Meeting Index not recorded this tick:", err);
+    return null;
+  }
 }

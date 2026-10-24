@@ -20,7 +20,7 @@ import type { JevInput, JudgmentGroup, ScreenMonth } from "../lib/research/jev.j
 import type { ReportingBrand } from "../lib/research/meetings.js";
 import type { GenerationRun, WorkflowRun } from "../lib/research/catalog.js";
 import type { GenerationCostInput } from "../lib/research/run-cost.js";
-import { meetingReportingOf } from "../lib/meeting-population.js";
+import { isMeasuringMeetingFact, meetingReportingOf } from "../lib/meeting-population.js";
 import { rememberMeetingReporting } from "../lib/meeting-reporting-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 
@@ -312,7 +312,7 @@ export async function readJevInputs(): Promise<Omit<JevInput, "costBasis" | "rea
  */
 /** lead-service's meeting attribution, as the Research build reads it (once per build). */
 export interface MeetingAttributionRead {
-  body: { attributedMeetings: Array<{ conversionEventId: string; orgId?: string; brandId: string; leadId?: string | null; event: string; occurredAt: string | null; positiveReply: unknown }> };
+  body: { attributedMeetings: Array<{ conversionEventId: string; orgId?: string; brandId: string; leadId?: string | null; event: string; source?: string; occurredAt: string | null; positiveReply: unknown }> };
   reporting: ReturnType<typeof meetingReportingOf>;
 }
 
@@ -338,7 +338,7 @@ export async function readBookedAfterReply(read: Promise<MeetingAttributionRead>
     const reportingBrandIds = new Set(reporting.reportingBrandIds);
     const booked = new Set<string>();
     for (const m of body.attributedMeetings) {
-      if (m.event !== "meeting_booked" || !m.positiveReply || !m.leadId || !m.orgId || !reportingBrandIds.has(m.brandId)) continue;
+      if (m.event !== "meeting_booked" || !m.positiveReply || !m.leadId || !m.orgId || !reportingBrandIds.has(m.brandId) || !isMeasuringMeetingFact(m)) continue;
       booked.add(`${m.orgId}|${m.brandId}|${m.leadId}`);
     }
     return { reportingBrandIds, booked };
@@ -356,7 +356,7 @@ export async function readReportingBrands(read: Promise<MeetingAttributionRead> 
     for (const m of body.attributedMeetings) {
       const b = brands.get(m.brandId);
       if (!b) continue;
-      if (m.event !== "meeting_booked" || !m.positiveReply || !m.occurredAt || seen.has(m.conversionEventId)) continue;
+      if (m.event !== "meeting_booked" || !m.positiveReply || !m.occurredAt || seen.has(m.conversionEventId) || !isMeasuringMeetingFact(m)) continue;
       seen.add(m.conversionEventId);
       const ym = m.occurredAt.slice(0, 7);
       b.meetingsByMonth[ym] = (b.meetingsByMonth[ym] ?? 0) + 1;

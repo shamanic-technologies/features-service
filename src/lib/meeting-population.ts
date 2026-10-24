@@ -52,17 +52,30 @@ export function meetingReportingFrom(brandIds: Iterable<string>): MeetingReporti
   return { reports: (brandId) => typeof brandId === "string" && set.has(brandId), reportingBrandIds: [...set].sort() };
 }
 
-/** PURE: the reporting brands off lead-service's `/internal/meeting-attribution` body (`byBrand[].meetings.total`). */
+/**
+ * A meeting source that does not MEASURE meetings (owner 2026-10-24, MEETING-TRACKER-1024: « le tracker est trop imprécis
+ * pour qu'on le considère comme fiable pour mesurer les meetings »): a brand whose only meeting facts come from it reports
+ * no meetings, and its facts count in no meeting figure. Prod: Legistai's 11 tracker meetings, none matched to a person.
+ */
+export const UNRELIABLE_MEETING_SOURCES: ReadonlySet<string> = new Set(["tracker"]);
+
+/** PURE: whether one lead-service meeting fact measures a meeting (its source is not an unreliable one). */
+export const isMeasuringMeetingFact = (m: { source?: unknown }): boolean => typeof m.source === "string" && !UNRELIABLE_MEETING_SOURCES.has(m.source);
+
+/**
+ * PURE: the reporting brands off lead-service's `/internal/meeting-attribution` body: every brand holding at least one
+ * live meeting fact (booked or attended, any person, matched or not) from a source that measures meetings
+ * (`attributedMeetings[].source`, MEETING-TRACKER-1024; was `byBrand[].meetings.total > 0`, every source).
+ */
 export function meetingReportingOf(body: unknown): MeetingReporting {
-  const byBrand = (body as { byBrand?: unknown } | null)?.byBrand;
-  if (!Array.isArray(byBrand)) throw new Error("[features-service] lead-service meeting-attribution has no byBrand");
-  const ids: string[] = [];
-  for (const row of byBrand as Array<{ brandId?: unknown; meetings?: { total?: unknown } }>) {
-    const total = row?.meetings?.total;
-    if (typeof row?.brandId !== "string" || typeof total !== "number" || !Number.isInteger(total) || total < 0) {
-      throw new Error("[features-service] lead-service meeting-attribution: a byBrand row has no brandId/meetings.total");
+  const rows = (body as { attributedMeetings?: unknown } | null)?.attributedMeetings;
+  if (!Array.isArray(rows)) throw new Error("[features-service] lead-service meeting-attribution has no attributedMeetings");
+  const ids = new Set<string>();
+  for (const row of rows as Array<{ brandId?: unknown; event?: unknown; source?: unknown }>) {
+    if (typeof row?.brandId !== "string" || typeof row?.event !== "string" || typeof row?.source !== "string") {
+      throw new Error("[features-service] lead-service meeting-attribution: a meeting row has no brandId/event/source");
     }
-    if (total > 0) ids.push(row.brandId);
+    if ((row.event === "meeting_booked" || row.event === "meeting_attended") && isMeasuringMeetingFact(row)) ids.add(row.brandId);
   }
   return meetingReportingFrom(ids);
 }
