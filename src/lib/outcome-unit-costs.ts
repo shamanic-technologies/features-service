@@ -232,3 +232,69 @@ export function rollUpByOrg(produced: readonly ProducedRow[], consumed: readonly
   }
   return out;
 }
+
+export interface WorkflowProducedRow {
+  outcomeKey: string;
+  campaignId: string | null;
+  workflowSlug: string | null;
+  ownCostUsd: number;
+}
+
+export interface SourcedConsumption {
+  consumerKey: string;
+  consumedKey: string;
+  /** The workflow of the run that PRODUCED the consumed occurrence (null = unknown provenance or untagged). */
+  sourceWorkflowSlug: string | null;
+  count: number;
+}
+
+export interface WorkflowUnitCost {
+  workflowSlug: string;
+  /** Occurrences of the outcome whose hand-off input (the send a reply answered) this workflow produced. */
+  outcomes: number;
+  /** The workflow's own production for the outcome (losses included) ÷ its outcomes, + the outcome's shared stages per unit. */
+  unitCostUsd: number | null;
+  ownCostUsd: number;
+}
+
+/**
+ * PURE. Per WORKFLOW (version), the unit cost of outcome S: everything the workflow produced inside the pipes whose leg
+ * ends on S (rule 3; the sends nobody answered included, rule 2) ÷ the S occurrences whose hand-off input it produced
+ * (the reply answering its send: runs-service groups a consumption by the producing run's workflow), + per unit what
+ * every S carries beyond its pipes' workflow runs (S's own stage off any campaign, inputs bought from other pipes), at
+ * the fleet's figure. `fleet` = the fleet roll-up of S. S occurrences of unknown source count in no workflow.
+ */
+export function workflowUnitCosts(
+  s: string,
+  produced: readonly WorkflowProducedRow[],
+  sourced: readonly SourcedConsumption[],
+  outputOf: (campaignId: string) => string | null,
+  fleet: OutcomeUnitCost,
+): WorkflowUnitCost[] {
+  const own = new Map<string, number>();
+  const handOffKeys = new Set<string>();
+  for (const r of produced) {
+    if (!r.campaignId || outputOf(r.campaignId) !== s || !r.workflowSlug) continue;
+    own.set(r.workflowSlug, (own.get(r.workflowSlug) ?? 0) + r.ownCostUsd);
+    if (r.outcomeKey !== s) handOffKeys.add(r.outcomeKey);
+  }
+  // per workflow, per hand-off key: the S occurrences that consumed what it produced; an S counts once (max over keys)
+  const byKey = new Map<string, Map<string, number>>();
+  for (const c of sourced) {
+    if (c.consumerKey !== s || !c.sourceWorkflowSlug || !handOffKeys.has(c.consumedKey)) continue;
+    const m = byKey.get(c.sourceWorkflowSlug) ?? new Map<string, number>();
+    m.set(c.consumedKey, (m.get(c.consumedKey) ?? 0) + c.count);
+    byKey.set(c.sourceWorkflowSlug, m);
+  }
+  const workflowsCost = [...own.values()].reduce((a, v) => a + v, 0);
+  // what one S carries beyond its pipes' workflow runs, fleet-wide: its unit cost minus the workflow part per unit
+  const shared = fleet.unitCostUsd !== null && fleet.produced > 0 ? Math.max(fleet.unitCostUsd - workflowsCost / fleet.produced, 0) : 0;
+  const slugs = new Set([...own.keys(), ...byKey.keys()]);
+  return [...slugs]
+    .map((w) => {
+      const outcomes = Math.max(0, ...(byKey.get(w)?.values() ?? []));
+      const ownCostUsd = own.get(w) ?? 0;
+      return { workflowSlug: w, outcomes, ownCostUsd, unitCostUsd: outcomes > 0 ? ownCostUsd / outcomes + shared : null };
+    })
+    .sort((a, b) => (a.unitCostUsd ?? Infinity) - (b.unitCostUsd ?? Infinity) || a.workflowSlug.localeCompare(b.workflowSlug));
+}
