@@ -10,10 +10,11 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
 
-export type LedgerBasis = "gross" | "vendor";
+export type LedgerBasis = "gross" | "net" | "vendor";
 
 interface WireCost {
   grossCents?: string;
+  netCents?: string;
   vendorCents?: string;
 }
 interface WireTotals {
@@ -41,7 +42,7 @@ export interface OutcomeLedgerTotals {
 }
 
 const usdOf = (c: WireCost | undefined, basis: LedgerBasis): number => {
-  const v = basis === "vendor" ? c?.vendorCents : c?.grossCents;
+  const v = basis === "vendor" ? c?.vendorCents : basis === "net" ? c?.netCents : c?.grossCents;
   if (v === undefined) throw new Error(`[features-service] outcome ledger totals: a cost carries no ${basis} figure`);
   return Number(v) / 100;
 };
@@ -96,6 +97,15 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
     daysMissing: (body.daysMissing ?? []).length,
     coverageByOrg,
   };
+}
+
+/**
+ * THE MATURE CUT on the ledger (runs-service v0.47.75): production of runs STARTED on or before `runStartUntil` (inclusive
+ * UTC day), and the consumptions whose consumed occurrence (the send a reply answers) was produced by such a run, so a
+ * reply landing after the cutoff still counts for the cohort that bought it (the maturity rule). Empty = no cut.
+ */
+export function matureCutParams(runStartUntil?: string): string {
+  return runStartUntil ? `&runStartUntil=${runStartUntil}&sourceRunStartUntil=${runStartUntil}` : "";
 }
 
 /**

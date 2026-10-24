@@ -236,15 +236,25 @@ async function readPairActed(orgId: string, brandId: string, campaignIds: string
   const reached = stepReading(toStep);
   if (reached === "acted") return { actedByCampaign, meetingLeadIds: actedIds };
   if (actedIds.size === 0) return { actedByCampaign, meetingLeadIds: new Set() };
+  const persons = await readActedPersons(orgId, brandId, actedIds);
+  return { actedByCampaign, meetingLeadIds: new Set(persons.filter((p) => (reached as (p: EnginePerson) => boolean)(p)).map((p) => p.leadId)) };
+}
+
+/**
+ * The named leads of one brand as the revenue engine reads them, step statements and qualifications overlaid: the
+ * reading `readPairActed` decides "reached" on, each signal with its date (`signalDates`; the meeting pipe history
+ * dates a booked meeting by it, MEETING-COST-METHODS-1024).
+ */
+export async function readActedPersons(orgId: string, brandId: string, leadIds: ReadonlySet<string>): Promise<EnginePerson[]> {
   const headers = { orgId };
-  const persons: EnginePerson[] = (await fetchLeadsForRevenue(brandId, undefined, headers)).filter((p) => actedIds.has(p.leadId));
+  const persons: EnginePerson[] = (await fetchLeadsForRevenue(brandId, undefined, headers)).filter((p) => leadIds.has(p.leadId));
   const emails = [...new Set(persons.map((p) => p.email).filter((e): e is string => Boolean(e)))];
   const [observed, quals] = await Promise.all([
     fetchObservedStepFacts(brandId, OUTCOME_CAUSES),
     fetchQualifications(brandId, undefined, emails, headers),
   ]);
   applySignalOverlays(persons, null, observed.byEmail, quals, [], OUTCOME_CAUSES);
-  return { actedByCampaign, meetingLeadIds: new Set(persons.filter((p) => (reached as (p: EnginePerson) => boolean)(p)).map((p) => p.leadId)) };
+  return persons;
 }
 
 export async function computeMeetingLegFleet(): Promise<MeetingLegFleet> {

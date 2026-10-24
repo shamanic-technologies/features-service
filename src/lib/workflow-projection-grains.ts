@@ -15,6 +15,7 @@
  * a workflow's evidence includes its predecessor versions', identical to crossOrg.
  */
 
+import { ledgerSlugEvidence, type LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { isScreenedVisitLeg, screenedCountsOfStats, screenVisitEvidence } from "./screened-visits.js";
 import { campaignFamilyStatsParams } from "./email-gateway-family.js";
 import { fetchWithRetry } from "./fetch-retry.js";
@@ -218,6 +219,16 @@ export function brandGrainDynasties(
   for (const w of workflows) place(w.workflowSlug, w.workflowDynastySlug);
   for (const slug of observedSlugs) place(slug, slug);
   return { active, retired };
+}
+
+/**
+ * LEDGER-HISTORY-1024: a leg read on a reconciled ledger re-states every version's spend, outcomes and contacted on
+ * the general ledger before the roll-up (`ledgerSlugEvidence`), at every grain alike. Absent = the previous regime.
+ */
+export interface GrainLedger {
+  book: LedgerPipeBook;
+  outcomeKey: string;
+  statKey: "recipientsRepliesPositive" | "recipientsClicked";
 }
 
 /** A brand- or campaign-grain rollup, active dynasties and retired lineages kept apart. */
@@ -730,18 +741,20 @@ export async function fetchCampaignWorkflowEvidenceWithRetired(
   pricing: Pricing = "gross",
   basis: CostBasis = "charged",
   repliers?: readonly PositiveReplier[],
+  ledger?: GrainLedger,
 ): Promise<GrainEvidenceWithRetired> {
   const [{ groups, filteredLocally }, emailStats] = await Promise.all([
     fetchCampaignCostGroups(brandId, featureSlug, campaignIds, identity, pricing),
     fetchCampaignEmailStats(brandId, featureSlug, campaignIds, identity),
   ]);
   await setRecordedContacted(emailStats, brandId, featureSlug, campaignIds, identity);
-  return rollUpGrain(
-    workflows,
-    mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis),
-    emailStats,
-    repliers,
-  );
+  const merged = mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis);
+  if (ledger) {
+    if (repliers) setPersonRepliesOnSlugStats(emailStats, repliers);
+    const o = ledgerSlugEvidence(merged, emailStats, ledger.outcomeKey, ledger.statKey, new Set(campaignIds), ledger.book, false);
+    return rollUpGrain(workflows, o.costGroups, o.emailStats, undefined);
+  }
+  return rollUpGrain(workflows, merged, emailStats, repliers);
 }
 
 // ── MATURE twins (`lib/maturity.ts`) ────────────────────────────────────────────────────────────────
@@ -769,6 +782,8 @@ export async function fetchCampaignWorkflowMatureEvidence(
   cutoffIso: string,
   /** The leg read; a leg whose outcome is the click is read on screened visits only (`lib/screened-visits.ts`). */
   legKey: string | null = null,
+  /** The mature cut of the reconciled ledger (`ledgerRegime(pricing, cutoffIso)`): the grain's mature figures on it. */
+  ledger?: GrainLedger,
 ): Promise<GrainEvidenceWithRetired> {
   if (campaignIds.length === 0) return { active: new Map(), retired: new Map() };
   const { groups, filteredLocally } = await fetchCampaignCostGroups(
@@ -781,6 +796,10 @@ export async function fetchCampaignWorkflowMatureEvidence(
   );
   const merged = mergeCostGroupsByWorkflowSlug(groups, filteredLocally ? new Set(campaignIds) : null, pricing, basis);
   const stats = matureSlugStats(persons, cutoffIso, new Set(campaignIds));
+  if (ledger) {
+    const o = ledgerSlugEvidence(merged, stats, ledger.outcomeKey, ledger.statKey, new Set(campaignIds), ledger.book, false);
+    return rollUpGrain(workflows, o.costGroups, o.emailStats, undefined, { exactCents: true });
+  }
   const screened = isScreenedVisitLeg(legKey) ? screenVisitEvidence(merged, stats, screenedCountsOfStats(stats)) : null;
   return rollUpGrain(workflows, screened?.costGroups ?? merged, screened?.emailStats ?? stats, undefined, { exactCents: true });
 }
