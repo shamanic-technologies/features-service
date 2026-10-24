@@ -7,7 +7,9 @@
  * plus every input it consumed, each at its own unit cost (a reused lead carries the price paid to find it).
  *
  * The ledger only prices the spend whose run declared an outcome: while the declared share (coverage) is under
- * `COVERAGE_BAR_PCT`, the figure is a FLOOR and says so, never a verdict.
+ * `COVERAGE_BAR_PCT`, the figure is a FLOOR and says so, never a verdict. Coverage reads on OUTCOME spend only
+ * (COST-SUPPORT-1024-FEATURES): support spend (payment fees, brand setup, Copilot, a retired product...) produces no
+ * outcome by design, is stated apart per function in one line, and is in neither side of the share.
  */
 import { n, usd } from "./format.js";
 import { headlineFor, type Verdict } from "./verdict.js";
@@ -25,8 +27,10 @@ export interface OutcomeCostInput {
   nounPlural: string;
   /** The roll-up of the outcome's catalogue step; null = the ledger could not be read this build. */
   unit: OutcomeUnitCost | null;
-  /** Share of the spend in scope whose run declared an outcome, 0..100; null = not served. */
+  /** Share of the OUTCOME spend (support apart) whose run declared an outcome, 0..100; null = not served. */
   coveragePct: number | null;
+  /** Support spend stated apart, per support function (runs-service's key), USD; absent = not served. */
+  support?: { byFunction: Array<{ fn: string; usd: number }>; daysMissing: number };
   /** Days since inception the ledger has not computed yet: the figure stands on the others. */
   daysMissing?: number;
   /** Fleet spend on no outcome's production (unknown leg, or no pipe's output: our newsletter), USD. */
@@ -35,6 +39,26 @@ export interface OutcomeCostInput {
   outcomesRequired: number;
   /** A catalogue step key in words ("Email checked"). */
   labelOf: (stepKey: string) => string;
+}
+
+/** runs-service's support functions in words; an unknown key prints as is. */
+const SUPPORT_FUNCTION_LABELS: Record<string, string> = {
+  payment_fees: "payment fees",
+  brand_setup: "brand setup",
+  copilot: "Copilot",
+  platform_llm: "platform AI calls",
+  staff_experiment: "staff tests",
+  product_feature: "product features",
+  retired_product: "retired products",
+};
+
+/** PURE. The one line naming the spend apart, per function in dollars. */
+export function supportLine(support: NonNullable<OutcomeCostInput["support"]>): string {
+  const parts = support.byFunction.map((f) => `${SUPPORT_FUNCTION_LABELS[f.fn] ?? f.fn.replace(/_/g, " ")} ${usd(f.usd)}`);
+  const pending = support.daysMissing > 0 ? ` (${n(support.daysMissing)} ${support.daysMissing === 1 ? "day" : "days"} not split yet)` : "";
+  return parts.length > 0
+    ? `Apart, in no figure: ${parts.join(" · ")}${pending}.`
+    : `Apart, in no figure: no support spend marked yet${pending}.`;
 }
 
 export const outcomeCostStudyId = (outcome: ResearchOutcomeId) => `${outcome}-cost-every-path`;
@@ -67,12 +91,12 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
   const covText = cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`;
   const learning = u.produced < input.outcomesRequired;
   const verdict: Verdict = floor
-    ? { kind: "noise", reason: `The ledger holds ${covText} of the spend so far${missing > 0 ? `, and ${n(missing)} ${missing === 1 ? "day" : "days"} since inception ${missing === 1 ? "is" : "are"} still being computed` : ""}: the rest is not declared yet, so this is a floor, not a price.` }
+    ? { kind: "noise", reason: `The ledger holds ${covText} of the outcome spend so far${missing > 0 ? `, and ${n(missing)} ${missing === 1 ? "day" : "days"} since inception ${missing === 1 ? "is" : "are"} still being computed` : ""}: the rest is not declared yet, so this is a floor, not a price.` }
     : learning
       ? { kind: "noise", reason: `Learning: ${n(u.produced)} of the ${n(input.outcomesRequired)} ${input.nounPlural} a figure needs.` }
       : { kind: "signal", reason: `A measurement on ${n(u.produced)} ${input.nounPlural}: one price, no rival to beat.` };
   const price = u.unitCostUsd;
-  const sample = `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} · every client, every path, since inception · ${covText} of the spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}`;
+  const sample = `${n(u.produced)} ${u.produced === 1 ? input.noun : input.nounPlural} · every client, every path, since inception · ${covText} of the outcome spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}`;
   const unpriced = u.unpricedInputs.length
     ? [`${u.unpricedInputs.map(input.labelOf).join(", ")} ${u.unpricedInputs.length === 1 ? "is" : "are"} consumed but declared by no run yet: ${u.unpricedInputs.length === 1 ? "its" : "their"} cost is missing from the figure.`]
     : [];
@@ -104,7 +128,8 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
       `One ${input.noun} costs ${usd(price)} to produce: its own pipes ${usd(u.ownUnitCostUsd ?? 0)}, everything they produced included (what led nowhere rides what did), and what it bought from earlier pipes at their own unit cost.`,
       ...(u.byProducts > 0 ? [`${n(u.byProducts)} more ${u.byProducts === 1 ? input.noun : input.nounPlural} came from pipes aimed at another outcome: by-products at $0, left out of the figure.`] : []),
       ...((input.unattributedCostUsd ?? 0) > 0 ? [`${usd(input.unattributedCostUsd!)} of declared spend belongs to no pipe's outcome (our newsletter, a campaign with no stated leg): in no figure.`] : []),
-      `Read on what each run declared it produced and consumed, on every client and every channel: ${covText} of the spend is declared so far.`,
+      `Read on what each run declared it produced and consumed, on every client and every channel: ${covText} of the outcome spend is declared so far.`,
+      ...(input.support ? [supportLine(input.support)] : []),
       ...unpriced,
     ],
   };
