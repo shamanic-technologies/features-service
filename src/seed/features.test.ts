@@ -22,9 +22,9 @@ describe("SEED_FEATURES — pr-expert-quote-outreach", () => {
     expect(seed?.description).toMatch(/journalist quote requests/i);
   });
 
-  it("has implemented=true and status=active", () => {
+  it("has implemented=true and is PAUSED by the owner (2026-10-24: out of every published read, may come back)", () => {
     expect(seed?.implemented).toBe(true);
-    expect(seed?.status).toBe("active");
+    expect(seed?.status).toBe("deprecated");
   });
 
   it("has a non-zero displayOrder distinct from existing features", () => {

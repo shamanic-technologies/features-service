@@ -368,7 +368,8 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     icon: "megaphone",
     implemented: true,
     displayOrder: 2,
-    status: "active",
+    // Owner PAUSED 2026-10-24 (may come back): out of every published read; set "active" to bring it back.
+    status: "deprecated",
     acquisitionChannel: { family: "earned", operatedBy: "platform", performedBy: "software", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
     supersededBySlug: null,
     inputs: [
@@ -522,7 +523,8 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     icon: "award",
     implemented: true,
     displayOrder: 6,
-    status: "active",
+    // Owner PAUSED 2026-10-24 (may come back): out of every published read; set "active" to bring it back.
+    status: "deprecated",
     acquisitionChannel: { family: "earned", operatedBy: "platform", performedBy: "software", stepTransitions: VISIT_ONLY, terms: terms(800, 30, 21) },
     supersededBySlug: null,
     inputs: [
