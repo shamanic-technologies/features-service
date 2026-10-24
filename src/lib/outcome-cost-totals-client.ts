@@ -10,11 +10,10 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
 
-export type LedgerBasis = "gross" | "net" | "vendor";
+export type LedgerBasis = "gross" | "vendor";
 
 interface WireCost {
   grossCents?: string;
-  netCents?: string;
   vendorCents?: string;
 }
 interface WireTotals {
@@ -42,7 +41,7 @@ export interface OutcomeLedgerTotals {
 }
 
 const usdOf = (c: WireCost | undefined, basis: LedgerBasis): number => {
-  const v = basis === "vendor" ? c?.vendorCents : basis === "net" ? c?.netCents : c?.grossCents;
+  const v = basis === "vendor" ? c?.vendorCents : c?.grossCents;
   if (v === undefined) throw new Error(`[features-service] outcome ledger totals: a cost carries no ${basis} figure`);
   return Number(v) / 100;
 };
@@ -100,23 +99,13 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
 }
 
 /**
- * THE MATURE CUT on the ledger (runs-service v0.47.75): production of runs STARTED on or before `runStartUntil` (inclusive
- * UTC day), and the consumptions whose consumed occurrence (the send a reply answers) was produced by such a run, so a
- * reply landing after the cutoff still counts for the cohort that bought it (the maturity rule). Empty = no cut.
- */
-export function matureCutParams(runStartUntil?: string): string {
-  return runStartUntil ? `&runStartUntil=${runStartUntil}&sourceRunStartUntil=${runStartUntil}` : "";
-}
-
-/**
  * The fleet read, every day since inception. NO `since`: runs-service states its own inception (RESEARCH-STALE-1024: asked
  * `since=2026-01-01`, a month before its ledger starts on 2026-02-02, it counted those 32 days as missing forever and every
  * every-path study read "32 days still computing" over a complete ledger).
  */
-export async function fetchOutcomeLedgerTotals(basis: LedgerBasis, until?: string, runStartUntil?: string): Promise<OutcomeLedgerTotals> {
+export async function fetchOutcomeLedgerTotals(basis: LedgerBasis, until?: string): Promise<OutcomeLedgerTotals> {
   // `until` (UTC day, inclusive) = the ledger AS OF the end of that day, still since inception (MEETING-COST-METHODS-1024).
-  // `runStartUntil` = the mature cut (`matureCutParams`), a different question: what the runs before a cutoff bought.
-  const cut = (until ? `&until=${encodeURIComponent(until)}` : "") + matureCutParams(runStartUntil);
+  const cut = until ? `&until=${encodeURIComponent(until)}` : "";
   const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId${cut}`, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
   });
@@ -174,18 +163,15 @@ export function parseOutcomeLedgerByWorkflow(producedBody: WireTotals, sourcedBo
   return { produced, sourced, daysMissing: Math.max((producedBody.daysMissing ?? []).length, (sourcedBody.daysMissing ?? []).length) };
 }
 
-/** The fleet reads, since runs-service's own inception (no `since`, RESEARCH-STALE-1024). `runStartUntil` = the mature cut (below). */
-export async function fetchOutcomeLedgerByWorkflow(basis: LedgerBasis, runStartUntil?: string): Promise<OutcomeLedgerByWorkflow> {
+/** The fleet reads, since runs-service's own inception (no `since`, RESEARCH-STALE-1024). */
+export async function fetchOutcomeLedgerByWorkflow(basis: LedgerBasis): Promise<OutcomeLedgerByWorkflow> {
   const get = async (groupBy: string) => {
-    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}${matureCutParams(runStartUntil)}`, {
+    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}`, {
       headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
     });
     if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
     return (await r.json()) as WireTotals;
   };
-  // A build that predates the cut IGNORES the filters and answers lifetime: a mature read would then pass every reply off
-  // as mature. The run-day dimension exists only where the cut is served, so asking it first fails loud (400) elsewhere.
-  if (runStartUntil) await get("outcomeKey,sourceRunStartDay");
   const [p, s] = await Promise.all([get("outcomeKey,campaignId,workflowSlug"), get("outcomeKey,sourceWorkflowSlug")]);
   return parseOutcomeLedgerByWorkflow(p, s, basis);
 }
