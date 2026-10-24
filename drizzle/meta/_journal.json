@@ -330,6 +330,13 @@
       "when": 1793030400000,
       "tag": "0046_step_subject_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793116800000,
+      "tag": "0047_generation_completion_cost",
+      "breakpoints": true
     }
   ]
 }

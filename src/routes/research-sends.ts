@@ -19,6 +19,7 @@ import type { LegSpendSplit, OpensArm, SendGroup } from "../lib/research/sends.j
 import type { JevInput, JudgmentGroup, ScreenMonth } from "../lib/research/jev.js";
 import type { ReportingBrand } from "../lib/research/meetings.js";
 import type { GenerationRun, WorkflowRun } from "../lib/research/catalog.js";
+import type { GenerationCostInput } from "../lib/research/run-cost.js";
 import { meetingReportingOf } from "../lib/meeting-population.js";
 import { rememberMeetingReporting } from "../lib/meeting-reporting-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
@@ -406,15 +407,38 @@ export async function readWorkflowRuns(campaigns: ReadonlyArray<{ campaignId: st
 /** The 10 newest sequences of every template and of every model on a leg's campaigns (our copy of content-generation's feed). */
 export async function readGenerationRuns(campaignIds: readonly string[]): Promise<GenerationRun[]> {
   if (!campaignIds.length) return [];
-  const rows = await pg<Array<{ created_at: Date; model: string; prompt_type: string | null; workflow_slug: string | null }>>`
-    SELECT DISTINCT generation_id, created_at, model, prompt_type, workflow_slug FROM (
+  const rows = await pg<Array<{ created_at: Date; model: string; prompt_type: string | null; workflow_slug: string | null; tokens_input: number | null; tokens_output: number | null }>>`
+    SELECT DISTINCT generation_id, created_at, model, prompt_type, workflow_slug, tokens_input, tokens_output FROM (
       SELECT g.*, row_number() OVER (PARTITION BY prompt_type ORDER BY created_at DESC) AS rt, row_number() OVER (PARTITION BY model ORDER BY created_at DESC) AS rm
       FROM generation_sequence_copy g WHERE campaign_id = ANY(${pg.array([...campaignIds])})
     ) x WHERE rt <= 10 OR rm <= 10
   `;
   return rows
-    .map((r) => ({ createdAt: new Date(r.created_at).toISOString(), model: r.model, promptType: r.prompt_type, workflowSlug: r.workflow_slug }))
+    .map((r) => ({ createdAt: new Date(r.created_at).toISOString(), model: r.model, promptType: r.prompt_type, workflowSlug: r.workflow_slug, tokensInput: r.tokens_input, tokensOutput: r.tokens_output }))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+/**
+ * Every generation written on a pipe's campaigns with its completion's LLM cost (MODEL-RUN-COST-1024; our copy of the
+ * sequence feed, costs read by `lib/generation-completion-costs.ts`): the run-cost figures of each model page. A row whose
+ * cost is not known (no completion stated, run not found, not read yet, a hold still open) carries null cents.
+ */
+export async function readGenerationCosts(campaignIds: readonly string[]): Promise<GenerationCostInput[]> {
+  if (!campaignIds.length) return [];
+  const rows = await pg<Array<{ created_at: Date; model: string; i: string | null; o: string | null; tokens_input: number | null; tokens_output: number | null }>>`
+    SELECT created_at, model, tokens_input, tokens_output,
+           CASE WHEN llm_cost_status = 'read' THEN llm_input_cost_cents::text END AS i,
+           CASE WHEN llm_cost_status = 'read' THEN llm_output_cost_cents::text END AS o
+    FROM generation_sequence_copy WHERE campaign_id = ANY(${pg.array([...campaignIds])})
+  `;
+  return rows.map((r) => ({
+    createdAt: new Date(r.created_at).toISOString(),
+    model: r.model,
+    inputCents: r.i === null ? null : Number(r.i),
+    outputCents: r.o === null ? null : Number(r.o),
+    tokensInput: r.tokens_input,
+    tokensOutput: r.tokens_output,
+  }));
 }
 
 /**

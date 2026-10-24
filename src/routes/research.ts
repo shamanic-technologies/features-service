@@ -42,6 +42,7 @@ import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/research/run-cost.js";
 import { pickPipeWriters } from "./leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
@@ -68,7 +69,7 @@ import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import { pipeLegKeyOf } from "../lib/funnel-legs.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
-import { readBookedAfterReply, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
+import { readBookedAfterReply, readGenerationCosts, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
 import { fetchBrandsBasic, fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
@@ -815,11 +816,13 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
         return null;
       },
     ));
-  const [replyRuns, visitRuns, replyGens, visitGens, replyRanking, visitRanking, writers] = await Promise.all([
+  const [replyRuns, visitRuns, replyGens, visitGens, replyCosts, visitCosts, replyRanking, visitRanking, writers] = await Promise.all([
     readWorkflowRuns(reply.campaigns, (slug) => reply.input.dynastyOf.get(slug) ?? slug, basis),
     readWorkflowRuns(visit.campaigns, (slug) => visit.input.dynastyOf.get(slug) ?? slug, basis),
     readGenerationRuns(reply.campaignIds).catch(() => []),
     readGenerationRuns(visit.campaignIds).catch(() => []),
+    pipeGenerationCosts(basis, reply.campaignIds),
+    pipeGenerationCosts(basis, visit.campaignIds),
     rankingOf(reply),
     rankingOf(visit),
     readDynastyWriters(),
@@ -843,7 +846,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   const allTexts = new Map([...gens.templateTexts, ...nowTexts]);
   const writerOf = typeof writers === "string" ? writers : (d: string) => writers.now.get(d) ?? null;
   const lastWriterOf = typeof writers === "string" ? writers : (d: string) => writers.last.get(d) ?? null;
-  const catalogOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, runs: WorkflowRun[], gensRuns: GenerationRun[], ranking: readonly LegWorkflowRankingRow[] | null) =>
+  const catalogOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, runs: WorkflowRun[], gensRuns: GenerationRun[], ranking: readonly LegWorkflowRankingRow[] | null, genCosts: Awaited<ReturnType<typeof pipeGenerationCosts>>) =>
     pipeCatalog({
       terms: termsOf(pipe, r.input, note),
       workflows: workflowBuckets(r.input),
@@ -859,6 +862,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       modelVersions: g.modelVersions,
       templateVersions: g.templateVersions,
       generationRuns: gensRuns,
+      generationCosts: genCosts,
       templateTexts: new Set(allTexts.keys()),
       runnableWorkflows: runnableWorkflowsOf(ranking),
       writerOf,
@@ -918,8 +922,8 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     return view === "flash" ? shown : inFlashOrder(shown, onBars(workflowBuckets({ ...r.input, view: "flash" })));
   };
   const catalog: ResearchCatalog = {
-    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking), replyRanking, view),
-    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking), visitRanking, view),
+    [POSITIVE_REPLY_PIPE]: withWorkflowFigures(catalogOf(POSITIVE_REPLY_PIPE, reply, gens.reply, replyRuns, replyGens, replyRanking, replyCosts), replyRanking, view),
+    [WEBSITE_VISIT_PIPE]: withWorkflowFigures(catalogOf(WEBSITE_VISIT_PIPE, visit, gens.visit, visitRuns, visitGens, visitRanking, visitCosts), visitRanking, view),
     [MEETING_BOOKING_PIPE]: { workflows: [], templates: [], models: [] },
   };
   // Each pipe reads its OWN writer LLM statuses (LLM-STATUS-PER-PIPE-1023).
@@ -1030,6 +1034,19 @@ function emptySection(p: OtherPipe): OtherSection {
  * evidence), its template dynasties, what its workflows write with now. An INTERNAL pipe (it acts on people another
  * campaign holds) has no per-person evidence here: its workflows are its ranking rows, its writers its definitions.
  */
+/**
+ * MODEL-RUN-COST-1024. Every generation a model wrote on one pipe's campaigns with its completion's LLM cost, for the
+ * model pages' run-cost figures; billed basis only (the vendor cost of a run is not read: `not_on_vendor_basis`), an
+ * unreadable copy says so on every page (`run_costs_unreadable`), never fails the file.
+ */
+async function pipeGenerationCosts(basis: Basis, campaignIds: readonly string[]): Promise<GenerationCostInput[] | RunCostUnavailableReason> {
+  if (basis === "actual") return "not_on_vendor_basis";
+  return readGenerationCosts(campaignIds).catch((err): RunCostUnavailableReason => {
+    console.error("[features-service] research catalogue: generation run costs unreadable this time:", err);
+    return "run_costs_unreadable";
+  });
+}
+
 async function otherPipeSection(
   p: OtherPipe,
   basis: Basis,
@@ -1072,9 +1089,10 @@ async function otherPipeSection(
   const split = read?.split ?? { screened: false, signal: "other" as const, cutoffDay: null };
   const nameOf = (d: string) => read?.names.get(d) ?? rankingNames.get(d) ?? null;
   const hasGen = persons.some((b) => b.generation);
-  const [models, generationRuns, workflowRuns] = await Promise.all([
+  const [models, generationRuns, generationCosts, workflowRuns] = await Promise.all([
     hasGen ? readModelNames() : Promise.resolve(new Map<string, ModelName>()),
     read ? readGenerationRuns(read.campaignIds).catch(() => []) : Promise.resolve([]),
+    pipeGenerationCosts(basis, read?.campaignIds ?? []),
     read ? readWorkflowRuns(read.campaigns, (slug) => input.dynastyOf.get(slug) ?? slug, basis) : Promise.resolve([]),
   ]);
   const g = hasGen ? generationBuckets({ legKey, cells: input.cells, persons, split, models, templateDynasties: tplDyn, llmDynasties: shared.llm, view }) : null;
@@ -1133,6 +1151,7 @@ async function otherPipeSection(
       modelVersions: gen.modelVersions,
       templateVersions: gen.templateVersions,
       generationRuns,
+      generationCosts,
       templateTexts: new Set(texts.keys()),
       runnableWorkflows: runnableWorkflowsOf(ranking),
       writerOf,
