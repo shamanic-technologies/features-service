@@ -82,6 +82,7 @@ const REPLY_LEG = "start_to_conversation";
 const VISIT_LEG = "start_to_website_visit";
 const FRESH_MS = 15 * 60_000;
 const BUILD_TIMEOUT_MS = 20 * 60_000;
+const STORE_TIMEOUT_MS = 2 * 60_000;
 const RANKING_WAIT_MS = 10 * 60_000;
 /** The first month runs carry cold email spend (the ledger starts in February 2026). */
 const FIRST_MONTH = "2026-01";
@@ -1146,7 +1147,8 @@ export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promi
     .then(async (value) => {
       const computedAt = Date.now();
       store.set(key, { value, computedAt });
-      await storeFleetCell(cellKey(basis, view), JSON.stringify(value), computedAt);
+      // A store that hangs must never hold the single flight (every later read would wait on it, nothing rebuilt).
+      await withTimeout(storeFleetCell(cellKey(basis, view), JSON.stringify(value), computedAt), STORE_TIMEOUT_MS, `research ${key} store`);
     })
     .catch((error) => {
       failedAt.set(key, Date.now());
@@ -1155,6 +1157,56 @@ export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promi
     .finally(() => warming.delete(key));
   warming.set(key, p);
   return p;
+}
+
+/**
+ * How old the served build is, stated on every read (RESEARCH-STALE-1024, 2026-10-24: a build only started on a read, so the
+ * first read after a quiet night served a copy 8 hours old with nothing on the page saying so). `stale` once the build is
+ * older than TWICE its cadence (one cadence + one build + one loop tick never reaches it); `rebuilding` = a build is running.
+ */
+export interface ResearchFreshness {
+  computedAt: string;
+  refreshEveryMinutes: number;
+  staleAfterMinutes: number;
+  ageMinutes: number;
+  stale: boolean;
+  rebuilding: boolean;
+}
+
+/** PURE. */
+export function researchFreshness(computedAtIso: string, refreshEveryMs: number, now: number, rebuilding: boolean): ResearchFreshness {
+  const ageMinutes = Math.max(0, Math.floor((now - Date.parse(computedAtIso)) / 60_000));
+  const refreshEveryMinutes = Math.round(refreshEveryMs / 60_000);
+  const staleAfterMinutes = 2 * refreshEveryMinutes;
+  return { computedAt: computedAtIso, refreshEveryMinutes, staleAfterMinutes, ageMinutes, stale: ageMinutes > staleAfterMinutes, rebuilding };
+}
+
+const freshnessOf = (file: ResearchFile, basis: Basis, view: ResearchView): ResearchFreshness =>
+  researchFreshness(file.computedAt, freshMsOf(basis), Date.now(), warming.has(keyOf(basis, view)));
+
+/**
+ * Rebuilt on a CLOCK, never only on a read (RESEARCH-STALE-1024): every 5 minutes the billed basis, both views, one after
+ * the other, each rebuilt when past its 15 min (single flight per key; a failure keeps the previous build, retried in 10 min).
+ * The vendor-cost twin stays rebuilt on read (6 h, runs-service's heaviest aggregation), its age stated the same way.
+ */
+const LOOP_EVERY_MS = 5 * 60_000;
+let loopRunning = false;
+export async function refreshResearchOnce(): Promise<void> {
+  if (loopRunning) return;
+  loopRunning = true;
+  try {
+    for (const view of ["mature", "flash"] as const) {
+      await readResearchBuild("user", view);
+      await warmResearch("user", view);
+    }
+  } finally {
+    loopRunning = false;
+  }
+}
+export function startResearchRefreshLoop(): void {
+  const tick = () => void refreshResearchOnce().catch((err) => console.error("[features-service] research refresh loop failed:", err));
+  setTimeout(tick, 120_000).unref();
+  setInterval(tick, LOOP_EVERY_MS).unref();
 }
 
 /** The last build (the persisted copy on a fresh process); kicks a rebuild when stale. Null = never built. */
@@ -1189,6 +1241,7 @@ export function __resetResearch(): void {
   warming.clear();
   failedAt.clear();
   closedWindows.clear();
+  loopRunning = false;
 }
 
 /** `?view=`: absent = mature (MATURITY-VIEW-1023); anything else than mature / flash = null (400). */
@@ -1211,7 +1264,7 @@ router.get("/internal/research", apiKeyOnly, async (req, res) => {
     if (!view) return badView(res);
     const file = await readResearch(basis, view);
     if (!file) return notYet(res);
-    res.json(file);
+    res.json({ ...file, freshness: freshnessOf(file, basis, view) });
   } catch (error) {
     console.error("[features-service] research read failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -1305,7 +1358,7 @@ router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
     const build = await readResearchBuild(basis, view);
     // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
     if (!build?.performance) return notYet(res);
-    res.json({ computedAt: build.file.computedAt, costBasis: build.file.costBasis, view, pipes: await withPerformanceMarks(build.performance) });
+    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes: await withPerformanceMarks(build.performance) });
   } catch (error) {
     console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });
