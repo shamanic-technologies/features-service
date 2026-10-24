@@ -36,6 +36,7 @@ import type { Pricing } from "../lib/pricing.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { legCutoffIso, legMaturity, type LegMaturityFigures } from "../lib/maturity.js";
+import { withLedgerFlash } from "../lib/ledger-leg-overlay.js";
 import { withWorkflowRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
@@ -2347,16 +2348,18 @@ export async function fetchFleetLegSlugEvidence(featureSlug: string, legKey: str
     flash.emailStats,
     await fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: "", brandId: "", repliers: [] }, legSet),
   );
+  // COST-ACCOUNTING-1023-SWITCH: the flash half priced on the outcome ledger (lib/ledger-leg-overlay.ts).
+  const ledgerFlash = await withLedgerFlash(`${featureSlug}|${legKey}`, legKey, pricing, { costGroups: flash.costGroups, emailStats: flash.emailStats }, legSet);
   const cutoffIso = legCutoffIso(legKey);
   const mature = cutoffIso
     ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, null, legSet, slugs)
-    : { costGroups: flash.costGroups, emailStats: flash.emailStats };
+    : ledgerFlash;
   return {
     legKey,
     cutoffIso,
     workflows,
     campaigns: flash.campaigns,
-    flash: { costGroups: flash.costGroups, emailStats: flash.emailStats },
+    flash: ledgerFlash,
     mature: mature ? { costGroups: mature.costGroups, emailStats: mature.emailStats } : null,
   };
 }

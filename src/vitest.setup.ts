@@ -249,3 +249,12 @@ vi.mock("./lib/catalogue-marks-store.js", async () => {
     __resetCatalogueMarksMemory: vi.fn(() => store.clear()),
   };
 });
+
+/**
+ * Suite-wide default: no leg's flash evidence is re-based on the outcome ledger (lib/ledger-leg-overlay.ts), so a route
+ * suite keeps the runs figures its fixture states. `ledger-leg-overlay.test.ts` unmocks it.
+ */
+vi.mock("./lib/ledger-leg-overlay.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/ledger-leg-overlay.js")>()),
+  withLedgerFlash: vi.fn(async (_label: string, _leg: string, _pricing: string, flash: unknown) => flash),
+}));

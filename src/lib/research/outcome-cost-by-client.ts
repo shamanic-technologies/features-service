@@ -65,7 +65,7 @@ export function outcomeCostByClientStudy(rows: readonly ClientCostRow[] | null, 
     headline: `${n(priced.length)} ${priced.length === 1 ? "client" : "clients"} priced on the ledger, beside today's figure. ${floors > 0 ? `${n(floors)} still a floor (spend not all declared yet).` : "Every one on its full spend."} Noise so far.`,
     winner: null,
     crowned: false,
-    verdict: { kind: "noise", reason: "A comparison of two bases, not a verdict: no reader switches to the ledger until every client's figure is on its full spend and the gap with today's figure is explained." },
+    verdict: { kind: "noise", reason: "A comparison of two bases, not a verdict. The workflow ranking already prices positive replies on the ledger; each client's figure firms up as its spend gets declared." },
     result: null,
     charts: [
       {
@@ -85,7 +85,7 @@ export function outcomeCostByClientStudy(rows: readonly ClientCostRow[] | null, 
       },
     ],
     conclusion: [
-      `The ledger and today's figure are served side by side for ${n(priced.length)} ${priced.length === 1 ? "client" : "clients"}; no reader switches until both agree on what they count.`,
+      `The ledger and today's figure are served side by side for ${n(priced.length)} ${priced.length === 1 ? "client" : "clients"}. The workflow ranking now picks on the ledger figure.`,
       ...(daysMissing > 0 ? [`${n(daysMissing)} ledger days since inception are still being computed: every bar is a floor until they are.`] : []),
     ],
   };
