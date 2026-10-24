@@ -33281,6 +33281,44 @@
           "computedAt": {
             "type": "string"
           },
+          "freshness": {
+            "type": "object",
+            "properties": {
+              "computedAt": {
+                "type": "string",
+                "description": "When the served build was computed (= the file's `computedAt`)."
+              },
+              "refreshEveryMinutes": {
+                "type": "integer",
+                "description": "The build's cadence: 15 on the billed basis, 360 on the vendor-cost twin."
+              },
+              "staleAfterMinutes": {
+                "type": "integer",
+                "description": "Twice the cadence: past it, the served build is out of date."
+              },
+              "ageMinutes": {
+                "type": "integer",
+                "description": "Whole minutes since `computedAt`, at this read."
+              },
+              "stale": {
+                "type": "boolean",
+                "description": "`ageMinutes > staleAfterMinutes`: the page must say the figures are out of date, with their time."
+              },
+              "rebuilding": {
+                "type": "boolean",
+                "description": "A build of this basis and view is running now."
+              }
+            },
+            "required": [
+              "computedAt",
+              "refreshEveryMinutes",
+              "staleAfterMinutes",
+              "ageMinutes",
+              "stale",
+              "rebuilding"
+            ],
+            "description": "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so."
+          },
           "allOrgs": {
             "type": "boolean",
             "enum": [
@@ -33556,6 +33594,7 @@
         "required": [
           "generatedAt",
           "computedAt",
+          "freshness",
           "allOrgs",
           "costBasis",
           "unpricedBilledUsd",
@@ -68885,7 +68924,7 @@
     "/internal/research": {
       "get": {
         "summary": "The staff Research studies, live (staff, api-key)",
-        "description": "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
+        "description": "Every Research study the staff Research page shows, computed from live production evidence off the request path (rebuilt on a clock every 15 min; the persisted last build is served meanwhile, its age stated in `freshness`). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
         "tags": [
           "Internal"
         ],
@@ -72210,6 +72249,44 @@
                     "computedAt": {
                       "type": "string"
                     },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "computedAt": {
+                          "type": "string",
+                          "description": "When the served build was computed (= the file's `computedAt`)."
+                        },
+                        "refreshEveryMinutes": {
+                          "type": "integer",
+                          "description": "The build's cadence: 15 on the billed basis, 360 on the vendor-cost twin."
+                        },
+                        "staleAfterMinutes": {
+                          "type": "integer",
+                          "description": "Twice the cadence: past it, the served build is out of date."
+                        },
+                        "ageMinutes": {
+                          "type": "integer",
+                          "description": "Whole minutes since `computedAt`, at this read."
+                        },
+                        "stale": {
+                          "type": "boolean",
+                          "description": "`ageMinutes > staleAfterMinutes`: the page must say the figures are out of date, with their time."
+                        },
+                        "rebuilding": {
+                          "type": "boolean",
+                          "description": "A build of this basis and view is running now."
+                        }
+                      },
+                      "required": [
+                        "computedAt",
+                        "refreshEveryMinutes",
+                        "staleAfterMinutes",
+                        "ageMinutes",
+                        "stale",
+                        "rebuilding"
+                      ],
+                      "description": "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so."
+                    },
                     "costBasis": {
                       "type": "string",
                       "enum": [
@@ -73122,6 +73199,7 @@
                   },
                   "required": [
                     "computedAt",
+                    "freshness",
                     "costBasis",
                     "view",
                     "pipes"

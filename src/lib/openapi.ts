@@ -8537,11 +8537,24 @@ const researchStudySchema = registry.register(
     conclusion: z.array(z.string()),
   }),
 );
+const researchFreshnessSchema = z
+  .object({
+    computedAt: z.string().describe("When the served build was computed (= the file's `computedAt`)."),
+    refreshEveryMinutes: z.number().int().describe("The build's cadence: 15 on the billed basis, 360 on the vendor-cost twin."),
+    staleAfterMinutes: z.number().int().describe("Twice the cadence: past it, the served build is out of date."),
+    ageMinutes: z.number().int().describe("Whole minutes since `computedAt`, at this read."),
+    stale: z.boolean().describe("`ageMinutes > staleAfterMinutes`: the page must say the figures are out of date, with their time."),
+    rebuilding: z.boolean().describe("A build of this basis and view is running now."),
+  })
+  .describe(
+    "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so.",
+  );
 const researchFileSchema = registry.register(
   "ResearchFile",
   z.object({
     generatedAt: z.string(),
     computedAt: z.string(),
+    freshness: researchFreshnessSchema,
     allOrgs: z.literal(true),
     view: z.enum(["mature", "flash"]).optional().describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it."),
     costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
@@ -8604,7 +8617,7 @@ registry.registerPath({
   path: "/internal/research",
   summary: "The staff Research studies, live (staff, api-key)",
   description:
-    "Every Research study the staff Research page shows, computed from live production evidence off the request path (refreshed every 15 min; the persisted last build is served meanwhile). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
+    "Every Research study the staff Research page shows, computed from live production evidence off the request path (rebuilt on a clock every 15 min; the persisted last build is served meanwhile, its age stated in `freshness`). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
   tags: ["Internal"],
   request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed)."), view: researchViewParam }) },
   responses: {
@@ -8910,7 +8923,7 @@ registry.registerPath({
   responses: {
     200: {
       description: "The Performance tab per pipe",
-      content: { "application/json": { schema: z.object({ computedAt: z.string(), costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(researchPerformancePipeSchema) }) } },
+      content: { "application/json": { schema: z.object({ computedAt: z.string(), freshness: researchFreshnessSchema, costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(researchPerformancePipeSchema) }) } },
     },
     400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,

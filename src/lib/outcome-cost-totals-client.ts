@@ -10,9 +10,6 @@ import type { ConsumedRow, ProducedRow } from "./outcome-unit-costs.js";
 
 export type LedgerBasis = "gross" | "vendor";
 
-/** The ledger's first possible day: runs-service's cost history starts in 2026 (Research's `FIRST_MONTH`). */
-export const LEDGER_INCEPTION_DAY = "2026-01-01";
-
 interface WireCost {
   grossCents?: string;
   vendorCents?: string;
@@ -64,9 +61,13 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
   return { produced, consumed, coveragePct: spend > 0 ? (100 * carried) / spend : null, daysMissing: (body.daysMissing ?? []).length };
 }
 
-/** The fleet read, every day since inception. */
+/**
+ * The fleet read, every day since inception. NO `since`: runs-service states its own inception (RESEARCH-STALE-1024: asked
+ * `since=2026-01-01`, a month before its ledger starts on 2026-02-02, it counted those 32 days as missing forever and every
+ * every-path study read "32 days still computing" over a complete ledger).
+ */
 export async function fetchOutcomeLedgerTotals(basis: LedgerBasis): Promise<OutcomeLedgerTotals> {
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId&since=${LEDGER_INCEPTION_DAY}`, {
+  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId`, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
   });
   if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs ${r.status}: ${(await r.text()).slice(0, 200)}`);
