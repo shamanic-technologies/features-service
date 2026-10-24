@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ledgerReconciliation, offCampaignUnitCost, pipeWorkflowCosts, type LedgerPipeBook } from "./ledger-pipe-costs.js";
+import { ledgerAudienceEvidence, offCampaignUnitCost, pipeWorkflowCosts, type LedgerPipeBook } from "./ledger-pipe-costs.js";
 
 // a reply pipe (campaigns c1, c2) and a sourcing pipe (s1) that found its leads
 const book: LedgerPipeBook = {
@@ -40,17 +40,21 @@ describe("one regime for every pipe (LEDGER-HISTORY-1024)", () => {
     expect(pipeWorkflowCosts("conversation", new Set(["c2"]), book).has("keel-v2")).toBe(false);
   });
 
-  it("the books reconcile when undeclared spend and unplaced consumptions are each at most 0.5%, every day computed", () => {
-    const scope = [
-      { campaignId: "c1", spendUsd: 100, supportUsd: 1, producedUsd: 90, noOutputUsd: 10 },
-      { campaignId: null, spendUsd: 100, supportUsd: 99.8, producedUsd: 0, noOutputUsd: 100 },
-    ];
-    expect(ledgerReconciliation({ scope, consumptions: 1000, unknownProvenance: 5, daysMissing: 0 })).toMatchObject({ reconciled: true, campaignLossUsd: 9 });
-    expect(ledgerReconciliation({ scope, consumptions: 1000, unknownProvenance: 6, daysMissing: 0 }).reconciled).toBe(false);
-    expect(ledgerReconciliation({ scope, consumptions: 1000, unknownProvenance: 0, daysMissing: 1 }).reconciled).toBe(false);
-    // prod 2026-10-24 order of magnitude: $541 declared on $9,965
-    const today = ledgerReconciliation({ scope: [{ campaignId: "c", spendUsd: 9965, supportUsd: 0, producedUsd: 541, noOutputUsd: 0 }], consumptions: 19, unknownProvenance: 16, daysMissing: 0 });
-    expect(today.reconciled).toBe(false);
-    expect(today.undeclaredPct).toBeGreaterThan(90);
+  it("the audience is one more grain: the runs and the sends of that audience only", () => {
+    const aud: LedgerPipeBook = {
+      produced: [
+        { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2", audienceId: "a1", occurrences: 100, costUsd: 10 },
+        { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2", audienceId: "a2", occurrences: 100, costUsd: 30 },
+      ],
+      noOutput: [],
+      consumed: [
+        { consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, workflowSlug: null, audienceId: null, sourceCampaignId: "c1", sourceWorkflowSlug: "keel-v2", sourceAudienceId: "a2", count: 3 },
+      ],
+    };
+    const [a1, a2] = ledgerAudienceEvidence("conversation", new Set(["c1"]), ["a1", "a2"], aud, new Map([["keel-v2", "keel"]]), "recipientsRepliesPositive");
+    expect(a1!.byDynasty.get("keel")).toMatchObject({ totalCostInUsdCents: 1000, replies: 0 });
+    expect(a2!.byDynasty.get("keel")).toMatchObject({ totalCostInUsdCents: 3000, replies: 3 });
+    // the brand grain is the sum of its audiences
+    expect(pipeWorkflowCosts("conversation", new Set(["c1"]), aud).get("keel-v2")).toMatchObject({ costUsd: 40, outcomes: 3 });
   });
 });

@@ -7,7 +7,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { matureCutParams, type LedgerBasis } from "./outcome-cost-totals-client.js";
-import { ledgerReconciliation, type LedgerPipeBook, type LedgerReconciliation } from "./ledger-pipe-costs.js";
+import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { legMaturity } from "./maturity.js";
 import { pipeLegKeyOf } from "./funnel-legs.js";
@@ -36,7 +36,8 @@ const usd = (c: WireCost | undefined, basis: BookBasis): number => {
 
 export interface LedgerBookRead {
   book: LedgerPipeBook;
-  reconciliation: LedgerReconciliation;
+  /** Days of the read runs-service has not computed yet, or computed before a fact recorded later (stale). */
+  daysMissing: number;
 }
 
 /** PURE. The three wire bodies as one book + the fleet reconciliation. */
@@ -44,40 +45,36 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
   const produced = (producedBody.produced ?? []).map((g) => {
     const key = g.dimensions?.outcomeKey;
     if (!key) throw new Error("[features-service] ledger book: a produced group names no outcomeKey");
-    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis) };
+    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis) };
   });
-  let consumptions = 0;
-  let unknownProvenance = 0;
   const consumed = [];
   for (const g of consumedBody.consumed ?? []) {
     const consumer = g.dimensions?.consumingOutcomeKey;
     const key = g.dimensions?.consumedOutcomeKey;
     if (!key) throw new Error("[features-service] ledger book: a consumed group names no consumedOutcomeKey");
     const count = Number(g.consumptions ?? 0);
-    consumptions += count;
-    unknownProvenance += Number(g.unknownProvenance ?? 0);
     if (!consumer) continue;
     consumed.push({
       consumerKey: consumer,
       consumedKey: key,
       campaignId: g.dimensions?.campaignId ?? null,
       workflowSlug: g.dimensions?.workflowSlug ?? null,
+      audienceId: g.dimensions?.audienceId ?? null,
       sourceCampaignId: g.dimensions?.sourceCampaignId ?? null,
       sourceWorkflowSlug: g.dimensions?.sourceWorkflowSlug ?? null,
+      sourceAudienceId: g.dimensions?.sourceAudienceId ?? null,
       count,
     });
   }
-  const scope = (scopeBody.scope ?? []).map((s) => ({
+  // runs-service's "produced none" holds the support marks too: only the rest is a pipe's loss
+  const noOutput = (scopeBody.scope ?? []).map((s) => ({
     campaignId: s.dimensions?.campaignId ?? null,
     workflowSlug: s.dimensions?.workflowSlug ?? null,
-    spendUsd: usd(s.spend, basis),
-    supportUsd: usd(s.support, basis),
-    producedUsd: usd(s.producedCost, basis),
-    noOutputUsd: usd(s.producedNone, basis),
+    audienceId: s.dimensions?.audienceId ?? null,
+    costUsd: Math.max(usd(s.producedNone, basis) - usd(s.support, basis), 0),
   }));
-  const noOutput = scope.map((s) => ({ campaignId: s.campaignId, workflowSlug: s.workflowSlug, costUsd: Math.max(s.noOutputUsd - s.supportUsd, 0) }));
   const daysMissing = Math.max(...[producedBody, consumedBody, scopeBody].map((b) => (b.daysMissing ?? []).length));
-  return { book: { produced, noOutput, consumed }, reconciliation: ledgerReconciliation({ scope, consumptions, unknownProvenance, daysMissing }) };
+  return { book: { produced, noOutput, consumed }, daysMissing };
 }
 
 async function read(groupBy: string, runStartUntil?: string): Promise<Wire> {
@@ -103,9 +100,9 @@ export async function loadLedgerBook(basis: BookBasis, runStartUntil?: string): 
     // a runs build that does not serve the run-day cut ignores it and answers lifetime: ask the run-day dimension first
     if (runStartUntil) await read("outcomeKey,sourceRunStartDay", runStartUntil);
     const [produced, consumed, scope] = await Promise.all([
-      read("outcomeKey,campaignId,workflowSlug", runStartUntil),
-      read("outcomeKey,campaignId,workflowSlug,sourceCampaignId,sourceWorkflowSlug", runStartUntil),
-      read("campaignId,workflowSlug", runStartUntil),
+      read("outcomeKey,campaignId,workflowSlug,audienceId", runStartUntil),
+      read("outcomeKey,campaignId,workflowSlug,audienceId,sourceCampaignId,sourceWorkflowSlug,sourceAudienceId", runStartUntil),
+      read("campaignId,workflowSlug,audienceId", runStartUntil),
     ]);
     const value = parseLedgerBook(produced, consumed, scope, basis);
     held.set(key, { at: Date.now(), value });
@@ -125,20 +122,45 @@ export function bookBasisOf(pricing: string): BookBasis {
 const lastGood = new Map<string, LedgerBookRead>();
 
 /**
- * THE REGIME GATE every reader asks (one answer for the whole fleet): the book when the ledger reconciles, else null (every
- * pipe stays on the previous regime). A read that fails serves the last good book of the same key, whatever its age
- * (logged): a hiccup never flips some pipes back while others stay. `cutoffIso` = a mature cohort's cutoff; a cut the
- * ledger cannot make yet (days not grouped by run day) = null for that half only (the maturity rule: no mature figure,
- * never one on another basis).
+ * THE REGIME GATE every reader asks (one answer for the whole fleet): runs-service's own reconciliation
+ * (`/internal/outcome-costs/reconciliation`, since its first spend day): every day, spend = declared production + loss
+ * + support to the cent, nothing undeclared, every consumption placed (`reconciled`, strict, no tolerance). Reconciled =
+ * the book, else null (every pipe stays on the previous regime). A read that fails serves the last good answer of the
+ * same key, whatever its age (logged): a hiccup never flips some pipes back while others stay. `cutoffIso` = a mature
+ * cohort's cutoff; a cut runs-service has not computed yet (or computed before a later fact) = null for that half only
+ * (the maturity rule: no mature figure, never one on another basis).
  */
 export async function ledgerRegime(pricing: string, cutoffIso?: string | null): Promise<LedgerBookRead | null> {
   const basis = bookBasisOf(pricing);
-  const gate = await readOrLastGood("gross");
-  if (!gate || !gate.reconciliation.reconciled) return null;
-  const cut = cutoffIso ? runStartUntilOf(cutoffIso) : undefined;
-  const read = basis === "gross" && !cut ? gate : await readOrLastGood(basis, cut);
-  if (!read || read.reconciliation.daysMissing > 0) return null;
+  if (!(await reconciledOrLastGood())) return null;
+  const read = await readOrLastGood(basis, cutoffIso ? runStartUntilOf(cutoffIso) : undefined);
+  if (!read || read.daysMissing > 0) return null;
   return read;
+}
+
+let reconciliationHeld: { at: number; reconciled: boolean } | null = null;
+let lastReconciled: boolean | null = null;
+
+/** PURE. runs-service's verdict, read strictly: a body without it is not reconciled. */
+export function reconciledOf(body: unknown): boolean {
+  return (body as { reconciled?: unknown } | null)?.reconciled === true;
+}
+
+async function reconciledOrLastGood(): Promise<boolean> {
+  if (reconciliationHeld && Date.now() - reconciliationHeld.at < HELD_MS) return reconciliationHeld.reconciled;
+  try {
+    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/outcome-costs/reconciliation`, {
+      headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
+    });
+    if (!r.ok) throw new Error(`[features-service] runs-service reconciliation ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const reconciled = reconciledOf(await r.json());
+    reconciliationHeld = { at: Date.now(), reconciled };
+    lastReconciled = reconciled;
+    return reconciled;
+  } catch (error) {
+    console.error(`[features-service] ledger reconciliation unreadable; ${lastReconciled === null ? "previous regime kept" : "serving the last verdict"}:`, error);
+    return lastReconciled ?? false;
+  }
 }
 
 async function readOrLastGood(basis: BookBasis, cut?: string): Promise<LedgerBookRead | null> {
@@ -163,6 +185,8 @@ export function runStartUntilOf(cutoffIso: string): string {
 export function __resetLedgerBook(): void {
   held.clear();
   lastGood.clear();
+  reconciliationHeld = null;
+  lastReconciled = null;
   inFlight.clear();
 }
 
