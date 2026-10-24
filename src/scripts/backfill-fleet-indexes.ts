@@ -9,7 +9,12 @@
  */
 import { FLEET_INDEXES, SCEO_FEATURE_SLUG, SCEO_POSITIVE_REPLY_LEG, SCEO_WEBSITE_VISIT_LEG } from "../lib/fleet-indexes.js";
 import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, rankingOn, recomputeIndexHistory } from "../lib/fleet-index-history.js";
-import { readAssignmentChanges, readDatedSlugSpend, readHistoryLegs, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
+import { readAssignmentChanges, readDatedSlugSpend, readHistoryLegs, readMeetingHistoryInputs, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
+import { meetingPipeOn } from "../lib/meeting-pipe-history.js";
+import { fetchDynastyMerges } from "../lib/public-stats-clients.js";
+import { computeMeetingLegFleet } from "../lib/meeting-leg-fleet.js";
+import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG } from "../lib/research/pipe-series.js";
+import { MEETING_COST_OUTCOME_PRICES_SLUG } from "../lib/research/meeting-cost-methods.js";
 import { readFleetIndexRows, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
 
@@ -27,10 +32,11 @@ async function main(): Promise<void> {
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
   const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
   const legKeys = [visitLeg, replyLeg];
-  const [legs, workflows, assignmentChanges] = await Promise.all([
+  const [legs, workflows, assignmentChanges, merges] = await Promise.all([
     readHistoryLegs(SCEO_FEATURE_SLUG, legKeys),
     readWorkflowVersions(SCEO_FEATURE_SLUG),
     readAssignmentChanges(SCEO_FEATURE_SLUG, legKeys),
+    fetchDynastyMerges(SCEO_FEATURE_SLUG),
   ]);
   log(`legs: ${legs.map((l) => `${l.legKey} ${l.campaignIds.size} campaigns`).join(", ")}; ${workflows.length} workflow versions (${workflows.filter((w) => w.executableUntil === null).length} executable today); ${assignmentChanges.length} assignment changes`);
   const spend = await readDatedSlugSpend(SCEO_FEATURE_SLUG, legs);
@@ -43,14 +49,33 @@ async function main(): Promise<void> {
   const persons = emptyPersonHistory(days);
   const pairs = await readPersonHistory(SCEO_FEATURE_SLUG, persons, legs, log);
   log(`${pairs} pairs walked; ${persons.undatedPersons} persons with no serve date and no dated send (in no past day)`);
-  const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows };
+  // The AI Meeting Booking pipe as of each day (MEETING-COST-METHODS-1024): the meeting indexes, its Research series and
+  // the outcome prices' meeting price. Checked first against the live pipe: rebuilt as of today, it must read the same.
+  const meeting = await readMeetingHistoryInputs();
+  const today = now.toISOString().slice(0, 10);
+  const [asOfToday, live] = [meetingPipeOn(meeting, today).fleet, await computeMeetingLegFleet()];
+  const pick = (f: typeof live) => JSON.stringify({ pooled: f.pooled, byDynasty: f.byDynasty.map(([d, x]) => [d, x.flash]), reporting: f.population });
+  log(`meeting pipe as of today: ${pick(asOfToday)}`);
+  log(`meeting pipe live:        ${pick(live)}`);
+  log(`meeting pipe check: ${pick(asOfToday) === pick(live) ? "SAME" : "DIFFERENT"} (${meeting.campaigns.length} campaigns, ${meeting.acts.length} acts, ${meeting.meetings.length} meeting facts, ${meeting.spend.length} spend buckets)`);
+  // The outcome prices price a reply WITH the sourcing its lead cost (`fed`), the ranking and the index without it.
+  const fedSpend = await readDatedSlugSpend(SCEO_FEATURE_SLUG, legs.filter((l) => l.legKey === replyLeg), "fed");
+  log(`${fedSpend.length} (version, day) fed spend buckets on ${replyLeg}`);
+  const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows, meeting, merges, fedSpend };
   const points = recomputeIndexHistory(inputs);
-  const stored = await readFleetIndexRows(FLEET_INDEXES.map((d) => d.slug));
+  const slugs = [...FLEET_INDEXES.map((d) => d.slug), MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, MEETING_COST_OUTCOME_PRICES_SLUG];
+  const stored = await readFleetIndexRows(slugs);
   const plan = planRecomputedWrites(points, stored);
-  for (const def of FLEET_INDEXES) {
+  for (const slug of slugs) {
+    const def = { slug };
     const series = points.filter((p) => p.point.indexSlug === def.slug);
     const sample = series.filter((_, i) => i % 7 === 0 || i === series.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}@${p.point.workflowDynastySlug ?? "-"}`);
     log(`${def.slug}: ${series.length} days from ${series[0]?.day ?? "-"}; ${sample.join(" ")}`);
+  }
+  // The last recomputed day of the meeting chains, with what they were built from (a reader re-does them by hand).
+  for (const slug of ["cold-email-cost-per-meeting", MEETING_COST_OUTCOME_PRICES_SLUG]) {
+    const last = points.filter((p) => p.point.indexSlug === slug).at(-1);
+    if (last) log(`last ${slug} ${last.day}: ${last.point.value} ${JSON.stringify(last.point.inputs)}`);
   }
   // A day both recorded live and recomputed: the two side by side (the recorded one is kept).
   for (const r of stored.filter((s) => s.basis === "recorded")) {

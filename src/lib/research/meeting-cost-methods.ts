@@ -20,7 +20,6 @@
  */
 import { MONTHS, dayText, n, usd } from "./format.js";
 import { clientMedian } from "./pipe-series.js";
-import { addDays, dayRange } from "../fleet-index-history.js";
 import { COVERAGE_BAR_PCT } from "./outcome-cost.js";
 import type { ResearchChart, ResearchPoint } from "./types.js";
 import type { FleetIndexPoint } from "../fleet-indexes.js";
@@ -123,6 +122,14 @@ export function ledgerPoint(unit: OutcomeUnitCost | null, coveragePct: number | 
   };
 }
 
+const DAY_MS = 86_400_000;
+const addDays = (day: string, k: number): string => new Date(Date.parse(`${day}T00:00:00.000Z`) + k * DAY_MS).toISOString().slice(0, 10);
+const dayRange = (first: string, last: string): string[] => {
+  const out: string[] = [];
+  for (let d = first; d <= last; d = addDays(d, 1)) out.push(d);
+  return out;
+};
+
 /**
  * PURE. The past days the ledger history must (re)compute now: every day from the first day the ledger holds a booked
  * meeting to yesterday, except a recorded day and a recomputed one already written today (UTC). Oldest first.
@@ -211,6 +218,8 @@ function dayPoints(rows: readonly MethodDay[], display: (r: MethodDay) => string
     .map((r) => ({ label: dayText(r.day), value: Number(r.value!.toFixed(2)), display: display(r), note: note(r), thin: thin(r) }));
 }
 
+const recomputedText = (r: MethodDay): string => (r.basis === "recomputed" ? " · recomputed as of that day" : "");
+
 const firstDayText = (rows: readonly MethodDay[]) => {
   const first = rows.find((r) => r.value !== null && Number.isFinite(r.value));
   return first ? dayText(first.day) : null;
@@ -226,8 +235,8 @@ export function outcomePricesChart(rows: readonly MethodDay[]): ResearchChart | 
       const rate = num(r.inputs.meetingRatePct);
       const mb = num(r.inputs.meetingLegCostUsd);
       return reply !== null && rate !== null && mb !== null
-        ? `${usd(reply)} per positive reply ÷ ${rate.toFixed(1)}% booked + ${usd(mb)} per meeting · ${meetingsText(num(r.inputs.meetingsBooked) ?? 0)} behind the rate${r.inputs.maturity === "mature" ? "" : " · early (a leg on flash figures)"}`
-        : `${meetingsText(r.outcomes)} behind the rate`;
+        ? `${usd(reply)} per positive reply ÷ ${rate.toFixed(1)}% booked + ${usd(mb)} per meeting · ${meetingsText(num(r.inputs.meetingsBooked) ?? 0)} behind the rate${r.inputs.maturity === "mature" ? "" : " · early (a leg on flash figures)"}${recomputedText(r)}`
+        : `${meetingsText(r.outcomes)} behind the rate${recomputedText(r)}`;
     },
     (r) => r.status === "noise",
   );
@@ -237,7 +246,7 @@ export function outcomePricesChart(rows: readonly MethodDay[]): ResearchChart | 
     title: `Expected, outcome prices: cost per meeting booked, day by day from ${firstDayText(rows)}`,
     lowerIsBetter: true,
     points,
-    note: "Our best cold email workflow's cost per positive reply, divided by the share of positive replies our best meeting booking workflow books, plus that workflow's cost per meeting: the price a new client is quoted (outcome prices), on what each workflow incurred, mature figures where a workflow has them. Not stored before this row existed: recorded day by day since, no earlier day is recomputed.",
+    note: "Our best cold email workflow's cost per positive reply, divided by the share of positive replies our best meeting booking workflow books, plus that workflow's cost per meeting: the price a new client is quoted (outcome prices), on what each workflow incurred, mature figures where a workflow has them. Past days recomputed as of the end of each day (the people, replies, meetings and spend dated by then, the workflows that could run then), recorded live from Oct 24, 2026.",
   };
 }
 
@@ -251,8 +260,8 @@ export function indexChart(rows: readonly MethodDay[]): ResearchChart | null {
       const rate = num(r.inputs.interestToMeetingPct);
       const mb = num(r.inputs.meetingPipeCostPerMeetingUsd);
       return reply !== null && rate !== null && mb !== null
-        ? `${usd(reply)} per positive reply ÷ ${rate.toFixed(1)}% booked + ${usd(mb)} per meeting · ${meetingsText(r.outcomes)} behind the rate`
-        : `${meetingsText(r.outcomes)} behind the rate`;
+        ? `${usd(reply)} per positive reply ÷ ${rate.toFixed(1)}% booked + ${usd(mb)} per meeting · ${meetingsText(r.outcomes)} behind the rate${recomputedText(r)}`
+        : `${meetingsText(r.outcomes)} behind the rate${recomputedText(r)}`;
     },
     (r) => r.status === "noise",
   );
@@ -262,7 +271,7 @@ export function indexChart(rows: readonly MethodDay[]): ResearchChart | null {
     title: `Expected, public index (Cold Email Cost Per Meeting Index): day by day from ${firstDayText(rows)}`,
     lowerIsBetter: true,
     points,
-    note: "The same formula as the outcome prices, on the leg rankings' money rows (the best proven workflow that can still run, else the best available, marked Learning): the figure our landing publishes, recorded once a day.",
+    note: "The same formula as the outcome prices, on the leg rankings' money rows (the best proven workflow that can still run, else the best available, marked Learning): the figure our landing publishes, recorded live from Oct 18, 2026, earlier days recomputed as of the end of each day.",
   };
 }
 
@@ -275,7 +284,7 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
     (r) => {
       const cov = num(r.inputs.coveragePct);
       const missing = num(r.inputs.daysMissing) ?? 0;
-      return `${meetingsText(r.outcomes)} · ${cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`} of the outcome spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}${floor(r) ? " · a floor" : ""}${r.basis === "recomputed" ? " · recomputed as of that day" : ""}`;
+      return `${meetingsText(r.outcomes)} · ${cov === null ? "an unknown share" : `${cov < 10 ? cov.toFixed(1) : Math.round(cov)}%`} of the outcome spend declared${missing > 0 ? ` · ${n(missing)} days still computing` : ""}${floor(r) ? " · a floor" : ""}${recomputedText(r)}`;
     },
     (r) => floor(r) || r.status === "noise",
   );
