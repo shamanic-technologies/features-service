@@ -8716,6 +8716,31 @@ const researchCatalogRoi = z
   })
   .describe("Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured.");
 const researchTemplateStatus = z.enum(["active", "deprecated"]);
+const researchRunCost = z
+  .object({
+    runs: z.number().int().describe("Writing runs of this model on the pipe whose cost is known: the average's denominator. A run = one generation the model wrote on the pipe's campaigns (every client, workflow and template of the pipe pooled)."),
+    runsWithoutCost: z.number().int().describe("Runs on the pipe whose cost is not known (content-generation stated no completion run, runs-service did not return it, or not read yet); in no figure, never $0."),
+    averageUsd: z.number().nullable().describe("What ONE writing run costs: Σ the LLM cost of the completion that wrote each run ÷ `runs`. Money basis = billed GROSS, committed (actual + open holds), the basis of the page's spend on `basis=user`. Null with `unavailableReason`."),
+    averageDisplay: z.string().nullable().describe("`averageUsd` printed (`$0.0123`)."),
+    averageInputUsd: z.number().nullable().describe("The input-token part of `averageUsd`; CACHE IS FOLDED INTO INPUT (cached input, cache writes): `averageInputUsd + averageOutputUsd = averageUsd`."),
+    averageOutputUsd: z.number().nullable().describe("The output-token part of `averageUsd` (the completion's `...-tokens-output` cost lines)."),
+    totalUsd: z.number().describe("Σ over the priced runs = `averageUsd × runs`."),
+    totalInputUsd: z.number(),
+    totalOutputUsd: z.number(),
+    averageInputTokens: z.number().nullable().describe("Average input tokens content-generation recorded per run (priced runs that recorded tokens)."),
+    averageOutputTokens: z.number().nullable(),
+    history: z
+      .array(z.object({ day: z.string().describe("UTC day (YYYY-MM-DD) a priced run was written."), runs: z.number().int().describe("Priced runs to that day."), averageUsd: z.number().describe("CUMULATIVE average cost per run since inception to that day.") }))
+      .describe("Since inception, one point per UTC day a priced run was written, oldest first; the last point IS `averageUsd`."),
+    basis: z.literal("billed_gross_committed"),
+    cache: z.literal("folded_into_input"),
+    unavailableReason: z
+      .enum(["no_run_on_pipe", "no_run_cost_known", "not_on_vendor_basis", "run_costs_unreadable"])
+      .nullable()
+      .describe("Why the averages are null: the model wrote nothing on this pipe (Learning), none of its runs has a known cost yet, the `basis=actual` read (a run's vendor cost is not read), or our copy was unreadable this build. Null when served."),
+  })
+  .describe("MODEL-RUN-COST-1024: what ONE email-writing run with this model costs on THIS pipe (staff Research > Models), split input vs output tokens, with its since-inception curve.");
+
 const researchCatalogPipeSchema = z.object({
   workflows: z.array(z.object({
     key: z.string(),
@@ -8782,7 +8807,7 @@ const researchCatalogPipeSchema = z.object({
         .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
       ...researchCatalogFigures,
       workflows: z.array(z.object({ key: z.string(), label: z.string() })),
-      runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), templateVersion: z.string().nullable().describe("The template version the sequence was written with."), tokens: z.string().nullable() })),
+      runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), templateVersion: z.string().nullable().describe("The template version the sequence was written with."), tokens: z.string().nullable().describe("The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded.") })),
     }))
     .describe("One page per template DYNASTY of the pipe (TPL-DYNASTY-1021-FS2), its figures pooled over every version (every dynasty of the pipe has a page, zero figures until a version writes); a version no dynasty lists keeps its own page. The template study bars are the same buckets."),
   models: z.array(z.object({
@@ -8796,20 +8821,21 @@ const researchCatalogPipeSchema = z.object({
     roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."),
     roiDetail: researchCatalogRoi.describe("MODEL-ROI-1023: the model's OWN return, the template rule (TPL-ROI-OWN-1022): the pipeline its own outcomes carry (each workflow's pipeline shared on the outcomes its emails produced) ÷ what its own people were billed (each workflow's billed spend shared on what they cost), on the same people as its $/outcome, % conversion, # outcomes and $ spent; `measured` only with an outcome of its own. Else `expected`: every model of the pipe pooled (`pipe_models`), then the workflows writing with it now (`writes_with_now`), then the pipe's money workflow (`pipe_best_workflow`); null only with `unavailableReason`."),
     models: z
-      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi.describe("MODEL-ROI-1023: this version's OWN return (`own_outcomes`) once it has an outcome of its own, else its dynasty page's, `expected` + `source: dynasty`. Its pipeline and billed spend are its share of the page's: the versions' add up to the page's."), ...researchCatalogFigures }))
+      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), runCost: researchRunCost.describe("This version's runs only (written by one of its `modelIds`): the versions' runs partition the page's, their `totalUsd` add up to it."), roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi.describe("MODEL-ROI-1023: this version's OWN return (`own_outcomes`) once it has an outcome of its own, else its dynasty page's, `expected` + `source: dynasty`. Its pipeline and billed spend are its share of the page's: the versions' add up to the page's."), ...researchCatalogFigures }))
       .describe("Every version of the dynasty, newest first (chat-service's order), each with its share of the page's figures read on the DYNASTY's basis: their spend, people and outcomes add up to the page's. `rank` is null. Zero for a version that never wrote. On a model on its own: that model."),
     modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). Empty when chat-service lists none."),
     aliases: z.array(z.string()).describe("Every alias chat-service serves this page's models under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
     formerAliases: z.array(z.string()).describe("Aliases that once named this model and now name another (a status set on them acts on that other model)."),
     aliasesUnavailableReason: z.enum(["model_ids_unreadable", "model_not_in_chat_service", "no_alias_serves_it"]).nullable().describe("Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."),
-    ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable() })) })),
+    runCost: researchRunCost.describe("Every version of the dynasty pooled on this pipe."),
+    ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable().describe("The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded.") })) })),
 });
 
 registry.registerPath({
   method: "get",
   path: "/internal/research/catalog",
   summary: "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
-  description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
+  description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences, `tokens` = the tokens it recorded, null when not recorded). Every model page and version carries `runCost` (MODEL-RUN-COST-1024): what one writing run costs on the pipe. Same build cadence as /internal/research.",
   tags: ["Internal"],
   request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {

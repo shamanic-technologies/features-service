@@ -1,4 +1,4 @@
-import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric } from "drizzle-orm/pg-core";
 
 export const features = pgTable(
   "features",
@@ -781,6 +781,17 @@ export const generationSequenceCopy = pgTable(
     opening: text("opening"),
     dash: text("dash"),
     copiedAt: timestamp("copied_at", { withTimezone: true }).notNull().defaultNow(),
+    // MODEL-RUN-COST-1024 (migration 0047): the completion run(s) content-generation states wrote it (null + reason when it
+    // cannot tell), its recorded tokens, and that run's own LLM cost read from runs-service (billed gross, committed).
+    completionRunIds: text("completion_run_ids").array(),
+    completionUnknownReason: text("completion_unknown_reason"),
+    tokensInput: integer("tokens_input"),
+    tokensOutput: integer("tokens_output"),
+    llmInputCostCents: numeric("llm_input_cost_cents"),
+    llmOutputCostCents: numeric("llm_output_cost_cents"),
+    /** `read` | `held` (a provisioned hold still open: re-read) | `run_not_found`. Null = not read yet. */
+    llmCostStatus: text("llm_cost_status"),
+    llmCostReadAt: timestamp("llm_cost_read_at", { withTimezone: true }),
   },
   (t) => [
     index("idx_generation_sequence_copy_campaign_lead").on(t.campaignId, t.leadId),

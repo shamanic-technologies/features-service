@@ -12,6 +12,7 @@ import type { ResearchChart, ResearchPipeId } from "./types.js";
 import { modelRowAliases, type DynastyWriter, type ModelAliasReason, type ModelIdRow, type WriterReason } from "./writers.js";
 import type { VersionShare } from "./generations.js";
 import { NO_LLM_DYNASTIES, type LlmDynastyIndex, type LlmDynastyReason } from "../llm-dynasties.js";
+import { runCostOf, tokensText, unavailableRunCost, type CatalogRunCost, type GenerationCostInput, type RunCostUnavailableReason } from "./run-cost.js";
 import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex, type TemplateDynastyReason, type TemplateDynastyStatusSource, type TemplateStatus } from "./template-dynasties.js";
 
 export interface CatalogRef {
@@ -214,6 +215,8 @@ export interface CatalogModelVersion extends CatalogFigures {
   /** Its OWN return (MODEL-ROI-1023, the template version rule): measured with an outcome of its own, else its dynasty's, expected. */
   roi: string | null;
   roiDetail: CatalogRoi;
+  /** What one writing run of this model costs on the pipe (MODEL-RUN-COST-1024): its runs only; the versions' runs add up to the page's. */
+  runCost: CatalogRunCost;
 }
 
 /** Why a model page is one model on its own (no dynasty). */
@@ -243,6 +246,11 @@ export interface CatalogModel extends CatalogFigures {
   /** Aliases that once named it and now name another model. */
   formerAliases: string[];
   aliasesUnavailableReason: ModelAliasReason | null;
+  /**
+   * What ONE writing run of the dynasty costs on this pipe (MODEL-RUN-COST-1024): every client, workflow and template of
+   * the pipe pooled, every version; average, input/output split (cache folded into input), cumulative daily curve.
+   */
+  runCost: CatalogRunCost;
   workflows: Array<{ key: string; label: string }>;
   runs: Array<{ when: string; workflow: { key: string; label: string } | null; template: CatalogRef | null; version: string | null; tokens: string | null }>;
 }
@@ -266,6 +274,9 @@ export interface GenerationRun {
   model: string;
   promptType: string | null;
   workflowSlug: string | null;
+  /** The tokens content-generation-service recorded for it (MODEL-RUN-COST-1024); absent/null = not recorded. */
+  tokensInput?: number | null;
+  tokensOutput?: number | null;
 }
 
 const RUNS_SHOWN = 10;
@@ -340,6 +351,11 @@ export interface PipeCatalogInput {
   /** Per template version, its share of its bar on the bar's basis (generationBuckets `tplVersions`). */
   templateVersions?: readonly ResearchBucket[];
   generationRuns: readonly GenerationRun[];
+  /**
+   * Every generation a model wrote on the pipe with its completion's LLM cost (MODEL-RUN-COST-1024); a reason when the
+   * run costs cannot be served (vendor basis, copy unreadable). Absent = `run_costs_unreadable`.
+   */
+  generationCosts?: readonly GenerationCostInput[] | RunCostUnavailableReason;
   templateTexts: ReadonlySet<string>;
   /**
    * Every workflow the leg ranking lists (TPL-TACTICS-ROWS-1022; was its selectable rows only, so a ranking row that
@@ -669,7 +685,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
         workflow: wfRef(x.workflowSlug),
         version: x.workflowSlug ? versionText(x.workflowSlug) : null,
         templateVersion: x.promptType && dyn.versionOf(x.promptType),
-        tokens: null,
+        tokens: tokensText(x.tokensInput ?? null, x.tokensOutput ?? null),
       })),
     };
   });
@@ -682,7 +698,25 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     const m = ownRoi(p.modelFiguresByVersion?.get(key));
     return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (pooledModelRoi ?? nowRoiOf(key, "model") ?? pipeRoi);
   };
-  const modelVersionsOf = (key: string, label: string, pageRoi: CatalogRoi): CatalogModelVersion[] => {
+  const costs = p.generationCosts ?? "run_costs_unreadable";
+  const costsOfPage = (key: string) => (typeof costs === "string" ? null : costs.filter((x) => llmKeyOfId(x.model) === key));
+  const pageRunCost = (key: string) => {
+    const rows = costsOfPage(key);
+    return rows ? runCostOf(rows) : unavailableRunCost(costs as RunCostUnavailableReason);
+  };
+  // A version's runs: the page's runs written by one of its model ids (or named like it); the versions' runs partition the page's.
+  const withVersionRunCosts = (key: string, versions: Array<Omit<CatalogModelVersion, "runCost">>): CatalogModelVersion[] => {
+    const rows = costsOfPage(key);
+    if (!rows) return versions.map((v) => ({ ...v, runCost: unavailableRunCost(costs as RunCostUnavailableReason) }));
+    const versionOfRun = (m: string) => versions.find((v) => v.modelIds.includes(m))?.key ?? versions.find((v) => v.key === modelKey(p.modelLabel(m)))?.key ?? null;
+    const byVersion = new Map<string, GenerationCostInput[]>();
+    for (const x of rows) {
+      const k = versionOfRun(x.model);
+      if (k !== null) byVersion.set(k, [...(byVersion.get(k) ?? []), x]);
+    }
+    return versions.map((v) => ({ ...v, runCost: runCostOf(byVersion.get(v.key) ?? []) }));
+  };
+  const modelVersionsOf = (key: string, label: string, pageRoi: CatalogRoi): Array<Omit<CatalogModelVersion, "runCost">> => {
     const d = llmDyn.bySlug(key);
     const bars = versionBarsOf.get(key) ?? [];
     // A version's own return once it has an outcome of its own, else its dynasty's, expected (the template version rule).
@@ -699,7 +733,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     }
     // Every version newest first (chat-service's order), its bar if it wrote; a bar naming no listed version is appended.
     const used = new Set<string>();
-    const out: CatalogModelVersion[] = [];
+    const out: Array<Omit<CatalogModelVersion, "runCost">> = [];
     for (const m of d.models) {
       const k = modelKey(m.displayName);
       const existing = out.find((x) => x.key === k);
@@ -725,14 +759,15 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     dynasty: d ? { slug: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModelId: d.headModelId, servedToday: d.servedToday, legacyAliases: [...d.legacyAliases] } : null,
     standaloneReason: d ? null : (llmDyn.unavailableReason ?? "no_dynasty_in_chat_service"),
     ...roiFields(roi),
-    models: modelVersionsOf(r.key, r.label, roi),
+    models: withVersionRunCosts(r.key, modelVersionsOf(r.key, r.label, roi)),
+    runCost: pageRunCost(r.key),
     ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", pageKeyOfServed),
     ...figures(p.terms, r, writerRank.get(r) ?? null),
     workflows: workflows.filter((w) => w.model?.key === r.key || w.writesWithNow?.model?.key === r.key || w.wroteWith?.model?.key === r.key).map((w) => ({ key: w.key, label: w.label })),
     runs: p.generationRuns
       .filter((x) => llmKeyOfId(x.model) === r.key)
       .slice(0, RUNS_SHOWN)
-      .map((x) => ({ when: whenText(x.createdAt), workflow: wfRef(x.workflowSlug), template: tplRef(x.promptType), version: x.workflowSlug ? versionText(x.workflowSlug) : null, tokens: null })),
+      .map((x) => ({ when: whenText(x.createdAt), workflow: wfRef(x.workflowSlug), template: tplRef(x.promptType), version: x.workflowSlug ? versionText(x.workflowSlug) : null, tokens: tokensText(x.tokensInput ?? null, x.tokensOutput ?? null) })),
     };
   });
   return { workflows, templates, models };

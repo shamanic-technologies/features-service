@@ -19,10 +19,12 @@ import { generationSequenceCopy } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
+import { sweepCompletionCosts } from "./generation-completion-costs.js";
 
 const COLD_EMAIL = "sales-cold-email-outreach";
 
-const cursorKeyOf = (feature: string) => `generation-sequences-cursor:${feature}:v1`;
+// v2 (MODEL-RUN-COST-1024): re-read once from the start, so every row gains its completion run(s) and tokens.
+const cursorKeyOf = (feature: string) => `generation-sequences-cursor:${feature}:v2`;
 const TICK_MS = 2 * 60_000;
 const FIRST_TICK_MS = 100_000;
 
@@ -36,6 +38,11 @@ interface RawSequence {
   workflowSlug: string | null;
   createdAt: string;
   firstEmail: { layout: string; opening: string; dash: string } | null;
+  /** MODEL-RUN-COST-1024-CG: the chat completion run(s) that wrote it (null + reason when it cannot be told), its recorded tokens. */
+  completionRunIds?: string[] | null;
+  completionRunsReason?: string | null;
+  tokensInput?: number | null;
+  tokensOutput?: number | null;
 }
 
 /** PURE. One served sequence as its row. */
@@ -52,6 +59,10 @@ export function rowOfSequence(s: RawSequence): typeof generationSequenceCopy.$in
     layout: s.firstEmail?.layout ?? null,
     opening: s.firstEmail?.opening ?? null,
     dash: s.firstEmail?.dash ?? null,
+    completionRunIds: s.completionRunIds ?? null,
+    completionUnknownReason: s.completionRunIds ? null : (s.completionRunsReason ?? null),
+    tokensInput: s.tokensInput ?? null,
+    tokensOutput: s.tokensOutput ?? null,
   };
 }
 
@@ -96,6 +107,13 @@ async function copyFeatureSequences(feature: string): Promise<number> {
             layout: sql`excluded.layout`,
             opening: sql`excluded.opening`,
             dash: sql`excluded.dash`,
+            completionUnknownReason: sql`excluded.completion_unknown_reason`,
+            tokensInput: sql`excluded.tokens_input`,
+            tokensOutput: sql`excluded.tokens_output`,
+            // A completion stated differently than the one read makes its stored cost stale: read again.
+            llmCostReadAt: sql`CASE WHEN ${generationSequenceCopy.completionRunIds} IS DISTINCT FROM excluded.completion_run_ids THEN NULL ELSE ${generationSequenceCopy.llmCostReadAt} END`,
+            llmCostStatus: sql`CASE WHEN ${generationSequenceCopy.completionRunIds} IS DISTINCT FROM excluded.completion_run_ids THEN NULL ELSE ${generationSequenceCopy.llmCostStatus} END`,
+            completionRunIds: sql`excluded.completion_run_ids`,
             copiedAt: sql`now()`,
           },
         });
@@ -114,8 +132,11 @@ let running: Promise<void> | null = null;
 export function tickGenerationSequencesCopy(): Promise<void> {
   if (running) return running;
   running = copyGenerationSequences()
-    .then((n) => {
+    .then(async (n) => {
       if (n > 0) console.log(`[features-service] generation sequences copy: ${n} sequences copied`);
+      // MODEL-RUN-COST-1024: the LLM cost of each copied sequence's completion, read once it is due.
+      const c = await sweepCompletionCosts();
+      if (c > 0) console.log(`[features-service] completion costs: ${c} sequences priced`);
     })
     .catch((err) => console.error("[features-service] generation sequences copy failed (next tick resumes from the stored cursor):", err))
     .finally(() => {
