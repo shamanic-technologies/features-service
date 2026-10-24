@@ -4955,6 +4955,20 @@ export async function awaitFleetLegCostsFromOutcomePrices(waitMs: number = FLEET
 }
 
 /**
+ * The outcome prices' meeting price for the Research meeting-cost study (MEETING-COST-METHODS-1024), awaiting the first
+ * build of this process up to `waitMs`. Null (logged) when no build landed: the study says not readable.
+ */
+export async function readOutcomePricesMeetingBooked(waitMs: number): Promise<OutcomePricesPayload["outcomes"]["meetingBooked"] | null> {
+  try {
+    const value = await awaitWarmStore(() => outcomePricesStore?.value ?? null, warmOutcomePrices, waitMs, "outcome prices (research meeting cost)");
+    return value.outcomes.meetingBooked;
+  } catch (error) {
+    console.error("[features-service] research: outcome prices not built in time, the meeting-cost study says not readable:", error);
+    return null;
+  }
+}
+
+/**
  * The fleet's positive-reply rate per contacted lead, as the public onboarding quotes it: the conversion of
  * the best workflow on the cold-email `start_to_conversation` leg, from the last outcome-prices build (never a
  * request-path fleet walk). Null before the first build or when the leg is unmeasured. Kicks a warm when

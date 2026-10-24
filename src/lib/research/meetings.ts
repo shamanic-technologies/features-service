@@ -16,6 +16,7 @@ import { compareVerdict, headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy, type BucketFigures } from "./studies.js";
 import type { ResearchPoint, ResearchStudy } from "./types.js";
 import type { MeetingBookingBeforeAfter, MeetingBookingWindow } from "../meeting-booking-before-after.js";
+import { indexChart, ledgerChart, medianChart, medianToday, methodLines, outcomePricesChart, type MeetingCostMethods } from "./meeting-cost-methods.js";
 
 const people = (k: number) => `${n(k)} ${k === 1 ? "person" : "people"}`;
 const meetingsText = (k: number) => `${n(k)} ${k === 1 ? "meeting" : "meetings"}`;
@@ -204,7 +205,7 @@ export interface ReportingBrand {
  * meetings would invent a price (owner pick, 2026-10-03). A meeting counts for our outreach when the person had replied
  * positively to it before booking (lead-service's own attribution).
  */
-export function meetingCostStudy(brands: readonly ReportingBrand[] | null, outcomesRequired: number, readOn: string): ResearchStudy {
+export function meetingCostStudy(brands: readonly ReportingBrand[] | null, outcomesRequired: number, readOn: string, methods?: MeetingCostMethods): ResearchStudy {
   const base = {
     id: "meeting-cost",
     pipe: null,
@@ -262,10 +263,29 @@ export function meetingCostStudy(brands: readonly ReportingBrand[] | null, outco
         cumulative: { title: "Brands reporting meetings: average since inception", points: cumulative },
         note: `Spend on cold email and meeting booking, against the meetings booked by people who had replied positively to our outreach first. A figure needs ${meetingsText(outcomesRequired)} behind it; below that it reads Learning.`,
       },
+      // MEETING-COST-METHODS-1024: every other way we compute the figure, one row each (`meeting-cost-methods.ts`).
+      ...(methods
+        ? [
+            medianChart(brands, months, partial, outcomesRequired),
+            methods.outcomePrices ? outcomePricesChart(methods.outcomePrices) : null,
+            methods.index ? indexChart(methods.index) : null,
+            methods.ledger ? ledgerChart(methods.ledger) : null,
+          ].filter((c): c is NonNullable<typeof c> => c !== null)
+        : []),
     ],
     conclusion: [
       "The average divides everything those brands were charged, positive reply leg and meeting leg alike, by every meeting booked since; the monthly bars are context, not the answer.",
       `Measured on the ${brandsText(brands.length)} that report their booked meetings to us (CRM import or tracker). Brands that report no meetings are left out, since zero meetings there means we cannot see them.`,
+      ...(methods ? [medianLine(brands), ...methodLines(methods)] : []),
     ],
   };
+}
+
+/** PURE. The median client's figure today, in one line (MEETING-COST-METHODS-1024). */
+function medianLine(brands: readonly ReportingBrand[]): string {
+  const m = medianToday(brands);
+  if (!m) return "Measured, median client: no reporting brand has spent yet.";
+  return m.medianUsd !== null
+    ? `Measured, median client: ${usd(m.medianUsd)} per meeting booked today, across ${brandsText(m.clients)} that spent (${n(m.clientsWithoutOutcome)} with no meeting yet). The average is what the fleet pays; the median is what a typical client lives.`
+    : `Measured, median client: the median brand has no meeting yet (${n(m.clientsWithoutOutcome)} of the ${brandsText(m.clients)} that spent have none).`;
 }
