@@ -525,6 +525,34 @@ async function pipeOfWorkflow(workflowSlug: string): Promise<{ featureSlug: stri
   return null;
 }
 
+/**
+ * What a run of the pipe writes with today (BEST-TPL-LLM-1022): rank 1 template and rank 1 LLM under the play its campaign
+ * unit names (`salesFunnelId`; null = the pipe's default play). Null = the pipe's writer ranking is not built yet.
+ */
+export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000) {
+  const [catalogue, played, p] = await Promise.all([loadPlayCatalogue(), playOfLegRead(featureSlug, legKey, salesFunnelId), readLegWriterRanking(featureSlug, legKey, waitMs)]);
+  if (!p) return null;
+  const strategy = played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null;
+  // A play the pipe does not catalogue rules out every workflow on the ladder; here it rules out every writer too.
+  const unknownPlay = played !== null && !strategy;
+  const served = servedRankings(p, catalogue, strategy);
+  const t = unknownPlay ? null : (served.templates.best as TemplateRow | null);
+  const l = unknownPlay ? null : (served.llms.best as LlmRow | null);
+  // The run calls the DYNASTY SLUG when content-generation accepts it (LLM-DYNASTY-1022-CG: every name chat-service
+  // accepts, slugs included); else an active legacy alias of the same dynasty (chat-service runs the same head).
+  const activeAliases = l?.aliases.filter((a) => a.status === "active") ?? [];
+  const alias = activeAliases.find((a) => a.alias === l?.llmDynastySlug) ?? activeAliases[0] ?? null;
+  return {
+    payload: p,
+    strategyId: strategy?.id ?? null,
+    template: t,
+    templateUnavailableReason: t ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.templates.unavailableReason,
+    llm: l && alias ? l : null,
+    alias,
+    llmUnavailableReason: l && alias ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.llms.unavailableReason,
+  };
+}
+
 router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Response) => {
   const workflowSlug = typeof req.query.workflowSlug === "string" ? req.query.workflowSlug : "";
   const campaignId = typeof req.query.campaignId === "string" && req.query.campaignId ? req.query.campaignId : null;
@@ -539,18 +567,9 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
       salesFunnelId = unit.salesFunnelId;
     }
-    const [catalogue, played, p] = await Promise.all([loadPlayCatalogue(), playOfLegRead(pipe.featureSlug, pipe.legKey, salesFunnelId), readLegWriterRanking(pipe.featureSlug, pipe.legKey, 30_000)]);
-    if (!p) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${pipe.featureSlug}|${pipe.legKey} is being built: keep the workflow's own template and LLM`);
-    const strategy = played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null;
-    // A play the pipe does not catalogue rules out every workflow on the ladder; here it rules out every writer too.
-    const unknownPlay = played !== null && !strategy;
-    const served = servedRankings(p, catalogue, strategy);
-    const t = unknownPlay ? null : (served.templates.best as TemplateRow | null);
-    const l = unknownPlay ? null : (served.llms.best as LlmRow | null);
-    // The run calls the DYNASTY SLUG when content-generation accepts it (LLM-DYNASTY-1022-CG: every name chat-service
-    // accepts, slugs included); else an active legacy alias of the same dynasty (chat-service runs the same head).
-    const activeAliases = l?.aliases.filter((a) => a.status === "active") ?? [];
-    const alias = activeAliases.find((a) => a.alias === l?.llmDynastySlug) ?? activeAliases[0] ?? null;
+    const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId);
+    if (!picked) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${pipe.featureSlug}|${pipe.legKey} is being built: keep the workflow's own template and LLM`);
+    const { payload: p, template: t, llm: l, alias } = picked;
     const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
     res.json({
       workflowSlug,
@@ -558,13 +577,13 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       featureSlug: pipe.featureSlug,
       legKey: p.legKey,
       pipeId: p.pipeId,
-      strategyId: strategy?.id ?? null,
+      strategyId: picked.strategyId,
       computedAt: p.computedAt,
       template: t ? { templateDynastySlug: t.templateDynastySlug, head: t.head, name: t.label, ...figures(t) } : null,
-      templateUnavailableReason: t ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.templates.unavailableReason,
+      templateUnavailableReason: picked.templateUnavailableReason,
       // `llmDynastySlug` names the dynasty rank 1 is (LLM-DYNASTY-1022-FS: chat-service runs its head when called by the slug).
       llm: l && alias ? { model: alias.alias, llmDynastySlug: l.llmDynastySlug, headModelId: l.headModelId, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
-      llmUnavailableReason: l && alias ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.llms.unavailableReason,
+      llmUnavailableReason: picked.llmUnavailableReason,
     });
   } catch (error) {
     console.error(`[features-service] writer pick ${workflowSlug} failed:`, error);

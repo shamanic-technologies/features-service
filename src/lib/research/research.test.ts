@@ -570,7 +570,8 @@ describe("research catalogue", () => {
       runnableWorkflows: null,
       writerOf: "workflow_definitions_unreadable",
     });
-    expect(c.workflows.map((w) => [w.key, w.rank, w.cost])).toEqual([["rampart", 1, "$8.47"], ["pelican", null, null]]);
+    // PERF-COST-ORDER-1024: every workflow ranked, one with no outcome on its $ spent
+    expect(c.workflows.map((w) => [w.key, w.rank, w.cost])).toEqual([["rampart", 1, "$8.47"], ["pelican", 2, null]]);
     expect(c.workflows[0]!.writesWithNow).toBeNull();
     expect(c.workflows[0]!.writesWithNowUnavailableReason).toBe("workflow_definitions_unreadable");
     expect(c.workflows[0]!.model).toEqual({ key: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", linked: false });
@@ -630,11 +631,12 @@ describe("research catalogue: every runnable workflow, and what it writes with n
       ],
       writerOf: (d) => writers.get(d) ?? null,
     });
+    // PERF-COST-ORDER-1024: a workflow that never ran stands on its $0 spent, ahead of azalea's $10 per outcome
     expect(c.workflows.map((w) => [w.key, w.runnable, w.emails, w.spend, w.cost, w.rank])).toEqual([
-      ["azalea", true, "500", "$100", "$10", 1],
-      ["aldhanab", true, "0", "$0.00", null, null],
+      ["aldhanab", true, "0", "$0.00", null, 1],
+      ["azalea", true, "500", "$100", "$10", 2],
     ]);
-    const azalea = c.workflows[0]!;
+    const azalea = c.workflows.find((w) => w.key === "azalea")!;
     expect(azalea.wroteWithMost.template).toEqual({ key: "blind-discovery-email-v9", label: "Blind discovery v9", linked: true });
     expect(azalea.writesWithNow).toEqual({
       version: "v8",
@@ -642,7 +644,7 @@ describe("research catalogue: every runnable workflow, and what it writes with n
       model: { key: "gemini-3.1-pro", label: "Gemini 3.1 Pro", linked: true },
       modelAlias: "pro",
     });
-    const aldhanab = c.workflows[1]!;
+    const aldhanab = c.workflows.find((w) => w.key === "aldhanab")!;
     expect(aldhanab.name).toBe("Sales Cold Email Outreach Aldhanab");
     expect(aldhanab.writesWithNow?.model).toEqual({ key: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", linked: true });
     // The leg order (BEST-TPL-LLM-1022): a template never used has spent $0 and stands before one still learning.

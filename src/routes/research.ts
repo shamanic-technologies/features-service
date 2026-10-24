@@ -41,7 +41,8 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { pickPipeWriters } from "./leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -778,6 +779,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       pipe,
       noun: t.noun,
       nounPlural: t.nounPlural,
+      featureSlug: COLD_EMAIL,
       legKey: r.input.legKey,
       cells: r.input.cells,
       persons: r.persons,
@@ -822,10 +824,11 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
-      rowOrder: "leg_order",
+      rowOrder: "cost_per_outcome",
       orderView: "flash",
       rowsCover: "all_valid_combinations",
-      estimateModel: "part_effects",
+      featureSlug: null,
+      legKey: null,
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -894,10 +897,11 @@ interface OtherSection {
 const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
-  rowOrder: "leg_order",
+  rowOrder: "cost_per_outcome",
   orderView: "flash",
   rowsCover: "all_valid_combinations",
-  estimateModel: "part_effects",
+  featureSlug: p.featureSlug,
+  legKey: p.legKey,
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -1043,6 +1047,7 @@ async function otherPipeSection(
           pipe: p.entry.id,
           noun: terms.noun,
           nounPlural: terms.nounPlural,
+          featureSlug,
           legKey,
           cells: input.cells,
           persons,
@@ -1128,11 +1133,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: leg_order` since PERF-LEG-ORDER-1023, priors on `estimateModel: part_effects` since PRIOR-PART-EFFECTS-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: cost_per_outcome` since PERF-COST-ORDER-1024) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "leg_order" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "cost_per_outcome" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
@@ -1346,6 +1351,31 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
   }
 });
 
+/**
+ * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
+ * ranking's first workflow (what campaign-service runs) x the writer pick under the pipe's default play. A pipe whose
+ * pick cannot be read says so on its own block (logged), never fails the tab.
+ */
+async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNow> {
+  const none = { workflow: null, template: null, llm: null };
+  if (!perf.featureSlug || !perf.legKey) return servedNowOf(perf, { ...none, unavailableReason: "pipe_not_read" });
+  try {
+    const [ranking, picked] = await Promise.all([readLegWorkflowRanking(perf.featureSlug, perf.legKey, 0), pickPipeWriters(perf.featureSlug, perf.legKey, null, 0)]);
+    if (!ranking) return servedNowOf(perf, { ...none, unavailableReason: "workflow_ranking_not_computed_yet" });
+    if (!picked) return servedNowOf(perf, { ...none, unavailableReason: "writer_ranking_not_computed_yet" });
+    const first = ranking.rows.find((r) => r.goesFirst) ?? null;
+    const labelOf = (key: string, part: "workflow" | "template" | "llm") => perf.rows.find((r) => r[part]?.key === key)?.[part]?.label ?? null;
+    const workflow = first ? { key: first.workflowDynastySlug, label: labelOf(first.workflowDynastySlug, "workflow") ?? first.workflowDynastyName ?? first.workflowDynastySlug } : null;
+    const tplKey = picked.template ? (picked.template.templateDynastySlug ?? picked.template.key) : null;
+    const template = picked.template && tplKey ? { key: tplKey, label: labelOf(tplKey, "template") ?? picked.template.label } : null;
+    const llm = picked.llm ? { key: picked.llm.key, label: labelOf(picked.llm.key, "llm") ?? picked.llm.label } : null;
+    return servedNowOf(perf, { workflow, template, llm, unavailableReason: null });
+  } catch (error) {
+    console.error(`[features-service] research performance: the served combination of ${perf.pipe} could not be read:`, error);
+    return servedNowOf(perf, { ...none, unavailableReason: "served_pick_unreadable" });
+  }
+}
+
 router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
   const basis = basisOf(req.query.basis);
   if (!basis) {
@@ -1358,7 +1388,9 @@ router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
     const build = await readResearchBuild(basis, view);
     // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
     if (!build?.performance) return notYet(res);
-    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes: await withPerformanceMarks(build.performance) });
+    const marked = await withPerformanceMarks(build.performance);
+    const pipes = Object.fromEntries(await Promise.all(Object.entries(marked).map(async ([id, perf]) => [id, { ...perf, servedNow: await readServedNow(perf) }] as const)));
+    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes });
   } catch (error) {
     console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });

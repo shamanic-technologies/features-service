@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { candidatePartsOf, deprecatedPartsOf, fitPartEffects, inFlashOrder, pipePerformance, type PipePerformanceInput } from "./performance.js";
-import { legWorkflowPlaces, orderLegWorkflows } from "../leg-workflow-order.js";
+import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PipePerformanceInput } from "./performance.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -141,54 +140,29 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(row("azalea|borealis|claude-opus").costPerOutcomeUsd).toMatchObject({ value: 25, basis: "measured" });
   });
 
-  it("rows stand in the pipe's PICK order, the ONE leg order on each combination's own figures (PERF-LEG-ORDER-1023)", () => {
-    expect(out.rowOrder).toBe("leg_order");
+  it("rows stand on the figure the table shows: cost per outcome ascending, else $ spent (PERF-COST-ORDER-1024)", () => {
+    expect(out.rowOrder).toBe("cost_per_outcome");
     expect(out.orderView).toBe("flash");
     expect(out.rows.map((r) => r.rank)).toEqual([1, 2, 3, 4]);
-    // the order IS the shared leg order on each row's own figures (the one writer-pick and the workflow ranking use)
-    const entries = out.rows.map((r) => ({
-      slug: r.key,
-      selectable: r.status === "active",
-      mature: r.maturity.isMature && r.outcomes.value > 0 ? { tier: 0, costPerOutcomeUsd: r.spentUsd.value / r.outcomes.value } : null,
-      fleet: { spentUsd: r.spentUsd.value, outcomes: r.outcomes.value },
-    }));
-    expect(out.rows.map((r) => r.key)).toEqual(orderLegWorkflows(entries));
-    expect(out.rows.map((r) => r.place)).toEqual(out.rows.map((r) => legWorkflowPlaces(entries).get(r.key)));
-    expect(out.rows[0]!.key).toBe("azalea|borealis|claude-opus");
-    // the estimate is still served: (own spend + k x prior) / (own outcomes + k), k = 1 positive reply
-    const opus = row("azalea|borealis|claude-opus");
-    expect(opus.estimate.priorWeightOutcomes).toBe(1);
-    expect(opus.estimate.costPerOutcomeUsd).toBeCloseTo((opus.estimate.ownSpentUsd + opus.estimate.priorCostPerOutcomeUsd!) / (opus.estimate.ownOutcomes + 1), 9);
+    // opus $25 per reply; keel spent $50 with no reply; aurora x gemini $200 / 2 replies = $100; borealis x gemini spent
+    // $100 with no reply: the same $100, the tie on the key
+    expect(out.rows.map((r) => [r.key, r.sortCostUsd])).toEqual([
+      ["azalea|borealis|claude-opus", 25],
+      ["keel|-|-", 50],
+      ["azalea|aurora|gemini-flash", 100],
+      ["azalea|borealis|gemini-flash", 100],
+    ]);
+    for (const r of out.rows) expect(r.sortCostUsd).toBeCloseTo(r.costPerOutcomeUsd.value ?? r.spentUsd.value, 9);
   });
 
-  it("never used ($0) combinations go FIRST, ties on their estimate; a learning row proven worse than the best mature one goes after it", () => {
+  it("a combination that spent nothing is untested and stands on $0, first among the active rows (the dashboard hides them by default)", () => {
     const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
-    const fresh = all.rows.filter((r) => !r.written);
-    expect(all.rows.slice(0, fresh.length).every((r) => !r.written)).toBe(true);
-    for (let i = 1; i < fresh.length; i++) expect(fresh[i]!.estimate.costPerOutcomeUsd!).toBeGreaterThanOrEqual(fresh[i - 1]!.estimate.costPerOutcomeUsd!);
-    // a mature row sets the bar: learning rows that already spent more than its cost stand after it
-    const mature = pipePerformance(input({
-      candidates: { workflows: ["azalea"], templates: ["aurora"], llms: ["gemini-flash"] },
-      cells: cells.map((c) => (c.slug === "azalea-v1" ? { ...c, mature: half({ "2026-08": [100, 100, 2], "2026-09": [200, 200, 4] }) } : c)),
-    }));
-    const opus = mature.rows.find((r) => r.key === "azalea|borealis|claude-opus")!;
-    if (opus.maturity.isMature) {
-      expect(opus.place).toBe("money");
-      const worse = mature.rows.filter((r) => r.place === "proven_worse");
-      for (const w of worse) expect(w.rank).toBeGreaterThan(opus.rank);
-    }
-  });
-
-  it("a combination that spent with no outcome climbs above its prior; its expected cost IS that estimate, its return moves with it", () => {
-    const r = row("azalea|borealis|gemini-flash");
-    expect(r.estimate.ownOutcomes).toBe(0);
-    expect(r.estimate.ownSpentUsd).toBeGreaterThan(0);
-    expect(r.estimate.costPerOutcomeUsd).toBeCloseTo(r.estimate.ownSpentUsd + r.estimate.priorCostPerOutcomeUsd!, 9);
-    expect(r.costPerOutcomeUsd.value).toBeCloseTo(r.estimate.costPerOutcomeUsd!, 9);
-    // same value per outcome at a higher cost: return x (prior / estimate)
-    const noSpend = pipePerformance(input({ cells: cells.map((c) => (c.slug === "azalea-v2" ? { ...c, flash: half({ "2026-09": [0, 100, 0] }), mature: half({ "2026-09": [0, 100, 0] }) } : c)) }));
-    const free = noSpend.rows.find((x) => x.key === "azalea|borealis|gemini-flash")!;
-    expect(free.estimate.costPerOutcomeUsd).toBeCloseTo(free.estimate.priorCostPerOutcomeUsd!, 9);
+    const untested = all.rows.filter((r) => r.untested);
+    expect(untested.length).toBeGreaterThan(0);
+    expect(untested.every((r) => r.spentUsd.value === 0 && r.sortCostUsd === 0)).toBe(true);
+    expect(all.rows.slice(0, untested.length).every((r) => r.untested)).toBe(true);
+    expect(all.rows.filter((r) => !r.untested).map((r) => r.key)).toEqual(out.rows.map((r) => r.key));
+    expect(out.rows.some((r) => r.untested)).toBe(false);
   });
 
   it("a combination with ANY deprecated part is deprecated and stands after every active one", () => {
@@ -212,12 +186,12 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(fresh.written).toBe(false);
     expect(fresh.writerSource).toBeNull();
     expect(fresh.spentUsd.value).toBe(0);
-    expect(fresh.estimate.costPerOutcomeUsd).toBeCloseTo(fresh.estimate.priorCostPerOutcomeUsd!, 9);
-    expect(fresh.estimate.priorSource).toBe("own_parts");
-    expect(fresh.costPerOutcomeUsd).toMatchObject({ basis: "expected" });
+    expect(fresh.untested).toBe(true);
+    expect(fresh.costPerOutcomeUsd).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
+    expect(fresh.roi).toMatchObject({ value: null, unavailableReason: "no_outcome_yet" });
+    expect(fresh.conversionRatePct).toMatchObject({ value: null, unavailableReason: "nobody_emailed_yet" });
     expect(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.written).toBe(true);
-    // never used: explored first, before every row that spent; the totals and the series never move
-    expect(fresh.rank).toBeLessThan(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.rank);
+    // the totals and the series never move
     expect(all.totals).toEqual(out.totals);
     expect(all.series).toEqual(out.series);
   });
@@ -263,37 +237,15 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect([...deprecatedPartsOf({ workflows: [], templates: [], models: [{ key: "haiku", aliases: ["haiku"], aliasesUnavailableReason: null }, { key: "deepseek-pro", aliases: [], aliasesUnavailableReason: "no_alias_serves_it" }] }, null).llms]).toEqual(["deepseek-pro"]);
   });
 
-  it("a row with no outcome reads its OWN figures: measured 0% conversion, expected ROI and cost from its own parts", () => {
+  it("a row with no outcome reads its OWN measured figures only: 0% conversion measured, no cost or return estimated", () => {
     const r = row("azalea|borealis|gemini-flash");
     expect(r.outcomes.value).toBe(0);
     expect(r.conversionRatePct).toMatchObject({ value: 0, basis: "measured", source: "own" });
-    expect(r.roi).toMatchObject({ basis: "expected", source: "own_parts", parts: ["workflow"] });
-    expect(r.costPerOutcomeUsd).toMatchObject({ basis: "expected", source: "own_parts" });
-    // its prior = the pipe's model of part effects fitted on every OTHER row (PRIOR-PART-EFFECTS-1023)
-    const others = out.rows.filter((x) => x.key !== r.key && (x.spentUsd.value > 0 || x.outcomes.value > 0));
-    const keysOf = (x: (typeof out.rows)[number]) => [`w:${x.workflow.key}`, ...(x.template ? [`t:${x.template.key}`] : []), ...(x.llm ? [`l:${x.llm.key}`] : [])];
-    const model = fitPartEffects(others.map((x) => ({ parts: keysOf(x), spentUsd: x.spentUsd.value, outcomes: x.outcomes.value })), 1)!;
-    const rate = keysOf(r).reduce((acc, k) => acc * (model.effects.get(k) ?? 1), model.pipeRatePerUsd);
-    expect(r.estimate.priorCostPerOutcomeUsd).toBeCloseTo(1 / rate, 6);
-    expect(r.estimate.priorSource).toBe("own_parts");
-    expect(r.estimate.priorParts).toEqual(["workflow", "template", "llm"]);
-    // never the pipe pool copied on every row
-    expect(r.roi.value).not.toBeCloseTo(out.totals!.roi.value!, 3);
-    // a spend-only row (nobody emailed) still reads its parts
-    expect(row("keel|-|-").conversionRatePct).toMatchObject({ basis: "expected" });
-  });
-
-  it("an expected ROI is read FROM the expected cost: value per outcome ÷ that cost billed, never averaged apart (PRIOR-PART-EFFECTS-1023)", () => {
-    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
-    // azalea: $1,200 pipeline over 6 outcomes = $200 per outcome, $400 billed on $400 spent = 1 per dollar
-    for (const r of all.rows.filter((x) => x.workflow.key === "azalea" && x.roi.basis === "expected")) expect(r.roi.value! * r.costPerOutcomeUsd.value!).toBeCloseTo(200, 6);
-    // keel's own terms are $0 per outcome: its rows read the pipe pooled ($1,200 / 6 per outcome, $450 billed / $450 spent)
-    const keel = all.rows.find((x) => x.key === "keel|aurora|gemini-flash")!;
-    expect(keel.roi).toMatchObject({ basis: "expected", source: "pipe_combinations" });
-    expect(keel.roi.value! * keel.costPerOutcomeUsd.value!).toBeCloseTo(200, 6);
-    // so a cheaper expected cost always reads a higher expected return on one workflow
-    const az = all.rows.filter((x) => x.workflow.key === "azalea" && x.roi.basis === "expected").sort((a, b) => a.costPerOutcomeUsd.value! - b.costPerOutcomeUsd.value!);
-    for (let i = 1; i < az.length; i++) expect(az[i]!.roi.value!).toBeLessThanOrEqual(az[i - 1]!.roi.value!);
+    expect(r.roi).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
+    expect(r.costPerOutcomeUsd).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
+    expect("estimate" in r).toBe(false);
+    // a spend-only row (nobody emailed) states it, never borrows a rate
+    expect(row("keel|-|-").conversionRatePct).toMatchObject({ value: null, unavailableReason: "nobody_emailed_yet" });
   });
 
   it("the series is monthly, cumulative, and its last point IS the card", () => {
@@ -314,71 +266,40 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
   });
 });
 
-// PRIOR-PART-EFFECTS-1023 (owner 2026-10-23): the prior is ONE model of the pipe, never the geometric mean of each part.
-describe("fitPartEffects", () => {
-  const cost = (m: NonNullable<ReturnType<typeof fitPartEffects>>, parts: string[]) => 1 / parts.reduce((r, k) => r * (m.effects.get(k) ?? 1), m.pipeRatePerUsd);
-
-  it("effects MULTIPLY: three parts each twice as good make a combination ~8x cheaper, not 2x", () => {
-    // every pair of a good and a plain part is tried on its own with plenty of evidence; the all-good triple never ran
-    const rows: Array<{ parts: string[]; spentUsd: number; outcomes: number }> = [];
-    for (const w of ["w:good", "w:plain"]) for (const t of ["t:good", "t:plain"]) for (const l of ["l:good", "l:plain"]) {
-      if (w === "w:good" && t === "t:good" && l === "l:good") continue;
-      const goods = [w, t, l].filter((k) => k.endsWith("good")).length;
-      rows.push({ parts: [w, t, l], spentUsd: 8000, outcomes: 40 * 2 ** goods });
-    }
-    const m = fitPartEffects(rows, 1)!;
-    const ratio = cost(m, ["w:plain", "t:plain", "l:plain"]) / cost(m, ["w:good", "t:good", "l:good"]);
-    expect(ratio).toBeGreaterThan(7.5);
-    expect(ratio).toBeLessThan(8.5);
-  });
-
-  it("one lucky outcome barely moves a part; thirty move it (each part pulled toward the pipe by k outcomes)", () => {
-    // the pipe: $200 per outcome on 30 outcomes; a new LLM got 1 reply for $10
-    const base = [{ parts: ["w:a", "l:old"], spentUsd: 6000, outcomes: 30 }];
-    const lucky = fitPartEffects([...base, { parts: ["w:a", "l:new"], spentUsd: 10, outcomes: 1 }], 1)!;
-    // the raw figure is $10; the model reads it about half the pipe's price, never $10
-    expect(cost(lucky, ["w:a", "l:new"])).toBeGreaterThan(90);
-    const proven = fitPartEffects([...base, { parts: ["w:a", "l:new"], spentUsd: 300, outcomes: 30 }], 1)!;
-    expect(cost(proven, ["w:a", "l:new"])).toBeLessThan(15);
-  });
-
-  it("a part nobody spent on is neutral (effect 1), never a bonus", () => {
-    const m = fitPartEffects([{ parts: ["w:a", "t:x"], spentUsd: 1000, outcomes: 10 }, { parts: ["w:b", "t:x"], spentUsd: 1000, outcomes: 2 }], 1)!;
-    expect(m.effects.has("t:never")).toBe(false);
-    expect(cost(m, ["w:a", "t:x", "t:never"])).toBeCloseTo(cost(m, ["w:a", "t:x"]), 9);
-  });
-
-  it("the same replies are not counted once per part: one great row lifts its parts less than three separate proofs would", () => {
-    const one = fitPartEffects([{ parts: ["w:a", "t:a", "l:a"], spentUsd: 100, outcomes: 10 }, { parts: ["w:b", "t:b", "l:b"], spentUsd: 1000, outcomes: 10 }], 1)!;
-    // its parts' product reproduces roughly its own rate (10 per $100), not that rate cubed
-    const fitted = cost(one, ["w:a", "t:a", "l:a"]);
-    expect(fitted).toBeGreaterThan(8);
-    expect(fitted).toBeLessThan(25);
-  });
-
-  it("nothing to read a rate from: null", () => {
-    expect(fitPartEffects([], 1)).toBeNull();
-    expect(fitPartEffects([{ parts: ["w:a"], spentUsd: 100, outcomes: 0 }], 1)).toBeNull();
-  });
-});
-
-// PERF-ORDER-FLASH-1023 (owner 2026-10-23 « pourquoi ce ranking change si on choisit flash ou mature »): the view moves the
-// figures, never the rows. On the mature view a young combination read $0 and stood first as never used.
+// PERF-ORDER-FLASH-1023, kept by PERF-COST-ORDER-1024 (owner 2026-10-24 « c'est à moi de m'habituer que ça sort sur la vue
+// flash »): the view moves the figures, never the rows.
 describe("inFlashOrder", () => {
-  const perf = (rows: Array<[string, number, string, number]>) =>
-    ({ pipe: "p", orderView: "flash", rows: rows.map(([key, rank, place, spent]) => ({ key, rank, place, spentUsd: { value: spent } })) }) as never as Parameters<typeof inFlashOrder>[0];
+  const perf = (rows: Array<[string, number, number]>) =>
+    ({ pipe: "p", orderView: "flash", rows: rows.map(([key, rank, spent]) => ({ key, rank, sortCostUsd: spent, untested: spent === 0, spentUsd: { value: spent } })) }) as never as Parameters<typeof inFlashOrder>[0];
   // mature view: "young" read $0 (nothing old enough) and stands first
-  const mature = perf([["young", 1, "explore", 0], ["old", 2, "money", 900], ["gone", 3, "cannot_run", 10]]);
+  const mature = perf([["young", 1, 0], ["old", 2, 900], ["gone", 3, 10]]);
   // flash view: "young" spent $150 for nothing, the proven one leads
-  const flash = perf([["old", 1, "money", 1000], ["young", 2, "explore", 150], ["gone", 3, "cannot_run", 10]]);
-  it("rows stand in the flash tab's order, with its rank and place, on the view's own figures", () => {
+  const flash = perf([["old", 1, 100], ["young", 2, 150], ["gone", 3, 10]]);
+  it("rows stand in the flash tab's order, with its rank, sort figure and untested flag, on the view's own figures", () => {
     const out = inFlashOrder(mature, flash);
-    expect(out.rows.map((r) => [r.key, r.rank, r.place])).toEqual([["old", 1, "money"], ["young", 2, "explore"], ["gone", 3, "cannot_run"]]);
+    expect(out.rows.map((r) => [r.key, r.rank, r.sortCostUsd, r.untested])).toEqual([["old", 1, 100, false], ["young", 2, 150, false], ["gone", 3, 10, false]]);
     expect(out.rows.map((r) => r.spentUsd.value)).toEqual([900, 0, 10]);
     expect(out.orderView).toBe("flash");
   });
   it("a row the flash tab lacks keeps its place, after the others", () => {
-    const out = inFlashOrder(perf([["extra", 1, "explore", 0], ["old", 2, "money", 900]]), flash);
+    const out = inFlashOrder(perf([["extra", 1, 0], ["old", 2, 900]]), flash);
     expect(out.rows.map((r) => [r.key, r.rank])).toEqual([["old", 1], ["extra", 2]]);
+  });
+});
+
+// PERF-COST-ORDER-1024: the combination the pipe runs today, beside the rows.
+describe("servedNowOf", () => {
+  const out = pipePerformance(input());
+  const part = (key: string, label = key) => ({ key, label });
+  it("finds the row of the served workflow x template x LLM", () => {
+    const s = servedNowOf(out, { workflow: part("azalea"), template: part("borealis"), llm: part("claude-opus"), unavailableReason: null });
+    expect(s.row?.key).toBe("azalea|borealis|claude-opus");
+    expect(s.unavailableReason).toBeNull();
+  });
+  it("names why when the combination is not listed or a part is missing", () => {
+    expect(servedNowOf(out, { workflow: part("keel"), template: part("aurora"), llm: part("claude-opus"), unavailableReason: null })).toMatchObject({ row: null, unavailableReason: "combination_not_listed" });
+    expect(servedNowOf(out, { workflow: null, template: part("aurora"), llm: part("claude-opus"), unavailableReason: null }).unavailableReason).toBe("no_runnable_workflow");
+    expect(servedNowOf(out, { workflow: part("keel"), template: null, llm: part("claude-opus"), unavailableReason: null }).unavailableReason).toBe("no_template_picked");
+    expect(servedNowOf(out, { workflow: null, template: null, llm: null, unavailableReason: "writer_ranking_not_computed_yet" }).unavailableReason).toBe("writer_ranking_not_computed_yet");
   });
 });
