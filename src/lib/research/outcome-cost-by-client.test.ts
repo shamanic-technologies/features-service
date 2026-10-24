@@ -26,8 +26,10 @@ describe("ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4)", (
     expect(st.verdict.kind).toBe("noise");
   });
 
-  it("ledger days still computing make every bar a floor; nothing priced or unreadable = not measured", () => {
-    expect(outcomeCostByClientStudy([row("o1", "Acme", 99, 80, 10)], 12).charts[0]!.points[0]!.display).toBe("≥ $10");
+  it("RESEARCH-LEDGER-RECOMPUTING-1024: ledger days still being recomputed price nothing; nothing priced or unreadable = not measured", () => {
+    const st = outcomeCostByClientStudy([row("o1", "Acme", 99, 80, 10)], 12);
+    expect(st).toMatchObject({ status: "not_enough_data", headline: "Being recomputed." });
+    expect(st.charts.length).toBe(0);
     expect(outcomeCostByClientStudy([], 0).headline).toBe("No client priced on the ledger yet.");
     expect(outcomeCostByClientStudy(null, 0).headline).toBe("Not readable right now.");
   });

@@ -41,6 +41,7 @@ export function outcomeCostByClientStudy(rows: readonly ClientCostRow[] | null, 
     question: "What does a positive reply cost each client, every path, beside today's figure?",
   };
   if (!rows) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "runs-service's outcome ledger could not be read this time. The study comes back on the next build." });
+  if (daysMissing > 0) return notMeasuredStudy({ ...base, headline: "Being recomputed.", reason: `runs-service is recomputing ${n(daysMissing)} ledger ${daysMissing === 1 ? "day" : "days"} since inception: no figure until every day is in, since a figure read on part of the days is neither a price nor a floor.` });
   const priced = rows
     .filter((r) => r.ledger && r.ledger.unitCostUsd !== null && r.ledger.unitCostUsd > 0)
     .sort((a, b) => a.ledger!.unitCostUsd! - b.ledger!.unitCostUsd! || a.label.localeCompare(b.label));

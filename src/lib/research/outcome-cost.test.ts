@@ -32,9 +32,10 @@ describe("cost per outcome, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(low.result?.display).toBe("≥ $1.05");
     expect(low.headline).toMatch(/^At least \$1\.05/);
     expect(low.verdict.reason).toMatch(/12% of the outcome spend/);
-    const computing = outcomeCostStudy({ ...base, unit, coveragePct: 99, daysMissing: 251 });
-    expect(computing.verdict).toMatchObject({ kind: "noise" });
-    expect(computing.verdict.reason).toMatch(/251 days since inception are still being computed/);
+    // RESEARCH-LEDGER-RECOMPUTING-1024: 16 of 265 days read "at least $7.41" beside $148: no figure while days are recomputed
+    const computing = outcomeCostStudy({ ...base, unit, coveragePct: 99, daysMissing: 249 });
+    expect(computing).toMatchObject({ status: "not_enough_data", headline: "Being recomputed.", result: null });
+    expect(JSON.stringify(computing)).toMatch(/recomputing 249 ledger days/);
   });
 
   it("COST-SUPPORT-1024-FEATURES: support spend stated apart in one line, per function in dollars", () => {
