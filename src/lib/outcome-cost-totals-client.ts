@@ -22,7 +22,11 @@ interface WireTotals {
   supportDaysMissing?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
   consumed?: Array<{ dimensions?: Record<string, string | null>; consumptions?: string }>;
-  scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost; support?: WireCost; supportByFunction?: Record<string, WireCost> }>;
+  scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost; support?: WireCost; supportByFunction?: Record<string, WireCost>; abnormal?: WireCost }>;
+  /** Allocation v5 (LEAD-STATES-1024): the routed spend priced in the OTHER state family; a state's price = produced + parallel of its key. */
+  parallel?: Array<{ dimensions?: Record<string, string | null>; cost?: WireCost }>;
+  /** Allocation v5: abnormal loss, in no unit cost (IAS 2 section 16), per reason. */
+  abnormal?: Array<{ dimensions?: Record<string, string | null>; cost?: WireCost }>;
 }
 
 export interface OutcomeLedgerTotals {
@@ -35,6 +39,9 @@ export interface OutcomeLedgerTotals {
   supportByFunction: Array<{ fn: string; usd: number }>;
   /** Computed days runs-service has not split support on yet (their support reads 0: coverage understated there). */
   supportDaysMissing: number;
+  /** Abnormal loss (LEAD-STATES-1024), USD, and per reason (runs-service's key), largest first: in no unit cost. */
+  abnormalUsd: number;
+  abnormalByReason: Array<{ reason: string; usd: number }>;
   /** Days since inception the ledger has not computed yet (its refresher fills them): the figures stand on the others. */
   daysMissing: number;
   /** Per org (the scope rows' `orgId`): share of its OUTCOME spend an outcome carries, 0..100; null when it has none. */
@@ -63,6 +70,20 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
     if (!consumer) continue;
     consumed.push({ consumerKey: consumer, consumedKey: key, campaignId: g.dimensions?.campaignId ?? null, orgId: g.dimensions?.orgId ?? null, count: Number(g.consumptions ?? 0) });
   }
+  // A state's own production cost also holds its PARALLEL share (the other family's routed spend): a cost row of its key
+  // with no occurrence, so the roll-up adds it to the state's own stage and divides by the state's occurrences only.
+  for (const g of body.parallel ?? []) {
+    const key = g.dimensions?.outcomeKey;
+    if (!key) throw new Error("[features-service] outcome ledger totals: a parallel group names no outcomeKey");
+    const cost = usdOf(g.cost, basis);
+    if (cost !== 0) produced.push({ outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, orgId: g.dimensions?.orgId ?? null, produced: 0, ownCostUsd: cost });
+  }
+  const byReason = new Map<string, number>();
+  for (const g of body.abnormal ?? []) {
+    const reason = g.dimensions?.abnormalReason;
+    if (!reason) throw new Error("[features-service] outcome ledger totals: an abnormal group names no abnormalReason");
+    byReason.set(reason, (byReason.get(reason) ?? 0) + usdOf(g.cost, basis));
+  }
   let spend = 0;
   let carried = 0;
   let support = 0;
@@ -72,7 +93,8 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
     const sup = usdOf(s.support, basis);
     // Outcome spend: support is apart by design, never in the coverage denominator.
     const sp = usdOf(s.spend, basis) - sup;
-    const ca = usdOf(s.producedCost, basis);
+    // Abnormal loss is accounted for (runs-service's outcomeSpendCoverage = (allocated + abnormal) / (ledger - support)); absent before v5.
+    const ca = usdOf(s.producedCost, basis) + (s.abnormal ? usdOf(s.abnormal, basis) : 0);
     spend += sp;
     carried += ca;
     support += sup;
@@ -94,6 +116,8 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
     supportUsd: support,
     supportByFunction: [...byFn].map(([fn, usd]) => ({ fn, usd })).filter((f) => f.usd > 0).sort((a, b) => b.usd - a.usd),
     supportDaysMissing: (body.supportDaysMissing ?? []).length,
+    abnormalUsd: [...byReason.values()].reduce((a, b) => a + b, 0),
+    abnormalByReason: [...byReason].map(([reason, usd]) => ({ reason, usd })).filter((r) => r.usd > 0).sort((a, b) => b.usd - a.usd),
     daysMissing: (body.daysMissing ?? []).length,
     coverageByOrg,
   };
