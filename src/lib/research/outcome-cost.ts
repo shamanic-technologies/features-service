@@ -75,6 +75,11 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
   };
   const u = input.unit;
   if (!u) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "runs-service's outcome ledger could not be read this time. The study comes back on the next build." });
+  // A ledger still recomputing days (a new allocation rule, a refresher catching up) prices nothing (RESEARCH-LEDGER-RECOMPUTING-1024):
+  // 16 of 265 days read "at least $7.41" per positive reply beside a $148 figure.
+  if ((input.daysMissing ?? 0) > 0) {
+    return notMeasuredStudy({ ...base, headline: "Being recomputed.", reason: `runs-service is recomputing ${n(input.daysMissing!)} ledger ${input.daysMissing! === 1 ? "day" : "days"} since inception: no figure until every day is in, since a figure read on part of the days is neither a price nor a floor.` });
+  }
   if (u.unpricedReason === "consumption_cycle_diverges") {
     return notMeasuredStudy({ ...base, headline: "Not priceable yet.", reason: `Each ${input.noun} declared consumes one ${input.noun} or more of the same kind, so the ledger's declarations draw a loop with no finite cost. The declaring service has to state what each one really consumed.` });
   }

@@ -591,6 +591,7 @@ async function workflowLedgerStudyOf(
   return workflowLedgerStudy({
     pipe: POSITIVE_REPLY_PIPE,
     floorReason,
+    daysMissing: missing,
     rows: rows.filter((r) => ownDynasties.has(r.workflowSlug) && r.ownCostUsd > 0).map((r) => {
       const rank = ranking.get(r.workflowSlug);
       return { key: r.workflowSlug, label: input.labelOf(r.workflowSlug), outcomes: r.outcomes, ownCostUsd: r.ownCostUsd, unitCostUsd: r.unitCostUsd, todayCostUsd: rank?.costPerOutcomeUsd ?? null, todayBasis: rank ? rank.basis : null };
