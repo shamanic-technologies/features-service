@@ -245,7 +245,7 @@ export async function readMeetingHistoryInputs(): Promise<MeetingHistoryInputs> 
     const persons = acts.length ? await readActedPersons(orgId, brandId, new Set(acts.map((a) => a.leadId))) : [];
     const booked: MeetingFact[] = persons
       .filter((p) => STEP_REACHED.meeting_booked !== "acted" && (STEP_REACHED.meeting_booked as (x: typeof p) => boolean)(p))
-      .map((p) => ({ brandId, leadId: p.leadId, event: "acted_person_meeting", occurredAt: p.signalDates?.meeting ?? null }));
+      .map((p) => ({ brandId, source: "acted_person", leadId: p.leadId, event: "acted_person_meeting", occurredAt: p.signalDates?.meeting ?? null }));
     return { acts, booked };
   });
   return {
@@ -263,7 +263,10 @@ export async function readMeetingHistoryInputs(): Promise<MeetingHistoryInputs> 
 async function readMeetingFacts(): Promise<MeetingFact[]> {
   const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, { headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY ?? "" } }, { timeoutMs: 120_000 });
   if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const body = (await res.json()) as { attributedMeetings?: Array<{ brandId: string; leadId?: string | null; event: string; occurredAt: string | null }> };
+  const body = (await res.json()) as { attributedMeetings?: Array<{ brandId: string; source: string; leadId?: string | null; event: string; occurredAt: string | null }> };
   if (!Array.isArray(body.attributedMeetings)) throw new Error("lead-service meeting-attribution: no attributedMeetings");
-  return body.attributedMeetings.map((m) => ({ brandId: m.brandId, leadId: m.leadId ?? null, event: m.event, occurredAt: m.occurredAt }));
+  return body.attributedMeetings.map((m) => {
+    if (typeof m.source !== "string") throw new Error("lead-service meeting-attribution: a meeting row has no source");
+    return { brandId: m.brandId, source: m.source, leadId: m.leadId ?? null, event: m.event, occurredAt: m.occurredAt };
+  });
 }

@@ -99,18 +99,19 @@ describe("campaignOutputsOf (COST-ACCOUNTING-1023-P2)", () => {
       ],
       [{ slug: "sales-cold-email-outreach", stepTransitions: [{ legKey: "lead_found_to_conversation", to: { key: "conversation" } }, { legKey: "lead_found_to_website_visit", to: { key: "website_visit" } }] }],
     );
-    expect(outputOf("c1")).toBe("conversation");
-    expect(outputOf("c2")).toBe("website_visit");
+    // LEAD-STATES-1024: a pipe produces the lead STATE its step reaches
+    expect(outputOf("c1")).toBe("lead_interested");
+    expect(outputOf("c2")).toBe("lead_visited");
     expect(outputOf("c3")).toBeNull();
-    expect([...pipeOutputs].sort()).toEqual(["conversation", "website_visit"]);
+    expect([...pipeOutputs].sort()).toEqual(["lead_interested", "lead_visited"]);
   });
 });
 
 describe("clientCostRowsOf (COST-ACCOUNTING-1023-P4)", () => {
   it("one row per client with a ledger figure or a positive reply, today's spend and replies summed per org", () => {
-    const unit = { outcomeKey: "conversation", produced: 2, byProducts: 0, unitCostUsd: 5, ownUnitCostUsd: 5, stages: [], unpricedInputs: [] };
+    const unit = { outcomeKey: "lead_interested", produced: 2, byProducts: 0, unitCostUsd: 5, ownUnitCostUsd: 5, stages: [], unpricedInputs: [] };
     const rows = clientCostRowsOf(
-      new Map([["o1", { units: new Map([["conversation", unit]]) }]]),
+      new Map([["o1", { units: new Map([["lead_interested", unit]]) }]]),
       new Map([["o1", 50]]),
       [
         { orgId: "o1", positiveReplies: 1 },

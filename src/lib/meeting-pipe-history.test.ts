@@ -16,8 +16,8 @@ const inputs: MeetingHistoryInputs = {
     { brandId: "b1", campaignId: "c1", leadId: "C", firstActedAt: null },
   ],
   meetings: [
-    { brandId: "b1", leadId: "A", event: "meeting_booked", occurredAt: "2026-10-05T15:00:00.000Z" },
-    { brandId: "b1", leadId: "A", event: "acted_person_meeting", occurredAt: "2026-10-05T15:00:00.000Z" },
+    { brandId: "b1", source: "crm", leadId: "A", event: "meeting_booked", occurredAt: "2026-10-05T15:00:00.000Z" },
+    { brandId: "b1", source: "acted_person", leadId: "A", event: "acted_person_meeting", occurredAt: "2026-10-05T15:00:00.000Z" },
   ],
   assignmentChanges: [],
 };

@@ -398,11 +398,14 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     const ledgerFacts = {
       daysMissing: l.totals?.daysMissing ?? 0,
       unattributedCostUsd: units?.unattributedCostUsd ?? 0,
-      ...(l.totals ? { support: { byFunction: l.totals.supportByFunction, daysMissing: l.totals.supportDaysMissing } } : {}),
+      ...(l.totals ? { support: { byFunction: l.totals.supportByFunction, daysMissing: l.totals.supportDaysMissing }, abnormal: l.totals.abnormalByReason } : {}),
     };
+    // LEAD-STATES-1024: a lead STATE reached once per lead, never an event (3 replies = 1 interested lead, a meeting
+    // booked with no reply = interested too); the cost of each run goes to the state its lead had not reached yet.
     if (input.replyDelay !== undefined) {
-      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "positive reply", nounPlural: "positive replies", unit: unitOf("conversation"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
+      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "interested lead", nounPlural: "interested leads", unit: unitOf("lead_interested"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
     }
+    studies.push(outcomeCostStudy({ pipe: WEBSITE_VISIT_PIPE, idStem: "lead-visited", noun: "visiting lead", nounPlural: "visiting leads", unit: unitOf("lead_visited"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_website_visit").outcomesRequired, labelOf: l.labelOf }));
     studies.push(outcomeCostStudy({ outcome: "meeting", noun: "booked meeting", nounPlural: "booked meetings", unit: unitOf("meeting_booked"), ...ledgerFacts, coveragePct, outcomesRequired: input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, labelOf: l.labelOf }));
   }
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));

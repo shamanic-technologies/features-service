@@ -14,6 +14,7 @@
  * and every other bar regroups the same per-version evidence (`fetchFleetLegSlugEvidence`), dated by the runs ledger and
  * the fleet person cell. Pure assembly: `lib/research/*`.
  */
+import { leadStateOf } from "../lib/lead-states.js";
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
@@ -54,7 +55,7 @@ import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking, readOutcomePricesMeetingBooked } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries, recordFleetIndexPoints, utcDay, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
-import type { FleetIndexPoint } from "../lib/fleet-indexes.js";
+import { ledgerMeetingIndexPoint, type FleetIndexPoint, type LedgerMeetingCost } from "../lib/fleet-indexes.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import {
   ledgerHistoryDays,
@@ -96,6 +97,9 @@ import { STUDIED_PIPES } from "../lib/research/assemble.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
+
+/** The lead state the positive reply pipes produce (LEAD-STATES-1024): the every-path ledger figures key on it. */
+const INTERESTED = "lead_interested";
 
 const router = Router();
 
@@ -517,8 +521,10 @@ export function campaignOutputsOf(
   const pipeOutputs = new Set<string>();
   for (const c of channels) {
     for (const t of c.stepTransitions) {
-      toOf.set(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`, t.to.key);
-      pipeOutputs.add(t.to.key);
+      // A pipe produces the lead STATE its step reaches (LEAD-STATES-1024: a reply pipe produces Lead interested).
+      const out = leadStateOf(t.to.key) ?? t.to.key;
+      toOf.set(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`, out);
+      pipeOutputs.add(out);
     }
   }
   const byCampaign = new Map<string, string>();
@@ -550,7 +556,7 @@ export function clientCostRowsOf(
   return [...orgs].map((orgId) => ({
     orgId,
     label: labelOf(orgId),
-    ledger: byOrg.get(orgId)?.units.get("conversation") ?? null,
+    ledger: byOrg.get(orgId)?.units.get(INTERESTED) ?? null,
     coveragePct: coverageByOrg.get(orgId) ?? null,
     todaySpendUsd: spent.get(orgId) ?? 0,
     todayReplies: replies.get(orgId) ?? 0,
@@ -569,11 +575,11 @@ async function workflowLedgerStudyOf(
       })
     : null;
   if (!ledger.totals || !byWorkflow) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: null, floorReason: null });
-  const fleet = rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("conversation");
+  const fleet = rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get(INTERESTED);
   if (!fleet) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: [], floorReason: null });
   const dyn = (slug: string | null) => (slug ? (input.dynastyOf.get(slug) ?? slug) : null);
   const rows = workflowUnitCosts(
-    "conversation",
+    INTERESTED,
     byWorkflow.produced.map((r) => ({ ...r, workflowSlug: dyn(r.workflowSlug) })),
     byWorkflow.sourced.map((c) => ({ ...c, sourceWorkflowSlug: dyn(c.sourceWorkflowSlug) })),
     ledger.outputOf,
@@ -1694,19 +1700,27 @@ let ledgerHistoryInFlight = false;
 function backfillMeetingLedgerHistory(
   ledger: { outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
   stored: readonly MethodDay[],
+  storedIndex: readonly MethodDay[],
   today: string,
 ): void {
   if (ledgerHistoryInFlight) return;
   ledgerHistoryInFlight = true;
   void (async () => {
     const first = await fetchFirstOutcomeDay("meeting_booked");
-    const days = ledgerHistoryDays(first, today, stored).slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
+    // The public Cost Per Meeting Index IS this figure (MEETING-COST-METHODS-1024): its past days are written beside it.
+    const days = [...new Set([...ledgerHistoryDays(first, today, stored), ...ledgerHistoryDays(first, today, storedIndex)])].sort().slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
     if (!days.length) return;
     const outcomesRequired = legMaturity("start_to_meeting_booked").outcomesRequired;
     for (const day of days) {
       const totals = await fetchOutcomeLedgerTotals("gross", day);
       const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null;
-      await writeRecomputedFleetIndexPoints([{ day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) }], new Date());
+      await writeRecomputedFleetIndexPoints(
+        [
+          { day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) },
+          { day, point: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)), inputs: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)).inputs, asOfDay: day } } },
+        ],
+        new Date(),
+      );
     }
     console.log(`[features-service] research meeting-cost: ledger history recomputed for ${days.length} day(s), ${days[0]}..${days[days.length - 1]}`);
   })()
@@ -1753,10 +1767,38 @@ async function meetingCostMethodsOf(
     series(MEETING_COST_INDEX_SLUG, null),
     series(MEETING_COST_LEDGER_SLUG, ledgerToday),
   ]);
-  if (ledger.totals && ledgerDays) backfillMeetingLedgerHistory(ledger, ledgerDays, day);
+  if (ledger.totals && ledgerDays && index) backfillMeetingLedgerHistory(ledger, ledgerDays, index, day);
   return {
     outcomePrices: prices && (prices.length || price) ? prices : null,
-    index,
     ledger: ledgerDays && (ledgerDays.length || ledger.totals) ? ledgerDays : null,
   };
+}
+
+/** The ledger's booked meeting as the Cost Per Meeting Index reads it (an unpriced unit reads 0 meetings, no cost). */
+function ledgerMeetingCostOf(unit: OutcomeUnitCost | null, totals: Pick<OutcomeLedgerTotals, "coveragePct" | "daysMissing">): LedgerMeetingCost {
+  const priced = unit && !unit.unpricedReason ? unit : null;
+  return {
+    unitCostUsd: priced?.unitCostUsd ?? null,
+    produced: unit?.produced ?? 0,
+    coveragePct: totals.coveragePct,
+    daysMissing: totals.daysMissing,
+    unpricedInputs: priced?.unpricedInputs.length ?? 0,
+  };
+}
+
+/**
+ * The ledger's cost of one booked meeting today, every path (the `meeting-cost-every-path` study's figure): the public
+ * Cost Per Meeting Index's input (owner 2026-10-24 « go ledger accounting direct »). Null (logged) when the ledger, the
+ * campaigns or the catalogue cannot be read: the recorder then records nothing for that index.
+ */
+export async function readLedgerMeetingCost(): Promise<LedgerMeetingCost | null> {
+  try {
+    const [totals, rows, catalogue] = await Promise.all([fetchOutcomeLedgerTotals("gross"), fetchFleetCampaignRows(), loadChannelCatalogue({ publishedOnly: false })]);
+    const { outputOf, pipeOutputs } = campaignOutputsOf(rows, catalogue.channels);
+    const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, outputOf, pipeOutputs).units.get("meeting_booked") ?? null;
+    return ledgerMeetingCostOf(unit, totals);
+  } catch (err) {
+    console.error("[features-service] fleet indexes: the ledger's booked meeting unreadable, Cost Per Meeting Index not recorded this tick:", err);
+    return null;
+  }
 }

@@ -16,7 +16,7 @@ import { compareVerdict, headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy, type BucketFigures } from "./studies.js";
 import type { ResearchPoint, ResearchStudy } from "./types.js";
 import type { MeetingBookingBeforeAfter, MeetingBookingWindow } from "../meeting-booking-before-after.js";
-import { indexChart, ledgerChart, medianChart, medianToday, methodLines, outcomePricesChart, type MeetingCostMethods } from "./meeting-cost-methods.js";
+import { ledgerChart, medianChart, medianToday, methodLines, outcomePricesChart, type MeetingCostMethods } from "./meeting-cost-methods.js";
 
 const people = (k: number) => `${n(k)} ${k === 1 ? "person" : "people"}`;
 const meetingsText = (k: number) => `${n(k)} ${k === 1 ? "meeting" : "meetings"}`;
@@ -268,7 +268,6 @@ export function meetingCostStudy(brands: readonly ReportingBrand[] | null, outco
         ? [
             medianChart(brands, months, partial, outcomesRequired),
             methods.outcomePrices ? outcomePricesChart(methods.outcomePrices) : null,
-            methods.index ? indexChart(methods.index) : null,
             methods.ledger ? ledgerChart(methods.ledger) : null,
           ].filter((c): c is NonNullable<typeof c> => c !== null)
         : []),

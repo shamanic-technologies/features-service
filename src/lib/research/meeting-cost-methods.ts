@@ -10,11 +10,10 @@
  *  3. EXPECTED, outcome prices (`/public/stats/outcome-prices`): best cold email workflow's cost per positive reply ÷
  *     the best meeting booking workflow's rate + its cost per meeting, on INCURRED mature-else-flash figures. Not
  *     stored anywhere before: recorded day by day from the day this shipped, never back-filled.
- *  4. EXPECTED, the public index (Cold Email Cost Per Meeting Index): the same formula on the leg rankings' money rows,
- *     recorded day by day since Oct 18, 2026. Same formula as 3, NOT the same inputs (prod 2026-10-24: $794 vs $614,
- *     the reply cost read $183 vs $141), so two rows.
- *  5. LEDGER (production cost, every path, `<outcome>-cost-every-path`): a FLOOR while coverage < 95% or days still
- *     computing. A since-inception total with no history: recorded day by day from the day this shipped.
+ *  4. LEDGER (production cost, every path, `<outcome>-cost-every-path`): a FLOOR while coverage < 95% or days still
+ *     computing; each past day read as of its end. Since 2026-10-25 it IS the public Cold Email Cost Per Meeting Index
+ *     (owner 2026-10-24 « go ledger accounting direct »), so one row names both. The index's former chain (best reply
+ *     workflow ÷ best meeting booking rate) was the outcome prices' formula on the rankings' rows: it has no row of its own.
  *
  * The recorded series live in `fleet_index_points` under research slugs (never served by `/public/indexes`).
  */
@@ -48,7 +47,7 @@ export interface MethodDay {
 /** The recorded methods; null = could not be read this build (the row says so). */
 export interface MeetingCostMethods {
   outcomePrices: MethodDay[] | null;
-  index: MethodDay[] | null;
+  /** The ledger, every path: since 2026-10-25 also the public Cost Per Meeting Index (one figure, one row). */
   ledger: MethodDay[] | null;
 }
 
@@ -250,32 +249,7 @@ export function outcomePricesChart(rows: readonly MethodDay[]): ResearchChart | 
   };
 }
 
-/** PURE. Method 4: the public Cold Email Cost Per Meeting Index, every recorded day. */
-export function indexChart(rows: readonly MethodDay[]): ResearchChart | null {
-  const points = dayPoints(
-    rows,
-    (r) => usd(r.value!),
-    (r) => {
-      const reply = num(r.inputs.interestIndexValue);
-      const rate = num(r.inputs.interestToMeetingPct);
-      const mb = num(r.inputs.meetingPipeCostPerMeetingUsd);
-      return reply !== null && rate !== null && mb !== null
-        ? `${usd(reply)} per positive reply ÷ ${rate.toFixed(1)}% booked + ${usd(mb)} per meeting · ${meetingsText(r.outcomes)} behind the rate${recomputedText(r)}`
-        : `${meetingsText(r.outcomes)} behind the rate${recomputedText(r)}`;
-    },
-    (r) => r.status === "noise",
-  );
-  if (!points.length) return null;
-  return {
-    kind: "months",
-    title: `Expected, public index (Cold Email Cost Per Meeting Index): day by day from ${firstDayText(rows)}`,
-    lowerIsBetter: true,
-    points,
-    note: "The same formula as the outcome prices, on the leg rankings' money rows (the best proven workflow that can still run, else the best available, marked Learning): the figure our landing publishes, recorded live from Oct 18, 2026, earlier days recomputed as of the end of each day.",
-  };
-}
-
-/** PURE. Method 5: the ledger's production cost per booked meeting, day by day from its first recorded day. */
+/** PURE. Method 4: the ledger's production cost per booked meeting, day by day from its first recorded day. */
 export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
   const floor = (r: MethodDay) => r.inputs.floor === "yes";
   const points = dayPoints(
@@ -291,10 +265,10 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
   if (!points.length) return null;
   return {
     kind: "months",
-    title: `Ledger, production cost every path: cost per meeting booked, day by day from ${firstDayText(rows)}`,
+    title: `Ledger, production cost every path (= the public Cold Email Cost Per Meeting Index): day by day from ${firstDayText(rows)}`,
     lowerIsBetter: true,
     points,
-    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared. Each day reads the ledger as of the end of that day (since inception up to it), rolled up with today's rules: past days recomputed, recorded live from Oct 24, 2026.`,
+    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared. Each day reads the ledger as of the end of that day (since inception up to it), rolled up with today's rules: past days recomputed, recorded live from Oct 24, 2026. The public Cold Email Cost Per Meeting Index publishes this figure since Oct 25, 2026.`,
   };
 }
 
@@ -302,7 +276,6 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
 export function methodLines(m: MeetingCostMethods): string[] {
   const last = (rows: MethodDay[] | null) => (rows && rows.length ? rows[rows.length - 1]! : null);
   const op = last(m.outcomePrices);
-  const ix = last(m.index);
   const lg = last(m.ledger);
   const out: string[] = [];
   out.push(
@@ -313,17 +286,10 @@ export function methodLines(m: MeetingCostMethods): string[] {
         : "Expected, outcome prices: no price today.",
   );
   out.push(
-    !m.index
-      ? "Expected, public index: not readable right now."
-      : ix?.value != null
-        ? `Expected, public index: ${usd(ix.value)} per meeting booked on ${ix.day}${op?.value != null && ix.day === op.day ? `, ${usd(Math.abs(op.value - ix.value))} ${op.value > ix.value ? "under" : "over"} the outcome prices: same formula, but each reads its own best workflows' figures` : ""}.`
-        : "Expected, public index: no value recorded yet.",
-  );
-  out.push(
     !m.ledger
       ? "Ledger: not readable right now."
       : lg?.value != null
-        ? `Ledger, every path: ${lg.inputs.floor === "yes" ? "at least " : ""}${usd(lg.value)} per meeting booked today (${lg.day})${lg.inputs.floor === "yes" ? ", a floor while the ledger misses part of the spend" : ""}.`
+        ? `Ledger, every path (the public Cold Email Cost Per Meeting Index): ${lg.inputs.floor === "yes" ? "at least " : ""}${usd(lg.value)} per meeting booked today (${lg.day})${lg.inputs.floor === "yes" ? ", a floor while the ledger misses part of the spend" : ""}.`
         : "Ledger, every path: no booked meeting priced on the ledger yet.",
   );
   return out;
