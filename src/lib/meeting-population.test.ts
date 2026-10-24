@@ -6,25 +6,25 @@ import {
   splitByMeetingReporting,
 } from "./meeting-population.js";
 
-const row = (brandId: string, total: number) => ({ orgId: "o", brandId, meetings: { total } });
+const fact = (brandId: string, source: string, event = "meeting_booked") => ({ brandId, event, source, occurredAt: "2026-10-01T00:00:00.000Z" });
 
 describe("MEETING-POPULATION-1018: ONE rule for every meeting figure", () => {
-  it("a brand reports meetings when lead-service holds at least one live meeting fact for it (prod 2026-10-18: a CRM brand and a tracker brand)", () => {
-    const r = meetingReportingOf({ byBrand: [row("crm", 162), row("tracker", 8), row("silent", 0)] });
-    expect(r.reportingBrandIds).toEqual(["crm", "tracker"]);
+  it("a brand reports meetings when lead-service holds a meeting fact from a source that measures them (prod 2026-10-24: CRM, manual; the tracker does not)", () => {
+    const r = meetingReportingOf({ attributedMeetings: [fact("crm", "crm"), fact("hand", "manual", "meeting_attended"), fact("tracker", "tracker"), fact("tracker", "tracker")] });
+    expect(r.reportingBrandIds).toEqual(["crm", "hand"]);
     expect(r.reports("crm")).toBe(true);
-    expect(r.reports("silent")).toBe(false);
+    expect(r.reports("tracker")).toBe(false);
     expect(r.reports("never-seen")).toBe(false);
     expect(r.reports(null)).toBe(false);
   });
 
   it("a malformed producer row is an error, never a brand silently left out", () => {
-    expect(() => meetingReportingOf({})).toThrow(/byBrand/);
-    expect(() => meetingReportingOf({ byBrand: [{ brandId: "b" }] })).toThrow(/meetings.total/);
+    expect(() => meetingReportingOf({})).toThrow(/attributedMeetings/);
+    expect(() => meetingReportingOf({ attributedMeetings: [{ brandId: "b", event: "meeting_booked" }] })).toThrow(/source/);
   });
 
   it("states who a figure was measured on, each brand once", () => {
-    const r = meetingReportingOf({ byBrand: [row("a", 1)] });
+    const r = meetingReportingOf({ attributedMeetings: [fact("a", "crm")] });
     expect(meetingPopulationOf(["a", "a", "b", "c", null], r)).toEqual({ rule: "brands_reporting_meetings", brandsCounted: 1, brandsLeftOut: 3 });
     const split = splitByMeetingReporting(
       [

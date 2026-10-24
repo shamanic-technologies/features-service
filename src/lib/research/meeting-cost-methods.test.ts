@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { meetingCostStudy, type ReportingBrand } from "./meetings.js";
 import {
-  indexChart,
   ledgerHistoryDays,
   ledgerHistoryPoint,
   ledgerChart,
@@ -31,7 +30,6 @@ const day = (d: string, value: number | null, inputs: Record<string, unknown> = 
 
 const methods: MeetingCostMethods = {
   outcomePrices: [day("2026-10-24", 794.46, { replyCostUsd: 182.96, meetingRatePct: 23.08, meetingLegCostUsd: 1.61, meetingsBooked: 3, maturity: "early" })],
-  index: [day("2026-10-18", 608.53), day("2026-10-24", 613.83, { interestIndexValue: 141.28, interestToMeetingPct: 23.08, meetingPipeCostPerMeetingUsd: 1.61 })],
   ledger: [day("2026-10-24", 79.2, { floor: "yes", coveragePct: 62, daysMissing: 0 }, "noise", 12)],
 };
 
@@ -46,8 +44,7 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
       alone.charts[0]!.title,
       "Measured, median client: cost per meeting booked by month",
       "Expected, outcome prices: cost per meeting booked, day by day from Oct 24",
-      "Expected, public index (Cold Email Cost Per Meeting Index): day by day from Oct 18",
-      "Ledger, production cost every path: cost per meeting booked, day by day from Oct 24",
+      "Ledger, production cost every path (= the public Cold Email Cost Per Meeting Index): day by day from Oct 24",
     ]);
     expect(all.charts.every((c) => c.kind === "months")).toBe(true);
   });
@@ -100,17 +97,14 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
     expect(p.inputs).toMatchObject({ replyCostUsd: 182.96, replyWorkflowDynastySlug: "sales-cold-email-outreach-ballad", meetingWorkflowDynastySlug: "ai-meeting-booking-avior", costBasis: "incurred" });
     expect(outcomePricesPoint(null)).toBeNull();
     expect(outcomePricesChart(methods.outcomePrices!)!.points[0]!.note).toContain("$183 per positive reply ÷ 23.1% booked + $1.61 per meeting");
-    expect(indexChart(methods.index!)!.points.map((x) => x.value)).toEqual([608.53, 613.83]);
   });
 
   it("states each method's figure today, and the gap between the two expected ones", () => {
     const lines = methodLines(methods);
     expect(lines[0]).toBe("Expected, outcome prices: $794 per meeting booked today (2026-10-24).");
-    expect(lines[1]).toContain("$614 per meeting booked on 2026-10-24, $181 under the outcome prices");
-    expect(lines[2]).toContain("at least $79 per meeting booked today");
-    expect(methodLines({ outcomePrices: null, index: null, ledger: null })).toEqual([
+    expect(lines[1]).toContain("(the public Cold Email Cost Per Meeting Index): at least $79 per meeting booked today");
+    expect(methodLines({ outcomePrices: null, ledger: null })).toEqual([
       "Expected, outcome prices: not readable right now.",
-      "Expected, public index: not readable right now.",
       "Ledger: not readable right now.",
     ]);
   });

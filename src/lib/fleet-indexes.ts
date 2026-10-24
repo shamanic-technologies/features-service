@@ -112,7 +112,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per meeting booked",
-    method: "What our best cold email workflow spends for one positive reply, divided by the share of positive replies our best AI meeting booking workflow turns into a meeting, plus what that workflow spends per meeting. Measured on the clients who report their booked meetings to us.",
+    method: "Everything spent to book one meeting, from finding the lead to the meeting itself, read on our cost ledger: every client, every path, the leads that never replied included.",
   },
   {
     slug: "cold-email-meeting-rate",
@@ -245,8 +245,13 @@ export interface FleetIndexInputs {
   /** null = the ranking could not be read: no point is recorded for its indexes. */
   websiteVisitRows: LegWorkflowRankingRow[] | null;
   positiveReplyRows: LegWorkflowRankingRow[] | null;
-  /** null = unreadable: no point is recorded for the meeting indexes. */
+  /** null = unreadable: no point is recorded for the meeting rate index. */
   meetingPipe: MeetingPipeEvidence | null;
+  /**
+   * The ledger's production cost of one booked meeting (MEETING-COST-METHODS-1024, owner 2026-10-24 « go ledger
+   * accounting direct »): the Cost Per Meeting Index. null / absent = unreadable or not read: nothing recorded for it.
+   */
+  meetingLedger?: LedgerMeetingCost | null;
   /** One entry per client brand (`/public/stats/ranked?groupBy=brand`); null = unreadable, nothing recorded. */
   brandEngagement?: BrandEngagement[] | null;
   /** `/public/stats/return-on-spend` at the $100 floor; null = unreadable or no snapshot yet, nothing recorded. */
@@ -393,7 +398,46 @@ function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRo
   };
 }
 
+/** The ledger's roll-up of the booked meeting (`outcomeCostStudy`'s figure): null unit = nothing priced yet. */
+export interface LedgerMeetingCost {
+  unitCostUsd: number | null;
+  /** Booked meetings the ledger counts. */
+  produced: number;
+  /** Share of the outcome spend declared, 0..100; null = not served. */
+  coveragePct: number | null;
+  daysMissing: number;
+  unpricedInputs: number;
+}
+
+/** Below this share of the outcome spend declared, the ledger's figure is a floor (`COVERAGE_BAR_PCT`, research). */
+const LEDGER_COVERAGE_BAR_PCT = 95;
+
+/** PURE. The Cost Per Meeting Index point off the ledger: a floor (noise) while coverage is short. */
+export function ledgerMeetingIndexPoint(l: LedgerMeetingCost): FleetIndexPoint {
+  const floor = l.coveragePct === null || l.coveragePct < LEDGER_COVERAGE_BAR_PCT || l.daysMissing > 0;
+  const priced = l.unitCostUsd !== null && l.unitCostUsd > 0 && l.produced > 0;
+  return {
+    indexSlug: COST_PER_MEETING.slug,
+    value: priced ? l.unitCostUsd : null,
+    status: priced && !floor ? indexStatus(Math.round(l.produced), true) : "noise",
+    outcomes: Math.round(l.produced),
+    contacted: null,
+    workflowDynastySlug: null,
+    workflowDynastyName: null,
+    unavailableReason: priced ? null : "no_meeting_priced_on_ledger",
+    inputs: {
+      method: "ledger_every_path",
+      floor: floor ? "yes" : "no",
+      coveragePct: l.coveragePct,
+      daysMissing: l.daysMissing,
+      unpricedInputs: l.unpricedInputs,
+      meetingsBooked: l.produced,
+    },
+  };
+}
+
 const COST_PER_INTEREST = fleetIndexBySlug("cold-email-cost-per-positive-reply")!;
+const COST_PER_MEETING = fleetIndexBySlug("cold-email-cost-per-meeting")!;
 const INTEREST_RATE = fleetIndexBySlug("cold-email-positive-reply-rate")!;
 const COST_PER_ENGAGED_LEAD = fleetIndexBySlug("cold-email-cost-per-engaged-lead")!;
 const CLIENT_ROI = fleetIndexBySlug("cold-email-roi")!;
@@ -404,7 +448,10 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
   for (const def of FLEET_INDEXES) {
     if (def.outcome === "website_visit" && inputs.websiteVisitRows) points.push(legPoint(def, inputs.websiteVisitRows));
     if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows));
-    if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
+    // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024); the meeting rate stays the pipes' chain.
+    if (def.slug === COST_PER_MEETING.slug) {
+      if (inputs.meetingLedger) points.push(ledgerMeetingIndexPoint(inputs.meetingLedger));
+    } else if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
       points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
     }
     if (def.outcome === "engaged_lead" && inputs.brandEngagement) points.push(engagedLeadPoint(inputs.brandEngagement));
