@@ -1,4 +1,7 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import type { GrainLedger } from "../lib/workflow-projection-grains.js";
+import { ledgerRegime, outcomeStatKeyOf, pipeOutcomeKey } from "../lib/ledger-book.js";
+import { ledgerSlugEvidence } from "../lib/ledger-pipe-costs.js";
 import { Router, type Request, type Response } from "express";
 import { getInternalPipeFleet, internalPipeCountsByDynasty, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
@@ -2117,7 +2120,12 @@ export async function fetchWorkflowProjectionEvidence(input: {
   const brandRepliers = legSet
     ? allBrandRepliers.filter((r) => r.campaignId !== null && legSet.has(r.campaignId))
     : allBrandRepliers;
-  const [costGroups, emailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
+  // LEDGER-HISTORY-1024: a leg read on a reconciled ledger states every grain on it (`lib/ledger-pipe-costs.ts`).
+  const flashBook = legFleet && legKey && legSet ? await ledgerRegime(pricing) : null;
+  const grainLedger: GrainLedger | undefined = flashBook && legKey
+    ? { book: flashBook.book, outcomeKey: await pipeOutcomeKey(featureSlug, legKey), statKey: outcomeStatKeyOf(legKey) }
+    : undefined;
+  let [costGroups, emailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
     legFleet ? Promise.resolve(legFleet.costGroups) : fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     legFleet ? Promise.resolve(legFleet.emailStats) : fetchPublicEmailStats(featureSlug, "workflowSlug"),
     // The FLEET's positive repliers on the SAME per-person basis as the finer grains (this brand's own
@@ -2125,20 +2133,25 @@ export async function fetchWorkflowProjectionEvidence(input: {
     fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: identity.orgId, brandId, repliers: brandRepliers }, legSet ?? undefined),
     brandLegIds
       ? brandLegIds.length > 0
-        ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", brandRepliers)
+        ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", brandRepliers, grainLedger)
         : Promise.resolve({ active: new Map<string, WorkflowGrainEvidence>(), retired: new Map<string, WorkflowGrainEvidence>() })
       : fetchBrandWorkflowEvidenceWithRetired(brandId, featureSlug, workflows, identity, pricing, "charged", brandRepliers),
     fetchAudienceGrainEvidence(brandId, featureSlug, identity, slugToDynasty, pricing, undefined, brandRepliers, brandLegIds),
     campaignIds && campaignIds.length > 0
-      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignRepliers ?? undefined)
+      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignRepliers ?? undefined, grainLedger)
       : Promise.resolve(null),
     readOffer
-      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerRepliers ?? undefined)
+      ? fetchCampaignWorkflowEvidenceWithRetired(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerRepliers ?? undefined, grainLedger)
       : Promise.resolve(null),
   ]);
   const offerGrain = offerIsCampaign ? campaignGrain : offerGrainRead;
   // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
   if (fleetReplies) setReplyCountsOnSlugStats(emailStats, fleetReplies);
+  if (grainLedger && legSet) {
+    const o = ledgerSlugEvidence(costGroups, emailStats, grainLedger.outcomeKey, grainLedger.statKey, legSet, grainLedger.book, false);
+    costGroups = o.costGroups;
+    emailStats = o.emailStats;
+  }
 
   // ── THE MATURE TWIN of every grain above, on the SAME populations (leg campaigns, identity, offer).
   let mature: MatureEvidence | null | undefined;
@@ -2154,18 +2167,24 @@ export async function fetchWorkflowProjectionEvidence(input: {
         (!offerPersons || serveDatesStated(offerPersons));
       // The FLEET decides every row's version, so it is read first: a fleet that cannot be cut makes the
       // whole answer flash, and the finer mature reads are not worth making.
-      const fleetMature = stated
+      // On a reconciled ledger the mature half is its mature cut; a cut it cannot make yet = no mature figure.
+      const matureBook = grainLedger ? await ledgerRegime(pricing, cutoffIso) : null;
+      const matureLedger: GrainLedger | undefined = grainLedger && matureBook ? { ...grainLedger, book: matureBook.book } : undefined;
+      const runsFleetMature = stated && (!grainLedger || matureLedger)
         ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, { orgId: identity.orgId, brandId, persons: allBrandPersons }, legSet)
         : null;
+      const fleetMature = runsFleetMature && matureLedger
+        ? ledgerSlugEvidence(runsFleetMature.costGroups, runsFleetMature.emailStats, matureLedger.outcomeKey, matureLedger.statKey, legSet, matureLedger.book, false)
+        : runsFleetMature;
       const emptyGrain = (): GrainEvidenceWithRetired => ({ active: new Map(), retired: new Map() });
       const [brandMature, campaignMature, offerMatureRead, audienceMature] = fleetMature
         ? await Promise.all([
-            fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", allBrandPersons, cutoffIso, legKey),
+            fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, brandLegIds, workflows, identity, pricing, "charged", allBrandPersons, cutoffIso, legKey, matureLedger),
             campaignIds && campaignIds.length > 0 && campaignPersons
-              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignPersons, cutoffIso, legKey)
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, campaignIds, workflows, identity, pricing, "charged", campaignPersons, cutoffIso, legKey, matureLedger)
               : Promise.resolve(null),
             readOffer && offerPersons
-              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerPersons, cutoffIso, legKey)
+              ? fetchCampaignWorkflowMatureEvidence(brandId, featureSlug, offerCampaignIds!, workflows, identity, pricing, "charged", offerPersons, cutoffIso, legKey, matureLedger)
               : Promise.resolve(null),
             fetchAudienceMatureEvidence(
               brandId,
@@ -2229,7 +2248,8 @@ export async function fetchWorkflowProjectionEvidence(input: {
   // An INTERNAL pipe (its leg starts on a step other than Lead found) serves nobody, so the sends above
   // count no one: its people and outcomes are the follow-up ledger's, at every grain (the one rule every
   // pipe follows, `fleetPipeFigures` in routes/public.ts).
-  const internalToStep = legKey ? await internalPipeToStep(featureSlug, legKey) : null;
+  // On the ledger every pipe already reads its own outcomes (one regime): the follow-up ledger stands aside.
+  const internalToStep = legKey && !grainLedger ? await internalPipeToStep(featureSlug, legKey) : null;
   if (internalToStep) {
     const fleet = await getInternalPipeFleet(featureSlug, legKey!, internalToStep);
     return withInternalPipeCounts(out, fleet, {

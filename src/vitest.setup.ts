@@ -249,3 +249,12 @@ vi.mock("./lib/catalogue-marks-store.js", async () => {
     __resetCatalogueMarksMemory: vi.fn(() => store.clear()),
   };
 });
+
+/**
+ * Suite-wide default: the general ledger does not reconcile (lib/ledger-book.ts), so every reader keeps the previous
+ * regime and a route suite reads the runs figures its fixture states. Ledger suites unmock it.
+ */
+vi.mock("./lib/ledger-book.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/ledger-book.js")>()),
+  ledgerRegime: vi.fn(async () => null),
+}));
