@@ -51,9 +51,21 @@ import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
 import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
 import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "../lib/research/types.js";
-import { fetchFleetLegSlugEvidence, readLegWorkflowRanking } from "./public.js";
+import { fetchFleetLegSlugEvidence, readLegWorkflowRanking, readOutcomePricesMeetingBooked } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
-import { readFleetIndexSeries } from "../lib/fleet-index-store.js";
+import { readFleetIndexSeries, recordFleetIndexPoints, utcDay } from "../lib/fleet-index-store.js";
+import type { FleetIndexPoint } from "../lib/fleet-indexes.js";
+import type { FleetIndexPointRow } from "../db/schema.js";
+import {
+  ledgerPoint,
+  MEETING_COST_INDEX_SLUG,
+  MEETING_COST_LEDGER_SLUG,
+  MEETING_COST_OUTCOME_PRICES_SLUG,
+  outcomePricesPoint,
+  withToday,
+  type MeetingCostMethods,
+  type MethodDay,
+} from "../lib/research/meeting-cost-methods.js";
 import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResearchPoints, meetingSeriesOf } from "../lib/research/pipe-series.js";
 import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
@@ -62,7 +74,7 @@ import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outco
 import { estimateStudy, LLM_DIMENSION, TEMPLATE_DIMENSION, workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
 import { estimateReplayStudy, type ReplayBucket } from "../lib/research/estimate-replay.js";
 import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
-import { rollUpByOrg, rollUpOutcomeUnitCosts, workflowUnitCosts } from "../lib/outcome-unit-costs.js";
+import { rollUpByOrg, rollUpOutcomeUnitCosts, workflowUnitCosts, type OutcomeUnitCost } from "../lib/outcome-unit-costs.js";
 import { fetchOutcomeLedgerByWorkflow } from "../lib/outcome-cost-totals-client.js";
 import { workflowLedgerStudy } from "../lib/research/workflow-ledger.js";
 import { COVERAGE_BAR_PCT } from "../lib/research/outcome-cost.js";
@@ -871,6 +883,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
   const ledger = await ledgerP;
   const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
+  const meetingCostMethods = basis === "user" ? await meetingCostMethodsOf(ledger, now) : undefined;
   if (basis === "user" && reply.input.rankingRows) estimateStudies.push(await workflowLedgerStudyOf(ledger, reply.input));
   const file = assembleResearch({
     replyDelay,
@@ -883,6 +896,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     nicheStudies: niche_,
     volume: volume ? { ...volume, workflows: workflowsWithPeople, noRunStart } : null,
     reportingBrands,
+    ...(meetingCostMethods ? { meetingCostMethods } : {}),
     meetingOutcomeRequired: legMaturity("start_to_meeting_booked").outcomesRequired,
     jev: { ...jev, replies },
     costBasis: basis,
@@ -1648,3 +1662,59 @@ router.get("/internal/research/compute", apiKeyOnly, async (req, res) => {
 });
 
 export default router;
+
+/** How long the build waits on this process's first outcome-prices build before the row says not readable. */
+const OUTCOME_PRICES_WAIT_MS = 60_000;
+
+const methodDayOfRow = (r: FleetIndexPointRow): MethodDay => ({
+  day: r.day,
+  value: r.value,
+  status: r.status,
+  outcomes: r.outcomes,
+  unavailableReason: r.unavailableReason,
+  inputs: (r.inputs ?? {}) as Record<string, unknown>,
+});
+
+/**
+ * MEETING-COST-METHODS-1024: the meeting-cost study's recorded methods. Records TODAY's outcome-prices and ledger points
+ * (neither is stored anywhere else; a past day is never recomputed), then reads every stored day of them and of the
+ * public meeting index. A method whose input is unreadable and that has no stored day is null (its row says so).
+ */
+async function meetingCostMethodsOf(
+  ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
+  now: Date,
+): Promise<MeetingCostMethods> {
+  const day = utcDay(now);
+  let unit: OutcomeUnitCost | null = null;
+  try {
+    unit = ledger.totals ? (rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null) : null;
+  } catch (err) {
+    console.error("[features-service] research meeting-cost methods: ledger roll-up failed, no ledger point today:", err);
+  }
+  const ledgerToday = ledger.totals ? ledgerPoint(unit, ledger.totals.coveragePct, ledger.totals.daysMissing, legMaturity("start_to_meeting_booked").outcomesRequired) : null;
+  const price = await readOutcomePricesMeetingBooked(OUTCOME_PRICES_WAIT_MS);
+  const pricesToday = outcomePricesPoint(price);
+  const toRecord = [ledgerToday, pricesToday].filter((p): p is FleetIndexPoint => p !== null);
+  if (toRecord.length) {
+    await recordFleetIndexPoints(toRecord, now).catch((err) => console.error("[features-service] research meeting-cost methods: today's points not recorded (served live):", err));
+  }
+  const asDay = (p: FleetIndexPoint | null): MethodDay | null => (p ? { day, value: p.value, status: p.status, outcomes: p.outcomes, unavailableReason: p.unavailableReason, inputs: p.inputs } : null);
+  const series = (slug: string, today: FleetIndexPoint | null): Promise<MethodDay[] | null> =>
+    readFleetIndexSeries(slug).then(
+      (rows) => withToday(rows.map(methodDayOfRow), asDay(today)),
+      (err) => {
+        console.error(`[features-service] research meeting-cost methods: ${slug} unreadable:`, err);
+        return today ? [asDay(today)!] : null;
+      },
+    );
+  const [prices, index, ledgerDays] = await Promise.all([
+    series(MEETING_COST_OUTCOME_PRICES_SLUG, pricesToday),
+    series(MEETING_COST_INDEX_SLUG, null),
+    series(MEETING_COST_LEDGER_SLUG, ledgerToday),
+  ]);
+  return {
+    outcomePrices: prices && (prices.length || price) ? prices : null,
+    index,
+    ledger: ledgerDays && (ledgerDays.length || ledger.totals) ? ledgerDays : null,
+  };
+}

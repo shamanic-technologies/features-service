@@ -21,6 +21,7 @@ import { TIME_TO_REPLY_MIN_SAMPLE } from "../campaign-next-steps.js";
 import { POSITIVE_REPLY_OUTCOME, POSITIVE_REPLY_OUTCOME_ID, replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
 import { legMaturity } from "../maturity.js";
 import { outcomeCostStudy } from "./outcome-cost.js";
+import type { MeetingCostMethods } from "./meeting-cost-methods.js";
 import { rollUpOutcomeUnitCosts } from "../outcome-unit-costs.js";
 import type { OutcomeLedgerTotals } from "../outcome-cost-totals-client.js";
 
@@ -107,6 +108,8 @@ export interface ResearchInput {
   } | null;
   /** The brands reporting their meetings (null = unreadable); undefined = not asked (the study stays waiting). */
   reportingBrands?: ReportingBrand[] | null;
+  /** The meeting-cost study's other methods, recorded day by day (MEETING-COST-METHODS-1024); absent = not built. */
+  meetingCostMethods?: MeetingCostMethods;
   /** Leg `start_to_meeting_booked`'s outcome count (the Meeting booked outcome section's maturity bar). */
   meetingOutcomeRequired?: number;
   /** The studies of what wrote the emails (LLM, template, naming, first-email shape), written by `lib/research/generations.ts`. */
@@ -352,7 +355,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     studies.push(
       input.costBasis === "actual"
         ? notMeasuredStudy({ id: "meeting-cost", pipe: null, outcome: "meeting", topic: "cost", goal: "roi", question: "What does a booked meeting cost, from the first cold email?", headline: "Not measured on vendor cost yet.", reason: "The meeting figures are on what clients were charged only. Switch to the billed basis to read them." })
-        : meetingCostStudy(input.reportingBrands, input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, input.now.toISOString().slice(0, 10)),
+        : meetingCostStudy(input.reportingBrands, input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, input.now.toISOString().slice(0, 10), input.meetingCostMethods),
     );
   }
 
