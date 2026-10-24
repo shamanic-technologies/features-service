@@ -14,6 +14,23 @@ import { notMeasuredStudy } from "./studies.js";
 import { effectiveExposure, estimateOutcomes, lagCurveOf, type CohortSlice } from "../outcome-estimates.js";
 
 export const WORKFLOW_ESTIMATE_STUDY_ID = "cold-email-positive-reply-workflow-estimate";
+export const TEMPLATE_ESTIMATE_STUDY_ID = "cold-email-positive-reply-template-estimate";
+export const LLM_ESTIMATE_STUDY_ID = "cold-email-positive-reply-llm-estimate";
+
+/**
+ * What a study estimates (owner 2026-10-24, PERF-ESTIMATE-DISCUSS-1024: the pipe picks its workflow, its template and its
+ * LLM separately, so each part gets its own estimate, side by side on the pipe's study list).
+ */
+export interface EstimateDimension {
+  id: string;
+  topic: "workflow" | "template" | "llm";
+  /** "workflow", "template", "LLM". */
+  noun: string;
+  nounPlural: string;
+}
+export const WORKFLOW_DIMENSION: EstimateDimension = { id: WORKFLOW_ESTIMATE_STUDY_ID, topic: "workflow", noun: "workflow", nounPlural: "workflows" };
+export const TEMPLATE_DIMENSION: EstimateDimension = { id: TEMPLATE_ESTIMATE_STUDY_ID, topic: "template", noun: "template", nounPlural: "templates" };
+export const LLM_DIMENSION: EstimateDimension = { id: LLM_ESTIMATE_STUDY_ID, topic: "llm", noun: "LLM", nounPlural: "LLMs" };
 
 export interface WorkflowEstimateGroup {
   key: string;
@@ -31,25 +48,41 @@ const rangeText = (e: { costPerOutcomeUsd: number | null; costLowUsd: number | n
     ? `95% range from ${usd(e.costLowUsd!)}, no upper bound yet`
     : `95% range ${usd(e.costLowUsd!)} to ${usd(e.costHighUsd)}`;
 
-/** PURE. The study. `dayBins` = lead-service's time-to-first-positive-reply day bins (null = unreadable). */
-export function workflowEstimateStudy(input: { pipe: string; groups: readonly WorkflowEstimateGroup[]; dayBins: ReadonlyArray<{ count: number }> | null; outcomesRequired: number }): ResearchStudy {
+export interface EstimateStudyInput {
+  pipe: string;
+  groups: readonly WorkflowEstimateGroup[];
+  dayBins: ReadonlyArray<{ count: number }> | null;
+  outcomesRequired: number;
+  /** People of the pipe no group holds (no writer on record): stated, never spread. */
+  peopleLeftOut?: number;
+}
+
+/** PURE. The workflow study. `dayBins` = lead-service's time-to-first-positive-reply day bins (null = unreadable). */
+export function workflowEstimateStudy(input: EstimateStudyInput): ResearchStudy {
+  return estimateStudy(WORKFLOW_DIMENSION, input);
+}
+
+/** PURE. The estimate study of one part of the pipe (workflow, template or LLM), the same maths for each. */
+export function estimateStudy(dim: EstimateDimension, input: EstimateStudyInput): ResearchStudy {
+  const W = dim.noun;
+  const Ws = dim.nounPlural;
   const base = {
-    id: WORKFLOW_ESTIMATE_STUDY_ID,
+    id: dim.id,
     pipe: input.pipe,
-    topic: "workflow" as const,
+    topic: dim.topic,
     goal: "roi" as const,
-    question: "Estimated: which workflow gets a positive reply cheapest, young cohorts included?",
+    question: `Estimated: which ${W} gets a positive reply cheapest, young cohorts included?`,
   };
   if (!input.dayBins) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "lead-service's reply-delay curve could not be read this time: without it, a young cohort cannot be corrected. The study comes back on the next build." });
   const F = lagCurveOf(input.dayBins);
   const groups = input.groups
     .map((g) => ({ ...g, contacted: g.slices.reduce((a, s) => a + s.contacted, 0), exposure: effectiveExposure(g.slices, F) }))
     .filter((g) => g.contacted > 0);
-  if (groups.length === 0) return notMeasuredStudy({ ...base, headline: "No one emailed yet.", reason: "No workflow of this pipe has emailed anybody yet." });
+  if (groups.length === 0) return notMeasuredStudy({ ...base, headline: "No one emailed yet.", reason: `No ${W} of this pipe has emailed anybody yet.` });
   const { prior, estimates } = estimateOutcomes(groups.map((g) => ({ key: g.key, outcomes: g.outcomes, exposure: g.exposure, contacted: g.contacted, spendUsd: g.spendUsd })));
   const byKey = new Map(groups.map((g) => [g.key, g]));
   const priced = estimates.filter((e) => e.costPerOutcomeUsd !== null).sort((a, b) => a.costPerOutcomeUsd! - b.costPerOutcomeUsd! || a.key.localeCompare(b.key));
-  if (priced.length === 0) return notMeasuredStudy({ ...base, headline: "No spend on record yet.", reason: "No workflow of this pipe carries billed spend yet." });
+  if (priced.length === 0) return notMeasuredStudy({ ...base, headline: "No spend on record yet.", reason: `No ${W} of this pipe carries billed spend yet.` });
   const points: ResearchPoint[] = priced.map((e) => {
     const g = byKey.get(e.key)!;
     return {
@@ -61,7 +94,7 @@ export function workflowEstimateStudy(input: { pipe: string; groups: readonly Wo
       thin: e.outcomes < input.outcomesRequired,
     };
   });
-  // The headline names the cheapest workflow the data BOUNDS (at least one outcome): a workflow with none has an estimate, not a price.
+  // The headline names the cheapest part the data BOUNDS (at least one outcome): a part with none has an estimate, not a price.
   const bounded = priced.filter((e) => e.outcomes > 0);
   const [lead, runner] = bounded.length ? bounded : priced;
   // A lead whose whole range sits below the runner-up's whole range: a signal; overlapping ranges: noise. Never a conclusion: it is a model.
@@ -69,10 +102,10 @@ export function workflowEstimateStudy(input: { pipe: string; groups: readonly Wo
   const leadLabel = byKey.get(lead!.key)!.label;
   const reason =
     kind === "signal"
-      ? `${leadLabel}'s whole 95% range (${usd(lead!.costLowUsd!)} to ${usd(lead!.costHighUsd!)}) sits below the next workflow's (${usd(runner!.costLowUsd!)} to ${usd(runner!.costHighUsd!)}). An estimate, so a signal at most.`
+      ? `${leadLabel}'s whole 95% range (${usd(lead!.costLowUsd!)} to ${usd(lead!.costHighUsd!)}) sits below the next ${W}'s (${usd(runner!.costLowUsd!)} to ${usd(runner!.costHighUsd!)}). An estimate, so a signal at most.`
       : runner
-        ? `${leadLabel}'s 95% range overlaps the next workflow's: the order is not settled.`
-        : "One workflow only: nothing to compare.";
+        ? `${leadLabel}'s 95% range overlaps the next ${W}'s: the order is not settled.`
+        : `One ${W} only: nothing to compare.`;
   const withoutOutcome = priced.length - bounded.length;
   const young = groups.reduce((a, g) => a + (g.contacted - g.exposure), 0);
   const people = groups.reduce((a, g) => a + g.contacted, 0);
@@ -83,20 +116,21 @@ export function workflowEstimateStudy(input: { pipe: string; groups: readonly Wo
     winner: null,
     crowned: false,
     verdict: { kind, reason },
-    result: { display: usd(lead!.costPerOutcomeUsd!), unit: "per positive reply, estimated, best workflow", sample: `${n(groups.length)} workflows · ${n(people)} people emailed` },
+    result: { display: usd(lead!.costPerOutcomeUsd!), unit: `per positive reply, estimated, best ${W}`, sample: `${n(groups.length)} ${Ws} · ${n(people)} people emailed` },
     charts: [
       {
         kind: "bars",
         title: "Estimated cost per positive reply, young cohorts included (USD, lower is better)",
         lowerIsBetter: true,
         points,
-        note: "Each person counts for the share of positive replies the fleet sees by their age (a person emailed yesterday counts for about half). A workflow with few people is drawn toward the pipe's rate. The bar is the estimate, the note its 95% range.",
+        note: `Each person counts for the share of positive replies the fleet sees by their age (a person emailed yesterday counts for about half). A ${W} with few people is drawn toward the pipe's rate. The bar is the estimate, the note its 95% range.`,
       },
     ],
     conclusion: [
-      `An estimate beside the measured figures, never in their place: ${n(Math.round(young))} of the ${n(people)} people emailed are too young to have replied in full, and the maturity rule waits ${n(input.outcomesRequired)} ${input.outcomesRequired === 1 ? "positive reply" : "positive replies"} and 21 days before it prices a workflow.`,
-      ...(withoutOutcome > 0 ? [`${n(withoutOutcome)} ${withoutOutcome === 1 ? "workflow has" : "workflows have"} no positive reply yet: ${withoutOutcome === 1 ? "its" : "their"} estimate leans on the pipe's rate and has no upper bound, so the headline names the cheapest workflow with at least one.`] : []),
-      `Prior drawn from every workflow of the pipe: ${pct((100 * prior.alpha) / (prior.alpha + prior.beta))} positive reply rate, as strong as ${n(Math.round(prior.alpha + prior.beta))} people.`,
+      `An estimate beside the measured figures, never in their place: ${n(Math.round(young))} of the ${n(people)} people emailed are too young to have replied in full, and the maturity rule waits ${n(input.outcomesRequired)} ${input.outcomesRequired === 1 ? "positive reply" : "positive replies"} and 21 days before it prices a ${W}.`,
+      ...(withoutOutcome > 0 ? [`${n(withoutOutcome)} ${withoutOutcome === 1 ? `${W} has` : `${Ws} have`} no positive reply yet: ${withoutOutcome === 1 ? "its" : "their"} estimate leans on the pipe's rate and has no upper bound, so the headline names the cheapest ${W} with at least one.`] : []),
+      ...(input.peopleLeftOut ? [`${n(input.peopleLeftOut)} people emailed have no ${W} on record: left out, never spread.`] : []),
+      `Prior drawn from every ${W} of the pipe: ${pct((100 * prior.alpha) / (prior.alpha + prior.beta))} positive reply rate, as strong as ${n(Math.round(prior.alpha + prior.beta))} people.`,
     ],
   };
 }

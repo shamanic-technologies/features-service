@@ -108,7 +108,10 @@ export function bucketPopulation(persons: readonly EnginePerson[], generationOf?
     // The person's own country is a fifth part (RESEARCH-COUNTRY-1021). Trailing empty parts are dropped, so a person
     // with neither keeps the three-part key (the v4 spelling) and every older reader reads the same bucket.
     const country = countryKeyPart(p.leadCountry);
-    const parts = [p.campaignId ?? "", p.workflowSlug ?? "", day, gen, country];
+    // The day of the first positive reply is a sixth part (ESTIMATE-REPLAY-1024: a replay of the past counts only the
+    // replies dated by then); only a replier carries it, so every other bucket keeps its key.
+    const replyDay = replied && p.firstPositiveReplyAt ? p.firstPositiveReplyAt.slice(0, 10) : "";
+    const parts = [p.campaignId ?? "", p.workflowSlug ?? "", day, gen, country, replyDay];
     while (parts.length > 3 && parts[parts.length - 1] === "") parts.pop();
     const key = parts.join(BUCKET_SEP);
     if (replied) repliers.set(p.leadId, country);
@@ -123,9 +126,9 @@ export function bucketPopulation(persons: readonly EnginePerson[], generationOf?
   return { serveDatesStated: serveDatesStated(persons), buckets, repliers };
 }
 
-function splitBucketKey(key: string): { campaignId: string; slug: string; day: string; gen: string; country: string } {
-  const [campaignId = "", slug = "", day = "", gen = "", country = ""] = key.split(BUCKET_SEP);
-  return { campaignId, slug, day, gen, country };
+function splitBucketKey(key: string): { campaignId: string; slug: string; day: string; gen: string; country: string; replyDay: string } {
+  const [campaignId = "", slug = "", day = "", gen = "", country = "", replyDay = ""] = key.split(BUCKET_SEP);
+  return { campaignId, slug, day, gen, country, replyDay };
 }
 
 /**
@@ -469,6 +472,8 @@ export interface FleetPersonBucket {
   generation: GenerationClass | null;
   /** The person's own country (lead-service's spelling); null = not on record (or a cell built before it). */
   country: string | null;
+  /** `YYYY-MM-DD` of the bucket's first positive replies (repliers only); null = no reply, undated, or a cell built before it. */
+  positiveReplyDay?: string | null;
 }
 
 /**
@@ -484,7 +489,7 @@ export async function fetchFleetPersonBuckets(featureSlug: string, campaignIds: 
     const orgId = key.slice(0, key.indexOf(":"));
     const brandId = key.slice(key.indexOf(":") + 1);
     for (const [bucketKey, [c, k, r, sc, hk]] of pair.buckets) {
-      const { campaignId, slug, day, gen, country } = splitBucketKey(bucketKey);
+      const { campaignId, slug, day, gen, country, replyDay } = splitBucketKey(bucketKey);
       if (!slug || !campaignId || !campaignIds.has(campaignId)) continue;
       out.push({
         orgId,
@@ -499,6 +504,7 @@ export async function fetchFleetPersonBuckets(featureSlug: string, campaignIds: 
         humanClicked: hk ?? 0,
         generation: generationOfKeyPart(gen),
         country: country || null,
+        positiveReplyDay: replyDay || null,
       });
     }
   }

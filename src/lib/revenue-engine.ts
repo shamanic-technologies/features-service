@@ -160,6 +160,8 @@ export interface EnginePerson {
    * counting anybody twice. The engine never reads it. Null / absent otherwise.
    */
   crmPositiveReplyAt?: string | null;
+  /** The first dated positive reply (thread or CRM), set by `creditPerson` on a positive replier; absent = undated. */
+  firstPositiveReplyAt?: string;
   /**
    * Which of the person's signals the row it is attributed to (`campaignId` / `workflowSlug`) EARNED: its
    * campaign acted on the person, and the reply / click answered that contact (`lib/serving-row-credit.ts`).
