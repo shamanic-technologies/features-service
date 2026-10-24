@@ -21,3 +21,10 @@ describe("workflow ledger study (COST-ACCOUNTING-1023-P4)", () => {
     expect(workflowLedgerStudy({ pipe: "p", rows: [row("x", null, 3)], floorReason: null }).headline).toBe("No workflow priced on the ledger yet.");
   });
 });
+
+describe("ledger beside the ranking, as a paired series (COST-ACCOUNTING-1023-P4)", () => {
+  it("each bar's ranking figure rides compare[] on the same key; a bar the ranking does not price has no pair", () => {
+    const st = workflowLedgerStudy({ pipe: "p", rows: [row("keel", 30, 25), row("legato", 40, null)], floorReason: null });
+    expect(st.charts[0]!.compare!.points.map((p) => [p.key, p.display])).toEqual([["keel", "$25"]]);
+  });
+});

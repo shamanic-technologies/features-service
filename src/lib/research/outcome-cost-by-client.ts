@@ -73,6 +73,14 @@ export function outcomeCostByClientStudy(rows: readonly ClientCostRow[] | null, 
         title: "Cost per positive reply per client, on the ledger (USD, lower is better)",
         lowerIsBetter: true,
         points,
+        compare: {
+          title: "Today's figure: reply pipes' spend ÷ positive replies (USD)",
+          points: priced.flatMap((r) =>
+            r.todayReplies > 0 && r.todaySpendUsd > 0
+              ? [{ key: r.orgId, label: r.label, value: Number((r.todaySpendUsd / r.todayReplies).toFixed(2)), display: usd(r.todaySpendUsd / r.todayReplies), note: `${usd(r.todaySpendUsd)} on the reply pipes ÷ ${n(r.todayReplies)} ${r.todayReplies === 1 ? "positive reply" : "positive replies"}`, thin: r.todayReplies < 10 }]
+              : [],
+          ),
+        },
         note: "The bar is the ledger's production cost of one positive reply for that client: every stage its pipes ran, the sends nobody answered included, and what it bought from earlier pipes at their unit cost. The note gives today's figure (its reply pipes' spend ÷ its positive replies): it leaves out sourcing and checks, so it reads lower when the ledger is complete.",
       },
     ],

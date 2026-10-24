@@ -61,6 +61,11 @@ export interface ResearchChart {
    * point per bucket in the same order, `value` = the % of the sample arrived by the END of that bucket (the last = 100).
    */
   curve?: { title: string; points: ResearchPoint[] };
+  /**
+   * A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's figure next to the
+   * one a reader uses today). Points carry the same `key` as the bar they pair with; a bar with no pair has none.
+   */
+  compare?: { title: string; points: ResearchPoint[] };
   note?: string;
 }
 
