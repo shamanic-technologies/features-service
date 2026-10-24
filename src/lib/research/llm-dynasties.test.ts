@@ -143,14 +143,31 @@ describe("LLM dynasties on the Research pages (LLM-DYNASTY-1022-FS)", () => {
       dynastyOf: (s) => s.replace(/-v\d+$/, ""),
       workflowRuns: [],
       generationRuns: [
-        { createdAt: "2026-10-18T10:00:00Z", model: "gemini-3.8-flash", promptType: "cold-email-v35", workflowSlug: "azalea-v2" },
+        { createdAt: "2026-10-18T10:00:00Z", model: "gemini-3.8-flash", promptType: "cold-email-v35", workflowSlug: "azalea-v2", tokensInput: 5000, tokensOutput: 300 },
         { createdAt: "2026-10-17T10:00:00Z", model: "gemini-3.7-flash", promptType: "cold-email-v35", workflowSlug: "azalea-v1" },
       ],
       templateTexts: new Set(),
       runnableWorkflows: null,
       writerOf: () => ({ ok: true, workflowSlug: "azalea-v2", version: 2, template: "cold-email-v35", modelAlias: "flash-pro", model: { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" } }),
       servedModels: served,
+      generationCosts: [
+        { createdAt: "2026-10-17T10:00:00Z", model: "gemini-3.7-flash", inputCents: 0.3, outputCents: 0.1, tokensInput: 3000, tokensOutput: 200 },
+        { createdAt: "2026-10-18T10:00:00Z", model: "gemini-3.8-flash", inputCents: 0.5, outputCents: 0.3, tokensInput: 5000, tokensOutput: 300 },
+        { createdAt: "2026-10-18T11:00:00Z", model: "gemini-3.8-flash", inputCents: null, outputCents: null, tokensInput: null, tokensOutput: null },
+        { createdAt: "2026-10-18T12:00:00Z", model: "claude-opus-5-5", inputCents: 4, outputCents: 6, tokensInput: 4000, tokensOutput: 400 },
+      ],
     });
+    // MODEL-RUN-COST-1024: one writing run's cost per page, its versions partition the page's runs
+    const flashCost = c.models.find((m) => m.key === "gemini-flash")!.runCost;
+    expect(flashCost).toMatchObject({ runs: 2, runsWithoutCost: 1, unavailableReason: null });
+    expect(flashCost.averageUsd).toBeCloseTo(0.006);
+    expect(flashCost.history.at(-1)!.averageUsd).toBeCloseTo(flashCost.averageUsd!);
+    const versions = c.models.find((m) => m.key === "gemini-flash")!.models;
+    expect(versions.map((v) => [v.key, v.runCost.runs])).toEqual([["gemini-3.8-flash", 1], ["gemini-3.7-flash", 1], ["gemini-3.5-flash", 0]]);
+    expect(versions[2]!.runCost.unavailableReason).toBe("no_run_on_pipe");
+    expect(versions.reduce((a, v) => a + v.runCost.totalUsd, 0)).toBeCloseTo(flashCost.totalUsd);
+    expect(c.models.find((m) => m.key === "claude-opus")!.runCost.averageUsd).toBeCloseTo(0.1);
+    expect(c.models.find((m) => m.key === "gemini-flash")!.runs[0]!.tokens).toBe("5,000 in / 300 out");
     const page = c.models.find((m) => m.key === "gemini-flash")!;
     expect(page.label).toBe("Gemini Flash");
     expect(page.dynasty).toEqual({ slug: "gemini-flash", name: "Gemini Flash", provider: "google", capabilityTier: "cheap", headModelId: "gemini-3.8-flash", servedToday: true, legacyAliases: ["flash-pro"] });

@@ -69373,7 +69373,7 @@
     "/internal/research/catalog": {
       "get": {
         "summary": "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
-        "description": "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences). `tokens` is null (the feed states none). Same build cadence as /internal/research.",
+        "description": "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences, `tokens` = the tokens it recorded, null when not recorded). Every model page and version carries `runCost` (MODEL-RUN-COST-1024): what one writing run costs on the pipe. Same build cadence as /internal/research.",
         "tags": [
           "Internal"
         ],
@@ -71267,7 +71267,8 @@
                                   },
                                   "tokens": {
                                     "type": "string",
-                                    "nullable": true
+                                    "nullable": true,
+                                    "description": "The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded."
                                   }
                                 },
                                 "required": [
@@ -71466,6 +71467,125 @@
                                   },
                                   "servedToday": {
                                     "type": "boolean"
+                                  },
+                                  "runCost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "runs": {
+                                        "type": "integer",
+                                        "description": "Writing runs of this model on the pipe whose cost is known: the average's denominator. A run = one generation the model wrote on the pipe's campaigns (every client, workflow and template of the pipe pooled)."
+                                      },
+                                      "runsWithoutCost": {
+                                        "type": "integer",
+                                        "description": "Runs on the pipe whose cost is not known (content-generation stated no completion run, runs-service did not return it, or not read yet); in no figure, never $0."
+                                      },
+                                      "averageUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "What ONE writing run costs: Σ the LLM cost of the completion that wrote each run ÷ `runs`. Money basis = billed GROSS, committed (actual + open holds), the basis of the page's spend on `basis=user`. Null with `unavailableReason`."
+                                      },
+                                      "averageDisplay": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "description": "`averageUsd` printed (`$0.0123`)."
+                                      },
+                                      "averageInputUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The input-token part of `averageUsd`; CACHE IS FOLDED INTO INPUT (cached input, cache writes): `averageInputUsd + averageOutputUsd = averageUsd`."
+                                      },
+                                      "averageOutputUsd": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "The output-token part of `averageUsd` (the completion's `...-tokens-output` cost lines)."
+                                      },
+                                      "totalUsd": {
+                                        "type": "number",
+                                        "description": "Σ over the priced runs = `averageUsd × runs`."
+                                      },
+                                      "totalInputUsd": {
+                                        "type": "number"
+                                      },
+                                      "totalOutputUsd": {
+                                        "type": "number"
+                                      },
+                                      "averageInputTokens": {
+                                        "type": "number",
+                                        "nullable": true,
+                                        "description": "Average input tokens content-generation recorded per run (priced runs that recorded tokens)."
+                                      },
+                                      "averageOutputTokens": {
+                                        "type": "number",
+                                        "nullable": true
+                                      },
+                                      "history": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "day": {
+                                              "type": "string",
+                                              "description": "UTC day (YYYY-MM-DD) a priced run was written."
+                                            },
+                                            "runs": {
+                                              "type": "integer",
+                                              "description": "Priced runs to that day."
+                                            },
+                                            "averageUsd": {
+                                              "type": "number",
+                                              "description": "CUMULATIVE average cost per run since inception to that day."
+                                            }
+                                          },
+                                          "required": [
+                                            "day",
+                                            "runs",
+                                            "averageUsd"
+                                          ]
+                                        },
+                                        "description": "Since inception, one point per UTC day a priced run was written, oldest first; the last point IS `averageUsd`."
+                                      },
+                                      "basis": {
+                                        "type": "string",
+                                        "enum": [
+                                          "billed_gross_committed"
+                                        ]
+                                      },
+                                      "cache": {
+                                        "type": "string",
+                                        "enum": [
+                                          "folded_into_input"
+                                        ]
+                                      },
+                                      "unavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_run_on_pipe",
+                                          "no_run_cost_known",
+                                          "not_on_vendor_basis",
+                                          "run_costs_unreadable"
+                                        ],
+                                        "description": "Why the averages are null: the model wrote nothing on this pipe (Learning), none of its runs has a known cost yet, the `basis=actual` read (a run's vendor cost is not read), or our copy was unreadable this build. Null when served."
+                                      }
+                                    },
+                                    "required": [
+                                      "runs",
+                                      "runsWithoutCost",
+                                      "averageUsd",
+                                      "averageDisplay",
+                                      "averageInputUsd",
+                                      "averageOutputUsd",
+                                      "totalUsd",
+                                      "totalInputUsd",
+                                      "totalOutputUsd",
+                                      "averageInputTokens",
+                                      "averageOutputTokens",
+                                      "history",
+                                      "basis",
+                                      "cache",
+                                      "unavailableReason"
+                                    ],
+                                    "description": "This version's runs only (written by one of its `modelIds`): the versions' runs partition the page's, their `totalUsd` add up to it."
                                   },
                                   "roi": {
                                     "type": "string",
@@ -71759,6 +71879,7 @@
                                   "modelIds",
                                   "head",
                                   "servedToday",
+                                  "runCost",
                                   "roi",
                                   "roiDetail",
                                   "rank",
@@ -71806,6 +71927,125 @@
                                 "no_alias_serves_it"
                               ],
                               "description": "Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."
+                            },
+                            "runCost": {
+                              "type": "object",
+                              "properties": {
+                                "runs": {
+                                  "type": "integer",
+                                  "description": "Writing runs of this model on the pipe whose cost is known: the average's denominator. A run = one generation the model wrote on the pipe's campaigns (every client, workflow and template of the pipe pooled)."
+                                },
+                                "runsWithoutCost": {
+                                  "type": "integer",
+                                  "description": "Runs on the pipe whose cost is not known (content-generation stated no completion run, runs-service did not return it, or not read yet); in no figure, never $0."
+                                },
+                                "averageUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "What ONE writing run costs: Σ the LLM cost of the completion that wrote each run ÷ `runs`. Money basis = billed GROSS, committed (actual + open holds), the basis of the page's spend on `basis=user`. Null with `unavailableReason`."
+                                },
+                                "averageDisplay": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "`averageUsd` printed (`$0.0123`)."
+                                },
+                                "averageInputUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The input-token part of `averageUsd`; CACHE IS FOLDED INTO INPUT (cached input, cache writes): `averageInputUsd + averageOutputUsd = averageUsd`."
+                                },
+                                "averageOutputUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The output-token part of `averageUsd` (the completion's `...-tokens-output` cost lines)."
+                                },
+                                "totalUsd": {
+                                  "type": "number",
+                                  "description": "Σ over the priced runs = `averageUsd × runs`."
+                                },
+                                "totalInputUsd": {
+                                  "type": "number"
+                                },
+                                "totalOutputUsd": {
+                                  "type": "number"
+                                },
+                                "averageInputTokens": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Average input tokens content-generation recorded per run (priced runs that recorded tokens)."
+                                },
+                                "averageOutputTokens": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "history": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "day": {
+                                        "type": "string",
+                                        "description": "UTC day (YYYY-MM-DD) a priced run was written."
+                                      },
+                                      "runs": {
+                                        "type": "integer",
+                                        "description": "Priced runs to that day."
+                                      },
+                                      "averageUsd": {
+                                        "type": "number",
+                                        "description": "CUMULATIVE average cost per run since inception to that day."
+                                      }
+                                    },
+                                    "required": [
+                                      "day",
+                                      "runs",
+                                      "averageUsd"
+                                    ]
+                                  },
+                                  "description": "Since inception, one point per UTC day a priced run was written, oldest first; the last point IS `averageUsd`."
+                                },
+                                "basis": {
+                                  "type": "string",
+                                  "enum": [
+                                    "billed_gross_committed"
+                                  ]
+                                },
+                                "cache": {
+                                  "type": "string",
+                                  "enum": [
+                                    "folded_into_input"
+                                  ]
+                                },
+                                "unavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_run_on_pipe",
+                                    "no_run_cost_known",
+                                    "not_on_vendor_basis",
+                                    "run_costs_unreadable"
+                                  ],
+                                  "description": "Why the averages are null: the model wrote nothing on this pipe (Learning), none of its runs has a known cost yet, the `basis=actual` read (a run's vendor cost is not read), or our copy was unreadable this build. Null when served."
+                                }
+                              },
+                              "required": [
+                                "runs",
+                                "runsWithoutCost",
+                                "averageUsd",
+                                "averageDisplay",
+                                "averageInputUsd",
+                                "averageOutputUsd",
+                                "totalUsd",
+                                "totalInputUsd",
+                                "totalOutputUsd",
+                                "averageInputTokens",
+                                "averageOutputTokens",
+                                "history",
+                                "basis",
+                                "cache",
+                                "unavailableReason"
+                              ],
+                              "description": "Every version of the dynasty pooled on this pipe."
                             },
                             "rank": {
                               "type": "integer",
@@ -72112,7 +72352,8 @@
                                   },
                                   "tokens": {
                                     "type": "string",
-                                    "nullable": true
+                                    "nullable": true,
+                                    "description": "The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded."
                                   }
                                 },
                                 "required": [
@@ -72137,6 +72378,7 @@
                             "aliases",
                             "formerAliases",
                             "aliasesUnavailableReason",
+                            "runCost",
                             "rank",
                             "rankBasis",
                             "emails",
