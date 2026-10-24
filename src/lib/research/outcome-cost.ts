@@ -14,14 +14,19 @@
 import { n, usd } from "./format.js";
 import { headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy } from "./studies.js";
-import type { ResearchOutcomeId, ResearchStudy } from "./types.js";
+import type { ResearchOutcomeId, ResearchPipeId, ResearchStudy } from "./types.js";
 import type { OutcomeUnitCost } from "../outcome-unit-costs.js";
 
 /** Below this share of the scope's spend declared to the ledger, a unit cost is a floor, not a price. */
 export const COVERAGE_BAR_PCT = 95;
 
 export interface OutcomeCostInput {
-  outcome: ResearchOutcomeId;
+  /** The outcome section the study sits in; absent = a pipe's study (`pipe`), e.g. Lead visited on the visit pipe. */
+  outcome?: ResearchOutcomeId;
+  /** The pipe section, when the study sits in no outcome section. */
+  pipe?: ResearchPipeId;
+  /** The study id's stem (`<stem>-cost-every-path`); default the outcome id. */
+  idStem?: string;
   /** The outcome in words, singular and plural ("positive reply", "positive replies"). */
   noun: string;
   nounPlural: string;
@@ -31,6 +36,8 @@ export interface OutcomeCostInput {
   coveragePct: number | null;
   /** Support spend stated apart, per support function (runs-service's key), USD; absent = not served. */
   support?: { byFunction: Array<{ fn: string; usd: number }>; daysMissing: number };
+  /** Abnormal loss stated apart, per reason (runs-service's key), USD (LEAD-STATES-1024, IAS 2 section 16); absent = not served. */
+  abnormal?: Array<{ reason: string; usd: number }>;
   /** Days since inception the ledger has not computed yet: the figure stands on the others. */
   daysMissing?: number;
   /** Fleet spend on no outcome's production (unknown leg, or no pipe's output: our newsletter), USD. */
@@ -61,14 +68,27 @@ export function supportLine(support: NonNullable<OutcomeCostInput["support"]>): 
     : `Apart, in no figure: no support spend marked yet${pending}.`;
 }
 
+/** runs-service's abnormal-loss reasons in words; an unknown key prints as is. */
+const ABNORMAL_REASON_LABELS: Record<string, string> = {
+  target_already_reached: "work on a lead that had already reached its state",
+  repeat_production: "the same work bought twice",
+};
+
+/** PURE. The one line naming the abnormal loss (waste), per reason in dollars; null when there is none. */
+export function abnormalLine(abnormal: NonNullable<OutcomeCostInput["abnormal"]>): string | null {
+  if (abnormal.length === 0) return null;
+  const total = abnormal.reduce((a, r) => a + r.usd, 0);
+  return `Waste apart, in no figure: ${usd(total)} (${abnormal.map((r) => `${ABNORMAL_REASON_LABELS[r.reason] ?? r.reason.replace(/_/g, " ")} ${usd(r.usd)}`).join(" · ")}).`;
+}
+
 export const outcomeCostStudyId = (outcome: ResearchOutcomeId) => `${outcome}-cost-every-path`;
 
 /** PURE. The study. */
 export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
   const base = {
-    id: outcomeCostStudyId(input.outcome),
-    pipe: null,
-    outcome: input.outcome,
+    id: `${input.idStem ?? input.outcome}-cost-every-path`,
+    pipe: input.pipe ?? null,
+    ...(input.outcome ? { outcome: input.outcome } : {}),
     topic: "cost" as const,
     goal: "roi" as const,
     question: `What does a ${input.noun} cost, every path?`,
@@ -135,6 +155,7 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
       ...((input.unattributedCostUsd ?? 0) > 0 ? [`${usd(input.unattributedCostUsd!)} of declared spend belongs to no pipe's outcome (our newsletter, a campaign with no stated leg): in no figure.`] : []),
       `Read on what each run declared it produced and consumed, on every client and every channel: ${covText} of the outcome spend is declared so far.`,
       ...(input.support ? [supportLine(input.support)] : []),
+      ...(input.abnormal && abnormalLine(input.abnormal) ? [abnormalLine(input.abnormal)!] : []),
       ...unpriced,
     ],
   };

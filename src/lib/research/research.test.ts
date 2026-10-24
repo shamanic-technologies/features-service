@@ -290,21 +290,30 @@ describe("assembleResearch", () => {
     const totals = {
       produced: [
         { outcomeKey: "message_sent", campaignId: "c1", produced: 2000, ownCostUsd: 40 },
-        { outcomeKey: "conversation", campaignId: null, produced: 40, ownCostUsd: 4 },
+        { outcomeKey: "lead_interested", campaignId: null, produced: 40, ownCostUsd: 4 },
+        { outcomeKey: "lead_visited", campaignId: "c2", produced: 10, ownCostUsd: 5 },
       ],
-      consumed: [{ consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, count: 40 }],
+      consumed: [{ consumerKey: "lead_interested", consumedKey: "message_sent", campaignId: null, count: 40 }],
       coveragePct: 99,
       daysMissing: 0,
       coverageByOrg: new Map(),
       supportUsd: 0,
       supportByFunction: [],
       supportDaysMissing: 0,
+      abnormalUsd: 7,
+      abnormalByReason: [{ reason: "target_already_reached", usd: 7 }],
     };
-    const labelOf = (k: string) => ({ message_sent: "Message sent", conversation: "Positive reply" })[k] ?? k;
-    const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf, outputOf: (c: string) => (c === "c1" ? "conversation" : null), pipeOutputs: new Set(["conversation", "meeting_booked"]) } });
+    const labelOf = (k: string) => ({ message_sent: "Message sent", lead_interested: "Lead interested" })[k] ?? k;
+    const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf, outputOf: (c: string) => (c === "c1" ? "lead_interested" : c === "c2" ? "lead_visited" : null), pipeOutputs: new Set(["lead_interested", "lead_visited", "meeting_booked"]) } });
     const pr = read.studies.find((x) => x.id === "positive-reply-cost-every-path")!;
     expect(pr).toMatchObject({ outcome: "positive-reply", pipe: null, topic: "cost", status: "measured" });
     expect(pr.result?.display).toBe("$1.10");
+    // LEAD-STATES-1024: priced per interested lead, the waste stated apart; the visit state on the visit pipe
+    expect(pr.result?.unit).toBe("per interested lead, every path, production cost");
+    expect(pr.conclusion).toContain("Waste apart, in no figure: $7.00 (work on a lead that had already reached its state $7.00).");
+    const lv = read.studies.find((x) => x.id === "lead-visited-cost-every-path")!;
+    expect(lv).toMatchObject({ pipe: "cold-email-website-visit", topic: "cost" });
+    expect(lv.result?.display).toBe("$0.50");
     const mb = read.studies.find((x) => x.id === "meeting-cost-every-path")!;
     expect(mb).toMatchObject({ outcome: "meeting", status: "not_enough_data", headline: "No booked meeting declared to the ledger yet." });
     const down = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals: null, labelOf, outputOf: () => null, pipeOutputs: new Set<string>() } });

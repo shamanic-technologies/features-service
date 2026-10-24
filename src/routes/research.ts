@@ -14,6 +14,7 @@
  * and every other bar regroups the same per-version evidence (`fetchFleetLegSlugEvidence`), dated by the runs ledger and
  * the fleet person cell. Pure assembly: `lib/research/*`.
  */
+import { leadStateOf } from "../lib/lead-states.js";
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
@@ -96,6 +97,9 @@ import { STUDIED_PIPES } from "../lib/research/assemble.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
+
+/** The lead state the positive reply pipes produce (LEAD-STATES-1024): the every-path ledger figures key on it. */
+const INTERESTED = "lead_interested";
 
 const router = Router();
 
@@ -517,8 +521,10 @@ export function campaignOutputsOf(
   const pipeOutputs = new Set<string>();
   for (const c of channels) {
     for (const t of c.stepTransitions) {
-      toOf.set(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`, t.to.key);
-      pipeOutputs.add(t.to.key);
+      // A pipe produces the lead STATE its step reaches (LEAD-STATES-1024: a reply pipe produces Lead interested).
+      const out = leadStateOf(t.to.key) ?? t.to.key;
+      toOf.set(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`, out);
+      pipeOutputs.add(out);
     }
   }
   const byCampaign = new Map<string, string>();
@@ -550,7 +556,7 @@ export function clientCostRowsOf(
   return [...orgs].map((orgId) => ({
     orgId,
     label: labelOf(orgId),
-    ledger: byOrg.get(orgId)?.units.get("conversation") ?? null,
+    ledger: byOrg.get(orgId)?.units.get(INTERESTED) ?? null,
     coveragePct: coverageByOrg.get(orgId) ?? null,
     todaySpendUsd: spent.get(orgId) ?? 0,
     todayReplies: replies.get(orgId) ?? 0,
@@ -569,11 +575,11 @@ async function workflowLedgerStudyOf(
       })
     : null;
   if (!ledger.totals || !byWorkflow) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: null, floorReason: null });
-  const fleet = rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("conversation");
+  const fleet = rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get(INTERESTED);
   if (!fleet) return workflowLedgerStudy({ pipe: POSITIVE_REPLY_PIPE, rows: [], floorReason: null });
   const dyn = (slug: string | null) => (slug ? (input.dynastyOf.get(slug) ?? slug) : null);
   const rows = workflowUnitCosts(
-    "conversation",
+    INTERESTED,
     byWorkflow.produced.map((r) => ({ ...r, workflowSlug: dyn(r.workflowSlug) })),
     byWorkflow.sourced.map((c) => ({ ...c, sourceWorkflowSlug: dyn(c.sourceWorkflowSlug) })),
     ledger.outputOf,
