@@ -27,6 +27,7 @@ import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { executableDynasties, fetchStatedPublicWorkflows } from "./public-stats-clients.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 import { listLegAssignments, setLegAssignment, type LegAssignmentRow } from "./workflow-leg-assignments.js";
+import { ONE_LEG_JUDGMENT_SUPPORT } from "./platform-caller.js";
 
 export const ONE_LEG_TASK = "ONE-LEG-PER-WORKFLOW-1019";
 const JEV_TIMEOUT_MS = 60_000;
@@ -97,7 +98,7 @@ async function askJev(state: Record<string, unknown>, legs: readonly PerformedLe
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
-    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { leg: legQuestion(legs) } }) },
+    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { leg: legQuestion(legs) }, support: ONE_LEG_JUDGMENT_SUPPORT }) },
     { timeoutMs: JEV_TIMEOUT_MS },
   );
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
