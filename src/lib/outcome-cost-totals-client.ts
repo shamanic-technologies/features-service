@@ -103,12 +103,39 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
  * `since=2026-01-01`, a month before its ledger starts on 2026-02-02, it counted those 32 days as missing forever and every
  * every-path study read "32 days still computing" over a complete ledger).
  */
-export async function fetchOutcomeLedgerTotals(basis: LedgerBasis): Promise<OutcomeLedgerTotals> {
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId`, {
+export async function fetchOutcomeLedgerTotals(basis: LedgerBasis, until?: string): Promise<OutcomeLedgerTotals> {
+  // `until` (UTC day, inclusive) = the ledger AS OF the end of that day, still since inception (MEETING-COST-METHODS-1024).
+  const cut = until ? `&until=${encodeURIComponent(until)}` : "";
+  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId${cut}`, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
   });
   if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return parseOutcomeLedgerTotals((await r.json()) as WireTotals, basis);
+}
+
+/**
+ * The first UTC day the ledger holds an occurrence of `outcomeKey` (MEETING-COST-METHODS-1024: where its history starts;
+ * an occurrence is dated by its effective declaration time). Null = none yet. One small read (one group per day).
+ */
+export async function fetchFirstOutcomeDay(outcomeKey: string): Promise<string | null> {
+  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,day&outcomeKey=${encodeURIComponent(outcomeKey)}`, {
+    headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
+  });
+  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs by day ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  return firstOutcomeDayOf((await r.json()) as WireTotals, outcomeKey);
+}
+
+/** PURE. The earliest `day` of a produced group of `outcomeKey` holding an occurrence. */
+export function firstOutcomeDayOf(body: WireTotals, outcomeKey: string): string | null {
+  const days = (body.produced ?? [])
+    .filter((g) => g.dimensions?.outcomeKey === outcomeKey && (g.occurrences ?? 0) > 0)
+    .map((g) => {
+      const d = g.dimensions?.day;
+      if (!d) throw new Error("[features-service] outcome ledger by day: a produced group names no day");
+      return d;
+    })
+    .sort();
+  return days[0] ?? null;
 }
 
 export interface OutcomeLedgerByWorkflow {

@@ -53,10 +53,12 @@ import { researchConclusions, researchMeasuredStudies } from "../lib/research/co
 import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking, readOutcomePricesMeetingBooked } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
-import { readFleetIndexSeries, recordFleetIndexPoints, utcDay } from "../lib/fleet-index-store.js";
+import { readFleetIndexSeries, recordFleetIndexPoints, utcDay, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
 import type { FleetIndexPoint } from "../lib/fleet-indexes.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import {
+  ledgerHistoryDays,
+  ledgerHistoryPoint,
   ledgerPoint,
   MEETING_COST_INDEX_SLUG,
   MEETING_COST_LEDGER_SLUG,
@@ -70,7 +72,7 @@ import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResear
 import { fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
-import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
+import { fetchFirstOutcomeDay, fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
 import { estimateStudy, LLM_DIMENSION, TEMPLATE_DIMENSION, workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
 import { estimateReplayStudy, type ReplayBucket } from "../lib/research/estimate-replay.js";
 import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
@@ -1673,7 +1675,45 @@ const methodDayOfRow = (r: FleetIndexPointRow): MethodDay => ({
   outcomes: r.outcomes,
   unavailableReason: r.unavailableReason,
   inputs: (r.inputs ?? {}) as Record<string, unknown>,
+  basis: r.basis,
+  recordedAt: r.recordedAt.toISOString(),
 });
+
+/** Past ledger days recomputed per pass, oldest missing first (each is one fleet ledger read). */
+const LEDGER_HISTORY_DAYS_PER_PASS = 40;
+let ledgerHistoryInFlight = false;
+
+/**
+ * The ledger's cost per booked meeting AS OF the end of each past UTC day: runs-service's ledger read with `until` (still
+ * since inception), rolled up like today's. History starts on the first day the ledger holds a booked meeting (an
+ * occurrence is dated by its effective declaration time: re-dated meetings move it earlier). Every past day is
+ * recomputed once per UTC day and stored `recomputed` (a meeting re-dated later changes every day after it); a
+ * recorded day is never touched. Single flight, in the background of the build, a bounded number of days per pass.
+ */
+function backfillMeetingLedgerHistory(
+  ledger: { outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
+  stored: readonly MethodDay[],
+  today: string,
+): void {
+  if (ledgerHistoryInFlight) return;
+  ledgerHistoryInFlight = true;
+  void (async () => {
+    const first = await fetchFirstOutcomeDay("meeting_booked");
+    const days = ledgerHistoryDays(first, today, stored).slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
+    if (!days.length) return;
+    const outcomesRequired = legMaturity("start_to_meeting_booked").outcomesRequired;
+    for (const day of days) {
+      const totals = await fetchOutcomeLedgerTotals("gross", day);
+      const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null;
+      await writeRecomputedFleetIndexPoints([{ day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) }], new Date());
+    }
+    console.log(`[features-service] research meeting-cost: ledger history recomputed for ${days.length} day(s), ${days[0]}..${days[days.length - 1]}`);
+  })()
+    .catch((err) => console.error("[features-service] research meeting-cost: ledger history pass failed, retried next build:", err))
+    .finally(() => {
+      ledgerHistoryInFlight = false;
+    });
+}
 
 /**
  * MEETING-COST-METHODS-1024: the meeting-cost study's recorded methods. Records TODAY's outcome-prices and ledger points
@@ -1712,6 +1752,7 @@ async function meetingCostMethodsOf(
     series(MEETING_COST_INDEX_SLUG, null),
     series(MEETING_COST_LEDGER_SLUG, ledgerToday),
   ]);
+  if (ledger.totals && ledgerDays) backfillMeetingLedgerHistory(ledger, ledgerDays, day);
   return {
     outcomePrices: prices && (prices.length || price) ? prices : null,
     index,
