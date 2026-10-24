@@ -23,8 +23,11 @@ import { sweepCompletionCosts } from "./generation-completion-costs.js";
 
 const COLD_EMAIL = "sales-cold-email-outreach";
 
-// v2 (MODEL-RUN-COST-1024): re-read once from the start, so every row gains its completion run(s) and tokens.
-const cursorKeyOf = (feature: string) => `generation-sequences-cursor:${feature}:v2`;
+const cursorKeyOf = (feature: string) => `generation-sequences-cursor:${feature}:v1`;
+// MODEL-RUN-COST-1024: a second walk from the start re-reads every row once, so history gains its completion run(s)
+// and tokens. Its own cursor: the feed holds a page at the first entry not matched yet, and content-generation
+// matches history last, so restarting the main cursor would stop new sequences reaching the copy for hours.
+const backfillCursorKeyOf = (feature: string) => `generation-sequences-completion-backfill:${feature}:v1`;
 const TICK_MS = 2 * 60_000;
 const FIRST_TICK_MS = 100_000;
 
@@ -75,15 +78,17 @@ async function followedFeatures(): Promise<string[]> {
 
 export async function copyGenerationSequences(): Promise<number> {
   let read = 0;
-  for (const feature of await followedFeatures()) read += await copyFeatureSequences(feature);
+  for (const feature of await followedFeatures()) {
+    read += await copyFeatureSequences(feature, cursorKeyOf(feature));
+    await copyFeatureSequences(feature, backfillCursorKeyOf(feature));
+  }
   return read;
 }
 
-async function copyFeatureSequences(feature: string): Promise<number> {
+async function copyFeatureSequences(feature: string, cursorKey: string): Promise<number> {
   const base = process.env.CONTENT_GENERATION_SERVICE_URL;
   const key = process.env.CONTENT_GENERATION_SERVICE_API_KEY;
   if (!base || !key) throw new Error("CONTENT_GENERATION_SERVICE_URL / CONTENT_GENERATION_SERVICE_API_KEY not configured");
-  const cursorKey = cursorKeyOf(feature);
   let cursor = (await loadFleetCell(cursorKey))?.text ?? null;
   let read = 0;
   for (let page = 0; page < 1000; page++) {
