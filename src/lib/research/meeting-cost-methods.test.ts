@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { meetingCostStudy, type ReportingBrand } from "./meetings.js";
 import {
   indexChart,
+  ledgerHistoryDays,
+  ledgerHistoryPoint,
   ledgerChart,
   ledgerPoint,
   medianChart,
@@ -111,5 +113,22 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
       "Expected, public index: not readable right now.",
       "Ledger: not readable right now.",
     ]);
+  });
+
+  it("the ledger history starts on the ledger's first booked meeting and recomputes each past day once per UTC day", () => {
+    const stored: MethodDay[] = [
+      { ...day("2026-10-20", 700), basis: "recomputed", recordedAt: "2026-10-24T08:00:00.000Z" },
+      { ...day("2026-10-21", 710), basis: "recomputed", recordedAt: "2026-10-23T08:00:00.000Z" },
+      { ...day("2026-10-23", 866), basis: "recorded", recordedAt: "2026-10-23T23:00:00.000Z" },
+    ];
+    expect(ledgerHistoryDays("2026-10-19", "2026-10-24", stored)).toEqual(["2026-10-19", "2026-10-21", "2026-10-22"]);
+    expect(ledgerHistoryDays(null, "2026-10-24", stored)).toEqual([]);
+    expect(ledgerHistoryDays("2026-10-24", "2026-10-24", stored)).toEqual([]);
+    const none = ledgerHistoryPoint(null, 90, 0, 10);
+    expect(none).toMatchObject({ indexSlug: MEETING_COST_LEDGER_SLUG, value: null, unavailableReason: "no_meeting_priced_yet" });
+    const chart = ledgerChart([{ ...day("2026-10-22", null), basis: "recomputed" }, { ...day("2026-10-23", 866.47, { floor: "yes", coveragePct: 90.5, daysMissing: 0 }, "noise", 8), basis: "recomputed" }])!;
+    expect(chart.title).toContain("from Oct 23");
+    expect(chart.points).toHaveLength(1);
+    expect(chart.points[0]!.note).toContain("recomputed as of that day");
   });
 });
