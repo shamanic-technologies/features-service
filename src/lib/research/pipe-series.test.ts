@@ -40,6 +40,15 @@ describe("MB-INDEX-PIPES-1018: the two Research articles over time", () => {
     ]);
   });
 
+  it("the Flash view: a proven workflow read on its flash half still competes; a Learning one never does (BEST-OVER-TIME-FLASH-1024)", () => {
+    const proven = { ...bucket("ballad", [["2026-09", 300, 1000, 2], ["2026-10", 300, 1000, 2]]), basis: "flash" as const };
+    const young = { ...bucket("young", [["2026-10", 10, 100, 1]]), basis: "flash" as const, learning: true };
+    expect(bestWorkflowByMonth([proven, young], new Set(["ballad", "young"]), 1).map((p) => [p.period, p.key, p.costPerOutcomeUsd])).toEqual([
+      ["2026-09", "ballad", 150],
+      ["2026-10", "ballad", 150],
+    ]);
+  });
+
   it("the meeting pipe's series: recorded days, today's live point replacing its own day", () => {
     const today = meetingResearchPoints(
       { source: "pipe_all_workflows", workflowDynastySlug: null, workflowDynastyName: null, mature: false, spentUsd: 3.8, contacted: 10, outcomes: 3, costPerMeetingUsd: 3.8 / 3, ratePct: 30, spentByDynasty: {} },
