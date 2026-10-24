@@ -41,8 +41,9 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/research/run-cost.js";
+import { pickPipeWriters } from "./leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
@@ -59,13 +60,15 @@ import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
 import { workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
+import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
+import { rollUpByOrg } from "../lib/outcome-unit-costs.js";
 import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import { pipeLegKeyOf } from "../lib/funnel-legs.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
 import { readBookedAfterReply, readGenerationCosts, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
-import { fetchOrgUserEmails } from "../lib/accounts-client.js";
+import { fetchBrandsBasic, fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
 import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
 import { readNicheGrades } from "../lib/research/niche-grades.js";
@@ -169,6 +172,8 @@ interface ColdEmailPipeRead {
   campaigns: Array<{ campaignId: string; orgId: string; brandId: string | null; offerId: string | null }>;
   /** Dynasty → workflow-service's name. */
   names: Map<string, string>;
+  /** The pipe's dated spend rows (per workflow version, org, month): today's per-client figure reads them. */
+  spend: DatedSpendRow[];
 }
 
 /**
@@ -233,6 +238,7 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { fe
     persons,
     campaigns: ev.campaigns.map((c) => ({ campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId ?? null })),
     names: new Map(ev.workflows.filter((w) => w.workflowDynastyName).map((w) => [w.workflowDynastySlug, w.workflowDynastyName])),
+    spend,
     split: { screened, signal: rule.outcomeSignal === "positiveReply" ? "positiveReply" : rule.outcomeSignal === "clicked" ? "clicked" : "other", cutoffDay: ev.cutoffIso ? ev.cutoffIso.slice(0, 10) : null },
   };
 }
@@ -508,6 +514,61 @@ export function campaignOutputsOf(
 }
 
 /**
+ * PURE. One row per client (org): its ledger roll-up of the positive reply beside today's figure (its reply pipes'
+ * spend ÷ its positive replies, the person cell's). `labelOf(org)` names the client.
+ */
+export function clientCostRowsOf(
+  byOrg: ReadonlyMap<string, { units: ReadonlyMap<string, import("../lib/outcome-unit-costs.js").OutcomeUnitCost> }>,
+  coverageByOrg: ReadonlyMap<string, number | null>,
+  persons: ReadonlyArray<{ orgId: string; positiveReplies: number }>,
+  spend: ReadonlyArray<{ orgId: string; spentUsd: number }>,
+  labelOf: (orgId: string) => string,
+): ClientCostRow[] {
+  const replies = new Map<string, number>();
+  for (const p of persons) replies.set(p.orgId, (replies.get(p.orgId) ?? 0) + p.positiveReplies);
+  const spent = new Map<string, number>();
+  for (const s of spend) spent.set(s.orgId, (spent.get(s.orgId) ?? 0) + s.spentUsd);
+  const orgs = new Set([...byOrg.keys(), ...[...replies].filter(([, v]) => v > 0).map(([o]) => o)]);
+  return [...orgs].map((orgId) => ({
+    orgId,
+    label: labelOf(orgId),
+    ledger: byOrg.get(orgId)?.units.get("conversation") ?? null,
+    coveragePct: coverageByOrg.get(orgId) ?? null,
+    todaySpendUsd: spent.get(orgId) ?? 0,
+    todayReplies: replies.get(orgId) ?? 0,
+  }));
+}
+
+/** The per-client study; a client is named by the brand most of its people were contacted for (brand-service names). */
+async function clientCostStudyOf(
+  ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
+  persons: ReadonlyArray<{ orgId: string; brandId: string; contacted: number; positiveReplies: number }>,
+  spend: ReadonlyArray<{ orgId: string; spentUsd: number }>,
+) {
+  if (!ledger.totals) return outcomeCostByClientStudy(null, 0);
+  const t = ledger.totals;
+  const byOrg = rollUpByOrg(t.produced, t.consumed, ledger.outputOf, ledger.pipeOutputs);
+  const brandOf = new Map<string, Map<string, number>>();
+  for (const p of persons) {
+    const m = brandOf.get(p.orgId) ?? new Map<string, number>();
+    m.set(p.brandId, (m.get(p.brandId) ?? 0) + p.contacted);
+    brandOf.set(p.orgId, m);
+  }
+  const mainBrand = new Map([...brandOf].map(([o, m]) => [o, [...m].sort((a, b) => b[1] - a[1])[0]![0]] as [string, string]));
+  const names = await fetchBrandsBasic([...mainBrand.values()]).catch((err) => {
+    console.error("[features-service] research: brand names unreadable, clients named by their org id:", err);
+    return new Map<string, { name: string | null }>();
+  });
+  const labelOf = (org: string) => {
+    const b = mainBrand.get(org);
+    const name = b ? names.get(b)?.name : null;
+    const more = (brandOf.get(org)?.size ?? 1) - 1;
+    return name ? `${name}${more > 0 ? ` +${more}` : ""}` : `Client ${org.slice(0, 8)}`;
+  };
+  return outcomeCostByClientStudy(clientCostRowsOf(byOrg, t.coverageByOrg, persons, spend, labelOf), t.daysMissing);
+}
+
+/**
  * PURE. The reply pipe's people per workflow DYNASTY (every version pooled), by serve day, with each dynasty's lifetime
  * billed spend (its ranking row's flash gross spend). A bucket with no serve day has no age: left out, never counted as mature.
  */
@@ -669,10 +730,14 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
         }),
       ]
     : [];
+  // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
+  const ledger = await ledgerP;
+  const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
   const file = assembleResearch({
     replyDelay,
     estimateStudies,
-    outcomeLedger: await ledgerP,
+    ledgerStudies,
+    outcomeLedger: ledger,
     sends,
     generationStudies: gens.studies,
     countryStudies: countries,
@@ -782,6 +847,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       pipe,
       noun: t.noun,
       nounPlural: t.nounPlural,
+      featureSlug: COLD_EMAIL,
       legKey: r.input.legKey,
       cells: r.input.cells,
       persons: r.persons,
@@ -826,10 +892,11 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
     [MEETING_BOOKING_PIPE]: {
       pipe: MEETING_BOOKING_PIPE,
       figuresBasis: "workflow_bars",
-      rowOrder: "leg_order",
+      rowOrder: "cost_per_outcome",
       orderView: "flash",
       rowsCover: "all_valid_combinations",
-      estimateModel: "part_effects",
+      featureSlug: null,
+      legKey: null,
       outcomeNoun: "meeting",
       outcomeNounPlural: "meetings",
       rows: [],
@@ -898,10 +965,11 @@ interface OtherSection {
 const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): PipePerformance => ({
   pipe: p.entry.id,
   figuresBasis: "workflow_bars",
-  rowOrder: "leg_order",
+  rowOrder: "cost_per_outcome",
   orderView: "flash",
   rowsCover: "all_valid_combinations",
-  estimateModel: "part_effects",
+  featureSlug: p.featureSlug,
+  legKey: p.legKey,
   outcomeNoun: noun,
   outcomeNounPlural: nounPlural,
   rows: [],
@@ -1062,6 +1130,7 @@ async function otherPipeSection(
           pipe: p.entry.id,
           noun: terms.noun,
           nounPlural: terms.nounPlural,
+          featureSlug,
           legKey,
           cells: input.cells,
           persons,
@@ -1147,11 +1216,11 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
 
 /**
  * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: leg_order` since PERF-LEG-ORDER-1023, priors on `estimateModel: part_effects` since PRIOR-PART-EFFECTS-1023) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * `figuresBasis: workflow_bars`, rows in `rowOrder: cost_per_outcome` since PERF-COST-ORDER-1024) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "leg_order" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && p.estimateModel === "part_effects" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "cost_per_outcome" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
@@ -1365,6 +1434,31 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
   }
 });
 
+/**
+ * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
+ * ranking's first workflow (what campaign-service runs) x the writer pick under the pipe's default play. A pipe whose
+ * pick cannot be read says so on its own block (logged), never fails the tab.
+ */
+async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNow> {
+  const none = { workflow: null, template: null, llm: null };
+  if (!perf.featureSlug || !perf.legKey) return servedNowOf(perf, { ...none, unavailableReason: "pipe_not_read" });
+  try {
+    const [ranking, picked] = await Promise.all([readLegWorkflowRanking(perf.featureSlug, perf.legKey, 0), pickPipeWriters(perf.featureSlug, perf.legKey, null, 0)]);
+    if (!ranking) return servedNowOf(perf, { ...none, unavailableReason: "workflow_ranking_not_computed_yet" });
+    if (!picked) return servedNowOf(perf, { ...none, unavailableReason: "writer_ranking_not_computed_yet" });
+    const first = ranking.rows.find((r) => r.goesFirst) ?? null;
+    const labelOf = (key: string, part: "workflow" | "template" | "llm") => perf.rows.find((r) => r[part]?.key === key)?.[part]?.label ?? null;
+    const workflow = first ? { key: first.workflowDynastySlug, label: labelOf(first.workflowDynastySlug, "workflow") ?? first.workflowDynastyName ?? first.workflowDynastySlug } : null;
+    const tplKey = picked.template ? (picked.template.templateDynastySlug ?? picked.template.key) : null;
+    const template = picked.template && tplKey ? { key: tplKey, label: labelOf(tplKey, "template") ?? picked.template.label } : null;
+    const llm = picked.llm ? { key: picked.llm.key, label: labelOf(picked.llm.key, "llm") ?? picked.llm.label } : null;
+    return servedNowOf(perf, { workflow, template, llm, unavailableReason: null });
+  } catch (error) {
+    console.error(`[features-service] research performance: the served combination of ${perf.pipe} could not be read:`, error);
+    return servedNowOf(perf, { ...none, unavailableReason: "served_pick_unreadable" });
+  }
+}
+
 router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
   const basis = basisOf(req.query.basis);
   if (!basis) {
@@ -1377,7 +1471,9 @@ router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
     const build = await readResearchBuild(basis, view);
     // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
     if (!build?.performance) return notYet(res);
-    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes: await withPerformanceMarks(build.performance) });
+    const marked = await withPerformanceMarks(build.performance);
+    const pipes = Object.fromEntries(await Promise.all(Object.entries(marked).map(async ([id, perf]) => [id, { ...perf, servedNow: await readServedNow(perf) }] as const)));
+    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes });
   } catch (error) {
     console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });

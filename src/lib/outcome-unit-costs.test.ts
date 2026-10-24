@@ -121,3 +121,27 @@ describe("normal loss on the prod shape (cairo-v15, 2026-10-24)", () => {
     expect(meeting.stages.find((s) => s.outcomeKey === "message_sent")!.requirementPerUnit).toBeCloseTo(168_933 / 8, 6);
   });
 });
+
+describe("per client (COST-ACCOUNTING-1023-P4)", () => {
+  it("each org is priced on its own pipes; an input bought from another org's run enters at the fleet unit cost", async () => {
+    const { rollUpByOrg } = await import("./outcome-unit-costs.js");
+    const by = rollUpByOrg(
+      [
+        { outcomeKey: "message_sent", campaignId: "c1", orgId: "o1", produced: 1000, ownCostUsd: 100 },
+        { outcomeKey: "conversation", campaignId: null, orgId: "o1", produced: 10, ownCostUsd: 0 },
+        { outcomeKey: "message_sent", campaignId: "c2", orgId: "o2", produced: 1000, ownCostUsd: 20 },
+        { outcomeKey: "conversation", campaignId: null, orgId: "o2", produced: 10, ownCostUsd: 0 },
+        // o3 books a meeting off a reply o3 never produced (its replies came from o1's pipe): fleet reply price
+        { outcomeKey: "meeting_booked", campaignId: null, orgId: "o3", produced: 1, ownCostUsd: 0 },
+      ],
+      [{ consumerKey: "meeting_booked", consumedKey: "conversation", campaignId: null, orgId: "o3", count: 1 }],
+      (c) => (c === "c1" || c === "c2" ? "conversation" : null),
+      new Set(["conversation", "meeting_booked"]),
+    );
+    expect(by.get("o1")!.units.get("conversation")!.unitCostUsd).toBeCloseTo(10, 8);
+    expect(by.get("o2")!.units.get("conversation")!.unitCostUsd).toBeCloseTo(2, 8);
+    // fleet reply = $120 / 20 = $6
+    expect(by.get("o3")!.units.get("meeting_booked")).toMatchObject({ unpricedInputs: [] });
+    expect(by.get("o3")!.units.get("meeting_booked")!.unitCostUsd).toBeCloseTo(6, 8);
+  });
+});

@@ -18,7 +18,7 @@ interface WireTotals {
   daysMissing?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
   consumed?: Array<{ dimensions?: Record<string, string | null>; consumptions?: string }>;
-  scope?: Array<{ spend?: WireCost; producedCost?: WireCost }>;
+  scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost }>;
 }
 
 export interface OutcomeLedgerTotals {
@@ -28,6 +28,8 @@ export interface OutcomeLedgerTotals {
   coveragePct: number | null;
   /** Days since inception the ledger has not computed yet (its refresher fills them): the figures stand on the others. */
   daysMissing: number;
+  /** Per org (the scope rows' `orgId`): share of its spend an outcome carries, 0..100; null when it spent nothing. */
+  coverageByOrg: Map<string, number | null>;
 }
 
 const usdOf = (c: WireCost | undefined, basis: LedgerBasis): number => {
@@ -54,11 +56,22 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
   }
   let spend = 0;
   let carried = 0;
+  const byOrg = new Map<string, { spend: number; carried: number }>();
   for (const s of body.scope ?? []) {
-    spend += usdOf(s.spend, basis);
-    carried += usdOf(s.producedCost, basis);
+    const sp = usdOf(s.spend, basis);
+    const ca = usdOf(s.producedCost, basis);
+    spend += sp;
+    carried += ca;
+    const org = s.dimensions?.orgId;
+    if (org) {
+      const e = byOrg.get(org) ?? { spend: 0, carried: 0 };
+      e.spend += sp;
+      e.carried += ca;
+      byOrg.set(org, e);
+    }
   }
-  return { produced, consumed, coveragePct: spend > 0 ? (100 * carried) / spend : null, daysMissing: (body.daysMissing ?? []).length };
+  const coverageByOrg = new Map([...byOrg].map(([o, e]) => [o, e.spend > 0 ? (100 * e.carried) / e.spend : null] as [string, number | null]));
+  return { produced, consumed, coveragePct: spend > 0 ? (100 * carried) / spend : null, daysMissing: (body.daysMissing ?? []).length, coverageByOrg };
 }
 
 /**
