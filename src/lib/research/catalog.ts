@@ -287,12 +287,15 @@ export function emptyBucket(key: string, label: string): ResearchBucket {
 }
 
 const costOf = (b: ResearchBucket) => (b.figures.outcomes > 0 && b.figures.spentUsd > 0 ? b.figures.spentUsd / b.figures.outcomes : null);
-/** Cheapest first (the study's ROI order), then the unpriced ones by people reached, then the pages nobody was reached on. */
+/**
+ * The Workflows tab's order (owner 2026-10-24, PERF-COST-ORDER-1024, the Performance tab's rule): cost per outcome ascending,
+ * a workflow with no outcome standing on its $ spent instead, every row ranked. Before, a workflow with no outcome had no
+ * rank and stood under every priced one: Keel, rank 1 on the leg ranking and the only workflow running in prod ($65, no
+ * reply yet), read below Ballad ($151 per reply).
+ */
 function catalogOrder(rows: readonly ResearchBucket[]): ResearchBucket[] {
-  const priced = rows.filter((r) => costOf(r) !== null).sort((a, b) => costOf(a)! - costOf(b)! || b.figures.outcomes - a.figures.outcomes);
-  const rest = rows.filter((r) => costOf(r) === null && r.figures.contacted > 0).sort((a, b) => b.figures.contacted - a.figures.contacted);
-  const unreached = rows.filter((r) => costOf(r) === null && !(r.figures.contacted > 0)).sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
-  return [...priced, ...rest, ...unreached];
+  const shown = (r: ResearchBucket) => costOf(r) ?? r.figures.spentUsd;
+  return [...rows].sort((a, b) => shown(a) - shown(b) || b.figures.outcomes - a.figures.outcomes || b.figures.contacted - a.figures.contacted || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
 }
 
 /** The leg order of the pipe's templates or models (`rankWriters`), selectable ones first: every row ranked. */
@@ -515,7 +518,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const tplKeys = new Set(tplRows.map((r) => r.key));
   const mdKeys = new Set(mdRows.map((r) => r.key));
   const wfLabel = new Map(wfRows.map((r) => [r.key, r.label]));
-  const rankOf = (r: ResearchBucket, i: number) => (costOf(r) === null ? null : i + 1);
+  const rankOf = (_r: ResearchBucket, i: number) => i + 1;
   const modelRef = (id: string | null): CatalogRef | null => {
     if (!id) return null;
     const key = llmKeyOfId(id);

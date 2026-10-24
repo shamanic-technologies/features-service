@@ -72321,16 +72321,16 @@
                           "rowOrder": {
                             "type": "string",
                             "enum": [
-                              "leg_order"
+                              "cost_per_outcome"
                             ],
-                            "description": "The pipe's pick order (PERF-LEG-ORDER-1023; supersedes RESEARCH-COMBO-ESTIMATE-1023's order on the estimate): the ONE leg order of writer-pick and the workflow ranking on each combination's own figures. Active first; learning combinations whose explore price (own spend ÷ max(own outcomes, 1), $0 never used) is below the best mature one's cost; the mature ones; the other learning ones. Same explore price (every $0 one): by `estimate.costPerOutcomeUsd`, cheapest first. `place` says why."
+                            "description": "PERF-COST-ORDER-1024 (owner 2026-10-24; supersedes PERF-LEG-ORDER-1023's pick order): active rows first, then the cost per outcome ascending, a row with no outcome standing on its $ spent instead (`sortCostUsd`), then key. Untested rows ($0 spent) stand first among the active ones: the dashboard hides them by default (`untested`)."
                           },
                           "orderView": {
                             "type": "string",
                             "enum": [
                               "flash"
                             ],
-                            "description": "The order is read on the FLASH figures whatever `?view=` (PERF-ORDER-FLASH-1023, owner 2026-10-23: the pipe picks on one order): `rank` and `place` are the flash tab's, only the figures are the view's. On the mature view a young combination reads $0 (nothing old enough) and would otherwise stand first as never used."
+                            "description": "The order is read on the FLASH figures whatever `?view=` (PERF-ORDER-FLASH-1023, kept): `rank`, `sortCostUsd` and `untested` are the flash tab's, only the figures are the view's. On the mature view the figures can look out of order: expected."
                           },
                           "rowsCover": {
                             "type": "string",
@@ -72339,12 +72339,95 @@
                             ],
                             "description": "Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."
                           },
-                          "estimateModel": {
+                          "featureSlug": {
                             "type": "string",
-                            "enum": [
-                              "part_effects"
+                            "nullable": true,
+                            "description": "The pipe's channel (feature) slug: what `servedNow` is read on. Null on a pipe with no combination."
+                          },
+                          "legKey": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "servedNow": {
+                            "type": "object",
+                            "properties": {
+                              "workflow": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ],
+                                "description": "The leg workflow ranking's first workflow (rank 1: what campaign-service runs)."
+                              },
+                              "template": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ],
+                                "description": "The writer pick's rank 1 template dynasty (default play): what every email of the pipe is written with."
+                              },
+                              "llm": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "key": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "key",
+                                  "label"
+                                ],
+                                "description": "The writer pick's rank 1 LLM dynasty (default play)."
+                              },
+                              "row": {
+                                "nullable": true,
+                                "description": "That combination's row (same shape as `rows[]`), on this view; null with `unavailableReason`."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "pipe_not_read",
+                                  "workflow_ranking_not_computed_yet",
+                                  "no_runnable_workflow",
+                                  "writer_ranking_not_computed_yet",
+                                  "no_template_picked",
+                                  "no_llm_picked",
+                                  "combination_not_listed",
+                                  "served_pick_unreadable"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "workflow",
+                              "template",
+                              "llm",
+                              "unavailableReason"
                             ],
-                            "description": "Each row's prior is ONE model of the pipe (PRIOR-PART-EFFECTS-1023): outcomes per dollar = the pipe's rate × its workflow's, template's and LLM's effects, fitted together on every other combination, each pulled toward 1 by the leg's maturity bar in outcomes; an untested part is neutral."
+                            "description": "The combination the pipe runs TODAY (PERF-COST-ORDER-1024, owner 2026-10-24: « la ligne de la combinaison actuelle qui est servie en prod »), read LIVE at every request, never from the build. The pipe chooses its workflow, its template and its LLM separately (BEST-TPL-LLM-1022): only this combination is a real pick."
                           },
                           "outcomeNoun": {
                             "type": "string"
@@ -72363,18 +72446,15 @@
                                 },
                                 "rank": {
                                   "type": "integer",
-                                  "description": "Served order: the pipe's pick order (`rowOrder: leg_order`)."
+                                  "description": "Served order (`rowOrder: cost_per_outcome`, read on the flash view)."
                                 },
-                                "place": {
-                                  "type": "string",
-                                  "enum": [
-                                    "explore",
-                                    "money",
-                                    "mature",
-                                    "proven_worse",
-                                    "cannot_run"
-                                  ],
-                                  "description": "Why it stands there: `explore` (learning, explore price below the best mature cost, or nothing mature), `money` (the best mature one), `mature`, `proven_worse` (learning, its spend already reached the best mature cost), `cannot_run` (deprecated)."
+                                "sortCostUsd": {
+                                  "type": "number",
+                                  "description": "What the row stands on: its cost per outcome, else (no outcome) its $ spent; flash view."
+                                },
+                                "untested": {
+                                  "type": "boolean",
+                                  "description": "Spent nothing on the flash view (never sent, or a combination no email was written with yet): hidden by default on the dashboard."
                                 },
                                 "workflow": {
                                   "type": "object",
@@ -72483,7 +72563,7 @@
                                 },
                                 "written": {
                                   "type": "boolean",
-                                  "description": "False = a technically valid combination (runnable workflow x live template dynasty x LLM served under an alias, none deprecated) that never wrote an email: zero figures, ranked on its parts' estimate (RESEARCH-ALL-COMBOS-1023)."
+                                  "description": "False = a technically valid combination (runnable workflow x live template dynasty x LLM served under an alias, none deprecated) that never wrote an email: zero figures, `untested` (RESEARCH-ALL-COMBOS-1023)."
                                 },
                                 "writerSource": {
                                   "type": "string",
@@ -72523,72 +72603,6 @@
                                 },
                                 "learning": {
                                   "type": "boolean"
-                                },
-                                "estimate": {
-                                  "type": "object",
-                                  "properties": {
-                                    "costPerOutcomeUsd": {
-                                      "type": "number",
-                                      "nullable": true,
-                                      "description": "(ownSpentUsd + priorWeightOutcomes × priorCostPerOutcomeUsd) ÷ (ownOutcomes + priorWeightOutcomes); with no prior, own spend ÷ own outcomes; null only with `unavailableReason`."
-                                    },
-                                    "display": {
-                                      "type": "string",
-                                      "nullable": true
-                                    },
-                                    "ownSpentUsd": {
-                                      "type": "number"
-                                    },
-                                    "ownOutcomes": {
-                                      "type": "number"
-                                    },
-                                    "priorCostPerOutcomeUsd": {
-                                      "type": "number",
-                                      "nullable": true,
-                                      "description": "What the pipe's model of part effects, fitted WITHOUT the row, predicts for its workflow × template × LLM (`own_parts`, `priorParts` = the parts another combination measured; an unmeasured part is neutral), else the pipe pooled (`pipe_combinations`)."
-                                    },
-                                    "priorSource": {
-                                      "type": "string",
-                                      "nullable": true,
-                                      "enum": [
-                                        "own_parts",
-                                        "pipe_combinations"
-                                      ]
-                                    },
-                                    "priorParts": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string",
-                                        "enum": [
-                                          "workflow",
-                                          "template",
-                                          "llm"
-                                        ]
-                                      }
-                                    },
-                                    "priorWeightOutcomes": {
-                                      "type": "number",
-                                      "description": "The leg's maturity bar in outcomes: the prior counts as that many outcomes."
-                                    },
-                                    "unavailableReason": {
-                                      "type": "string",
-                                      "nullable": true,
-                                      "enum": [
-                                        "no_outcome_on_pipe"
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "costPerOutcomeUsd",
-                                    "display",
-                                    "ownSpentUsd",
-                                    "ownOutcomes",
-                                    "priorCostPerOutcomeUsd",
-                                    "priorSource",
-                                    "priorWeightOutcomes",
-                                    "unavailableReason"
-                                  ],
-                                  "description": "Its best-guess cost per outcome (RESEARCH-COMBO-ESTIMATE-1023); orders combinations at the same explore price. With no outcome of its own, `costPerOutcomeUsd` (expected) IS this estimate and the expected `roi` is read from it (value per outcome ÷ this cost billed)."
                                 },
                                 "status": {
                                   "type": "string",
@@ -72634,23 +72648,9 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
-                                        "own_parts",
-                                        "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                    },
-                                    "parts": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string",
-                                        "enum": [
-                                          "workflow",
-                                          "template",
-                                          "llm"
-                                        ]
-                                      },
-                                      "description": "On `own_parts`: the parts the figure is read from."
+                                      "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -72658,8 +72658,12 @@
                                       "enum": [
                                         "no_outcome_on_pipe",
                                         "nobody_emailed_on_pipe",
-                                        "no_return_on_pipe"
-                                      ]
+                                        "no_return_on_pipe",
+                                        "no_outcome_yet",
+                                        "nobody_emailed_yet",
+                                        "no_return_yet"
+                                      ],
+                                      "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                     }
                                   },
                                   "required": [
@@ -72669,7 +72673,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected = its workflow's value per outcome ÷ (the expected cost per outcome × its workflow's billed per dollar), so it moves with the expected cost (PRIOR-PART-EFFECTS-1023)."
+                                  "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else null `no_outcome_yet` (never estimated, PERF-COST-ORDER-1024)."
                                 },
                                 "costPerOutcomeUsd": {
                                   "type": "object",
@@ -72695,23 +72699,9 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
-                                        "own_parts",
-                                        "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                    },
-                                    "parts": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string",
-                                        "enum": [
-                                          "workflow",
-                                          "template",
-                                          "llm"
-                                        ]
-                                      },
-                                      "description": "On `own_parts`: the parts the figure is read from."
+                                      "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -72719,8 +72709,12 @@
                                       "enum": [
                                         "no_outcome_on_pipe",
                                         "nobody_emailed_on_pipe",
-                                        "no_return_on_pipe"
-                                      ]
+                                        "no_return_on_pipe",
+                                        "no_outcome_yet",
+                                        "nobody_emailed_yet",
+                                        "no_return_yet"
+                                      ],
+                                      "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                     }
                                   },
                                   "required": [
@@ -72730,7 +72724,7 @@
                                     "source",
                                     "unavailableReason"
                                   ],
-                                  "description": "Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."
+                                  "description": "Spend ÷ outcomes, measured with >= 1 outcome of its own, else null `no_outcome_yet`."
                                 },
                                 "conversionRatePct": {
                                   "type": "object",
@@ -72756,23 +72750,9 @@
                                       "nullable": true,
                                       "enum": [
                                         "own",
-                                        "own_parts",
-                                        "pipe_combinations",
                                         "pipe_best_workflow"
                                       ],
-                                      "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                    },
-                                    "parts": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string",
-                                        "enum": [
-                                          "workflow",
-                                          "template",
-                                          "llm"
-                                        ]
-                                      },
-                                      "description": "On `own_parts`: the parts the figure is read from."
+                                      "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                     },
                                     "unavailableReason": {
                                       "type": "string",
@@ -72780,8 +72760,12 @@
                                       "enum": [
                                         "no_outcome_on_pipe",
                                         "nobody_emailed_on_pipe",
-                                        "no_return_on_pipe"
-                                      ]
+                                        "no_return_on_pipe",
+                                        "no_outcome_yet",
+                                        "nobody_emailed_yet",
+                                        "no_return_yet"
+                                      ],
+                                      "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                     }
                                   },
                                   "required": [
@@ -72843,7 +72827,8 @@
                               "required": [
                                 "key",
                                 "rank",
-                                "place",
+                                "sortCostUsd",
+                                "untested",
                                 "workflow",
                                 "template",
                                 "llm",
@@ -72852,7 +72837,6 @@
                                 "writerUnavailableReason",
                                 "maturity",
                                 "learning",
-                                "estimate",
                                 "status",
                                 "deprecatedParts",
                                 "roi",
@@ -72893,23 +72877,9 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
-                                      "own_parts",
-                                      "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                  },
-                                  "parts": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string",
-                                      "enum": [
-                                        "workflow",
-                                        "template",
-                                        "llm"
-                                      ]
-                                    },
-                                    "description": "On `own_parts`: the parts the figure is read from."
+                                    "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -72917,8 +72887,12 @@
                                     "enum": [
                                       "no_outcome_on_pipe",
                                       "nobody_emailed_on_pipe",
-                                      "no_return_on_pipe"
-                                    ]
+                                      "no_return_on_pipe",
+                                      "no_outcome_yet",
+                                      "nobody_emailed_yet",
+                                      "no_return_yet"
+                                    ],
+                                    "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                   }
                                 },
                                 "required": [
@@ -72928,7 +72902,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else expected = its workflow's value per outcome ÷ (the expected cost per outcome × its workflow's billed per dollar), so it moves with the expected cost (PRIOR-PART-EFFECTS-1023)."
+                                "description": "Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else null `no_outcome_yet` (never estimated, PERF-COST-ORDER-1024)."
                               },
                               "costPerOutcomeUsd": {
                                 "type": "object",
@@ -72954,23 +72928,9 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
-                                      "own_parts",
-                                      "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                  },
-                                  "parts": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string",
-                                      "enum": [
-                                        "workflow",
-                                        "template",
-                                        "llm"
-                                      ]
-                                    },
-                                    "description": "On `own_parts`: the parts the figure is read from."
+                                    "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -72978,8 +72938,12 @@
                                     "enum": [
                                       "no_outcome_on_pipe",
                                       "nobody_emailed_on_pipe",
-                                      "no_return_on_pipe"
-                                    ]
+                                      "no_return_on_pipe",
+                                      "no_outcome_yet",
+                                      "nobody_emailed_yet",
+                                      "no_return_yet"
+                                    ],
+                                    "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                   }
                                 },
                                 "required": [
@@ -72989,7 +72953,7 @@
                                   "source",
                                   "unavailableReason"
                                 ],
-                                "description": "Spend ÷ outcomes; with no outcome, expected = the row's `estimate` (its parts' figure without it, raised by what the row spent for nothing)."
+                                "description": "Spend ÷ outcomes, measured with >= 1 outcome of its own, else null `no_outcome_yet`."
                               },
                               "conversionRatePct": {
                                 "type": "object",
@@ -73015,23 +72979,9 @@
                                     "nullable": true,
                                     "enum": [
                                       "own",
-                                      "own_parts",
-                                      "pipe_combinations",
                                       "pipe_best_workflow"
                                     ],
-                                    "description": "measured: `own`. expected: `own_parts` (read from the row's own parts, named in `parts`: a cost per outcome = the pipe's model of part effects, a return = its workflow's value per outcome ÷ the expected cost billed, a conversion = geometric mean of its parts' rates), `pipe_combinations` (every combination of the pipe pooled), `pipe_best_workflow` (a return: the money workflow's, else the pipe's best measured)."
-                                  },
-                                  "parts": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string",
-                                      "enum": [
-                                        "workflow",
-                                        "template",
-                                        "llm"
-                                      ]
-                                    },
-                                    "description": "On `own_parts`: the parts the figure is read from."
+                                    "description": "measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."
                                   },
                                   "unavailableReason": {
                                     "type": "string",
@@ -73039,8 +72989,12 @@
                                     "enum": [
                                       "no_outcome_on_pipe",
                                       "nobody_emailed_on_pipe",
-                                      "no_return_on_pipe"
-                                    ]
+                                      "no_return_on_pipe",
+                                      "no_outcome_yet",
+                                      "nobody_emailed_yet",
+                                      "no_return_yet"
+                                    ],
+                                    "description": "Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."
                                   }
                                 },
                                 "required": [
@@ -73185,7 +73139,9 @@
                           "rowOrder",
                           "orderView",
                           "rowsCover",
-                          "estimateModel",
+                          "featureSlug",
+                          "legKey",
+                          "servedNow",
                           "outcomeNoun",
                           "outcomeNounPlural",
                           "rows",

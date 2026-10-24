@@ -20,9 +20,11 @@ describe("isCurrentBuild", () => {
     expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "leg_order", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never })).toBe(false);
     // PRIOR-PART-EFFECTS-1023: priors read as the geometric mean of each part are rebuilt on the pipe's model
     expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost", rowsCover: "all_valid_combinations" } } as never })).toBe(false);
+    // PERF-COST-ORDER-1024: rows in the pick order with estimates are rebuilt on the cost the table shows
+    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "leg_order", orderView: "flash", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never })).toBe(false);
   });
   it("a build on the workflow-bar rules, read on the asked view, is current (MATURITY-VIEW-1023)", () => {
-    const perf = { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "leg_order", orderView: "flash", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never;
+    const perf = { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "cost_per_outcome", orderView: "flash", rowsCover: "all_valid_combinations" } } as never;
     expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: perf })).toBe(true);
     expect(isCurrentBuild({ file: { view: "flash" } as never, catalog: null, texts: null, performance: perf }, "flash")).toBe(true);
     // a mixed build (stored before the views) or the other view is rebuilt
