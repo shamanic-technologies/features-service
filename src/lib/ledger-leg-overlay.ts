@@ -9,8 +9,8 @@
  *              + each of its outcomes' share of the stages beyond workflow runs (judging, inputs bought from other pipes)
  *   outcomes = the outcome occurrences whose hand-off input it produced (the reply to its send)
  * so cost per outcome = the ledger's unit production cost. A version the ledger holds nothing for (no declared
- * production on the leg, no outcome sourced to it) keeps its runs figures, logged. The MATURE half stays on its own
- * basis until runs-service groups a consumption by the day its source was produced (then it moves the same way).
+ * production on the leg, no outcome sourced to it) keeps its runs figures, logged. The MATURE half moves the same way
+ * on the mature cut (runs started before the cutoff, and the replies to their sends whenever they land).
  * Figures readjust as declarations fill in (owner accepted). Pure apart from the cached loader.
  */
 import type { CostGroup } from "./public-stats-clients.js";
@@ -87,28 +87,32 @@ export function overlayLegEvidence(
 }
 
 const HELD_MS = 15 * 60_000;
-const held = new Map<LedgerBasis, { at: number; value: LedgerInputs }>();
-const inFlight = new Map<LedgerBasis, Promise<LedgerInputs>>();
+const held = new Map<string, { at: number; value: LedgerInputs }>();
+const inFlight = new Map<string, Promise<LedgerInputs>>();
 
-/** The ledger inputs, held 15 min per basis, one read at a time. Throws when the ledger cannot be read. */
-export async function loadLedgerInputs(basis: LedgerBasis): Promise<LedgerInputs> {
-  const h = held.get(basis);
+/**
+ * The ledger inputs, held 15 min per (basis, mature cut), one read at a time. Throws when the ledger cannot be read.
+ * `runStartUntil` = the mature cut (`matureCutParams`); absent = every day (the flash half).
+ */
+export async function loadLedgerInputs(basis: LedgerBasis, runStartUntil?: string): Promise<LedgerInputs> {
+  const key = `${basis}|${runStartUntil ?? ""}`;
+  const h = held.get(key);
   if (h && Date.now() - h.at < HELD_MS) return h.value;
-  const running = inFlight.get(basis);
+  const running = inFlight.get(key);
   if (running) return running;
   const p = (async () => {
     const [totals, byWorkflow, rows, catalogue] = await Promise.all([
-      fetchOutcomeLedgerTotals(basis),
-      fetchOutcomeLedgerByWorkflow(basis),
+      fetchOutcomeLedgerTotals(basis, undefined, runStartUntil),
+      fetchOutcomeLedgerByWorkflow(basis, runStartUntil),
       fetchFleetCampaignRows(),
       loadChannelCatalogue({ publishedOnly: false }),
     ]);
     const { outputOf, pipeOutputs } = campaignOutputsOf(rows, catalogue.channels);
     const value = { totals, byWorkflow, outputOf, pipeOutputs };
-    held.set(basis, { at: Date.now(), value });
+    held.set(key, { at: Date.now(), value });
     return value;
-  })().finally(() => inFlight.delete(basis));
-  inFlight.set(basis, p);
+  })().finally(() => inFlight.delete(key));
+  inFlight.set(key, p);
   return p;
 }
 
@@ -122,12 +126,20 @@ export async function withLedgerFlash<T extends { costGroups: CostGroup[]; email
   pricing: Pricing,
   flash: T,
   legCampaignIds: ReadonlySet<string>,
+  cutoffIso?: string | null,
 ): Promise<T> {
   const outcomeKey = ledgerOutcomeOfLeg(legKey);
   const basis = ledgerBasisOf(pricing);
   if (!outcomeKey || !basis) return flash;
   try {
-    const ledger = await loadLedgerInputs(basis);
+    const runStartUntil = cutoffIso ? runStartUntilOf(cutoffIso) : undefined;
+    const ledger = await loadLedgerInputs(basis, runStartUntil);
+    // A mature cut on days the ledger has not grouped by run day yet would read a partial cohort as complete:
+    // keep the runs mature evidence until every day is there (the refresher fills them, newest first).
+    if (runStartUntil && (ledger.byWorkflow.daysMissing > 0 || ledger.totals.daysMissing > 0)) {
+      console.warn(`[features-service] ledger switch ${label}: ${Math.max(ledger.byWorkflow.daysMissing, ledger.totals.daysMissing)} ledger days not grouped by run day yet, runs mature figures kept`);
+      return flash;
+    }
     const o = overlayLegEvidence(flash.costGroups, flash.emailStats, outcomeKey, legCampaignIds, ledger);
     if (o.rebased.length === 0) console.warn(`[features-service] ledger switch ${label}: the ledger holds no workflow on the leg yet, runs figures kept`);
     return { ...flash, costGroups: o.costGroups, emailStats: o.emailStats };
@@ -135,6 +147,11 @@ export async function withLedgerFlash<T extends { costGroups: CostGroup[]; email
     console.error(`[features-service] ledger switch ${label}: ledger unreadable, runs figures kept:`, error);
     return flash;
   }
+}
+
+/** The inclusive last run-start UTC day of a mature cohort: runs started before the cutoff (UTC midnight). */
+export function runStartUntilOf(cutoffIso: string): string {
+  return new Date(Date.parse(cutoffIso) - 86_400_000).toISOString().slice(0, 10);
 }
 
 /** Test seam. */

@@ -4,7 +4,8 @@ vi.unmock("./ledger-leg-overlay.js");
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 vi.mock("./channel-declarations-store.js", () => ({ loadChannelCatalogue: vi.fn(async () => ({ channels: [] })) }));
 vi.mock("./fleet-leg-campaigns.js", () => ({ fetchFleetCampaignRows: vi.fn(async () => []) }));
-const { overlayLegEvidence, ledgerOutcomeOfLeg, ledgerBasisOf, withLedgerFlash, __resetLedgerInputs } = await import("./ledger-leg-overlay.js");
+const { overlayLegEvidence, ledgerOutcomeOfLeg, ledgerBasisOf, withLedgerFlash, runStartUntilOf, __resetLedgerInputs } = await import("./ledger-leg-overlay.js");
+const { matureCutParams } = await import("./outcome-cost-totals-client.js");
 import type { LedgerInputs } from "./ledger-leg-overlay.js";
 import type { CostGroup } from "./public-stats-clients.js";
 
@@ -78,6 +79,20 @@ describe("the leg ranking reads the ledger (COST-ACCOUNTING-1023-SWITCH)", () =>
     expect(ledgerBasisOf("vendorUnpriced" as never)).toBeNull();
   });
 
+  it("a runs-service build that does not serve the cut keeps the runs mature evidence (it would answer lifetime)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (u: string) =>
+      String(u).includes("sourceRunStartDay")
+        ? new Response(JSON.stringify({ error: "groupBy must be distinct values of ..." }), { status: 400 })
+        : new Response(JSON.stringify({ produced: [], consumed: [], scope: [] }), { status: 200 }),
+    ));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const flash = { costGroups: [group("keel-v2", "4000")], emailStats: new Map() };
+    expect(await withLedgerFlash("t", "start_to_conversation", "gross", flash, new Set(["c1"]), "2026-10-03T00:00:00.000Z")).toBe(flash);
+    expect(err).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    err.mockRestore();
+  });
+
   it("an unreadable ledger keeps the runs evidence, never a failure", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
     const flash = { costGroups: [group("keel-v2", "4000")], emailStats: new Map([["keel-v2", { recipientsRepliesPositive: 3 }]]) };
@@ -86,5 +101,25 @@ describe("the leg ranking reads the ledger (COST-ACCOUNTING-1023-SWITCH)", () =>
     expect(err).toHaveBeenCalled();
     vi.unstubAllGlobals();
     err.mockRestore();
+  });
+
+  it("the mature half cuts on the run start day, replies counted for the sends of runs before the cutoff", async () => {
+    expect(runStartUntilOf("2026-10-03T00:00:00.000Z")).toBe("2026-10-02");
+    expect(matureCutParams("2026-10-02")).toBe("&runStartUntil=2026-10-02&sourceRunStartUntil=2026-10-02");
+    expect(matureCutParams()).toBe("");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      urls.push(u);
+      return new Response(JSON.stringify({ daysMissing: ["2026-09-01"], produced: [], consumed: [], scope: [] }), { status: 200 });
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const flash = { costGroups: [group("keel-v2", "4000")], emailStats: new Map() };
+    // a day not grouped by run day yet: the runs mature evidence stays
+    expect(await withLedgerFlash("t", "start_to_conversation", "gross", flash, new Set(["c1"]), "2026-10-03T00:00:00.000Z")).toBe(flash);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.filter((u) => !String(u).includes("runStartUntil=2026-10-02&sourceRunStartUntil=2026-10-02"))).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    warn.mockRestore();
   });
 });
