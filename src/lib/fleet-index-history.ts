@@ -20,11 +20,18 @@
  * leg), maturity, the ONE leg order (`rankLegWorkflows`), the index points (`computeFleetIndexPoints`). Data dated
  * after D never moves D's point (`fleet-index-history.test.ts`).
  *
- * NOT rebuilt (their series start with the recorder): the meeting indexes, whose AI meeting booking pipe evidence (who
- * it acted on, which brands report meetings) is read live from lead-service with no dated cut; the client-median
- * indexes (engaged lead, ROI), whose per-brand inputs this does not build.
+ * The meeting indexes, the meeting pipe's Research series and the outcome prices' meeting price are rebuilt too when the
+ * AI Meeting Booking pipe's dated inputs are given (MEETING-COST-METHODS-1024, `meeting-pipe-history.ts`: acts dated by
+ * lead-service's follow-up ledger, meetings and the reporting brands by its meeting facts). NOT rebuilt (series start
+ * with the recorder): the client-median indexes (engaged lead, ROI), whose per-brand inputs this does not build.
  */
-import { computeFleetIndexPoints, FLEET_INDEXES, type FleetIndexPoint } from "./fleet-indexes.js";
+import { bestMeetingPipePick, computeFleetIndexPoints, FLEET_INDEXES, SCEO_FEATURE_SLUG, type FleetIndexPoint } from "./fleet-indexes.js";
+import { assignmentsOn, executableOn, meetingPipeOn, type MeetingHistoryInputs } from "./meeting-pipe-history.js";
+import { MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
+import { meetingBookedPrice, pickLegPrice } from "./outcome-prices.js";
+import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, meetingResearchPoints } from "./research/pipe-series.js";
+import { MEETING_COST_OUTCOME_PRICES_SLUG, outcomePricesPoint } from "./research/meeting-cost-methods.js";
+import type { LegMaturityFigures } from "./maturity.js";
 import { buildFleetLegMaturity, rollUpLegEvidenceByDynasty, type DynastyLegEvidence, type SlugCostGroup } from "./fleet-leg-maturity.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 import { legMaturity, maturityCutoffIso } from "./maturity.js";
@@ -53,13 +60,7 @@ const endOfDayMs = (day: string): number => Date.parse(`${day}T00:00:00.000Z`) +
  * (`executableDynasties`: a version active in an active dynasty) read on the past.
  */
 export function executableDynastiesOn(day: string, versions: readonly WorkflowVersion[]): Set<string> {
-  const end = endOfDayMs(day);
-  const out = new Set<string>();
-  for (const v of versions) {
-    if (Date.parse(v.createdAt) > end) continue;
-    if (v.executableUntil === null || Date.parse(v.executableUntil) > end) out.add(v.workflowDynastySlug);
-  }
-  return out;
+  return executableOn(day, versions);
 }
 
 /** The leg's cutoff DAY when the index is read on `day` (the live rule: UTC midnight of the day − the leg's duration). */
@@ -248,15 +249,27 @@ export interface HistoryInputs {
   /** Every change of the two legs, any order. Computation leg keys. */
   assignmentChanges: readonly AssignmentChange[];
   workflows: readonly WorkflowVersion[];
+  /**
+   * The AI Meeting Booking pipe's dated inputs (MEETING-COST-METHODS-1024): with them the two meeting indexes, the meeting
+   * pipe's Research series and the outcome prices' meeting price are rebuilt too. Absent = not rebuilt.
+   */
+  meeting?: MeetingHistoryInputs;
+  /** Absorbed dynasty → its survivor (`fetchDynastyMerges`): leg assignments pool like the live read. Absent = none. */
+  merges?: ReadonlyMap<string, string>;
+  /**
+   * The positive reply leg's spend WITH the sourcing its leads cost (`fed`, the outcome prices' basis: a reply priced
+   * there includes finding the lead; the ranking and the index read `spend`, the pipe's own). Required with `meeting`.
+   */
+  fedSpend?: readonly DatedSlugSpend[];
 }
 
-/** PURE. The leg ranking as it stood on `days[dayIndex]`. */
-export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: number): LegWorkflowRankingRow[] {
+/** PURE. The leg's per-dynasty figures as they stood on `days[dayIndex]` (what the ranking and the leg price read). */
+export function legFiguresOn(inputs: HistoryInputs, legKey: string, dayIndex: number, spend: readonly DatedSlugSpend[] = inputs.spend): Map<string, LegMaturityFigures> {
   const day = inputs.days[dayIndex]!;
   const cutoff = cutoffDayOn(legKey, day);
   const flashCents = new Map<string, number>();
   const matureCents = new Map<string, number>();
-  for (const s of inputs.spend) {
+  for (const s of spend) {
     if (s.legKey !== legKey) continue;
     if (s.day > day) continue;
     flashCents.set(s.workflowSlug, (flashCents.get(s.workflowSlug) ?? 0) + s.spentCents);
@@ -275,20 +288,16 @@ export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: numbe
     return rollUpLegEvidenceByDynasty(inputs.workflows, costGroups, stats).byDynasty;
   };
   const dynasties = [...new Set(inputs.workflows.map((w) => w.workflowDynastySlug))];
-  const byDynasty = buildFleetLegMaturity(legKey, dynasties, half(flashCents, "flash"), half(matureCents, "mature"));
+  return buildFleetLegMaturity(legKey, dynasties, half(flashCents, "flash"), half(matureCents, "mature"));
+}
+
+/** PURE. The leg ranking as it stood on `days[dayIndex]`. */
+export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: number): LegWorkflowRankingRow[] {
+  const day = inputs.days[dayIndex]!;
+  const dynasties = [...new Set(inputs.workflows.map((w) => w.workflowDynastySlug))];
+  const byDynasty = legFiguresOn(inputs, legKey, dayIndex);
   // Stated assignments exist from their first change; before it, the concept did not exist and every workflow counts.
-  const legChanges = inputs.assignmentChanges.filter((c) => c.legKey === legKey).sort((a, b) => (a.decidedAt < b.decidedAt ? -1 : 1));
-  const end = new Date(endOfDayMs(day)).toISOString();
-  const assignments = new Map<string, "active" | "deprecated">();
-  if (legChanges.length === 0 || legChanges[0]!.decidedAt > end) {
-    for (const d of dynasties) assignments.set(d, "active");
-  } else {
-    for (const c of legChanges) {
-      if (c.decidedAt > end) break;
-      if (c.toState === "active" || c.toState === "deprecated") assignments.set(c.workflowDynastySlug, c.toState);
-      else assignments.delete(c.workflowDynastySlug);
-    }
-  }
+  const assignments = assignmentsOn(inputs.assignmentChanges, legKey, day, dynasties, inputs.merges);
   const names = new Map<string, string | null>();
   for (const w of inputs.workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName);
   return rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynastiesOn(day, inputs.workflows), pipelineUsd: new Map(), billedSpendUsd: new Map() });
@@ -300,24 +309,65 @@ export interface DatedIndexPoint {
   point: FleetIndexPoint;
 }
 
+/** The stated leg rule as of `day`: deprecated or not executable then never prices the leg (`excludedFromLegPrice`). */
+function excludedOn(changes: readonly AssignmentChange[], workflows: readonly WorkflowVersion[], legKey: string, day: string, merges?: ReadonlyMap<string, string>): Set<string> {
+  const dynasties = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
+  const executable = executableOn(day, workflows);
+  const out = new Set([...assignmentsOn(changes, legKey, day, dynasties, merges)].filter(([, st]) => st === "deprecated").map(([d]) => d));
+  for (const d of dynasties) if (!executable.has(d)) out.add(d);
+  return out;
+}
+
+function fedSpendOf(inputs: HistoryInputs): readonly DatedSlugSpend[] {
+  if (!inputs.fedSpend) throw new Error("fleet index history: the outcome prices' history needs the reply leg's fed spend");
+  return inputs.fedSpend;
+}
+
+/** Every series this history writes, the indexes first. */
+const HISTORY_SLUGS = [...FLEET_INDEXES.map((d) => d.slug), MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, MEETING_COST_OUTCOME_PRICES_SLUG];
+
 /**
- * PURE. Every index point of every day of `inputs.days` (the meeting indexes excepted, see the module rule). An index's
- * series starts on its first day with a value: the days before it, when no workflow had been proven yet, are not points.
+ * PURE. Every index point of every day of `inputs.days`; the meeting indexes, the meeting pipe's Research series and the
+ * outcome prices' meeting price only when `inputs.meeting` is given. A series starts on its first day with a value: the
+ * days before it, when no workflow had been proven yet, are not points.
  */
 export function recomputeIndexHistory(inputs: HistoryInputs): DatedIndexPoint[] {
   const all: DatedIndexPoint[] = [];
   for (let i = 0; i < inputs.days.length; i++) {
     const day = inputs.days[i]!;
+    const positiveReplyRows = rankingOn(inputs, inputs.positiveReplyLeg, i);
+    const meeting = inputs.meeting ? meetingPipeOn(inputs.meeting, day) : null;
+    const meetingPipe = meeting ? { rows: meeting.rows, pooled: meeting.fleet.pooled } : null;
     const points = computeFleetIndexPoints({
       websiteVisitRows: rankingOn(inputs, inputs.websiteVisitLeg, i),
-      positiveReplyRows: rankingOn(inputs, inputs.positiveReplyLeg, i),
-      meetingPipe: null,
+      positiveReplyRows,
+      meetingPipe,
     });
+    if (meeting && meetingPipe) {
+      points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), meeting.fleet.byOrg));
+      // The outcome prices' meeting price as of the day: the same pick on both legs (`computeOutcomePrices`).
+      const replyLeg = pickLegPrice({
+        legKey: inputs.positiveReplyLeg,
+        featureSlug: SCEO_FEATURE_SLUG,
+        byDynasty: legFiguresOn(inputs, inputs.positiveReplyLeg, i, fedSpendOf(inputs)),
+        excluded: excludedOn(inputs.assignmentChanges, inputs.workflows, inputs.positiveReplyLeg, day, inputs.merges),
+        campaignCount: 1,
+      });
+      const meetingLeg = pickLegPrice({
+        legKey: MEETING_BOOKING_LEG_KEY,
+        featureSlug: MEETING_BOOKING_FEATURE_SLUG,
+        byDynasty: new Map(meeting.fleet.byDynasty),
+        excluded: excludedOn(inputs.meeting!.assignmentChanges, inputs.meeting!.workflows, MEETING_BOOKING_LEG_KEY, day, inputs.meeting!.merges),
+        campaignCount: inputs.meeting!.campaigns.length,
+      });
+      const price = outcomePricesPoint({ ...meetingBookedPrice(replyLeg, meetingLeg), legs: [replyLeg, meetingLeg] });
+      if (price) points.push(price);
+    }
     for (const p of points) all.push({ day, point: { ...p, inputs: { ...p.inputs, asOfDay: day } } });
   }
   const out: DatedIndexPoint[] = [];
-  for (const def of FLEET_INDEXES) {
-    const series = all.filter((p) => p.point.indexSlug === def.slug);
+  for (const slug of HISTORY_SLUGS) {
+    const series = all.filter((p) => p.point.indexSlug === slug);
     const start = series.findIndex((p) => p.point.value !== null);
     if (start >= 0) out.push(...series.slice(start));
   }

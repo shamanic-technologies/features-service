@@ -17,12 +17,15 @@ import { servedLegKeyOf } from "./funnel-legs.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { outsideInteractiveView } from "./lead-copy.js";
 import { selectCostCentsString } from "./pricing.js";
-import { fetchPublicWorkflows } from "./public-stats-clients.js";
+import { fetchDynastyMerges, fetchPublicWorkflows } from "./public-stats-clients.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import { indexTimelines } from "./serving-row-credit.js";
 import { fetchServingRowJourneys } from "./serving-row-journeys.js";
 import { addPairPersons, type AssignmentChange, type DatedSlugSpend, type HistoryLeg, type PersonHistory, type WorkflowVersion } from "./fleet-index-history.js";
+import { fetchFollowupActionRows } from "./followup-actions-client.js";
+import { MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, readActedPersons, STEP_REACHED } from "./meeting-leg-fleet.js";
+import type { MeetingFact, MeetingHistoryInputs } from "./meeting-pipe-history.js";
 
 const RUNS_CONCURRENCY = 2;
 const RUNS_ATTEMPTS = 4;
@@ -70,11 +73,13 @@ interface RunsCostGroup {
 export async function readDatedSlugSpend(
   featureSlug: string,
   legs: ReadonlyArray<{ legKey: string; campaigns: ReadonlyArray<{ campaignId: string; orgId: string }> }>,
+  /** `own` = the pipe's own runs (the ranking's basis); `fed` = with the sourcing its leads cost (the outcome prices'). */
+  spendSlugs: "own" | "fed" = "own",
 ): Promise<DatedSlugSpend[]> {
   const baseUrl = process.env.RUNS_SERVICE_URL;
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  const featureSlugs = runsSpendSlugsParam(featureSlug, effectiveSpendSlugs(featureSlug, "own"));
+  const featureSlugs = runsSpendSlugsParam(featureSlug, effectiveSpendSlugs(featureSlug, spendSlugs));
   const reads = legs.flatMap((leg) => {
     const byOrg = new Map<string, string[]>();
     for (const c of leg.campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
@@ -150,4 +155,56 @@ export async function readWorkflowVersions(featureSlug: string): Promise<Workflo
       executableUntil: w.executableUntil,
     };
   });
+}
+
+/**
+ * The AI Meeting Booking pipe's dated inputs (MEETING-COST-METHODS-1024, `lib/meeting-pipe-history.ts`): its campaigns,
+ * workflow versions and assignment changes, each campaign's spend per version and run-start day, every act of its workers
+ * with its first date, and every meeting fact lead-service holds (dated). FAIL-LOUD.
+ */
+export async function readMeetingHistoryInputs(): Promise<MeetingHistoryInputs> {
+  const campaigns = await fetchFleetLegCampaigns(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY);
+  const [workflows, assignmentChanges, meetings, merges] = await Promise.all([
+    readWorkflowVersions(MEETING_BOOKING_FEATURE_SLUG),
+    readAssignmentChanges(MEETING_BOOKING_FEATURE_SLUG, [MEETING_BOOKING_LEG_KEY]),
+    readMeetingFacts(),
+    fetchDynastyMerges(MEETING_BOOKING_FEATURE_SLUG),
+  ]);
+  // Each campaign read as its own "leg": the spend rows come back keyed on the campaign.
+  const dated = await readDatedSlugSpend(
+    MEETING_BOOKING_FEATURE_SLUG,
+    campaigns.map((c) => ({ legKey: c.campaignId, campaigns: [{ campaignId: c.campaignId, orgId: c.orgId }] })),
+  );
+  const byBrand = new Map<string, { orgId: string; ids: string[] }>();
+  for (const c of campaigns) if (c.brandId) byBrand.set(c.brandId, { orgId: c.orgId, ids: [...(byBrand.get(c.brandId)?.ids ?? []), c.campaignId] });
+  const perBrand = await mapWithConcurrency([...byBrand], 2, async ([brandId, { orgId, ids }]) => {
+    const acts = (await fetchFollowupActionRows(brandId, ids))
+      .filter((r) => r.actedCount > 0)
+      .map((r) => ({ brandId, campaignId: r.actingCampaignId, leadId: r.leadId, firstActedAt: r.firstActedAt }));
+    // A person acted on reached "meeting booked" on the live pipe's own reading (the engine's signals, matched by
+    // email too); its date is that signal's (`signalDates.meeting`), undated = in no past day.
+    const persons = acts.length ? await readActedPersons(orgId, brandId, new Set(acts.map((a) => a.leadId))) : [];
+    const booked: MeetingFact[] = persons
+      .filter((p) => STEP_REACHED.meeting_booked !== "acted" && (STEP_REACHED.meeting_booked as (x: typeof p) => boolean)(p))
+      .map((p) => ({ brandId, leadId: p.leadId, event: "acted_person_meeting", occurredAt: p.signalDates?.meeting ?? null }));
+    return { acts, booked };
+  });
+  return {
+    campaigns,
+    workflows,
+    assignmentChanges,
+    merges,
+    meetings: [...meetings, ...perBrand.flatMap((b) => b.booked)],
+    acts: perBrand.flatMap((b) => b.acts),
+    spend: dated.map((d) => ({ campaignId: d.legKey, workflowSlug: d.workflowSlug, day: d.day, spentCents: d.spentCents })),
+  };
+}
+
+/** Every meeting fact lead-service holds (booked or attended, every brand and cause), with its date. */
+async function readMeetingFacts(): Promise<MeetingFact[]> {
+  const res = await fetchWithRetry(`${process.env.LEAD_SERVICE_URL}/internal/meeting-attribution`, { headers: { "x-api-key": process.env.LEAD_SERVICE_API_KEY ?? "" } }, { timeoutMs: 120_000 });
+  if (!res.ok) throw new Error(`lead-service /internal/meeting-attribution ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const body = (await res.json()) as { attributedMeetings?: Array<{ brandId: string; leadId?: string | null; event: string; occurredAt: string | null }> };
+  if (!Array.isArray(body.attributedMeetings)) throw new Error("lead-service meeting-attribution: no attributedMeetings");
+  return body.attributedMeetings.map((m) => ({ brandId: m.brandId, leadId: m.leadId ?? null, event: m.event, occurredAt: m.occurredAt }));
 }
