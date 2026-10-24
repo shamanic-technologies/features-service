@@ -126,6 +126,8 @@ export interface ResearchInput {
   replyDelay?: ReplyDelayRead | null;
   /** The estimated studies (COST-ACCOUNTING-1023-P3), beside the measured ones; built in the route. */
   estimateStudies?: ResearchStudy[];
+  /** The ledger-beside-today studies (COST-ACCOUNTING-1023-P4), per client; built in the route. */
+  ledgerStudies?: ResearchStudy[];
   /**
    * runs-service's outcome ledger as totals (COST-ACCOUNTING-1023-P2): every outcome section gets its every-path cost
    * study. Absent = not served; null = unreadable this build (each study says so).
@@ -376,6 +378,8 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   studies.push(...(input.countryStudies ?? []));
   studies.push(...(input.nicheStudies ?? []));
   studies.push(...(input.estimateStudies ?? []));
+  // a ledger study names the positive reply section: served only when that section is
+  if (input.replyDelay !== undefined) studies.push(...(input.ledgerStudies ?? []));
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   if (input.outcomeLedger) {
     const l = input.outcomeLedger;
