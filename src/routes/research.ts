@@ -59,13 +59,15 @@ import { isReplyPipe } from "../lib/campaign-next-steps.js";
 import { fetchReplyDelayDistribution } from "../lib/campaign-next-steps-io.js";
 import { fetchOutcomeLedgerTotals, type OutcomeLedgerTotals } from "../lib/outcome-cost-totals-client.js";
 import { workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
+import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
+import { rollUpByOrg } from "../lib/outcome-unit-costs.js";
 import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
 import { pipeLegKeyOf } from "../lib/funnel-legs.js";
 import type { ReplyDelayRead } from "../lib/research/reply-delay.js";
 import { readBookedAfterReply, readGenerationRuns, readJevInputs, orgChunks, readLegSpendTotal, readMeetingAttribution, readOrgWindowSpend, readOpensArms, readPerEmailPrices, readReplyAuthors, readReportingBrands, readSendGroups, readVolume, readWorkflowRuns } from "./research-sends.js";
 import { fetchFleetReplierCountries } from "../lib/fleet-positive-repliers.js";
-import { fetchOrgUserEmails } from "../lib/accounts-client.js";
+import { fetchBrandsBasic, fetchOrgUserEmails } from "../lib/accounts-client.js";
 import { isStaffOnlyOrg } from "../lib/showcase-clients.js";
 import { countryMeetingStudy, countryStudies } from "../lib/research/countries.js";
 import { readNicheGrades } from "../lib/research/niche-grades.js";
@@ -169,6 +171,8 @@ interface ColdEmailPipeRead {
   campaigns: Array<{ campaignId: string; orgId: string; brandId: string | null; offerId: string | null }>;
   /** Dynasty → workflow-service's name. */
   names: Map<string, string>;
+  /** The pipe's dated spend rows (per workflow version, org, month): today's per-client figure reads them. */
+  spend: DatedSpendRow[];
 }
 
 /**
@@ -233,6 +237,7 @@ async function coldEmailPipe(legKey: string, basis: Basis, now: Date, opts: { fe
     persons,
     campaigns: ev.campaigns.map((c) => ({ campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId ?? null })),
     names: new Map(ev.workflows.filter((w) => w.workflowDynastyName).map((w) => [w.workflowDynastySlug, w.workflowDynastyName])),
+    spend,
     split: { screened, signal: rule.outcomeSignal === "positiveReply" ? "positiveReply" : rule.outcomeSignal === "clicked" ? "clicked" : "other", cutoffDay: ev.cutoffIso ? ev.cutoffIso.slice(0, 10) : null },
   };
 }
@@ -508,6 +513,61 @@ export function campaignOutputsOf(
 }
 
 /**
+ * PURE. One row per client (org): its ledger roll-up of the positive reply beside today's figure (its reply pipes'
+ * spend ÷ its positive replies, the person cell's). `labelOf(org)` names the client.
+ */
+export function clientCostRowsOf(
+  byOrg: ReadonlyMap<string, { units: ReadonlyMap<string, import("../lib/outcome-unit-costs.js").OutcomeUnitCost> }>,
+  coverageByOrg: ReadonlyMap<string, number | null>,
+  persons: ReadonlyArray<{ orgId: string; positiveReplies: number }>,
+  spend: ReadonlyArray<{ orgId: string; spentUsd: number }>,
+  labelOf: (orgId: string) => string,
+): ClientCostRow[] {
+  const replies = new Map<string, number>();
+  for (const p of persons) replies.set(p.orgId, (replies.get(p.orgId) ?? 0) + p.positiveReplies);
+  const spent = new Map<string, number>();
+  for (const s of spend) spent.set(s.orgId, (spent.get(s.orgId) ?? 0) + s.spentUsd);
+  const orgs = new Set([...byOrg.keys(), ...[...replies].filter(([, v]) => v > 0).map(([o]) => o)]);
+  return [...orgs].map((orgId) => ({
+    orgId,
+    label: labelOf(orgId),
+    ledger: byOrg.get(orgId)?.units.get("conversation") ?? null,
+    coveragePct: coverageByOrg.get(orgId) ?? null,
+    todaySpendUsd: spent.get(orgId) ?? 0,
+    todayReplies: replies.get(orgId) ?? 0,
+  }));
+}
+
+/** The per-client study; a client is named by the brand most of its people were contacted for (brand-service names). */
+async function clientCostStudyOf(
+  ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
+  persons: ReadonlyArray<{ orgId: string; brandId: string; contacted: number; positiveReplies: number }>,
+  spend: ReadonlyArray<{ orgId: string; spentUsd: number }>,
+) {
+  if (!ledger.totals) return outcomeCostByClientStudy(null, 0);
+  const t = ledger.totals;
+  const byOrg = rollUpByOrg(t.produced, t.consumed, ledger.outputOf, ledger.pipeOutputs);
+  const brandOf = new Map<string, Map<string, number>>();
+  for (const p of persons) {
+    const m = brandOf.get(p.orgId) ?? new Map<string, number>();
+    m.set(p.brandId, (m.get(p.brandId) ?? 0) + p.contacted);
+    brandOf.set(p.orgId, m);
+  }
+  const mainBrand = new Map([...brandOf].map(([o, m]) => [o, [...m].sort((a, b) => b[1] - a[1])[0]![0]] as [string, string]));
+  const names = await fetchBrandsBasic([...mainBrand.values()]).catch((err) => {
+    console.error("[features-service] research: brand names unreadable, clients named by their org id:", err);
+    return new Map<string, { name: string | null }>();
+  });
+  const labelOf = (org: string) => {
+    const b = mainBrand.get(org);
+    const name = b ? names.get(b)?.name : null;
+    const more = (brandOf.get(org)?.size ?? 1) - 1;
+    return name ? `${name}${more > 0 ? ` +${more}` : ""}` : `Client ${org.slice(0, 8)}`;
+  };
+  return outcomeCostByClientStudy(clientCostRowsOf(byOrg, t.coverageByOrg, persons, spend, labelOf), t.daysMissing);
+}
+
+/**
  * PURE. The reply pipe's people per workflow DYNASTY (every version pooled), by serve day, with each dynasty's lifetime
  * billed spend (its ranking row's flash gross spend). A bucket with no serve day has no age: left out, never counted as mature.
  */
@@ -669,10 +729,14 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
         }),
       ]
     : [];
+  // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
+  const ledger = await ledgerP;
+  const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
   const file = assembleResearch({
     replyDelay,
     estimateStudies,
-    outcomeLedger: await ledgerP,
+    ledgerStudies,
+    outcomeLedger: ledger,
     sends,
     generationStudies: gens.studies,
     countryStudies: countries,

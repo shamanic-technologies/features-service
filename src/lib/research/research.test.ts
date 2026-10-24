@@ -295,6 +295,7 @@ describe("assembleResearch", () => {
       consumed: [{ consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, count: 40 }],
       coveragePct: 99,
       daysMissing: 0,
+      coverageByOrg: new Map(),
     };
     const labelOf = (k: string) => ({ message_sent: "Message sent", conversation: "Positive reply" })[k] ?? k;
     const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf, outputOf: (c: string) => (c === "c1" ? "conversation" : null), pipeOutputs: new Set(["conversation", "meeting_booked"]) } });
