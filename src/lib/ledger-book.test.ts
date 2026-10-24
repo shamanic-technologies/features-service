@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.unmock("./ledger-book.js");
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 vi.mock("./channel-declarations-store.js", () => ({ loadChannelCatalogue: vi.fn(async () => ({ channels: [] })) }));
-const { ledgerRegime, parseLedgerBook, reconciledOf, runStartUntilOf, __resetLedgerBook } = await import("./ledger-book.js");
+const { concatWire, ledgerRegime, monthRanges, parseLedgerBook, reconciledOf, runStartUntilOf, __resetLedgerBook } = await import("./ledger-book.js");
 
 const c = (g: number) => ({ grossCents: String(g * 100), netCents: String(g * 100), vendorCents: "0", unpricedGrossCents: "0" });
 const body = (spend: number, declared: number, daysMissing: string[] = []) => ({
@@ -52,6 +52,17 @@ describe("the ledger regime gate (LEDGER-HISTORY-1024)", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await ledgerRegime("gross")).toBe(first);
     err.mockRestore();
+  });
+});
+
+describe("paging by month (runs-service's group cap holds per read)", () => {
+  it("months cover every day once, partial ends clipped", () => {
+    expect(monthRanges("2026-02-02", "2026-04-10")).toEqual([["2026-02-02", "2026-02-28"], ["2026-03-01", "2026-03-31"], ["2026-04-01", "2026-04-10"]]);
+  });
+  it("disjoint ranges add up: the book of two months = the sum of each", () => {
+    const b = parseLedgerBook(concatWire([body(100, 60), body(50, 50)]), concatWire([body(100, 60), body(50, 50)]), concatWire([body(100, 60), body(50, 50)]), "gross");
+    expect(b.book.produced.reduce((a, r) => a + r.costUsd, 0)).toBe(110);
+    expect(b.book.noOutput.reduce((a, r) => a + r.costUsd, 0)).toBe(40);
   });
 });
 
