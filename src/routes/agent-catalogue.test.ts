@@ -481,7 +481,7 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(pub.body.object).toBe("step");
     const internal = await request(app).get("/internal/catalogue/steps").query({ limit: 25 }).set(KEY);
     expect(internal.body.truncated).toBe(false);
-    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null; subjectKind: string | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank, subjectKind: r.subjectKind }]));
+    const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null; subjectKind: string | null; leadState: string | null; leadStateFamily: string | null; leadStateRank: number | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank, subjectKind: r.subjectKind, leadState: r.leadState, leadStateFamily: r.leadStateFamily, leadStateRank: r.leadStateRank }]));
     expect(pub.body.total).toBe(staff.size);
     expect(pub.body.rows).toHaveLength(staff.size);
     for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
@@ -489,6 +489,14 @@ describe("agent catalogue lists (context-window sized)", () => {
     // Owner 2026-10-15: the outcome "Lead" (key unchanged) and a plural for counts.
     expect(pub.body.rows.find((r: { key: string }) => r.key === "lead_found")).toMatchObject({ name: "Lead", pluralName: "Leads" });
     expect(JSON.stringify(pub.body)).not.toMatch(/valueUsd|costUsd|roi/);
+    // LEAD-STATES-1024: the two lead states are steps, every step names the state it reaches (runs-service reads it).
+    const byKey = new Map(pub.body.rows.map((r: { key: string }) => [r.key, r]));
+    expect(byKey.get("lead_interested")).toMatchObject({ name: "Lead interested", leadState: "lead_interested", leadStateFamily: "interest", leadStateRank: 1, subjectKind: "person" });
+    expect(byKey.get("lead_visited")).toMatchObject({ name: "Lead visited", leadState: "lead_visited", leadStateFamily: "visit", leadStateRank: 1 });
+    expect(byKey.get("conversation")).toMatchObject({ leadState: "lead_interested", leadStateFamily: "interest" });
+    expect(byKey.get("website_visit")).toMatchObject({ leadState: "lead_visited", leadStateFamily: "visit" });
+    expect(byKey.get("meeting_booked")).toMatchObject({ leadState: "meeting_booked", leadStateRank: 2 });
+    expect(byKey.get("lead_found")).toMatchObject({ leadState: null, leadStateFamily: null, leadStateRank: null });
   });
 
   it("serves a face as an SVG image", async () => {
