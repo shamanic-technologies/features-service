@@ -12,6 +12,13 @@ import type { EnginePerson } from "./revenue-engine.js";
 
 const { bucketPopulation } = await import("./fleet-positive-repliers.js");
 
+/** A (campaign, workflow, serve day) bucket summed over the parts after it (a replier's reply day splits it). */
+function bucketOf(buckets: ReadonlyMap<string, number[]>, prefix: string): number[] {
+  const sum = [0, 0, 0, 0, 0];
+  for (const [k, b] of buckets) if (k.split("\t").slice(0, 3).join("\t") === prefix) b.forEach((v, i) => (sum[i]! += v));
+  return sum;
+}
+
 /**
  * prod 2026-10-15 (OUTCOME-BEFORE-WORKFLOW-1015): a person's brand-scoped row is the LATEST one served, and it
  * carries the person's brand-wide evidence. `new-wf` (campaign C-NEW) was served people in October who had
@@ -110,7 +117,7 @@ describe("serving-row credit: a positive reply counts for a workflow only after 
   it("every per-workflow grain counts the same earned set: replier partition, fleet bucket, mature cohort, contacted", () => {
     expect(crmRepliesBySlug(positiveRepliersOf(persons))).toEqual(new Map([["new-wf", 3], ["wa-wf", 1]]));
     const buckets = bucketPopulation(persons).buckets;
-    expect(buckets.get("C-NEW\tnew-wf\t2026-10-15")).toEqual([5, 0, 3, 0, 0]);
+    expect(bucketOf(buckets, "C-NEW\tnew-wf\t2026-10-15")).toEqual([5, 0, 3, 0, 0]);
     expect(matureSlugStats(persons, null).get("new-wf")).toMatchObject({ recipientsContacted: 5, recipientsClicked: 0, recipientsRepliesPositive: 3 });
     expect(contactedPersonsBySlug(persons).get("new-wf")).toBe(5);
   });
@@ -224,7 +231,7 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
     expect(matureSlugStats(credited, null).get("wf-b")).toMatchObject({ recipientsContacted: 1, recipientsClicked: 0, recipientsRepliesPositive: 1 });
     expect(matureSlugStats(credited, null).get("wf-serve")).toBeUndefined();
     expect(contactedPersonsBySlug(credited).get("wf-c")).toBe(3);
-    expect(bucketPopulation(credited).buckets.get("C-A\twf-a\t2026-05-16")).toEqual([2, 0, 2, 0, 0]);
+    expect(bucketOf(bucketPopulation(credited).buckets, "C-A\twf-a\t2026-05-16")).toEqual([2, 0, 2, 0, 0]);
     expect(credited.filter((p) => p.signals.positiveReply)).toHaveLength(rows().filter((p) => p.signals.positiveReply).length);
     expect(positiveRepliersOf(credited)).toHaveLength(7);
   });
@@ -244,5 +251,18 @@ describe("sender attribution: an outcome counts for the workflow that SENT the e
     creditServingRows(input, sent);
     expect(input[0]).toMatchObject({ campaignId: "C-B", workflowSlug: "wf-b" });
     expect(input[0].servingRowCredit).toBeUndefined();
+  });
+});
+
+describe("the first positive reply is dated on the person and its bucket (ESTIMATE-REPLAY-1024)", () => {
+  it("earliest dated positive reply (thread or CRM), a sixth bucket key part on repliers only", () => {
+    const credited = creditServingRows(population(), journeys);
+    const byId = new Map(credited.map((p) => [p.leadId, p]));
+    expect(byId.get("after")!.firstPositiveReplyAt).toBe("2026-07-08T15:01:52.000Z");
+    expect(byId.get("crm-after")!.firstPositiveReplyAt).toBe("2026-10-14T00:00:00.000Z");
+    // no dated evidence: absent, never a guess
+    expect(byId.get("no-acts")!.firstPositiveReplyAt).toBeUndefined();
+    const keys = [...bucketPopulation(credited).buckets.keys()];
+    expect(keys.some((k) => k.split("\t")[5] === "2026-10-14")).toBe(true);
   });
 });

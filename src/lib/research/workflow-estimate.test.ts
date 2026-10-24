@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workflowEstimateStudy } from "./workflow-estimate.js";
+import { estimateStudy, LLM_DIMENSION, TEMPLATE_DIMENSION, workflowEstimateStudy } from "./workflow-estimate.js";
 
 // half the replies on day 1, the rest by day 5 (22 bins: Day 1..21 + 21+)
 const dayBins = [50, 20, 10, 10, 10, ...Array(17).fill(0)].map((count) => ({ count }));
@@ -73,5 +73,23 @@ describe("estimate copy after the prod probe (2026-10-23)", () => {
     });
     expect(weak.charts[0]!.points.find((p) => p.key === "zero")!.note).toMatch(/no upper bound yet/);
     expect(st.conclusion.join(" ")).toMatch(/1 workflow has no positive reply yet/);
+  });
+});
+
+describe("template and LLM estimates (PERF-ESTIMATE-DISCUSS-1024)", () => {
+  it("same maths, the part's own id, topic and words; people with no writer are stated", () => {
+    const groups = [
+      { key: "blind-intro", label: "Blind Intro Offer", slices: [old(20_000)], outcomes: 40, spendUsd: 4000 },
+      { key: "named-free", label: "Named Free Offer", slices: [old(20_000)], outcomes: 20, spendUsd: 4000 },
+    ];
+    const st = estimateStudy(TEMPLATE_DIMENSION, { pipe: "cold-email-positive-reply", outcomesRequired: 1, dayBins, groups, peopleLeftOut: 120 });
+    expect(st).toMatchObject({ id: "cold-email-positive-reply-template-estimate", topic: "template", question: "Estimated: which template gets a positive reply cheapest, young cohorts included?" });
+    expect(st.result!.unit).toBe("per positive reply, estimated, best template");
+    expect(st.conclusion.join(" ")).toMatch(/120 people emailed have no template on record/);
+    const llm = estimateStudy(LLM_DIMENSION, { pipe: "cold-email-positive-reply", outcomesRequired: 1, dayBins, groups });
+    expect(llm).toMatchObject({ id: "cold-email-positive-reply-llm-estimate", topic: "llm" });
+    expect(llm.headline).toMatch(/^Estimated, young cohorts included: Blind Intro Offer at/);
+    // the workflow study is unchanged
+    expect(workflowEstimateStudy({ pipe: "cold-email-positive-reply", outcomesRequired: 1, dayBins, groups }).id).toBe("cold-email-positive-reply-workflow-estimate");
   });
 });

@@ -212,15 +212,27 @@ function lastSendFollowed(evidence: readonly DatedEvidence[], sends: readonly Se
 }
 
 /**
+ * The date of the person's FIRST positive reply (the earliest dated reply evidence: the thread's, else the CRM's), for a
+ * person who replied positively. Absent when they did not or no evidence is dated: a replay of the past (the estimate
+ * replay, `lib/research/estimate-replay.ts`) never places an undated reply in time.
+ */
+function firstPositiveReplyOf(person: EnginePerson, replies: readonly DatedEvidence[]): { firstPositiveReplyAt?: string } {
+  if (!person.signals.positiveReply) return {};
+  const at = replies.reduce<number | null>((a, e) => (e.at !== null && (a === null || e.at < a) ? e.at : a), null);
+  return at === null ? {} : { firstPositiveReplyAt: new Date(at).toISOString() };
+}
+
+/**
  * PURE. The person as every partitioned count reads it: re-attributed to the workflow that SENT the email its
  * outcome followed, with what that send earned (see the module rule). Never mutates `person`.
  */
 export function creditPerson<T extends EnginePerson>(person: T, timeline: PersonTimeline | undefined, scope: ReadonlySet<string> | null): T {
   const sends = (timeline?.sends ?? []).filter((s) => !scope || (s.campaignId !== null && scope.has(s.campaignId)));
-  if (!timeline || sends.length === 0) return { ...person, servingRowCredit: servingRowCredit(person, timeline) };
-  const own = person.signals;
   const crmAt = ms(person.crmPositiveReplyAt ?? person.signalDates?.positiveReply ?? null);
-  const replies = crmAt !== null ? [...timeline.replies, { campaignId: null, at: crmAt }] : timeline.replies;
+  const replies = crmAt !== null ? [...(timeline?.replies ?? []), { campaignId: null, at: crmAt }] : (timeline?.replies ?? []);
+  const replyDate = firstPositiveReplyOf(person, replies);
+  if (!timeline || sends.length === 0) return { ...person, ...replyDate, servingRowCredit: servingRowCredit(person, timeline) };
+  const own = person.signals;
   const replyTo = own.positiveReply ? lastSendFollowed(replies, sends) : null;
   const clickTo = own.clicked ? lastSendFollowed(timeline.clicks, sends) : null;
   const to = replyTo ?? clickTo ?? latest(sends, (s) => s.last ?? s.first ?? -Infinity);
@@ -237,6 +249,7 @@ export function creditPerson<T extends EnginePerson>(person: T, timeline: Person
   const moved = to.campaignId !== (person.campaignId ?? null) || to.workflowSlug !== (person.workflowSlug ?? null);
   return {
     ...person,
+    ...replyDate,
     campaignId: to.campaignId,
     workflowSlug: to.workflowSlug,
     ...(moved && person.servedAt !== undefined && to.firstIso ? { servedAt: to.firstIso } : {}),
