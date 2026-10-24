@@ -166,9 +166,10 @@ describe("a RETIRED slug keeps working but is never published", () => {
     }
   });
 
-  it("the expert-quote offering is published EXACTLY ONCE, under the current spelling", () => {
+  it("the expert-quote offering is published AT MOST once, under the current spelling (none while the owner pauses it, 2026-10-24)", () => {
     const published = channels.filter((c) => c.slug.includes("expert-quote"));
-    expect(published.map((c) => c.slug)).toEqual(["pr-expert-quote-outreach"]);
+    expect(published.map((c) => c.slug)).toEqual([]);
+    expect(bySlug("pr-expert-quote-outreach")!.status).toBe("deprecated");
 
     // The retired spelling keeps its row, its terms and its measurement — live campaigns, live budgets
     // and the cost ledger reference it, so nothing about it moves except that it is not published.
@@ -178,12 +179,13 @@ describe("a RETIRED slug keeps working but is never published", () => {
     expect(dead.acquisitionChannel!.terms).toEqual(bySlug("pr-expert-quote-outreach")!.acquisitionChannel!.terms);
   });
 
-  it("every retired slug names a successor that is itself PUBLISHED and current", () => {
+  it("every retired slug names a successor that is itself current, published unless the owner paused it", () => {
     for (const feature of retired) {
       const successor = bySlug(feature.supersededBySlug!);
       expect(successor, `${feature.slug} → ${feature.supersededBySlug}`).toBeDefined();
       expect(successor!.supersededBySlug, successor!.slug).toBeNull();
-      expect(channels.map((c) => c.slug)).toContain(successor!.slug);
+      if (successor!.status === "active") expect(channels.map((c) => c.slug)).toContain(successor!.slug);
+      else expect(successor!.status, successor!.slug).toBe("deprecated");
     }
   });
 
