@@ -569,7 +569,7 @@ async function workflowLedgerStudyOf(
   const missing = Math.max(ledger.totals.daysMissing, byWorkflow.daysMissing);
   const floorReason =
     cov === null || cov < COVERAGE_BAR_PCT || missing > 0
-      ? `The ledger holds ${cov === null ? "an unknown share" : `${Math.round(cov)}%`} of the spend${missing > 0 ? `, ${missing} days still computing` : ""}: every figure is a floor.`
+      ? `The ledger holds ${cov === null ? "an unknown share" : `${Math.round(cov)}%`} of the outcome spend (support apart)${missing > 0 ? `, ${missing} days still computing` : ""}: every figure is a floor.`
       : null;
   return workflowLedgerStudy({
     pipe: POSITIVE_REPLY_PIPE,

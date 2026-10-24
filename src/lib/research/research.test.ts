@@ -296,6 +296,9 @@ describe("assembleResearch", () => {
       coveragePct: 99,
       daysMissing: 0,
       coverageByOrg: new Map(),
+      supportUsd: 0,
+      supportByFunction: [],
+      supportDaysMissing: 0,
     };
     const labelOf = (k: string) => ({ message_sent: "Message sent", conversation: "Positive reply" })[k] ?? k;
     const read = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals, labelOf, outputOf: (c: string) => (c === "c1" ? "conversation" : null), pipeOutputs: new Set(["conversation", "meeting_booked"]) } });

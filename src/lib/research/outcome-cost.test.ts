@@ -31,10 +31,18 @@ describe("cost per outcome, every path (COST-ACCOUNTING-1023-P2)", () => {
     const low = outcomeCostStudy({ ...base, unit, coveragePct: 12 });
     expect(low.result?.display).toBe("≥ $1.05");
     expect(low.headline).toMatch(/^At least \$1\.05/);
-    expect(low.verdict.reason).toMatch(/12% of the spend/);
+    expect(low.verdict.reason).toMatch(/12% of the outcome spend/);
     const computing = outcomeCostStudy({ ...base, unit, coveragePct: 99, daysMissing: 251 });
     expect(computing.verdict).toMatchObject({ kind: "noise" });
     expect(computing.verdict.reason).toMatch(/251 days since inception are still being computed/);
+  });
+
+  it("COST-SUPPORT-1024-FEATURES: support spend stated apart in one line, per function in dollars", () => {
+    const st = outcomeCostStudy({ ...base, unit, coveragePct: 96, support: { byFunction: [{ fn: "payment_fees", usd: 412.5 }, { fn: "retired_product", usd: 88 }, { fn: "new_kind", usd: 3 }], daysMissing: 0 } });
+    expect(st.result?.display).toBe("$1.05");
+    expect(st.conclusion).toContain("Apart, in no figure: payment fees $413 · retired products $88 · new kind $3.00.");
+    const none = outcomeCostStudy({ ...base, unit, coveragePct: 50, support: { byFunction: [], daysMissing: 265 } });
+    expect(none.conclusion).toContain("Apart, in no figure: no support spend marked yet (265 days not split yet).");
   });
 
   it("states the by-products and the spend no pipe owns", () => {

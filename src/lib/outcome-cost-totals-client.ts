@@ -3,7 +3,9 @@
  * the every-path unit cost rollup (`lib/outcome-unit-costs.ts`). One fleet read grouped by (outcome, campaign, org), since
  * inception (owner rule: every stat is since inception): produced occurrences + their own cost, consumptions per
  * (consuming, consumed) outcome under the consuming run's campaign, and the spend split into what an outcome carries and
- * what produced none (coverage). FAIL-LOUD: a 422 (too many groups) or any non-OK throws.
+ * what produced none (coverage). Coverage reads on OUTCOME spend only (COST-SUPPORT-1024-FEATURES): runs-service states the
+ * support spend apart per support function (payment fees, brand setup, Copilot, a retired product...: spend that produces
+ * no outcome by design, marked by its owner), so coverage = declared ÷ (spend − support). FAIL-LOUD: a 422 (too many groups) or any non-OK throws.
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
@@ -16,19 +18,25 @@ interface WireCost {
 }
 interface WireTotals {
   daysMissing?: string[];
+  supportDaysMissing?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
   consumed?: Array<{ dimensions?: Record<string, string | null>; consumptions?: string }>;
-  scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost }>;
+  scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost; support?: WireCost; supportByFunction?: Record<string, WireCost> }>;
 }
 
 export interface OutcomeLedgerTotals {
   produced: ProducedRow[];
   consumed: ConsumedRow[];
-  /** Share of the spend on the ledger's computed days an outcome carries, 0..100; null when nothing was spent. */
+  /** Share of the OUTCOME spend (spend − support) on the ledger's computed days an outcome carries, 0..100; null when no outcome spend. */
   coveragePct: number | null;
+  /** Spend apart (support functions, produce no outcome by design), USD, and per function (runs-service's function key), largest first. */
+  supportUsd: number;
+  supportByFunction: Array<{ fn: string; usd: number }>;
+  /** Computed days runs-service has not split support on yet (their support reads 0: coverage understated there). */
+  supportDaysMissing: number;
   /** Days since inception the ledger has not computed yet (its refresher fills them): the figures stand on the others. */
   daysMissing: number;
-  /** Per org (the scope rows' `orgId`): share of its spend an outcome carries, 0..100; null when it spent nothing. */
+  /** Per org (the scope rows' `orgId`): share of its OUTCOME spend an outcome carries, 0..100; null when it has none. */
   coverageByOrg: Map<string, number | null>;
 }
 
@@ -56,12 +64,18 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
   }
   let spend = 0;
   let carried = 0;
+  let support = 0;
+  const byFn = new Map<string, number>();
   const byOrg = new Map<string, { spend: number; carried: number }>();
   for (const s of body.scope ?? []) {
-    const sp = usdOf(s.spend, basis);
+    const sup = usdOf(s.support, basis);
+    // Outcome spend: support is apart by design, never in the coverage denominator.
+    const sp = usdOf(s.spend, basis) - sup;
     const ca = usdOf(s.producedCost, basis);
     spend += sp;
     carried += ca;
+    support += sup;
+    for (const [fn, c] of Object.entries(s.supportByFunction ?? {})) byFn.set(fn, (byFn.get(fn) ?? 0) + usdOf(c, basis));
     const org = s.dimensions?.orgId;
     if (org) {
       const e = byOrg.get(org) ?? { spend: 0, carried: 0 };
@@ -70,8 +84,18 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
       byOrg.set(org, e);
     }
   }
-  const coverageByOrg = new Map([...byOrg].map(([o, e]) => [o, e.spend > 0 ? (100 * e.carried) / e.spend : null] as [string, number | null]));
-  return { produced, consumed, coveragePct: spend > 0 ? (100 * carried) / spend : null, daysMissing: (body.daysMissing ?? []).length, coverageByOrg };
+  const pctOf = (ca: number, sp: number) => (sp > 0 ? (100 * ca) / sp : null);
+  const coverageByOrg = new Map([...byOrg].map(([o, e]) => [o, pctOf(e.carried, e.spend)] as [string, number | null]));
+  return {
+    produced,
+    consumed,
+    coveragePct: pctOf(carried, spend),
+    supportUsd: support,
+    supportByFunction: [...byFn].map(([fn, usd]) => ({ fn, usd })).filter((f) => f.usd > 0).sort((a, b) => b.usd - a.usd),
+    supportDaysMissing: (body.supportDaysMissing ?? []).length,
+    daysMissing: (body.daysMissing ?? []).length,
+    coverageByOrg,
+  };
 }
 
 /**
