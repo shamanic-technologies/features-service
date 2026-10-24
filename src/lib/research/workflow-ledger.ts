@@ -50,7 +50,7 @@ export function workflowLedgerStudy(input: { pipe: string; rows: readonly Workfl
   return {
     ...base,
     status: "measured",
-    headline: `On the ledger, ${lead.label} at ${floor ? "at least " : ""}${usd(lead.unitCostUsd!)} per positive reply, beside the ranking's ${lead.todayCostUsd === null ? "no price yet" : usd(lead.todayCostUsd)}. Noise so far.`,
+    headline: `On the ledger, ${lead.label} at ${floor ? "least " : ""}${usd(lead.unitCostUsd!)} per positive reply, beside the ranking's ${lead.todayCostUsd === null ? "no price yet" : usd(lead.todayCostUsd)}. Noise so far.`,
     winner: null,
     crowned: false,
     verdict: { kind: "noise", reason: input.floorReason ?? "A second basis beside the ranking, not a verdict: nothing picks on it until the gap is explained." },

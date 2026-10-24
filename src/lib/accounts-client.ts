@@ -488,3 +488,16 @@ export async function fetchBrandsBasic(ids: string[]): Promise<Map<string, Brand
   }
   return out;
 }
+
+/**
+ * An org's display name (client-service `GET /internal/orgs/:orgId` `name`): the label a staff study shows a client by
+ * when no brand of it was read. 404 = null (no client-service row); any other failure throws.
+ */
+export async function fetchOrgName(orgId: string): Promise<string | null> {
+  const { url, apiKey } = clientConfig();
+  const res = await fetchWithRetry(`${url}/internal/orgs/${encodeURIComponent(orgId)}`, { headers: { "x-api-key": apiKey } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`[features-service] client-service /internal/orgs/:orgId failed (${res.status}): ${await res.text()}`);
+  const org = (await res.json()) as { name?: string | null };
+  return typeof org.name === "string" && org.name.trim() !== "" ? org.name.trim() : null;
+}
