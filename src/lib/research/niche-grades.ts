@@ -23,6 +23,7 @@ import { fetchWithRetry } from "../fetch-retry.js";
 import { mapWithConcurrency } from "../concurrency.js";
 import { fetchBrandsBasic, fetchOrgUserEmails } from "../accounts-client.js";
 import { isStaffEmail, isStaffOnlyOrg } from "../showcase-clients.js";
+import { NICHE_GRADE_SUPPORT } from "../platform-caller.js";
 
 export const NICHE_GRADES = ["narrow", "focused", "broad"] as const;
 export type NicheGrade = (typeof NICHE_GRADES)[number];
@@ -116,7 +117,7 @@ async function askJev(state: JudgedState): Promise<{ grade: NicheGrade; confiden
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
-    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { niche: nicheQuestion() } }) },
+    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { niche: nicheQuestion() }, support: NICHE_GRADE_SUPPORT }) },
     { timeoutMs: JEV_TIMEOUT_MS },
   );
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);

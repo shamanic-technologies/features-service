@@ -27,6 +27,7 @@ import { readTemplateDynasties, readTemplateTexts } from "./writer-catalogue-cli
 import { readLlmDynasties } from "./llm-dynasties.js";
 import { subjectOfTactic, type Tactic, type TacticJudgingSweep } from "./plays.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
+import { TACTIC_JUDGMENT_SUPPORT } from "./platform-caller.js";
 
 const JUDGE_CONCURRENCY = 4;
 const JUDGE_TIMEOUT_MS = 60_000;
@@ -136,7 +137,7 @@ async function askOne(state: Record<string, unknown>, question: ReturnType<typeo
   const res = await fetchWithRetry(`${base}/internal/platform-judgments`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
-    body: JSON.stringify({ state, questions: { [QUESTION_KEY]: question } }),
+    body: JSON.stringify({ state, questions: { [QUESTION_KEY]: question }, support: TACTIC_JUDGMENT_SUPPORT }),
   }, { timeoutMs: JUDGE_TIMEOUT_MS });
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; noul?: unknown }> };
