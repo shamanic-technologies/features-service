@@ -66,10 +66,12 @@ export function clientMedian(clients: readonly ClientFigure[]): Omit<MedianPoint
 
 /**
  * PURE. Month by month, the cheapest MATURE workflow among `eligible` (runnable today), on its evidence cumulative through
- * the month. A month where none has reached the bar has no point.
+ * the month, read on the page's view (each bucket's months are its view's half). Mature = out of Learning, the maturity
+ * rule whatever the view: keyed on `basis`, the Flash view had no candidate at all and read "No workflow has reached 1
+ * positive reply yet" beside Ballad's 47 (BEST-OVER-TIME-FLASH-1024). A month where none has reached the bar has no point.
  */
 export function bestWorkflowByMonth(buckets: readonly ResearchBucket[], eligible: ReadonlySet<string>, outcomesRequired: number): BestPoint[] {
-  const candidates = buckets.filter((b) => b.basis === "mature" && eligible.has(b.key) && b.months);
+  const candidates = buckets.filter((b) => !b.learning && eligible.has(b.key) && b.months);
   const months = [...new Set(candidates.flatMap((b) => b.months!.map((m) => m.month)))].sort();
   const out: BestPoint[] = [];
   for (const month of months) {
