@@ -32,3 +32,10 @@ describe("ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4)", (
     expect(outcomeCostByClientStudy(null, 0).headline).toBe("Not readable right now.");
   });
 });
+
+describe("ledger beside today's figure, as a paired series", () => {
+  it("today's figure rides compare[] on the client's key", () => {
+    const st = outcomeCostByClientStudy([row("o1", "Acme", 99, 80, 10), row("o2", "Beta", 40, 0, 0)], 0);
+    expect(st.charts[0]!.compare!.points.map((p) => [p.key, p.display])).toEqual([["o1", "$8.00"]]);
+  });
+});

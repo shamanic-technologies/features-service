@@ -61,6 +61,12 @@ export function workflowLedgerStudy(input: { pipe: string; rows: readonly Workfl
         title: "Cost per positive reply per workflow, on the ledger (USD, lower is better)",
         lowerIsBetter: true,
         points,
+        compare: {
+          title: "The ranking's cost per positive reply, the figure the pipe picks by (USD)",
+          points: priced.flatMap((r) =>
+            r.todayCostUsd !== null ? [{ key: r.key, label: r.label, value: Number(r.todayCostUsd.toFixed(2)), display: usd(r.todayCostUsd), note: `Ranking, ${r.todayBasis} figures`, thin: r.todayBasis !== "mature" }] : [],
+          ),
+        },
         note: "The bar is everything the workflow produced on the reply pipes (the sends nobody answered included) divided by the replies to its sends, plus each reply's share of what every reply carries (judging the reply). The note gives the ranking's figure, the one the pipe picks by.",
       },
     ],

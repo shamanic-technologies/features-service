@@ -33185,6 +33185,60 @@
                   ],
                   "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                 },
+                "compare": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "display": {
+                            "type": "string",
+                            "description": "The value as the page prints it."
+                          },
+                          "note": {
+                            "type": "string",
+                            "description": "The counts behind the value."
+                          },
+                          "thin": {
+                            "type": "boolean",
+                            "description": "LEARNING under the maturity rule (historical field name)."
+                          },
+                          "partial": {
+                            "type": "boolean",
+                            "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value",
+                          "display",
+                          "note",
+                          "thin"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "points"
+                  ],
+                  "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
+                },
                 "note": {
                   "type": "string"
                 }
@@ -70338,6 +70392,60 @@
                                     ],
                                     "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                   },
+                                  "compare": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
+                                  },
                                   "note": {
                                     "type": "string"
                                   }
@@ -70921,6 +71029,60 @@
                                           ],
                                           "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                         },
+                                        "compare": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
+                                        },
                                         "note": {
                                           "type": "string"
                                         }
@@ -71163,6 +71325,60 @@
                                       "points"
                                     ],
                                     "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
+                                  },
+                                  "compare": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
                                   },
                                   "note": {
                                     "type": "string"
@@ -71860,6 +72076,60 @@
                                           ],
                                           "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
                                         },
+                                        "compare": {
+                                          "type": "object",
+                                          "properties": {
+                                            "title": {
+                                              "type": "string"
+                                            },
+                                            "points": {
+                                              "type": "array",
+                                              "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                  "key": {
+                                                    "type": "string",
+                                                    "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  },
+                                                  "value": {
+                                                    "type": "number"
+                                                  },
+                                                  "display": {
+                                                    "type": "string",
+                                                    "description": "The value as the page prints it."
+                                                  },
+                                                  "note": {
+                                                    "type": "string",
+                                                    "description": "The counts behind the value."
+                                                  },
+                                                  "thin": {
+                                                    "type": "boolean",
+                                                    "description": "LEARNING under the maturity rule (historical field name)."
+                                                  },
+                                                  "partial": {
+                                                    "type": "boolean",
+                                                    "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                                  }
+                                                },
+                                                "required": [
+                                                  "label",
+                                                  "value",
+                                                  "display",
+                                                  "note",
+                                                  "thin"
+                                                ]
+                                              }
+                                            }
+                                          },
+                                          "required": [
+                                            "title",
+                                            "points"
+                                          ],
+                                          "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
+                                        },
                                         "note": {
                                           "type": "string"
                                         }
@@ -72253,6 +72523,60 @@
                                       "points"
                                     ],
                                     "description": "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart."
+                                  },
+                                  "compare": {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "points": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "key": {
+                                              "type": "string",
+                                              "description": "On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."
+                                            },
+                                            "label": {
+                                              "type": "string"
+                                            },
+                                            "value": {
+                                              "type": "number"
+                                            },
+                                            "display": {
+                                              "type": "string",
+                                              "description": "The value as the page prints it."
+                                            },
+                                            "note": {
+                                              "type": "string",
+                                              "description": "The counts behind the value."
+                                            },
+                                            "thin": {
+                                              "type": "boolean",
+                                              "description": "LEARNING under the maturity rule (historical field name)."
+                                            },
+                                            "partial": {
+                                              "type": "boolean",
+                                              "description": "On a month chart: the month the maturity cutoff falls inside (drawn dotted)."
+                                            }
+                                          },
+                                          "required": [
+                                            "label",
+                                            "value",
+                                            "display",
+                                            "note",
+                                            "thin"
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "points"
+                                    ],
+                                    "description": "A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."
                                   },
                                   "note": {
                                     "type": "string"

@@ -8495,6 +8495,10 @@ const researchChartSchema = z.object({
     .describe(
       "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart.",
     ),
+  compare: z
+    .object({ title: z.string(), points: z.array(researchPointSchema) })
+    .optional()
+    .describe("A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."),
   note: z.string().optional(),
 });
 const researchVerdictSchema = z.object({
