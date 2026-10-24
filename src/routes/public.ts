@@ -35,7 +35,9 @@ import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-f
 import type { Pricing } from "../lib/pricing.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
-import { legCutoffIso, legMaturity, type LegMaturityFigures } from "../lib/maturity.js";
+import { legCutoffIso, legMaturity, legMaturityFigures, outcomeFigures, type LegMaturityFigures, type OutcomeFigures } from "../lib/maturity.js";
+import { ledgerRegime, pipeOutcomeKey, type LedgerBookRead } from "../lib/ledger-book.js";
+import { ledgerSlugEvidence, pipeWorkflowCosts } from "../lib/ledger-pipe-costs.js";
 import { withWorkflowRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
@@ -2348,9 +2350,31 @@ export async function fetchFleetLegSlugEvidence(featureSlug: string, legKey: str
     await fetchFleetPositiveRepliesBySlug(featureSlug, { orgId: "", brandId: "", repliers: [] }, legSet),
   );
   const cutoffIso = legCutoffIso(legKey);
-  const mature = cutoffIso
+  const runsMature = cutoffIso
     ? await fetchLegFleetMatureEvidence(featureSlug, legKey, pricing, cutoffIso, null, legSet, slugs)
     : { costGroups: flash.costGroups, emailStats: flash.emailStats };
+  // LEDGER-HISTORY-1024: once the ledger reconciles, every version's figures are its ledger figures, both halves.
+  const flashBook = await ledgerRegime(pricing);
+  if (flashBook) {
+    const outcomeKey = await pipeOutcomeKey(featureSlug, legKey);
+    const statKey = legMaturity(legKey).outcomeSignal === "clicked" ? "recipientsClicked" : "recipientsRepliesPositive";
+    const onBook = (ev: { costGroups: CostGroup[]; emailStats: Map<string, Record<string, number>> }, read: LedgerBookRead) => {
+      const o = ledgerSlugEvidence(ev.costGroups, ev.emailStats, outcomeKey, statKey, legSet, read.book, slugs === "fed");
+      if (o.missingOnLedger.length > 0) console.error(`[features-service] ledger ${featureSlug}|${legKey}: runs spend on versions the reconciled ledger does not hold: ${o.missingOnLedger.join(",")}`);
+      return { costGroups: o.costGroups, emailStats: o.emailStats };
+    };
+    const matureBook = cutoffIso ? await ledgerRegime(pricing, cutoffIso) : flashBook;
+    const ledgerFlash = onBook(flash, flashBook);
+    return {
+      legKey,
+      cutoffIso,
+      workflows,
+      campaigns: flash.campaigns,
+      flash: ledgerFlash,
+      mature: !cutoffIso ? ledgerFlash : matureBook && runsMature ? onBook(runsMature, matureBook) : null,
+    };
+  }
+  const mature = runsMature;
   return {
     legKey,
     cutoffIso,
@@ -5099,6 +5123,43 @@ const legRankingWarm = new Map<string, Promise<void>>();
  * the ledger by its slug and only in the price; the ranking read it as an entry pipe ("0 outcomes from 0
  * people" for rhodium).
  */
+/**
+ * ONE REGIME FOR EVERY PIPE, on the general ledger (owner 2026-10-24, LEDGER-HISTORY-1024: « Passe tout d'un coup au même
+ * régime »; `lib/ledger-pipe-costs.ts`): once the ledger RECONCILES with the runs spend (`ledgerReconciliation`), every
+ * pipe (entry, internal, sourcing alike) is priced per workflow on its own production in its campaigns ÷ the outcome of
+ * its leg, flash and mature (the run-start cut), and the three measure paths below stand aside. Until then null: every
+ * pipe keeps the previous regime, never half the pipes on each. Same campaigns as the previous regime (the leg's stated
+ * campaigns, the meeting-population rule where it applies).
+ */
+async function ledgerPipeFigures(
+  featureSlug: string,
+  legKey: string,
+  campaigns: readonly FleetLegCampaign[],
+): Promise<Array<[string, LegMaturityFigures]> | null> {
+  const flashRead = await ledgerRegime("gross");
+  if (!flashRead) return null;
+  const outcomeKey = await pipeOutcomeKey(featureSlug, legKey);
+  const cutoffIso = legCutoffIso(legKey);
+  const matureRead = cutoffIso ? await ledgerRegime("gross", cutoffIso) : flashRead;
+  const ids = new Set(campaigns.map((c) => c.campaignId));
+  const workflows = await fetchPublicWorkflows(featureSlug, "all");
+  const dynastyOf = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
+  const byDynasty = (read: LedgerBookRead) => {
+    const out = new Map<string, OutcomeFigures>();
+    for (const v of pipeWorkflowCosts(outcomeKey, ids, read.book).values()) {
+      const d = dynastyOf.get(v.workflowSlug) ?? v.workflowSlug;
+      const prev = out.get(d);
+      out.set(d, outcomeFigures((prev?.spentUsd ?? 0) + v.costUsd, (prev?.contacted ?? 0) + v.inputs, (prev?.outcomes ?? 0) + v.outcomes));
+    }
+    return out;
+  };
+  const flash = byDynasty(flashRead);
+  const mature = matureRead ? byDynasty(matureRead) : null;
+  return [...new Set([...flash.keys(), ...(mature ? mature.keys() : [])])].map(
+    (d) => [d, legMaturityFigures(legKey, flash.get(d) ?? outcomeFigures(0, 0, 0), mature ? (mature.get(d) ?? outcomeFigures(0, 0, 0)) : null)] as [string, LegMaturityFigures],
+  );
+}
+
 export async function fleetPipeFigures(
   featureSlug: string,
   legKey: string,
@@ -5109,6 +5170,11 @@ export async function fleetPipeFigures(
   campaignCount: number;
   meetingPopulation: MeetingPopulation | null;
 }> {
+  const pipePopulation = await getFleetLegPopulation(featureSlug, legKey);
+  const onLedger = await ledgerPipeFigures(featureSlug, legKey, pipePopulation.campaigns);
+  if (onLedger) {
+    return { byDynasty: onLedger, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: pipePopulation.campaigns.length, meetingPopulation: pipePopulation.population };
+  }
   // An ON-DEMAND pipe (owner 2026-10-11: the sourcing channels, run only when the cold email pipe asks, each ask its own
   // unit run) is measured on its own runs' spend and the leads its trigger's events say it found (`lib/on-demand-pipe-fleet.ts`).
   const onDemandTrigger = await onDemandPipeTrigger(featureSlug, legKey);
