@@ -1,7 +1,7 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import type { GrainLedger } from "../lib/workflow-projection-grains.js";
 import { ledgerRegime, outcomeStatKeyOf, pipeOutcomeKey } from "../lib/ledger-book.js";
-import { ledgerSlugEvidence } from "../lib/ledger-pipe-costs.js";
+import { ledgerAudienceEvidence, ledgerSlugEvidence } from "../lib/ledger-pipe-costs.js";
 import { Router, type Request, type Response } from "express";
 import { getInternalPipeFleet, internalPipeCountsByDynasty, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
@@ -2152,6 +2152,10 @@ export async function fetchWorkflowProjectionEvidence(input: {
     costGroups = o.costGroups;
     emailStats = o.emailStats;
   }
+  // the audience grain on the same book: the brand's leg campaigns, one audience at a time
+  if (grainLedger && brandLegIds) {
+    audienceEvidence = ledgerAudienceEvidence(grainLedger.outcomeKey, new Set(brandLegIds), audienceEvidence.map((a) => a.audienceId), grainLedger.book, slugToDynasty, grainLedger.statKey);
+  }
 
   // ── THE MATURE TWIN of every grain above, on the SAME populations (leg campaigns, identity, offer).
   let mature: MatureEvidence | null | undefined;
@@ -2199,6 +2203,9 @@ export async function fetchWorkflowProjectionEvidence(input: {
             ),
           ])
         : [emptyGrain(), null, null, []];
+      const audienceMatureOnBook = matureLedger
+        ? ledgerAudienceEvidence(matureLedger.outcomeKey, new Set(brandLegIds), audienceEvidence.map((a) => a.audienceId), matureLedger.book, slugToDynasty, matureLedger.statKey)
+        : audienceMature;
       if (!stated || !fleetMature) {
         mature = null;
         matureUnavailableReason = "serve_dates_unavailable";
@@ -2217,7 +2224,7 @@ export async function fetchWorkflowProjectionEvidence(input: {
           ...(offerMature
             ? { offerGrain: [...offerMature.active.entries()], retiredOfferGrain: [...offerMature.retired.entries()] }
             : {}),
-          audienceEvidence: audienceMature.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
+          audienceEvidence: audienceMatureOnBook.map((ev) => ({ audienceId: ev.audienceId, byDynasty: [...ev.byDynasty.entries()] })),
         };
       }
     } catch (err) {
