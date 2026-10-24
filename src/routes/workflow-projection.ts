@@ -1,4 +1,5 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { withLedgerFlash } from "../lib/ledger-leg-overlay.js";
 import { Router, type Request, type Response } from "express";
 import { getInternalPipeFleet, internalPipeCountsByDynasty, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
@@ -2117,7 +2118,7 @@ export async function fetchWorkflowProjectionEvidence(input: {
   const brandRepliers = legSet
     ? allBrandRepliers.filter((r) => r.campaignId !== null && legSet.has(r.campaignId))
     : allBrandRepliers;
-  const [costGroups, emailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
+  const [runsCostGroups, runsEmailStats, fleetReplies, brandGrain, audienceEvidence, campaignGrain, offerGrainRead] = await Promise.all([
     legFleet ? Promise.resolve(legFleet.costGroups) : fetchPublicCosts(featureSlug, "workflowSlug", pricing),
     legFleet ? Promise.resolve(legFleet.emailStats) : fetchPublicEmailStats(featureSlug, "workflowSlug"),
     // The FLEET's positive repliers on the SAME per-person basis as the finer grains (this brand's own
@@ -2138,7 +2139,13 @@ export async function fetchWorkflowProjectionEvidence(input: {
   ]);
   const offerGrain = offerIsCampaign ? campaignGrain : offerGrainRead;
   // Always a Map in production; only the suite-wide test default (src/vitest.setup.ts) leaves it unset.
-  if (fleetReplies) setReplyCountsOnSlugStats(emailStats, fleetReplies);
+  if (fleetReplies) setReplyCountsOnSlugStats(runsEmailStats, fleetReplies);
+  // COST-ACCOUNTING-1023-SWITCH: the crossOrg grain of a leg read is priced on the outcome ledger, the fleet
+  // ranking's own basis (lib/ledger-leg-overlay.ts); the finer grains keep their own spend and people.
+  const { costGroups, emailStats } =
+    legFleet && legKey && legSet
+      ? await withLedgerFlash(`${featureSlug}|${legKey} crossOrg`, legKey, pricing, { costGroups: runsCostGroups, emailStats: runsEmailStats }, legSet)
+      : { costGroups: runsCostGroups, emailStats: runsEmailStats };
 
   // ── THE MATURE TWIN of every grain above, on the SAME populations (leg campaigns, identity, offer).
   let mature: MatureEvidence | null | undefined;
