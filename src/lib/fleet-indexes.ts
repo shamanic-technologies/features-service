@@ -252,6 +252,8 @@ export interface FleetIndexInputs {
    * accounting direct »): the Cost Per Meeting Index. null / absent = unreadable or not read: nothing recorded for it.
    */
   meetingLedger?: LedgerMeetingCost | null;
+  /** The outcome prices' expected meeting price (`/public/stats/outcome-prices`), served while the ledger is not a price. */
+  meetingExpected?: ExpectedMeetingPrice | null;
   /** One entry per client brand (`/public/stats/ranked?groupBy=brand`); null = unreadable, nothing recorded. */
   brandEngagement?: BrandEngagement[] | null;
   /** `/public/stats/return-on-spend` at the $100 floor; null = unreadable or no snapshot yet, nothing recorded. */
@@ -450,6 +452,45 @@ export function ledgerMeetingIndexPoint(l: LedgerMeetingCost): FleetIndexPoint {
   };
 }
 
+/** The outcome prices' meeting price: what a new client is quoted (Research "Expected, outcome prices"). */
+export interface ExpectedMeetingPrice {
+  priceUsd: number | null;
+  maturity: string | null;
+  /** Outcomes behind the weakest leg of the price. */
+  outcomes: number;
+  unmeasuredReason: string | null;
+}
+
+/**
+ * PURE. The Cost Per Meeting Index point: the ledger's price when it is one, else the EXPECTED price, labelled
+ * `inputs.valueKind: "expected"` (owner 2026-10-25, MEETING-INDEX-EXPECTED-1025: « A, prends B en attendant »: the
+ * ledger stays the method, the public figure is the outcome prices' meeting price until the ledger reconciles).
+ * Never the ledger's partial figure; nothing expected either = the ledger's null and its reason.
+ */
+export function meetingCostIndexPoint(ledger: LedgerMeetingCost | null, expected: ExpectedMeetingPrice | null): FleetIndexPoint | null {
+  const lp = ledger ? ledgerMeetingIndexPoint(ledger) : null;
+  if (lp && lp.value !== null) return { ...lp, inputs: { ...lp.inputs, valueKind: "measured" } };
+  if (!expected || expected.priceUsd === null || !(expected.priceUsd > 0)) return lp;
+  return {
+    indexSlug: COST_PER_MEETING.slug,
+    value: expected.priceUsd,
+    status: expected.maturity === "mature" ? indexStatus(Math.round(expected.outcomes), true) : "noise",
+    outcomes: Math.round(expected.outcomes),
+    contacted: null,
+    workflowDynastySlug: null,
+    workflowDynastyName: null,
+    unavailableReason: null,
+    inputs: {
+      valueKind: "expected",
+      method: "expected_outcome_prices",
+      formula: "reply_cost / meeting_rate + meeting_leg_cost",
+      maturity: expected.maturity,
+      ledgerUnavailableReason: lp?.unavailableReason ?? "ledger_unreadable",
+      ...(lp ? { ledgerUnitCostUsd: lp.inputs.ledgerUnitCostUsd ?? null, coveragePct: lp.inputs.coveragePct ?? null, daysMissing: lp.inputs.daysMissing ?? null } : {}),
+    },
+  };
+}
+
 const COST_PER_INTEREST = fleetIndexBySlug("cold-email-cost-per-positive-reply")!;
 const COST_PER_MEETING = fleetIndexBySlug("cold-email-cost-per-meeting")!;
 const INTEREST_RATE = fleetIndexBySlug("cold-email-positive-reply-rate")!;
@@ -464,7 +505,8 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
     if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows));
     // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024); the meeting rate stays the pipes' chain.
     if (def.slug === COST_PER_MEETING.slug) {
-      if (inputs.meetingLedger) points.push(ledgerMeetingIndexPoint(inputs.meetingLedger));
+      const p = meetingCostIndexPoint(inputs.meetingLedger ?? null, inputs.meetingExpected ?? null);
+      if (p) points.push(p);
     } else if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
       points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
     }

@@ -17,6 +17,8 @@ const ranking = vi.hoisted(() => ({
     throw new Error("ranked read not under test");
   }),
   readFleetReturnOnSpend: vi.fn(async (): Promise<unknown> => ({ measured: false, reason: "no_snapshot_yet", brandCount: 0, minSpendUsd: 100, medianReturnPerDollar: null })),
+  // MEETING-INDEX-EXPECTED-1025: no expected meeting price unless a test says otherwise.
+  readOutcomePricesMeetingBooked: vi.fn(async (): Promise<unknown> => null),
 }));
 vi.mock("./public.js", () => ranking);
 const meeting = vi.hoisted(() => ({ getInternalPipeFleet: vi.fn() }));
@@ -146,6 +148,12 @@ describe("recording", () => {
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
     expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: null, status: "noise", unavailableReason: "ledger_coverage_short", inputs: { method: "ledger_every_path", ledgerUnitCostUsd: 866.47 } });
     expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.15 * 0.25, 6);
+    // MEETING-INDEX-EXPECTED-1025: with an expected price, the ledger's short figure gives way to it, labelled expected
+    ranking.readOutcomePricesMeetingBooked.mockResolvedValueOnce({ priceUsd: 794.46, maturity: "mature", unmeasuredReason: null, legs: [{ figures: { outcomes: 40 } }, { figures: { outcomes: 12 } }] });
+    store.recordFleetIndexPoints.mockClear();
+    await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
+    const again = new Map(store.recordFleetIndexPoints.mock.calls[0][0].map((p: { indexSlug: string }) => [p.indexSlug, p]));
+    expect(again.get("cold-email-cost-per-meeting")).toMatchObject({ value: 794.46, status: "signal", outcomes: 12, inputs: { valueKind: "expected", ledgerUnavailableReason: "ledger_coverage_short" } });
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
     // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting
     expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
