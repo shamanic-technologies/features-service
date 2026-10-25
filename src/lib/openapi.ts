@@ -5987,7 +5987,8 @@ const fleetIndexSummarySchema = registry.register(
     contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
     workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
     workflowDynastyName: z.string().nullable(),
-    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent)."),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either)."),
+    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
     recordedAt: z.string().nullable(),
   }),
 );
@@ -6038,6 +6039,7 @@ registry.registerPath({
                 workflowDynastyName: z.string().nullable(),
                 unavailableReason: z.string().nullable(),
                 basis: z.enum(["recorded", "recomputed"]).describe("`recorded`: written live that day. `recomputed`: rebuilt later as of that day (`basisRule`)."),
+                valueKind: z.enum(["measured", "expected"]).describe("Same as the summary's `valueKind`, for this day."),
                 inputs: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
               }),
             ),

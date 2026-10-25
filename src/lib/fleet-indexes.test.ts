@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, ledgerMeetingIndexPoint, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, ledgerMeetingIndexPoint, meetingCostIndexPoint, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 
 function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
@@ -98,6 +98,25 @@ describe("fleet indexes", () => {
     expect(point({ coveragePct: 90.5 })).toMatchObject({ value: null, status: "noise", unavailableReason: "ledger_coverage_short" });
     expect(point({ coveragePct: null })).toMatchObject({ value: null, unavailableReason: "ledger_coverage_short" });
     expect(point({ unitCostUsd: null, produced: 0 })).toMatchObject({ value: null, unavailableReason: "no_meeting_priced_on_ledger" });
+  });
+
+  it("MEETING-INDEX-EXPECTED-1025: while the ledger is not a price, the index serves the expected price, labelled expected", () => {
+    const recomputing = { unitCostUsd: 0.01317, produced: 83, coveragePct: 62.2, daysMissing: 265, unpricedInputs: 2 };
+    const expected = { priceUsd: 794.46, maturity: "mature", outcomes: 12, unmeasuredReason: null };
+    expect(meetingCostIndexPoint(recomputing, expected)).toMatchObject({
+      indexSlug: "cold-email-cost-per-meeting",
+      value: 794.46,
+      status: "signal",
+      unavailableReason: null,
+      inputs: { valueKind: "expected", method: "expected_outcome_prices", ledgerUnavailableReason: "ledger_being_recomputed", ledgerUnitCostUsd: 0.01317 },
+    });
+    // a ledger PRICE wins over the expected one
+    const priced = { unitCostUsd: 866.47, produced: 12, coveragePct: 97, daysMissing: 0, unpricedInputs: 0 };
+    expect(meetingCostIndexPoint(priced, expected)).toMatchObject({ value: 866.47, inputs: { valueKind: "measured", method: "ledger_every_path" } });
+    // nothing expected: the ledger's null and its reason; ledger unreadable: expected still served
+    expect(meetingCostIndexPoint(recomputing, { ...expected, priceUsd: null })).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
+    expect(meetingCostIndexPoint(null, { ...expected, maturity: "learning" })).toMatchObject({ value: 794.46, status: "noise", inputs: { ledgerUnavailableReason: "ledger_unreadable" } });
+    expect(meetingCostIndexPoint(null, null)).toBeNull();
   });
 
   it("a mature meeting workflow wins; the chain is as trustworthy as its weakest link", () => {
