@@ -98,6 +98,17 @@ describe("verdict", () => {
     expect(today).toMatchObject({ day: "2026-10-25", reported: true, repoCount: 3, critical: 1, high: 2, failedAudits: 1, redRepoCount: 2 });
   });
 
+  it("agrees the verb with the count: 1 repo needs, 2 repos need", () => {
+    const one = buildSecurityAdvisoriesView([row("2026-10-25", "a", { high: 1 })], NOW, 7);
+    expect(one.reason).toBe("1 repo needs attention on 2026-10-25: a (1 high).");
+    const two = buildSecurityAdvisoriesView(
+      [row("2026-10-25", "a", { high: 1 }), row("2026-10-25", "b", { critical: 1 })],
+      NOW,
+      7,
+    );
+    expect(two.reason).toBe("2 repos need attention on 2026-10-25: a (1 high); b (1 critical).");
+  });
+
   it("is red when the latest report is older than 36 hours, even if it was clean", () => {
     const v = buildSecurityAdvisoriesView([row("2026-10-23", "a")], NOW, 7);
     expect(v.status).toBe("red");
@@ -110,7 +121,7 @@ describe("verdict", () => {
     const v = buildSecurityAdvisoriesView([row("2026-09-01", "a", { high: 3 })], NOW, 7);
     expect(v.latestDay).toBe("2026-09-01");
     expect(v.redRepos.map((r) => r.repo)).toEqual(["a"]);
-    expect(v.reason).toMatch(/^No report for \d+ hours .* 1 repo need attention on 2026-09-01: a \(3 high\)\.$/);
+    expect(v.reason).toMatch(/^No report for \d+ hours .* 1 repo needs attention on 2026-09-01: a \(3 high\)\.$/);
     expect(v.repos[0].series.every((p) => p.status === "missing")).toBe(true);
   });
 

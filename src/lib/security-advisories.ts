@@ -190,7 +190,7 @@ export function buildSecurityAdvisoriesView(rows: StoredAdvisoryRow[], now: Date
   }
   if (redRepos.length > 0) {
     reasons.push(
-      `${plural(redRepos.length, "repo")} need attention on ${latestDay}: ${redRepos.map((r) => `${r.repo} (${r.reason})`).join("; ")}.`,
+      `${plural(redRepos.length, "repo")} ${redRepos.length === 1 ? "needs" : "need"} attention on ${latestDay}: ${redRepos.map((r) => `${r.repo} (${r.reason})`).join("; ")}.`,
     );
   }
   if (reasons.length === 0) {
