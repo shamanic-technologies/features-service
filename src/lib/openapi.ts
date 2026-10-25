@@ -213,7 +213,7 @@ const statsGroupSchema = z.object({
   workflowDynastySlug: z.string().nullable().optional(),
   brandId: z.string().nullable().optional(),
   campaignId: z.string().nullable().optional(),
-  campaignIdentity: campaignIdentitySchema.optional().describe("Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign."),
+  campaignIdentity: campaignIdentitySchema.describe("Present only on groupBy=campaignId: the identity these figures were totalled over. Every member of one identity carries the SAME figures — they are one campaign.").optional(),
   featureSlug: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
   stats: z.record(z.string(), z.number().nullable()),
@@ -226,7 +226,7 @@ const featureStatsResponseSchema = z.object({
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
   stats: z.record(z.string(), z.number().nullable()).optional(),
-  maturity: scopeMaturitySchema.nullable().optional().describe("Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read."),
+  maturity: scopeMaturitySchema.nullable().describe("Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read.").optional(),
 });
 
 const globalStatsResponseSchema = z.object({
@@ -273,7 +273,7 @@ const identityHeaders = z.object({
   "x-org-id": z.string().uuid().describe("Internal org UUID from client-service"),
   "x-user-id": z.string().uuid().describe("Internal user UUID from client-service"),
   "x-run-id": z.string().uuid().describe("Run ID for tracking and billing"),
-  "x-brand-id": z.string().optional().describe("Brand UUID(s), comma-separated"),
+  "x-brand-id": z.string().describe("Brand UUID(s), comma-separated").optional(),
 });
 
 // ── GET /features — list ─────────────────────────────────────────────────
@@ -320,9 +320,9 @@ registry.registerPath({
       brandId: z.string(),
       campaignId: z.string().optional(),
       offerId: z.string().optional(),
-      workflow: z.string().optional().describe("Workflow DYNASTY slug (the key `?groupBy=workflow` emits)."),
+      workflow: z.string().describe("Workflow DYNASTY slug (the key `?groupBy=workflow` emits).").optional(),
       cause: z.string().optional(),
-      groupBy: z.enum(["workflow", "campaignId"]).optional().describe("Serve the per-workflow / per-campaign groups at vendor cost instead of the curve."),
+      groupBy: z.enum(["workflow", "campaignId"]).describe("Serve the per-workflow / per-campaign groups at vendor cost instead of the curve.").optional(),
     }),
   },
   responses: {
@@ -409,9 +409,9 @@ const prefillResponseSchema = z.object({
 registry.register("PrefillResponse", prefillResponseSchema);
 
 const prefillRequestSchema = z.object({
-  offerId: z.string().uuid().optional().describe(
+  offerId: z.string().uuid().describe(
     "WHICH offer this channel is being started for — the offer whose confirmed fields ground the extraction. The user-facing inputs describe ONE value proposition, so a brand selling two things has two right answers and only the caller knows which it means. OPTIONAL: omit it and a brand with a single offer behaves exactly as before, while a brand holding SEVERAL answers 409 `several_offers` (carrying the offers) until one is named. An id naming no offer of this brand is a 404. Never defaulted here, and never resolved to 'the first offer'.",
-  ),
+  ).optional(),
 });
 
 registry.register("PrefillRequest", prefillRequestSchema);
@@ -434,7 +434,7 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
-      format: z.enum(["text", "full"]).optional().describe("Response format: 'text' returns flattened strings, 'full' returns structured values with per-brand breakdown. Defaults to 'full'."),
+      format: z.enum(["text", "full"]).describe("Response format: 'text' returns flattened strings, 'full' returns structured values with per-brand breakdown. Defaults to 'full'.").optional(),
     }),
     body: { required: false, content: { "application/json": { schema: prefillRequestSchema } } },
   },
@@ -490,10 +490,10 @@ registry.registerPath({
       groupBy: z.enum(["workflowSlug", "workflowDynastySlug", "brandId", "campaignId"]).optional(),
       brandId: z.string().optional(),
       campaignId: z.string().optional(),
-      offerId: z.string().optional().describe("Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and totals every stat over exactly those, using the same group-by-campaign fold a multi-row campaign identity already uses; no producer carries an offer dimension, so this is a scope, never a downstream filter. Requires brandId (an offer belongs to a brand). Mutually exclusive with campaignId and with groupBy — all three are 400s. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'."),
+      offerId: z.string().describe("Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and totals every stat over exactly those, using the same group-by-campaign fold a multi-row campaign identity already uses; no producer carries an offer dimension, so this is a scope, never a downstream filter. Requires brandId (an offer belongs to a brand). Mutually exclusive with campaignId and with groupBy — all three are 400s. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'.").optional(),
       workflowSlug: z.string().optional(),
       workflowDynastySlug: z.string().optional(),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (the discount is frozen at cost-declaration time; features-service does NOT recompute it); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates) are identical either way."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric in the response (cost, costPer*Cents). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (the discount is frozen at cost-declaration time; features-service does NOT recompute it); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates) are identical either way.").optional(),
     }),
   },
   responses: {
@@ -560,7 +560,7 @@ const revenueLeadSchema = z.object({
   signupAt: z.string().nullable().describe("ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."),
   formSubmission: z.boolean().describe("True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."),
   formSubmissionAt: z.string().nullable().describe("ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."),
-  conversionProbabilityPct: z.number().optional().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."),
+  conversionProbabilityPct: z.number().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses.").optional(),
 });
 
 /**
@@ -609,8 +609,8 @@ const revenueCostEconomicsSchema = z.object({
   costOfAcquisitionPct: z.number().nullable().describe("(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."),
   roiMultiple: z.number().nullable().describe("mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."),
   costPerAcquisitionUsd: z.number().nullable().describe("Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand\'s own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means \'we could not measure this\', a 0 would mean \'a customer costs nothing\'."),
-  expectedConversions: z.number().optional().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
-  costPerConversionUsd: z.number().nullable().optional().describe("LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."),
+  expectedConversions: z.number().describe("LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses.").optional(),
+  costPerConversionUsd: z.number().nullable().describe("LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses.").optional(),
   maturityDays: z.number().int().describe("The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."),
   unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."),
   ratioBasis: z.object({
@@ -633,7 +633,7 @@ const roiHistoryPointSchema = z.object({
 });
 
 const roiHistorySchema = z.object({
-  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read."),
+  isMature: z.boolean().nullable().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. The curve is the mature cohort's, so its last point is the mature return; false is the Learning tag. Null when the scope's maturity could not be read.").optional(),
   daily: z.array(roiHistoryPointSchema).describe("One point per UTC day that has spend or a dated outcome, ascending, spanning the brand's whole life. Days with neither are absent (never fabricated). Empty when the brand has neither spend nor a dated outcome."),
   datedPipelineUsd: z.number().describe("The curve's final cumulative pipeline — the part of the MATURE cohort's pipeline (the one costEconomics.roiMultiple divides; headline.totalPipelineUsd when costEconomics.maturityDays is 0) this curve can describe."),
   undatedPipelineUsd: z.number().describe("Mature-cohort pipeline whose outcome carries NO timestamp, so it sits on no day. Reported rather than dropped or parked on a fabricated day: datedPipelineUsd + undatedPipelineUsd === the mature cohort's pipeline, which is headline.totalPipelineUsd when costEconomics.maturityDays is 0."),
@@ -641,7 +641,7 @@ const roiHistorySchema = z.object({
     daily: z.array(roiHistoryPointSchema),
     datedPipelineUsd: z.number(),
     undatedPipelineUsd: z.number(),
-  }).optional().describe("THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0."),
+  }).describe("THE FLASH TWIN of this curve: the same fold over EVERY dollar committed and EVERY lead's dated pipeline (no maturity cut). Its last roiMultiple is costEconomics.maturity.flash.roiMultiple (when nothing is undated), where `daily`'s last point is maturity.mature.roiMultiple. A surface showing the FLASH return (scope not mature yet) charts this curve, never `daily`, so the line under a headline ends on that headline. Identical to the outer curve when costEconomics.maturityDays is 0.").optional(),
 });
 
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
@@ -689,7 +689,7 @@ const spendBrandLevelSchema = z.object({
 });
 
 const spendSchema = z.object({
-  brandLevel: spendBrandLevelSchema.optional().describe("OFFER and BRAND reads only (ROI-SPENT-SAME-BASIS-1022): the brand's own work no campaign carries joins EVERY money figure of the body on one basis (totalSpentCents, sources, today's spend, costEconomics and its maturity pair, roiHistory, window.spend), counted whole on the flash and the mature basis (it waits for no outcome) unless the mature cohort has no spend of its own (then maturing). So ROI × committed spend = pipeline, and window.spend (windowDays=all) states the same spend. Absent on campaign, workflow and lens reads (that work belongs to no campaign)."),
+  brandLevel: spendBrandLevelSchema.describe("OFFER and BRAND reads only (ROI-SPENT-SAME-BASIS-1022): the brand's own work no campaign carries joins EVERY money figure of the body on one basis (totalSpentCents, sources, today's spend, costEconomics and its maturity pair, roiHistory, window.spend), counted whole on the flash and the mature basis (it waits for no outcome) unless the mature cohort has no spend of its own (then maturing). So ROI × committed spend = pipeline, and window.spend (windowDays=all) states the same spend. Absent on campaign, workflow and lens reads (that work belongs to no campaign).").optional(),
   totalSpentCents: z.number().int().describe("'Total spent' (COMMITTED, USD cents) = ACTUAL + PROVISIONED holds for the brand(+campaign)+feature, == Σ sources[].totalSpentCents. The reserved money the customer sees; dips when a hold releases. Reconciles with totalCpcCents by construction."),
   actualSpentCents: z.number().int().describe("Billed-only spend (USD cents), == Σ sources[].actualSpentCents. Same source as systemStats.actualCostInUsdCents / costEconomics.actualCostUsd. REPORTED ONLY — ROI/CAC and every cost-per-outcome column ride the COMMITTED totalSpentCents beside it."),
   provisionedSpentCents: z.number().int().describe("Open PROVISIONED holds only (USD cents) = totalSpentCents − actualSpentCents, == Σ sources[].provisionedSpentCents. Money reserved for scheduled follow-up sends, not yet billed."),
@@ -700,14 +700,14 @@ const spendSchema = z.object({
   totalCpcCents: z.number().nullable().describe("COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."),
   actualCpcCents: z.number().nullable().describe("ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."),
   provisionedCpcCents: z.number().nullable().describe("PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."),
-  signupsCount: z.number().int().optional().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"),
-  salesMeetingsCount: z.number().int().optional().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."),
-  formSubmissionsCount: z.number().int().optional().describe("REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."),
-  cpsCents: z.number().nullable().optional().describe("REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection."),
-  cpsmCents: z.number().nullable().optional().describe("REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection."),
-  cpfsCents: z.number().nullable().optional().describe("REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection."),
-  salesCount: z.number().int().optional().describe("REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"),
-  cpSaleCents: z.number().nullable().optional().describe("REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)"),
+  signupsCount: z.number().int().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)").optional(),
+  salesMeetingsCount: z.number().int().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0.").optional(),
+  formSubmissionsCount: z.number().int().describe("REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0.").optional(),
+  cpsCents: z.number().nullable().describe("REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection.").optional(),
+  cpsmCents: z.number().nullable().describe("REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection.").optional(),
+  cpfsCents: z.number().nullable().describe("REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection.").optional(),
+  salesCount: z.number().int().describe("REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)").optional(),
+  cpSaleCents: z.number().nullable().describe("REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)").optional(),
   positiveRepliesCount: z.number().int().describe("REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"),
   cpprCents: z.number().nullable().describe("REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"),
   ratioBasis: z.object({
@@ -717,10 +717,10 @@ const spendSchema = z.object({
     provisionedSpentCents: z.number().nullable().describe("Open holds provisionedCpcCents divides, on the same basis."),
     clicksCount: z.number().int().nullable().describe("Website visits the CPCs divide: the mature cohort's visitors when maturityDays > 0."),
     positiveRepliesCount: z.number().int().nullable().describe("Positive replies cpprCents divides, on the same basis."),
-    signupsCount: z.number().int().nullable().optional().describe("Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is."),
-    salesMeetingsCount: z.number().int().nullable().optional().describe("Meetings booked cpsmCents divides, same rules."),
-    formSubmissionsCount: z.number().int().nullable().optional().describe("Form submissions cpfsCents divides, same rules."),
-    salesCount: z.number().int().nullable().optional().describe("Sales cpSaleCents divides, same rules."),
+    signupsCount: z.number().int().nullable().describe("Signups cpsCents divides. On a matured basis read off the cohort's own leads (lead-service's counts are undated). ABSENT when the top-level count is.").optional(),
+    salesMeetingsCount: z.number().int().nullable().describe("Meetings booked cpsmCents divides, same rules.").optional(),
+    formSubmissionsCount: z.number().int().nullable().describe("Form submissions cpfsCents divides, same rules.").optional(),
+    salesCount: z.number().int().nullable().describe("Sales cpSaleCents divides, same rules.").optional(),
     unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."),
   }).describe("WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."),
   maturity: spendRatiosMaturitySchema.optional(),
@@ -820,9 +820,9 @@ const funnelStepBreakdownSchema = z.object({
 const outcomeCausesSchema = z.object({
   priced: z.array(z.enum(["outreach", "other", "unstated"])).describe("WHOSE WINS THIS BODY PRICED — the echo of `?cause=` (default outreach), canonical order. Every outcome is counted; only these carry value into the pipeline, the return and the cost of acquisition. Always present, on every grain and every path, so a consumer can name the basis of a figure it renders beside another."),
   counts: z.object({
-    outreach: z.record(z.number().int()).describe("Outcomes the customer states OUR outreach caused, per step."),
-    other: z.record(z.number().int()).describe("Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."),
-    unstated: z.record(z.number().int()).describe("Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."),
+    outreach: z.record(z.string(), z.number().int()).describe("Outcomes the customer states OUR outreach caused, per step."),
+    other: z.record(z.string(), z.number().int()).describe("Outcomes the customer states something else of theirs caused — a referral, a conference, their existing pipeline, another agency. REAL outcomes: they stay in lead-service's own counts, in the brand's own revenue and on the lead's own standing. Stating one honestly costs the customer nothing they can see; what it buys is leaving its value out of the return computed on OUR outreach."),
+    unstated: z.record(z.string(), z.number().int()).describe("Outcomes NOBODY WAS ASKED about — every statement made before the field existed, and every tracker-reported one, because a page-load tag observes a page load and cannot know why somebody bought. Never folded into either other answer: reading it as ours is the overstatement this parameter removes, and reading it as theirs would wipe out the measured pipeline of every brand on the platform overnight. Almost every outcome in the system is in this state today, which is exactly why a surface has to be able to SAY so rather than leave a reader to guess why a figure looks the way it does."),
   }).nullable().describe("How many stated outcomes sit in each of the three states, keyed by step (signup | form_submission | meeting_booked | meeting_attended | sale). NOT filtered by `?cause=` — the point is that a consumer leaving a state out can say how much it left out. BRAND-scoped, like the statement read it comes from. Null when the statements could not be read on this path: the no-funnel short-circuit and the cold-start path never read them, and a degraded read nulls it rather than reporting a 0 that would say the brand has no outcomes. The legacy instantly qualifications are a different producer carrying no cause and are counted nowhere here."),
 }).describe("WHOSE WIN EACH OUTCOME WAS. A brand contacts people through us AND through everything else it already does — referrals, conferences, an existing pipeline, another agency — so some of the people we email buy for reasons that have nothing to do with our outreach. lead-service records the answer per statement (`causedByOutreach`); this block states what this read priced and what exists. Deliberately NOT the tracker's `attributed / needs_review / unmatched` vocabulary, which answers whether we managed to identify who somebody was.");
 
@@ -865,7 +865,7 @@ const costPerOutcomeHistoryPointSchema = z.object({
 });
 
 const costPerOutcomeHistorySchema = z.object({
-  isMature: z.boolean().nullable().optional().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable."),
+  isMature: z.boolean().nullable().describe("The SCOPE's maturity verdict beside the curve (features-service#1196) — the byte-same one `maturity.isMature` states. Null when unreadable.").optional(),
   outcomeStep: channelStepSchema.describe("The step EVERY count here is denominated in — the scope's own leg's toStep, named by this service rather than chosen by the caller, and the byte-same step learningPhase.outcomeStep reports (one leader resolution serves both, so the curve and the verdict beside it can never be denominated in two different things). A consumer labels the chart with it."),
   legKey: z.string().describe("The leg that step closes, canonical."),
   outcomeObserved: z.boolean().describe("TRUE ⟺ the counts are raw OBSERVATIONS (an ENTRY leg, whose driver signal IS its outcome). FALSE ⟺ each day's count is the observed driver walked forward through the funnel's declared rates, so it is fractional."),
@@ -986,8 +986,8 @@ const revenueWindowRef = registry.register("RevenueWindow", revenueWindowSchema)
 const featureRevenueResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
-  campaignIdentity: campaignIdentitySchema.optional().describe("Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign."),
-  window: revenueWindowRef.optional().describe("Present ONLY on a ?campaignId= read that asked ?windowDays= (windowDays=all = since inception): the campaign card row. The SAME block the offer and brand revenue reads serve, over the campaign's whole IDENTITY (its stopped ancestors included) on this channel: emails sent / delivered / bounced (EMAILS, every step), emails queued right now (queuedEmails, snapshot), and spend on the read's ?pricing= basis as actualSpentCents (charged) + provisionedSpentCents (holds still open, e.g. follow-ups not sent yet) = totalSpentCents (committed). The spend is the campaign's own only (brandLevel* are 0). A part that could not be read is null (queuedEmails with queuedEmailsUnavailableReason), never 0. See RevenueWindow."),
+  campaignIdentity: campaignIdentitySchema.describe("Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign.").optional(),
+  window: revenueWindowRef.describe("Present ONLY on a ?campaignId= read that asked ?windowDays= (windowDays=all = since inception): the campaign card row. The SAME block the offer and brand revenue reads serve, over the campaign's whole IDENTITY (its stopped ancestors included) on this channel: emails sent / delivered / bounced (EMAILS, every step), emails queued right now (queuedEmails, snapshot), and spend on the read's ?pricing= basis as actualSpentCents (charged) + provisionedSpentCents (holds still open, e.g. follow-ups not sent yet) = totalSpentCents (committed). The spend is the campaign's own only (brandLevel* are 0). A part that could not be read is null (queuedEmails with queuedEmailsUnavailableReason), never 0. See RevenueWindow.").optional(),
   spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
   recipientsContacted: recipientsContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
   recipientsOpened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
@@ -1001,8 +1001,8 @@ const featureRevenueResponseSchema = z.object({
   headline: z.object({
     totalPipelineUsd: z.number().nullable().describe("Org-deduped expected pipeline. Null (with headline.unpricedReason) when nothing is priced: no funnel wired, or no priced funnel (an offer that states no lifetime revenue is priced on the fleet median, see headline.lifetimeRevenueSource)."),
     unpricedReason: pipelineUnpricedReasonSchema.nullable().describe("WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."),
-    lifetimeRevenueUsd: z.number().nullable().optional().describe("The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced."),
-    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().optional().describe("Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced."),
+    lifetimeRevenueUsd: z.number().nullable().describe("The lifetime revenue per paying client this pipeline was priced on: the offer's own stated value, else the fleet median of every offer's stated lifetime revenue (owner 2026-10-09: every offer always has one, never 0). Present on the priced Overview body; absent/null when nothing is priced.").optional(),
+    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().describe("Where lifetimeRevenueUsd came from: offer_stated = the customer stated it on the offer; fleet_median = the offer states none, so the fleet median of stated offer lifetime revenues stands in (say 'fleet median', not 'you stated'). Absent/null when nothing is priced.").optional(),
   }),
   costEconomics: revenueCostEconomicsSchema.describe("Derived cost economics. Always present; ratios are null per the documented null semantics."),
   timeSeries: z.array(revenueTimeSeriesPointSchema).describe("Cumulative pipeline ordered by event date, from the per-lead event timestamps (email-gateway engagement + the dates a human stated a funnel step happened). An org with no dated event is counted in the headline but absent here."),
@@ -1017,13 +1017,13 @@ const featureRevenueResponseSchema = z.object({
     workflowDynastySlug: z.string().describe("The dynasty every figure on this body was computed over — byte the same key ?groupBy=workflow emits, so the row a consumer clicked opens the workflow it named."),
     workflowDynastyName: z.string().nullable().describe("Human name of the dynasty. Null when workflow-service describes no version of it."),
     workflowSlugs: z.array(z.string()).describe("Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."),
-  }).optional().describe("WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."),
+  }).describe("WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read.").optional(),
   funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read priced on ONE funnel always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
   costPerOutcomeHistory: costPerOutcomeHistorySchema.nullable().describe("WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"),
   conversionRateHistory: conversionRateHistorySchema.nullable().describe("WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, for the reason roiHistory gives: outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"),
   learningPhase: learningPhaseSchema.nullable(),
-  maturity: scopeMaturitySchema.nullable().optional().describe("The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired)."),
-  expectedReturn: expectedReturnRef.optional().describe("The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads."),
+  maturity: scopeMaturitySchema.nullable().describe("The scope's per-leg figures on both bases and its verdict. Null where the lead population was never read (no funnel wired).").optional(),
+  expectedReturn: expectedReturnRef.describe("The scope's EXPECTED return, never empty (see ExpectedReturn): campaign (?campaignId=), offer (?offerId=, /offers/{id}/revenue) or brand (/brands/{id}/revenue, a brand-wide read). Absent on ?lens= and ?workflow= reads.").optional(),
 });
 
 const featureRevenueResponseRef = registry.register("FeatureRevenueResponse", featureRevenueResponseSchema);
@@ -1045,7 +1045,7 @@ const revenueGroupSchema = z.object({
   }),
   costEconomics: revenueCostEconomicsSchema,
   outcomes: revenueOutcomesSchema.nullable().describe("The VOLUME half of this campaign's answer — how much real outcome evidence its ROI, %CAC and pipeline rest on. It exists because those three are derived from however many outcomes the campaign has produced so far: with one or two behind them they are decided by whichever one landed and swing by whole multiples on the next reply, so a consumer that cannot see the volume reads noise as a measurement. Totalled over the campaign's IDENTITY exactly as the money is — its stopped ancestors included — and deduped inside it, so a lead served under two member rows is ONE person here as it is one person to the brand, and every member of an identity carries the identical block. Across identities the counts do NOT sum to the brand (a lead worked under two campaigns is one lead to the brand and belongs to both), the same counting-people property the money half carries. NULL only when no funnel is wired for the feature and the leads were never read — never a fabricated 0."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("The identity's per-leg figures and verdict — the object its own ?campaignId= read serves."),  expectedReturn: expectedReturnRef.optional().describe("The identity's EXPECTED return, never empty (see ExpectedReturn), the one its own ?campaignId= read serves. Absent on the staff actual-cost read."),
+  maturity: scopeMaturitySchema.nullable().describe("The identity's per-leg figures and verdict — the object its own ?campaignId= read serves.").optional(),  expectedReturn: expectedReturnRef.describe("The identity's EXPECTED return, never empty (see ExpectedReturn), the one its own ?campaignId= read serves. Absent on the staff actual-cost read.").optional(),
 });
 
 const featureRevenueGroupedResponseSchema = z.object({
@@ -1074,14 +1074,14 @@ const revenueWorkflowGroupSchema = z.object({
   }),
   costEconomics: revenueCostEconomicsSchema,
   outcomes: revenueOutcomesSchema.describe("The VOLUME half of this workflow's answer — this brand's own outreach through this dynasty and what it cost, the same figures the un-grouped brand read gives for the whole brand. Every figure rides COMMITTED spend, the single basis costEconomics rides, so cpcCents × recipientsClicked ≈ committedSpentCents by construction. This block once rode billed-only spend to avoid a committed numerator beside a realized ROI; the ROI moved to committed, so that divergence would now BE the incoherence. Counts are distinct leads: a lead served under two workflows is one lead to the brand and belongs to both groups, so the groups do not sum to the brand (the same counting-people property the money half carries); a lead served under no workflow is in no group."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("This workflow's per-leg figures and verdict in this scope."),
+  maturity: scopeMaturitySchema.nullable().describe("This workflow's per-leg figures and verdict in this scope.").optional(),
 });
 
 const featureRevenueByWorkflowResponseSchema = z.object({
   costBasis: z.literal("charged").describe("ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."),
   featureSlug: z.string(),
   groupBy: z.literal("workflow"),
-  campaignIdentity: campaignIdentitySchema.optional().describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY every group was totalled over — the family of rows sharing (org, brand, sales funnel, acquisition channel), its stopped ancestors included. A consumer must be able to SEE that the subject is one campaign rather than the whole brand, instead of inferring it from a number that moved. Absent on the brand-wide read."),
+  campaignIdentity: campaignIdentitySchema.describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY every group was totalled over — the family of rows sharing (org, brand, sales funnel, acquisition channel), its stopped ancestors included. A consumer must be able to SEE that the subject is one campaign rather than the whole brand, instead of inferring it from a number that moved. Absent on the brand-wide read.").optional(),
   groups: z.array(revenueWorkflowGroupSchema),
 });
 
@@ -1100,7 +1100,7 @@ const revenueOfferGroupSchema = z.object({
     unpricedReason: pipelineUnpricedReasonSchema.nullable().describe("WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."),
   }),
   costEconomics: revenueCostEconomicsSchema,
-  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict."),  expectedReturn: expectedReturnRef.optional().describe("The offer's EXPECTED return, never empty (see ExpectedReturn)."),
+  maturity: scopeMaturitySchema.nullable().describe("The offer's per-leg figures and verdict.").optional(),  expectedReturn: expectedReturnRef.describe("The offer's EXPECTED return, never empty (see ExpectedReturn).").optional(),
 });
 
 const featureRevenueByOfferResponseSchema = z.object({
@@ -1135,15 +1135,15 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — revenue is brand-scoped."),
-      campaignId: z.string().optional().describe("Optional campaign drill-down (ignored when groupBy=campaignId). HONOURED by groupBy=workflow: each workflow group then states what THAT campaign did and spent through that workflow, over the campaign's whole IDENTITY (the family of rows sharing org+brand+funnel+channel), so a campaign's Workflows page never renders a brand figure under a campaign's name. Combines with ?workflow= on the un-grouped read (one campaign, one workflow). Mutually exclusive with offerId — a campaign already sells exactly one offer (400)."),
-      workflow: z.string().optional().describe("ONE WORKFLOW DRILL-DOWN — the workflow DYNASTY slug ?groupBy=workflow emits as `workflowDynastySlug`, so the row a consumer clicked opens the workflow it named. Every block this body serves is then computed over that workflow alone: funnelSteps, roiHistory, outcomes, costEconomics, spend, the per-signal daily series and the leads. Both legs are attributed by the producer that FROZE them — the workflowSlug lead-service stored on each served lead, and the runs / email-gateway spend filtered by the dynasty's VERSIONED slugs, which this service resolves once and passes to both (never each producer's own workflowDynastySlug lever, which they resolve by asking workflow-service and which fails for a dynasty it no longer describes -- i.e. for a RETIRED lineage, the workflow a 'which of these burned money' question is most often about) — never inferred from the campaign row's CURRENT workflow, which mis-attributes every lead and dollar from before a workflow switch. COMBINES with ?campaignId= (the campaign's Workflows page drills into one of its own rows) and with ?pricing=. The unit is the DYNASTY because that is what every workflow-keyed surface in this service means by 'a workflow'; a slug workflow-service does not describe is its own dynasty of one and is asked for under that exact slug, so every key the grouped read can emit resolves here and a retired lineage still answers with its real money (its return CURVE is the one figure that degrades to null, since runs' cost timeseries offers no slug filter). A workflow the scope never ran is a legitimate EMPTY answer — zero counts, zero spend, a null return — never a 404 and never a fabricated fleet estimate. Mutually exclusive with groupBy (400, reason 'workflow_and_group_by'): one drills into a workflow, the other lists many. The echo rides the response as `workflow`. Omitted → the whole scope → byte-identical to today."),
-      offerId: z.string().optional().describe("Optional OFFER drill-down — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). An offer is one distinct thing the brand sells; brand-service owns the entity and campaign-service stores it on the campaign, so this resolves to the campaigns selling the offer and every figure is computed over exactly those. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. Omitted → the whole brand, byte-identical to today. HONOURED by groupBy=workflow: each workflow group then states only what the campaigns selling THAT offer did and spent through that workflow, so an offer's Workflows table never renders a brand figure under an offer's name — the byte-same offer semantics this parameter has on the un-grouped read and that ?groupBy=offerId uses. A brand selling ONE offer through every campaign with runs reads the same groups either way; an offer whose campaigns never spent through a workflow is an EMPTY groups list, never the brand's. Mutually exclusive with campaignId (400). An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns' — never the brand's own numbers under the offer's label, and never a fabricated zero."),
-      groupBy: z.enum(["campaignId", "workflow", "offerId"]).optional().describe("When 'offerId', return one lean group per OFFER the brand sells (offerId + campaignIds + headline.totalPipelineUsd + costEconomics), each byte-equal to the standalone ?offerId= call, so the brand Overview can rank a brand's offers by what each returns while the brand's headline stays the sum across them. A brand selling ONE offer reads the same figures at both grains; across several the groups do NOT sum to the brand, and a campaign stating no offer is in no group at all (with its spend and its leads) — the same counting-people property the per-campaign and per-workflow grains carry. When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both."),
-      lens: z.enum(["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"]).optional().describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (spend block, costEconomics committedCostUsd, CAC, ROI, cps/cpsm/cpfs). Orthogonal to the ACCOUNTING basis, which is not selectable: committed, always. Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way."),
-      cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
-      windowDays: z.string().optional().describe("CAMPAIGN CARD ROW — requires ?campaignId= (400 reason 'window_requires_campaign' otherwise, and on ?lens=, ?groupBy=, ?workflow= or the actual-cost path). An integer 1..90 = that many UTC days ending today, or 'all' = since the campaign's first activity. Adds `window` (RevenueWindow, the block the offer/brand revenue reads serve) over the campaign identity alone. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'."),
-      leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
+      campaignId: z.string().describe("Optional campaign drill-down (ignored when groupBy=campaignId). HONOURED by groupBy=workflow: each workflow group then states what THAT campaign did and spent through that workflow, over the campaign's whole IDENTITY (the family of rows sharing org+brand+funnel+channel), so a campaign's Workflows page never renders a brand figure under a campaign's name. Combines with ?workflow= on the un-grouped read (one campaign, one workflow). Mutually exclusive with offerId — a campaign already sells exactly one offer (400).").optional(),
+      workflow: z.string().describe("ONE WORKFLOW DRILL-DOWN — the workflow DYNASTY slug ?groupBy=workflow emits as `workflowDynastySlug`, so the row a consumer clicked opens the workflow it named. Every block this body serves is then computed over that workflow alone: funnelSteps, roiHistory, outcomes, costEconomics, spend, the per-signal daily series and the leads. Both legs are attributed by the producer that FROZE them — the workflowSlug lead-service stored on each served lead, and the runs / email-gateway spend filtered by the dynasty's VERSIONED slugs, which this service resolves once and passes to both (never each producer's own workflowDynastySlug lever, which they resolve by asking workflow-service and which fails for a dynasty it no longer describes -- i.e. for a RETIRED lineage, the workflow a 'which of these burned money' question is most often about) — never inferred from the campaign row's CURRENT workflow, which mis-attributes every lead and dollar from before a workflow switch. COMBINES with ?campaignId= (the campaign's Workflows page drills into one of its own rows) and with ?pricing=. The unit is the DYNASTY because that is what every workflow-keyed surface in this service means by 'a workflow'; a slug workflow-service does not describe is its own dynasty of one and is asked for under that exact slug, so every key the grouped read can emit resolves here and a retired lineage still answers with its real money (its return CURVE is the one figure that degrades to null, since runs' cost timeseries offers no slug filter). A workflow the scope never ran is a legitimate EMPTY answer — zero counts, zero spend, a null return — never a 404 and never a fabricated fleet estimate. Mutually exclusive with groupBy (400, reason 'workflow_and_group_by'): one drills into a workflow, the other lists many. The echo rides the response as `workflow`. Omitted → the whole scope → byte-identical to today.").optional(),
+      offerId: z.string().describe("Optional OFFER drill-down — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). An offer is one distinct thing the brand sells; brand-service owns the entity and campaign-service stores it on the campaign, so this resolves to the campaigns selling the offer and every figure is computed over exactly those. Nothing is re-attributed: the campaign is what runs-service and lead-service froze, and the offer only decides which campaigns answer together. Omitted → the whole brand, byte-identical to today. HONOURED by groupBy=workflow: each workflow group then states only what the campaigns selling THAT offer did and spent through that workflow, so an offer's Workflows table never renders a brand figure under an offer's name — the byte-same offer semantics this parameter has on the un-grouped read and that ?groupBy=offerId uses. A brand selling ONE offer through every campaign with runs reads the same groups either way; an offer whose campaigns never spent through a workflow is an EMPTY groups list, never the brand's. Mutually exclusive with campaignId (400). An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns' — never the brand's own numbers under the offer's label, and never a fabricated zero.").optional(),
+      groupBy: z.enum(["campaignId", "workflow", "offerId"]).describe("When 'offerId', return one lean group per OFFER the brand sells (offerId + campaignIds + headline.totalPipelineUsd + costEconomics), each byte-equal to the standalone ?offerId= call, so the brand Overview can rank a brand's offers by what each returns while the brand's headline stays the sum across them. A brand selling ONE offer reads the same figures at both grains; across several the groups do NOT sum to the brand, and a campaign stating no offer is in no group at all (with its spend and its leads) — the same counting-people property the per-campaign and per-workflow grains carry. When 'campaignId', return one lean group per campaign with runs for the brand+feature instead of the single overview. When 'workflow', return one lean group per WORKFLOW DYNASTY the brand has run for the feature, carrying the same four money figures (pipeline revenue, ROI, cost-of-acquisition %, $ per acquisition), on the same single COMMITTED spend basis. Both legs are attributed by the producer that froze them — runs-service's per-workflow spend and the workflowSlug lead-service froze on each served lead — never inferred from the campaign row's current workflow (a campaign switches workflow while keeping its id). A brand whose spend all sits on one workflow reads the same figures at both grains; across several workflows the groups do NOT sum to the brand, because a lead served under two workflows is one lead to the brand and belongs to both.").optional(),
+      lens: z.enum(["signups", "booked-meetings", "website_purchase", "sales", "website_visits", "positive_replies"]).describe("Outcome lens (overview only). Filters leads[] to the lens's engagement signal and adds conversionProbabilityPct per lead: signups=website click (P=visitToSignup), booked-meetings=positive reply (P=replyToMeeting), website_purchase=click and/or positive reply, multi-step self-serve/meeting close (RENAMED from the former `sales` lens; legacy `purchase` spelling still accepted), sales=COMBINED goal — click and/or positive reply, per-lead sale probability = probabilistic OR of visit→paid (P=visitToPaidClient) and reply→paid (P=replyToPaidClient) (a lead converts at most once; ≤1×LTR), website_visits=website click SINGLE STEP (P=visitToPaidClient), positive_replies=positive reply SINGLE STEP (P=replyToPaidClient). headline.totalPipelineUsd = sum of the lensed leads' expectedRevenueUsd. Omitted → response unchanged.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric (spend block, costEconomics committedCostUsd, CAC, ROI, cps/cpsm/cpfs). Orthogonal to the ACCOUNTING basis, which is not selectable: committed, always. Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (counts, rates, pipeline revenue) are identical either way.").optional(),
+      cause: z.string().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`.").optional(),
+      windowDays: z.string().describe("CAMPAIGN CARD ROW — requires ?campaignId= (400 reason 'window_requires_campaign' otherwise, and on ?lens=, ?groupBy=, ?workflow= or the actual-cost path). An integer 1..90 = that many UTC days ending today, or 'all' = since the campaign's first activity. Adds `window` (RevenueWindow, the block the offer/brand revenue reads serve) over the campaign identity alone. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.").optional(),
+      leads: z.enum(["outcomes", "full"]).describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.").optional(),
     }),
   },
   responses: {
@@ -1160,7 +1160,7 @@ registry.registerPath({
 // (audienceId?, workflowDynasty). Replaces the flat per-workflow row + the deleted /candidates endpoint.
 
 const grainBlockSchema = z.object({
-  costBasis: z.enum(["charged", "incurred"]).optional().describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there)."),
+  costBasis: z.enum(["charged", "incurred"]).describe("Which accounting question THIS grain answers. crossOrg = \"incurred\": the fleet PERFORMANCE benchmark, where spend the platform comped counts at full value (one org being comped must not make a workflow look cheaper to everybody else). brand / audience = \"charged\": this customer's own billed money, where comped spend is absent. Stated per grain because this payload is the one place both questions sit side by side under the same words. Absent on an UNMEASURED row (estimatesByGrain is empty there).").optional(),
   evidence: z.object({
     spentUsd: z.number().describe("Spend attributed to this grain (USD). Always > 0 (a spent-0 grain is omitted from estimatesByGrain)."),
     observedContacted: z.number(),
@@ -1185,11 +1185,11 @@ const grainBlockSchema = z.object({
     outcomeCount: z.number().nullable().describe("How many of the leg's own outcomes this grain's evidence accounts for. A raw OBSERVATION on an entry leg (outcomeObserved=true); otherwise the driver's observed count walked through the funnel's rates. Null when unpriceable. A measured 0 is a real answer."),
     outcomeObserved: z.boolean().describe("TRUE ⟺ the leg's step IS the observed signal (an ENTRY leg), so outcomeCount was COUNTED rather than projected."),
     spentUsd: z.number().describe("The spend behind them, at this grain — the third figure a panel comparing grains needs and may not derive."),
-  }).optional().describe("Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged."),
-  basis: z.enum(["flash", "mature"]).optional().describe("WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it)."),
-  flash: outcomeFiguresSchema.nullable().optional().describe("This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted."),
-  mature: outcomeFiguresSchema.nullable().optional().describe("This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros."),
-  isMature: z.boolean().nullable().optional().describe("This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made."),
+  }).describe("Present ⟺ the request named a `?leg=`. WHAT THIS GRAIN'S EVIDENCE SAYS ABOUT THE LEG'S OWN STEP: a leg-keyed read is priced on the step the leg MOVES A LEAD TO, never on the step its basis funnel is named after (an entry leg's outcome is several rungs above that). Absent on every funnel- or goal-keyed request, whose bodies are byte-unchanged.").optional(),
+  basis: z.enum(["flash", "mature"]).describe("WHICH VERSION this block's own fields (evidence, unitCosts, legOutcome, resolvedOutcomeCount, projected) are on — present ⟺ the request named a `?leg=`. The ROW decides (row.maturity.basis): `mature` for a workflow mature on the fleet of its leg (its young spend counts nowhere), `flash` otherwise (its exploration phase, priced exactly as before). One exception: a grain (offer / brand / campaign / crossOrg) of a MATURE row that holds no mature evidence yet — a scope younger than the leg's cut — is still served, on its FLASH block, with `basis: \"flash\"` and `isMature: false`; the workflow's fleet verdict never removes a grain that has evidence. The audience grain of a mature row stays mature-only (campaign-service's audience draw reads it).").optional(),
+  flash: outcomeFiguresSchema.nullable().describe("This grain's FLASH figures (everything to date), observed. Present ⟺ `?leg=`. Null when the leg's outcome cannot be counted.").optional(),
+  mature: outcomeFiguresSchema.nullable().describe("This grain's MATURE figures (runs started before the leg's cutoff, over the outcomes of the leads they served), observed. Present ⟺ `?leg=`. Null when the mature cut could not be made; a cut that holds nothing reads zeros.").optional(),
+  isMature: z.boolean().nullable().describe("This grain's MATURE outcomes against the leg's outcomesRequired — what a surface tags `Learning` on per audience / campaign. Present ⟺ `?leg=`. Null when the mature cut could not be made.").optional(),
 });
 
 const resolvedBlockSchema = z.object({
@@ -1226,37 +1226,37 @@ const workflowProjectionRowSchema = z.object({
   audienceId: z.string().nullable().describe("null = brand-level row (crossOrg + brand grains). Non-null = one row per (active audience × workflow dynasty) couple that ran (adds the audience grain)."),
   workflow: z.object({ workflowDynastySlug: z.string(), workflowDynastyName: z.string().nullable() }),
   estimatesByGrain: z.object({
-    crossOrg: grainBlockSchema.optional().describe("Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend."),
-    brand: grainBlockSchema.optional().describe("The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow."),
-    campaign: grainBlockSchema.optional().describe("The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free."),
-    offer: grainBlockSchema.optional().describe("The same path narrowed to the OFFER the named campaign sells — every campaign of this channel selling it. Present ONLY on a leg-keyed read (`?leg=`) that named a `?campaignId=` whose campaign states an offer; omitted when that offer spent 0 on the workflow, or when campaign-service could not be read. Same readers, same counted outcomes and the same cascade floor as the brand grain (floored against it), so on a brand selling one offer `offer` and `brand` state the SAME figures; a difference between them only ever means a difference in scope. A STATED grain: it never enters `resolved`, `rank` or the recommendation, and the campaign grain stays floored against the brand."),
-    audience: grainBlockSchema.optional().describe("Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0."),
+    crossOrg: grainBlockSchema.describe("Fleet-wide unit costs (same source as /public/stats/best). Present for any dynasty with real fleet spend.").optional(),
+    brand: grainBlockSchema.describe("The same path scoped to this brandId. Omitted when the brand spent 0 on the workflow.").optional(),
+    campaign: grainBlockSchema.describe("The same path narrowed to ONE CAMPAIGN IDENTITY (org × brand × sales funnel × acquisition channel — every member, not the newest stored row). Present ONLY when the request named a `?campaignId=`, and omitted when that campaign spent 0 on the workflow. Floored against the brand grain, so a campaign that has barely spent reads its brand's price rather than looking free.").optional(),
+    offer: grainBlockSchema.describe("The same path narrowed to the OFFER the named campaign sells — every campaign of this channel selling it. Present ONLY on a leg-keyed read (`?leg=`) that named a `?campaignId=` whose campaign states an offer; omitted when that offer spent 0 on the workflow, or when campaign-service could not be read. Same readers, same counted outcomes and the same cascade floor as the brand grain (floored against it), so on a brand selling one offer `offer` and `brand` state the SAME figures; a difference between them only ever means a difference in scope. A STATED grain: it never enters `resolved`, `rank` or the recommendation, and the campaign grain stays floored against the brand.").optional(),
+    audience: grainBlockSchema.describe("Audience-attributed evidence (audience-WIDE, same across the audience's workflow rows — the fleet does not tag outcomes per audience×workflow). Present only on audienceId != null rows with audience spend > 0.").optional(),
   }).describe("A grain block is included ONLY when that grain has spentUsd > 0. Always EMPTY on an UNMEASURED row (measured=false) — nothing is borrowed from the workflows that do have evidence."),
   resolved: resolvedBlockSchema,
-  rank: z.number().optional().describe("THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Rank 1 is what a run takes and IS `recommendedWorkflowDynastySlug`; every row of one dynasty carries the same number; no consumer re-derives it. THE LEG ORDER (one computation, also served fleet-wide by `/public/stats/leg-workflow-ranking`; owner rule 2026-09-30 / 2026-10-01): selectable workflows (`legAssignment.selectable`, not retired) first, then every other in the same order among themselves. Within each: (1) LEARNING workflows (no mature price) whose EXPLORE PRICE (fleet spend on the leg ÷ max(fleet outcomes, 1): $0 for a workflow never run) is below the best mature price, cheapest first (not yet proven worse: worth exploring); (2) MATURE workflows, finest grain first (mature on the OFFER when the campaign states one, then the BRAND, then the FLEET `crossOrg`; `<grain>.mature.costPerOutcomeUsd` where `<grain>.isMature`), ascending inside a grain: the first is the best mature one; (3) the other learning workflows, cheapest explore price first. The slug breaks ties. Under `?maximize=conversionRate` the general order stands (measured rate desc, never-run last)."),
-  scopeRank: z.number().optional().describe("THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither."),
+  rank: z.number().describe("THIS WORKFLOW'S POSITION IN THE ORDER THIS SERVICE SELECTS ON — 1-based, present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). Rank 1 is what a run takes and IS `recommendedWorkflowDynastySlug`; every row of one dynasty carries the same number; no consumer re-derives it. THE LEG ORDER (one computation, also served fleet-wide by `/public/stats/leg-workflow-ranking`; owner rule 2026-09-30 / 2026-10-01): selectable workflows (`legAssignment.selectable`, not retired) first, then every other in the same order among themselves. Within each: (1) LEARNING workflows (no mature price) whose EXPLORE PRICE (fleet spend on the leg ÷ max(fleet outcomes, 1): $0 for a workflow never run) is below the best mature price, cheapest first (not yet proven worse: worth exploring); (2) MATURE workflows, finest grain first (mature on the OFFER when the campaign states one, then the BRAND, then the FLEET `crossOrg`; `<grain>.mature.costPerOutcomeUsd` where `<grain>.isMature`), ascending inside a grain: the first is the best mature one; (3) the other learning workflows, cheapest explore price first. The slug breaks ties. Under `?maximize=conversionRate` the general order stands (measured rate desc, never-run last).").optional(),
+  scopeRank: z.number().describe("THIS ROW'S POSITION AMONG THE ROWS IT IS COMPARABLE WITH — 1-based, present ⟺ `rank` is (the request named a `?leg=`). `rank` is scored over EVERY row a dynasty has, so the cell that won it is usually not the cell on screen: measured in prod 2026-09-13 the rank-1 workflow read $175 on its campaign row and $20.35 on the audience cell that crowned it, which makes a column ordered on `rank` look arbitrary. `scopeRank` orders the rows sharing this row's `audienceId` (null = the brand / campaign column) on their OWN resolved metric, under the same `?maximize=` objective, the same three groups and the same slug tie-break — a TOTAL order per scope, with non-selectable workflows (`legAssignment.selectable: false`) after every selectable one and never-run workflows last within each. The two ranks legitimately DISAGREE: `rank` says what we would put the customer on next, `scopeRank` says what the column they are reading says. Serve both; derive neither.").optional(),
   legAssignment: z.object({
     state: z.enum(["active", "deprecated", "unassigned"]).describe("`active` = the owner assigned this workflow to the leg; a new run may pick it here. `deprecated` = retired ON THIS LEG ONLY: no new run picks it here, its history stays on every stats read. `unassigned` = never put on this leg, so never selectable on it (a new workflow dynasty is on no leg until assigned)."),
     selectable: z.boolean().describe("TRUE ⟺ state is `active` AND workflow-service runs a version of the dynasty (one version active on both of its status axes). The one condition under which the selector may pick this workflow on this leg. An assigned workflow whose every version is retired reads `state: active`, `selectable: false`, and says so in `reason`."),
     reason: z.string().nullable().describe("Why it is not selectable, in a sentence a human reads. Null ⟺ selectable."),
     decidedBy: z.string().nullable().describe("Who decided the current state (`seed:served-a-lead-on-this-leg` for the initial seed). Null ⟺ unassigned."),
     decidedAt: z.string().nullable().describe("When (ISO). Null ⟺ unassigned."),
-  }).optional().describe("WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG THE READ NAMED — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). A STATED assignment per (channel, leg, workflow dynasty), written through PUT /internal/workflow-leg-assignments, never derived from the workflow's model or price. The row is served whatever the state, with its figures and history unchanged, but the ORDERS act on it: a non-selectable workflow ranks after every selectable one in `rank` and `scopeRank`, and is never `recommendedWorkflowDynastySlug`. workflow-service's global dynasty status still wins (a globally deprecated dynasty is not enumerated at all)."),
+  }).describe("WHETHER THIS WORKFLOW IS ASSIGNED TO THE LEG THE READ NAMED — present ⟺ the request named a `?leg=` (every funnel- and goal-keyed body is byte-unchanged). A STATED assignment per (channel, leg, workflow dynasty), written through PUT /internal/workflow-leg-assignments, never derived from the workflow's model or price. The row is served whatever the state, with its figures and history unchanged, but the ORDERS act on it: a non-selectable workflow ranks after every selectable one in `rank` and `scopeRank`, and is never `recommendedWorkflowDynastySlug`. workflow-service's global dynasty status still wins (a globally deprecated dynasty is not enumerated at all).").optional(),
   modelEligibility: z.object({
     modelAlias: z.string().nullable().describe("The chat-service model alias this workflow's DAG names (display only; it decides nothing). NULL when its DAG names none."),
     modelTier: z.null().describe("Always null: the model-tier rule is retired."),
     eligible: z.boolean().describe("=== legAssignment.selectable."),
     ineligibleReason: z.string().nullable().describe("=== legAssignment.reason."),
     unknownTierReason: z.null().describe("Always null: the model-tier rule is retired."),
-  }).optional().describe("TRANSITIONAL, DEPRECATED — the pre-assignment verdict block kept byte-compatible for readers not yet on `legAssignment` (campaign-service filters on `eligible`). `eligible` is now the leg assignment (active ⟺ true). Removed once every reader has moved."),
+  }).describe("TRANSITIONAL, DEPRECATED — the pre-assignment verdict block kept byte-compatible for readers not yet on `legAssignment` (campaign-service filters on `eligible`). `eligible` is now the leg assignment (active ⟺ true). Removed once every reader has moved.").optional(),
   measured: z.boolean().describe("TRUE ⟺ the row rests on real evidence (≥1 grain with spend) — every row an established channel serves. FALSE marks a row for a workflow this channel has measured NOTHING for: estimatesByGrain is empty and resolved carries the EXPLORE ALLOWANCE (a cost floor, no return), so a serving consumer that ranks on resolved.costPerOutcomeUsd can REACH an active workflow with no history — which is the only way it can earn a first run — while every display / benchmark surface filters on this flag instead of probing for nulls. Unmeasured rows appear beside measured ones in an established channel (the mixed case): an active dynasty with no grain anywhere is offered here, never recommended. When the channel has measured nothing whatsoever there is no allowance to state either and every resolved figure is null."),
-  availableToContactCount: z.number().int().nullable().optional().describe("HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body."),
+  availableToContactCount: z.number().int().nullable().describe("HOW MANY PEOPLE THIS ROW'S AUDIENCE CAN STILL BE SERVED — human-service's own `availableToContactCount` (pool members not suppressed inside the brand's 3-month re-contact window), read LIVE on every request, never from the cached evidence. Present on every audience row, absent on the brand / campaign column (audienceId null). `0` = the producer says the audience is served out, so a consumer picking an audience for a serve can skip it while another audience still has people (features-service#1035). `null` = we could not read it (human-service unreachable, or it stated no count) — treat as unknown, never as 0. Moves no figure and no order on this body.").optional(),
   maturity: z.object({
     basis: z.enum(["flash", "mature"]).describe("The version this row's estimatesByGrain and resolved are priced on — and therefore what campaign-service ranks. `mature` ⟺ the workflow is MATURE on the fleet of its leg (isMature) and a mature ladder exists; `flash` otherwise."),
     isMature: z.boolean().nullable().describe("The WORKFLOW's verdict on the fleet of its leg (every org's campaigns performing it): at least the leg's outcomesRequired MATURE outcomes. Null when the cut could not be made."),
     matureOutcomes: z.number().nullable().describe("The workflow's mature outcomes of the leg's step on the fleet. Null when the cut could not be made."),
     resolved: maturityPairSchema(resolvedFiguresSchema).describe("The row's price on BOTH versions, so a consumer compares them without re-deriving anything. resolved (the block above) equals the one named by `basis`."),
-  }).optional().describe("THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried)."),
+  }).describe("THE ROW'S MATURITY (features-service#1196) — present ⟺ the request named a `?leg=`. A mature workflow's young spend no longer inflates its price while its outcomes are still on their way; a workflow that is not yet mature is priced exactly as before (flash, with the cascade floor that lets it be tried).").optional(),
   priceByGrain: z
     .object({
       crossOrg: grainHeldPricesSchema.optional(),
@@ -1265,9 +1265,9 @@ const workflowProjectionRowSchema = z.object({
       campaign: grainHeldPricesSchema.optional(),
       audience: grainHeldPricesSchema.optional(),
     })
-    .optional()
-    .describe("THE PRICE THIS SERVICE HOLDS FOR THE WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺ the request named a `?leg=`. Grains listed: crossOrg and brand on every row, campaign on a `?campaignId=` read, offer where the read has an offer grain (brand-level rows), audience on audience rows. A grain absent from estimatesByGrain (no own spend) or with no evidence on one basis is still priced, inherited from its parent with its provenance stated, so a page reads one cell per (grain, basis) and never re-walks the cascade. estimatesByGrain (observed + floored blocks), resolved, rank and the recommendation are unchanged. An unmeasured (explore-allowance) row holds nothing at any grain (`no_evidence`): the allowance is the price of a first try, not a price of the workflow. On the actual-cost read each held price also carries `vendorCostKnown`."),
-  retired: z.literal(true).optional().describe("TRUE on a row for a RETIRED lineage — a workflow dynasty with no active version left (or a slug the catalogue does not describe) that this brand or campaign still spent on; absent on every other row. It carries its real brand / campaign evidence so the per-workflow rows add up to the scope's own total (spend and positive replies), and it can never be put forward: `resolved` is all null, so it is unrankable, never recommended, and skipped by any consumer selecting on resolved.costPerOutcomeUsd."),
+    .describe("THE PRICE THIS SERVICE HOLDS FOR THE WORKFLOW AT EVERY GRAIN THE ROW'S CASCADE COVERS, ON BOTH BASES — present ⟺ the request named a `?leg=`. Grains listed: crossOrg and brand on every row, campaign on a `?campaignId=` read, offer where the read has an offer grain (brand-level rows), audience on audience rows. A grain absent from estimatesByGrain (no own spend) or with no evidence on one basis is still priced, inherited from its parent with its provenance stated, so a page reads one cell per (grain, basis) and never re-walks the cascade. estimatesByGrain (observed + floored blocks), resolved, rank and the recommendation are unchanged. An unmeasured (explore-allowance) row holds nothing at any grain (`no_evidence`): the allowance is the price of a first try, not a price of the workflow. On the actual-cost read each held price also carries `vendorCostKnown`.")
+    .optional(),
+  retired: z.literal(true).describe("TRUE on a row for a RETIRED lineage — a workflow dynasty with no active version left (or a slug the catalogue does not describe) that this brand or campaign still spent on; absent on every other row. It carries its real brand / campaign evidence so the per-workflow rows add up to the scope's own total (spend and positive replies), and it can never be put forward: `resolved` is all null, so it is unrankable, never recommended, and skipped by any consumer selecting on resolved.costPerOutcomeUsd.").optional(),
 });
 
 const workflowProjectionEconomicsSchema = z.object({
@@ -1277,10 +1277,10 @@ const workflowProjectionEconomicsSchema = z.object({
   meetingToClosePct: z.number(),
   visitToClosePct: z.number(),
   replyToMeetingPct: z.number(),
-  visitToPaidClientPct: z.number().optional().describe("Single-step visit→paid rate — present when the queried goal is website_visits."),
-  replyToPaidClientPct: z.number().optional().describe("Single-step reply→paid rate — present when the queried goal is positive_replies."),
-  visitToFormSubmissionPct: z.number().optional().describe("Two-step visit→form rate — present when the queried goal is form_submissions."),
-  formSubmissionToPaidClientPct: z.number().optional().describe("Two-step form→paid rate — present when the queried goal is form_submissions."),
+  visitToPaidClientPct: z.number().describe("Single-step visit→paid rate — present when the queried goal is website_visits.").optional(),
+  replyToPaidClientPct: z.number().describe("Single-step reply→paid rate — present when the queried goal is positive_replies.").optional(),
+  visitToFormSubmissionPct: z.number().describe("Two-step visit→form rate — present when the queried goal is form_submissions.").optional(),
+  formSubmissionToPaidClientPct: z.number().describe("Two-step form→paid rate — present when the queried goal is form_submissions.").optional(),
 }).describe("The economics the read is priced on — the OFFER's terms (the priced funnels' effective leg rates, the offer's stated lifetime revenue), shown ONCE (same across grains). Includes the queried goal's resolved single-step / form-submission rates.");
 
 const salesFunnelKeyEnum = z.enum(["sales_meetings_from_conversation", "sales_meetings_from_website", "website_purchases", "form_magnet", "sales_from_conversation", "sales_meetings_from_ads", "lead_forms_from_ads", "sales_from_website"]);
@@ -1293,7 +1293,7 @@ const legStepSchema = z.object({ key: z.string(), label: z.string(), description
 const workflowProjectionResponseSchema = z.object({
   featureSlug: z.string(),
   maximize: z.enum(["return", "conversionRate"]).describe("WHAT THIS ANSWER WAS RANKED UNDER — always present, so a consumer can never present a recommendation without knowing what it optimised for. `return` is the default and what every caller that names nothing gets. Distinct from `objective`/`goal`, which name the OUTCOME being bought rather than the thing being maximised."),
-  funnelKey: salesFunnelKeyEnum.optional().describe("The SALES FUNNEL this projection was priced on — present ONLY on a `?leg=` read (the funnel the leg was priced through, = leg.basisFunnelKey). It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body."),
+  funnelKey: salesFunnelKeyEnum.describe("The SALES FUNNEL this projection was priced on — present ONLY on a `?leg=` read (the funnel the leg was priced through, = leg.basisFunnelKey). It is the authoritative answer to what was priced: the two meeting funnels carry the SAME `goal`/`objective` echo and DIFFERENT numbers, which is why the goal was retired as an identity. Absent on a goal-keyed request, so an existing consumer reads a byte-identical body.").optional(),
   objective: z.enum(["meeting-booked", "self-serve", "signup", "website_purchase", "sales", "website_visits", "positive_replies", "form_submissions", "whatsapp_conversations"]).describe("Canonical SNAKE echo of the requested goal (defaults to meeting-booked). Accepts both `goal` (camel) and `objective` (snake/kebab) request params. website_purchase is the RENAMED former `purchase` goal (multi-step self-serve/meeting close; legacy `purchase` input still accepted). sales is the COMBINED goal (a paying client won via EITHER visit→paid OR reply→paid, valued at CLTV; cost-per-outcome == cost-per-sale). whatsapp_conversations is a click-outcome goal (cost-per-outcome = CPC; no paid-client/ROI economics — those read null). A present-but-unrecognised goal fails loud (400)."),
   goal: z.enum(["meetingBooked", "signup", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Canonical CAMEL echo (= brand-service CurrentGoal). self-serve/signup both echo signup. websitePurchase = renamed former purchase goal; sales = combined-sales goal."),
   leg: z.object({
@@ -1310,7 +1310,7 @@ const workflowProjectionResponseSchema = z.object({
       measured: z.boolean().describe("Whether the recommended row rests on real evidence at all."),
       resolvedOutcomeCount: z.number().nullable().describe("How many of the basis funnel's outcomes were actually observed behind the recommended workflow — HOW MUCH the recommendation rests on. A handful is noise, and the caller is owed the number rather than a verdict. Null is 'we could not count this', never 0."),
     }).describe("What the recommendation rests on, in the vocabulary the rows already use."),
-  }).optional().describe("Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been."),
+  }).describe("Present ⟺ the request named a LEG (`?leg=`), and it states which of the brand's declared funnels the leg was priced through and what that answer rests on. Absent on every funnel- or goal-keyed request, so those bodies are byte-identical to what they have always been.").optional(),
   campaignIdentity: z.object({
     key: z.string(),
     funnelKey: z.string().nullable(),
@@ -1318,7 +1318,7 @@ const workflowProjectionResponseSchema = z.object({
     campaignIds: z.array(z.string()).describe("Every member of the identity, the stopped ancestors included."),
     liveCampaignIds: z.array(z.string()),
     representativeId: z.string().describe("The member a consumer renders the identity's line on — the live campaign when there is one."),
-  }).optional().describe("Present ⟺ the request named a `?campaignId=`. WHAT THE CAMPAIGN GRAIN ANSWERED FOR — the byte-same block /revenue?campaignId= and /audience-stats carry, so the fleet speaks ONE vocabulary about one campaign. The figures are totalled over the whole IDENTITY, never over the newest stored row of a campaign that has been running for weeks."),
+  }).describe("Present ⟺ the request named a `?campaignId=`. WHAT THE CAMPAIGN GRAIN ANSWERED FOR — the byte-same block /revenue?campaignId= and /audience-stats carry, so the fleet speaks ONE vocabulary about one campaign. The figures are totalled over the whole IDENTITY, never over the newest stored row of a campaign that has been running for weeks.").optional(),
   observedPicks: z.object({
     last: z.object({
       campaignId: z.string().describe("The identity member the trigger ran under — a family has several and they interleave, so this says which stored row recorded it."),
@@ -1330,12 +1330,12 @@ const workflowProjectionResponseSchema = z.object({
     }).nullable().describe("The most recent pick across the WHOLE identity. Null ⟺ the campaign has never triggered — a real, empty answer, distinct from a null block."),
     recent: z.array(z.any()).describe("The most recent picks, newest first, at most the requested window — same shape as `last`. Merged across every member of the identity, so a pick made under a stopped ancestor is in the list."),
     truncated: z.boolean().describe("TRUE ⟺ the identity has more triggers than the window states, i.e. the list is a window rather than the whole history."),
-  }).nullable().optional().describe("WHAT ACTUALLY RAN — the (workflow, audience) cells the bandit picked, read LIVE from the runs ledger that recorded them at write time. Present ⟺ the request named a `?campaignId=` and a non-zero `?picks=`; absent on every funnel- or goal-keyed body, so campaign-service's production workflow selection is untouched. It is emphatically NOT campaign-service's `campaigns.workflow_slug`, which is the workflow the campaign was CONFIGURED with at creation and is never rewritten when the bandit switches — badging that as 'running' states a configuration where a reader expects a fact (prod 2026-09-14: one campaign's row said `…-rudder-v3`, which had never served a lead, while `…-lithium-v6` had served 2,439). NULL is 'we could not read this' (runs unreachable), never the configured workflow and never a fabricated pick."),
+  }).nullable().describe("WHAT ACTUALLY RAN — the (workflow, audience) cells the bandit picked, read LIVE from the runs ledger that recorded them at write time. Present ⟺ the request named a `?campaignId=` and a non-zero `?picks=`; absent on every funnel- or goal-keyed body, so campaign-service's production workflow selection is untouched. It is emphatically NOT campaign-service's `campaigns.workflow_slug`, which is the workflow the campaign was CONFIGURED with at creation and is never rewritten when the bandit switches — badging that as 'running' states a configuration where a reader expects a fact (prod 2026-09-14: one campaign's row said `…-rudder-v3`, which had never served a lead, while `…-lithium-v6` had served 2,439). NULL is 'we could not read this' (runs unreachable), never the configured workflow and never a fabricated pick.").optional(),
   declaredFunnelsUnresolved: z.object({
     reason: z.literal("several_offers").describe("Machine-readable, so no consumer matches on prose. The only value today."),
     message: z.string().describe("brand-service's own sentence, rendered verbatim so the two services say one thing."),
     offers: z.array(z.object({ offerId: z.string(), name: z.string().nullable() })).describe("The offers brand-service refused to choose between — what a consumer needs to let someone pick one."),
-  }).optional().describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged."),
+  }).describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged.").optional(),
   economics: workflowProjectionEconomicsSchema.nullable().describe("Null when the read prices on nothing (no priced funnel, or the offer states no lifetime revenue) — rows still emit with null projected."),
   rows: z.array(workflowProjectionRowSchema),
   recommendedWorkflowDynastySlug: z.string().nullable().describe("Dynasty of the MEASURED row that best answers what the caller is maximising: under `maximize=return` (the default) the LOWEST resolved.costPerOutcomeUsd, under `maximize=conversionRate` the HIGHEST resolved.conversionRatePct. The same catalogue legitimately ranks differently under the two, so the two answers may differ for one (brand, channel, leg). An unmeasured row (explore allowance) is reachable but never recommended under either. On a `?leg=` read a workflow not assigned active on the leg (`legAssignment.selectable: false`) is never recommended either. On a MISSION read (`?leg=&campaignId=` whose campaign states an offer) whose rank-1 workflow holds a mature price (offer, else brand, else fleet), it is that rank-1 workflow, so rank 1 and the recommendation never disagree. On a `?leg=` read with no priced workflow but a selectable one, it is the rank-1 selectable workflow, flagged `recommendationBasis: \"cold_start\"`. Null when none has usable data (funnel/goal reads), or when no workflow is assigned active (then `recommendationWithheldReason` says so)."),
@@ -1351,17 +1351,17 @@ const workflowProjectionResponseSchema = z.object({
       source: z.enum(["sales_funnel", "pipe_default", "retired_play"]).describe("`sales_funnel` = the campaign's sales funnel names this play on the pipe; `pipe_default` = it names none (or the read names no campaign); `retired_play` = it names a play staff retired from the pipe, so it runs the pipe's default play (PLAY-RETIRE-1022)."),
       allowedWorkflowCount: z.number().int().describe("Workflows of the rows still selectable under the play. 0 = nothing may run it: the run waits, never falls back to another workflow."),
     })
-    .optional()
-    .describe("Owner 2026-10-13, leg reads only, present ⟺ the pipe catalogues plays (`GET /internal/catalogue/plays`). The campaign's play rules workflows out: a ruled-out workflow reads `legAssignment.selectable: false` (+ `reason`) and `modelEligibility.eligible: false`, so it is never ranked above, recommended or picked; figures never move."),
-  recommendationWithheldReason: z.literal("no_eligible_workflow").optional().describe("Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow."),
-  recommendationBasis: z.enum(["cold_start", "explore"]).optional().describe("Present ⟺ a `?leg=` read recommends a workflow that has NO price yet. `explore`: the leg order (see `rank`) put it first because another workflow on the leg is priced and this one is not yet proven worse than the best mature one (its explore price, fleet spend on the leg ÷ max(outcomes, 1), $0 if it never ran, is below the best mature price). `cold_start`: no workflow on the leg is priced; `recommendedWorkflowDynastySlug` is the rank-1 selectable workflow so a consumer can START the leg. Either way its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing."),
+    .describe("Owner 2026-10-13, leg reads only, present ⟺ the pipe catalogues plays (`GET /internal/catalogue/plays`). The campaign's play rules workflows out: a ruled-out workflow reads `legAssignment.selectable: false` (+ `reason`) and `modelEligibility.eligible: false`, so it is never ranked above, recommended or picked; figures never move.")
+    .optional(),
+  recommendationWithheldReason: z.literal("no_eligible_workflow").describe("Present ⟺ a `?leg=` read has workflows but NONE is assigned active on the leg (`legAssignment`). `recommendedWorkflowDynastySlug` is then null by refusal, never a fall back to an unassigned or deprecated workflow.").optional(),
+  recommendationBasis: z.enum(["cold_start", "explore"]).describe("Present ⟺ a `?leg=` read recommends a workflow that has NO price yet. `explore`: the leg order (see `rank`) put it first because another workflow on the leg is priced and this one is not yet proven worse than the best mature one (its explore price, fleet spend on the leg ÷ max(outcomes, 1), $0 if it never ran, is below the best mature price). `cold_start`: no workflow on the leg is priced; `recommendedWorkflowDynastySlug` is the rank-1 selectable workflow so a consumer can START the leg. Either way its cost fields stay null (no invented price) and `recommendedBudgetUsd` is null. Absent whenever a priced workflow is recommended; a leg with no selectable workflow still recommends nothing.").optional(),
   maturity: legMaturityRuleSchema.extend({
     legKey: z.string().nullable().describe("The leg the rule is for."),
     cutoffIso: z.string().nullable().describe("Runs started, and leads served, before this instant (UTC midnight of today − durationDays) are mature. Null on a 0-day leg, where mature ≡ flash."),
     measured: z.boolean().describe("TRUE ⟺ the mature cut could be made. FALSE ⟹ every row is priced on flash, as before."),
     unmeasuredReason: z.enum(["serve_dates_unavailable", "mature_evidence_unavailable", "leg_scope_unavailable"]).nullable().describe("Why the cut could not be made: serve_dates_unavailable = a lead population states no serve date (lead-service's lastServedAt), so young leads could not be told from mature ones; mature_evidence_unavailable = a mature cost or person read failed on this refresh (the answer degrades to flash rather than failing); leg_scope_unavailable = the leg's campaigns could not be read."),
-  }).optional().describe("THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it."),
-  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).optional().describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience: no audience row exists, but every active workflow of the channel still answers its brand-level row (`audienceId: null`, unmeasured unless the fleet measured it), so a pipe on a trigger still gets its fleet-ranked workflow (rank 1 = the pick). `no_active_workflows` = this feature has no active workflow (rows is empty). A `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`) answers 200 with one unmeasured brand-level row per workflow ASSIGNED to the pipe (rank 1 recommended as `cold_start`), `no_spend_recorded`, or `rows: []` + `no_active_workflows` when nothing is assigned; no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false."),
+  }).describe("THE LEG'S MATURITY RULE, echoed on a leg-keyed answer (present ⟺ `?leg=`), and whether this answer could apply it.").optional(),
+  unmeasuredReason: z.enum(["no_active_audiences", "no_active_workflows", "no_spend_recorded"]).describe("Present ⟺ measured=false, and it is the whole point of the field: an empty `rows` must never be read as 'this brand has nobody to contact'. `no_active_audiences` = the brand is working no audience: no audience row exists, but every active workflow of the channel still answers its brand-level row (`audienceId: null`, unmeasured unless the fleet measured it), so a pipe on a trigger still gets its fleet-ranked workflow (rank 1 = the pick). `no_active_workflows` = this feature has no active workflow (rows is empty). A `?leg=` naming a pipe of a channel that sells no reading sales funnel (sourcing `start_to_lead_found`, AI Instant Call `conversation_to_booking_call`) answers 200 with one unmeasured brand-level row per workflow ASSIGNED to the pipe (rank 1 recommended as `cold_start`), `no_spend_recorded`, or `rows: []` + `no_active_workflows` when nothing is assigned; no `leg` block, no economics, never a 400/404. `no_spend_recorded` = the brand HAS active audiences and this channel HAS active workflows, it has simply never run — rows then enumerate every (active audience × active workflow) couple, all measured=false.").optional(),
 });
 
 registry.register("WorkflowProjectionResponse", workflowProjectionResponseSchema);
@@ -1382,17 +1382,17 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — conversion economics are brand-scoped."),
-      audienceId: z.string().optional().describe("Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow."),
-      goal: z.string().optional().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics."),
-      objective: z.string().optional().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted."),
-      leg: z.string().optional().describe("ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis the audience-stats brand-level read combines on, so a leg yields ONE answer whichever funnel the caller had in mind. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. An unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared')."),
-      campaignId: z.string().optional().describe("ONE CAMPAIGN to narrow the ladder to, so a screen comparing grains — this campaign, this brand, every client we run the channel for — reads them all from ONE answer instead of stitching the campaign half on from a second endpoint. Answered for the campaign's whole IDENTITY. Only answerable BESIDE a `?leg=` (a campaign is bought for exactly one leg); sent without one it is a 400 `campaign_requires_leg`, never silently ignored."),
-      offerId: z.string().optional().describe("The OFFER a `?leg=` read is priced for, for a (brand, offer) pair with NO campaign yet (a brand being set up: the customer picks one offer and asks what each leg would cost before any campaign exists). The leg is priced through that offer's terms, so a brand selling several offers answers instead of a 409 `several_offers`; the grains are the ones a campaign-less read resolves (brand, falling back to the fleet), and the recommended workflow is served as usual. Only answerable beside a `?leg=` (400 `offer_requires_leg`), and mutually exclusive with `?campaignId=`, which already names its offer (400 `offer_and_campaign`). An id naming no offer of the brand is a 404 `offer_not_found`. Omitted → byte-identical to before."),
-      picks: z.string().optional().describe("How many OBSERVED PICKS `observedPicks.recent` states — what actually ran, newest first, read live from the runs ledger. Whole number, 0..200; omitted → 50. Only ever read beside a `?campaignId=` (the block is a fact about ONE campaign's own triggers), and `0` is a real answer that spends no read at all. Bounded so a debug panel cannot ask for a campaign's whole history — that history is thousands of triggers. An unreadable or out-of-range value is a 400 (reason='picks_unrecognised'), never clamped into a window the caller did not ask for."),
-      maximize: z.string().optional().describe(MAXIMIZE_DESC_PROJECTION),
-      maximise: z.string().optional().describe("Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical."),
-      budgetUsd: z.string().optional().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface)."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the discounted figures, sourced from runs-service's FROZEN net cost amounts at every grain of the crossOrg→brand→audience ladder (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. Non-money fields (counts, rates, economics rates) are identical either way."),
+      audienceId: z.string().describe("Optional audience UUID context (echoed via audience rows). Audience rows always enumerate ALL of the brand's active audiences that ran the workflow.").optional(),
+      goal: z.string().describe("Optimization goal. Accepts camel (websiteVisit/positiveReply/formSubmission/meetingBooked/signup/websitePurchase/sales/whatsappConversation), snake (website_visits/positive_replies/form_submissions/website_purchase/whatsapp_conversations), kebab, the legacy `purchase` spelling (→ websitePurchase), `combinedSales` (→ sales), and the whatsapp display value ('WhatsApp conversations'). Also accepted via `objective`. Defaults to meeting-booked; a present-but-unrecognised goal fails loud (400). websitePurchase = renamed former purchase (multi-step close). sales = COMBINED goal (paying client via either visit→paid OR reply→paid, valued at CLTV). whatsapp_conversations is a click-outcome goal — cost-per-outcome = CPC, no paid-client/ROI economics.").optional(),
+      objective: z.string().describe("Alias of `goal` (snake/kebab spelling). Either param is accepted.").optional(),
+      leg: z.string().describe("ONE LEG of a sales funnel — the leg a budget is being put behind — named with its single canonical identifier (`start_to_conversation`, `conversation_to_meeting_booked`, `meeting_booked_to_meeting_attended`, `meeting_attended_to_paid_client`, `start_to_website_visit`, `website_visit_to_meeting_booked`, `website_visit_to_signup`, `signup_to_paid_client`, `website_visit_to_form_submitted`, `form_submitted_to_paid_client`; case and separators tolerated). NO sales funnel is named alongside it, which is the point: one leg belongs to several funnels, so a campaign can no longer be identified by one. THE FUNNEL IS CHOSEN HERE — the brand's BEST-RETURNING declared funnel that contains the leg, on the IDENTICAL returnPerDollar basis the audience-stats brand-level read combines on, so a leg yields ONE answer whichever funnel the caller had in mind. NOT the cheapest: a dollar buys a paying client through whichever route converts best, so the cheap leg of a funnel worth little loses to the dear leg of one worth a lot. The pick and what it rests on are stated back on `leg`. An unrecognised leg is a 400 (reason='leg_unrecognised'); a leg no declared funnel of this brand contains is a 404 (reason='leg_not_declared').").optional(),
+      campaignId: z.string().describe("ONE CAMPAIGN to narrow the ladder to, so a screen comparing grains — this campaign, this brand, every client we run the channel for — reads them all from ONE answer instead of stitching the campaign half on from a second endpoint. Answered for the campaign's whole IDENTITY. Only answerable BESIDE a `?leg=` (a campaign is bought for exactly one leg); sent without one it is a 400 `campaign_requires_leg`, never silently ignored.").optional(),
+      offerId: z.string().describe("The OFFER a `?leg=` read is priced for, for a (brand, offer) pair with NO campaign yet (a brand being set up: the customer picks one offer and asks what each leg would cost before any campaign exists). The leg is priced through that offer's terms, so a brand selling several offers answers instead of a 409 `several_offers`; the grains are the ones a campaign-less read resolves (brand, falling back to the fleet), and the recommended workflow is served as usual. Only answerable beside a `?leg=` (400 `offer_requires_leg`), and mutually exclusive with `?campaignId=`, which already names its offer (400 `offer_and_campaign`). An id naming no offer of the brand is a 404 `offer_not_found`. Omitted → byte-identical to before.").optional(),
+      picks: z.string().describe("How many OBSERVED PICKS `observedPicks.recent` states — what actually ran, newest first, read live from the runs ledger. Whole number, 0..200; omitted → 50. Only ever read beside a `?campaignId=` (the block is a fact about ONE campaign's own triggers), and `0` is a real answer that spends no read at all. Bounded so a debug panel cannot ask for a campaign's whole history — that history is thousands of triggers. An unreadable or out-of-range value is a 400 (reason='picks_unrecognised'), never clamped into a window the caller did not ask for.").optional(),
+      maximize: z.string().describe(MAXIMIZE_DESC_PROJECTION).optional(),
+      maximise: z.string().describe("Alias of `maximize` (British spelling of the key). Either is accepted; the value vocabulary is identical.").optional(),
+      budgetUsd: z.string().describe("Optional budget context (accepted for back-compat; the grain ladder + recommendedBudgetUsd carry the projection surface).").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric (each grain's unitCosts + projected cost-per-outcome, resolved.costPerOutcomeUsd, roiMultiple, cacPct, recommendedBudgetUsd). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the discounted figures, sourced from runs-service's FROZEN net cost amounts at every grain of the crossOrg→brand→audience ladder (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. Non-money fields (counts, rates, economics rates) are identical either way.").optional(),
     }),
   },
   responses: {
@@ -1455,8 +1455,8 @@ registry.registerPath({
                           mature: grainHeldPriceSchema.extend({ vendorCostKnown: z.boolean() }),
                         }),
                       )
-                      .optional()
-                      .describe("The billed read's priceByGrain at VENDOR cost: a held price is known when the grain it is read from and every grain it floors against are fully priced on that basis; otherwise costPerOutcomeUsd is null with unpricedReason `vendor_cost_unknown` and the billed provenance kept."),
+                      .describe("The billed read's priceByGrain at VENDOR cost: a held price is known when the grain it is read from and every grain it floors against are fully priced on that basis; otherwise costPerOutcomeUsd is null with unpricedReason `vendor_cost_unknown` and the billed provenance kept.")
+                      .optional(),
                   })
                   .passthrough(),
               ),
@@ -1533,10 +1533,10 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      offerId: z.string().optional().describe("Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Narrows the ACTUAL day series to the campaigns selling the offer (read once per campaign and merged; a send is tagged to exactly one campaign, so no day is counted twice). The EXPECTED series and summary.dailyBudgetUsd are NULL under an offer scope, and so are the observed signup / form-submission actuals: a daily budget is funded per brand (and per sales funnel in billing) with no per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it — so both would be brand-wide figures drawn beside offer-only bars, two grains on one chart. Null is 'we could not measure this at this grain', never a share and never a zero. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'."),
-      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
+      offerId: z.string().describe("Optional OFFER scope — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Narrows the ACTUAL day series to the campaigns selling the offer (read once per campaign and merged; a send is tagged to exactly one campaign, so no day is counted twice). The EXPECTED series and summary.dailyBudgetUsd are NULL under an offer scope, and so are the observed signup / form-submission actuals: a daily budget is funded per brand (and per sales funnel in billing) with no per-offer ceiling to divide, and the conversion tracker is brand-keyed with no campaign on it — so both would be brand-wide figures drawn beside offer-only bars, two grains on one chart. Null is 'we could not measure this at this grain', never a share and never a zero. Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason 'offer_has_no_campaigns'.").optional(),
+      days: z.string().describe("Number of days to return. Defaults to 7.").optional(),
       timezone: z.string().describe("IANA timezone used for calendar day ordering and today's event bucket. Any spelling the runtime accepts is accepted here, aliases included (`Asia/Saigon` as well as `Asia/Ho_Chi_Minh`). A name that is valid IANA but that the day-bucketing funnel cannot actually serve comes back as a 400 naming this parameter — never an opaque upstream failure."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every COST input behind the expected series (the fleet cost-per-outreach benchmark, the brand's own observed cost per outreach it is floored at, and the per-audience cost that ranks the forecast audience). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount), so a discounted org's forecast promises the volume its budget really buys; fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. The daily BUDGET is a configuration ceiling, not a charge — it is NEVER discounted — and counts/rates are identical either way.").optional(),
     }),
   },
   responses: {
@@ -1559,9 +1559,9 @@ const audienceStatsEvidenceSchema = z.object({
   opened: z.number().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
   websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
   positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
-  formSubmissions: z.number().optional().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."),
-  signups: z.number().optional().describe("REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."),
-  sales: z.number().optional().describe("REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."),
+  formSubmissions: z.number().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions.").optional(),
+  signups: z.number().describe("REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups.").optional(),
+  sales: z.number().describe("REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales.").optional(),
 });
 
 const audienceStatsRowSchema = z.object({
@@ -1603,14 +1603,14 @@ const audienceStatsRowSchema = z.object({
   maturity: audienceMetricsMaturitySchema.optional(),
 }),
   projection: z.object({
-    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only (no `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced."),
-    lifetimeRevenueUsd: z.number().nullable().optional().describe("The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read."),
+    basisFunnelKey: z.string().nullable().describe("BRAND-LEVEL read only (no `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced.").optional(),
+    lifetimeRevenueUsd: z.number().nullable().describe("The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read.").optional(),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."),
     returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. An audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."),
   maturity: audienceProjectionMaturitySchema.optional(),
 }).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity."),  expectedReturn: expectedReturnRef.optional().describe("This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's)."),
+  maturity: scopeMaturitySchema.nullable().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity.").optional(),  expectedReturn: expectedReturnRef.describe("This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's).").optional(),
 });
 
 const audienceStatsResponseSchema = z.object({
@@ -1627,26 +1627,26 @@ const audienceStatsResponseSchema = z.object({
       reason: z.enum(["no_economics", "no_workflow_evidence", "no_paid_client_path", "no_return_defined"]).nullable().describe("Why the funnel could not be priced, when priced=false. Never a substituted number — the reason IS the answer."),
     })).describe("EVERY funnel the brand DECLARED, and whether it went into the figures. Listed in full, never short: a reader who cannot tell what was included cannot trust the number."),
     pricingBasisFunnelKey: z.string().nullable().describe("The funnel whose funnel every cost-per-outcome COLUMN on this payload is denominated in — the brand's best-returning declared funnel, falling back to its FIRST declared funnel in catalogue order when none could be priced. A cost per outcome is denominated in a funnel's own outcome, so unlike a return it cannot be combined across funnels; naming the one it was priced on is the honest answer."),
-  }).optional().describe("Present ONLY on the BRAND-LEVEL read (no `goal` sent) — what the money figures cover."),
+  }).describe("Present ONLY on the BRAND-LEVEL read (no `goal` sent) — what the money figures cover.").optional(),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr", "returnPerDollar"]).describe("Single-funnel read: signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. BRAND-LEVEL read: `returnPerDollar`, DESCENDING (best return first, unmeasurable rows last) — at brand level there is no goal, and cost per outcome would rank by cheapness, putting an audience that converts to nothing above an expensive one that pays."),
   audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted by sortMetric — ascending for the cost metrics (null last), DESCENDING for returnPerDollar (null last). Rank by projection.returnPerDollar when the question is where the money should go."),
   brandProjection: z.object({
-    basisFunnelKey: z.string().nullable().optional().describe("BRAND-LEVEL read only: the funnel the BRAND's own return was priced through (its best-returning one). Absent on a single-funnel read; null when nothing could be priced."),
+    basisFunnelKey: z.string().nullable().describe("BRAND-LEVEL read only: the funnel the BRAND's own return was priced through (its best-returning one). Absent on a single-funnel read; null when nothing could be priced.").optional(),
     lifetimeRevenueUsd: z.number().nullable().describe("The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced) economics this whole payload was projected on — the numerator behind every returnPerDollar here. Surfaced so a consumer can never pair a return with an LTR this projection did not use. Null at cold start."),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."),
     returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
     costOfAcquisitionPct: z.number().nullable().describe("PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."),
-    maturity: audienceProjectionMaturitySchema.optional().describe("The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read."),
+    maturity: audienceProjectionMaturitySchema.describe("The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read.").optional(),
   }).describe("The BRAND-level twin of every row's projection, on the same economics and the same formula."),
   declaredFunnelsUnresolved: z.object({
     reason: z.literal("several_offers").describe("Machine-readable, so no consumer matches on prose. The only value today."),
     message: z.string().describe("brand-service's own sentence, rendered verbatim so the two services say one thing."),
     offers: z.array(z.object({ offerId: z.string(), name: z.string().nullable() })).describe("The offers brand-service refused to choose between — what a consumer needs to let someone pick one."),
-  }).optional().describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged."),
-  campaignIdentity: campaignIdentitySchema.optional().describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way."),
-  maturity: scopeMaturitySchema.nullable().optional().describe("The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it."),
-  unattributedMaturity: scopeMaturitySchema.nullable().optional().describe("Spend and leads of this scope whose serve carried NO audience tag."),  expectedReturn: expectedReturnRef.optional().describe("The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model."),
+  }).describe("Present ONLY when this brand sells SEVERAL OFFERS and the read could name none. A declared sales funnel hangs off an OFFER — each carries its own conversion rates, its own lifetime revenue and its own value proposition — so brand-service REFUSES (409 SEVERAL_OFFERS) a brand-scoped declared-funnel read for a brand selling more than one, rather than serve one proposition's economics under another's name. That refusal is NOT an outage and NOT a producer gap; it is a question with several answers, so this read DEGRADES and says so instead of failing. The VOLUME half of the body is unaffected (measured facts about spend, not about a proposition); the PROJECTED half reads null. A campaign sells exactly one offer, so naming a `campaignId` names the offer transitively and returns the fully-priced answer. Absent for every brand selling one offer, whose body is byte-unchanged.").optional(),
+  campaignIdentity: campaignIdentitySchema.describe("Present ONLY on a ?campaignId= read: the campaign IDENTITY these per-audience figures were totalled over. A campaign as a customer knows it is (org, brand, sales funnel, acquisition channel) and is stored as MANY rows - campaign-service mints a new one every time the workflow switches and keeps the ancestors - so asking about any member returns the same, complete campaign, and every member lands on one cache cell. Byte-same block as /features/{slug}/revenue?campaignId= carries, so the two reads name one campaign one way.").optional(),
+  maturity: scopeMaturitySchema.nullable().describe("The scope's own maturity (campaign, offer or brand) — the byte-same object /revenue serves for it.").optional(),
+  unattributedMaturity: scopeMaturitySchema.nullable().describe("Spend and leads of this scope whose serve carried NO audience tag.").optional(),  expectedReturn: expectedReturnRef.describe("The SCOPE's expected return, never empty (see ExpectedReturn): brandProjection.maturity's mature returnPerDollar when mature, else the scope's sales path model.").optional(),
 });
 
 registry.register("AudienceStatsResponse", audienceStatsResponseSchema);
@@ -1667,21 +1667,21 @@ registry.registerPath({
     params: z.object({ featureSlug: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).optional().describe("Omit it for the brand-level read. Omitting it prices the brand across EVERY funnel it declared (see the endpoint description) — a first-class request, not a missing parameter. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross."),
-      brandProfileId: z.string().optional().describe("Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup)."),
-      offerId: z.string().optional().describe("Optional OFFER scope for the STATS — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and narrows every per-audience cost and engagement numerator to exactly those; the campaignId scope below is the one-member case of the same thing. AUDIENCES themselves stay brand-wide, as they do under a campaign scope: an audience is a brand-level entity several offers may address, and hiding one this offer has not reached yet would answer a question about the audience list with one about the spend. Mutually exclusive with campaignId (400). Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason \'offer_has_no_campaigns\'."),
-      campaignId: z.string().optional().describe("Optional CAMPAIGN scope for the STATS, answered for the campaign's whole IDENTITY - (org, brand, sales funnel, acquisition channel), campaign-service's own key. A campaign is stored as MANY rows (a new one per workflow switch, ancestors kept), so naming any member narrows the per-audience cost + outcome numerators to EVERY member: the same subject /features/{slug}/revenue?campaignId= answers for, so the two reads on one screen cannot state different numbers about one campaign. The resolved identity is echoed as `campaignIdentity`. Audiences themselves stay brand-wide (they are brand-scoped entities). Absent -> brand-wide numbers, byte-identical to today. Cost comes from runs-service (grouped by audienceId, co-grouped by campaign for a multi-member identity) and outcomes from email-gateway, read once per member and summed - a send carries one campaign, so nobody is counted twice. With campaign-service unreachable the read degrades to the single named row (narrower than the truth, never the brand's numbers under this campaign's name). Powers the dashboard's per-campaign audience view."),
-      limit: z.string().optional().describe("Optional positive integer row limit after sorting."),
+      goal: z.enum(["signup", "meetingBooked", "websitePurchase", "sales", "websiteVisit", "positiveReply", "formSubmission", "whatsappConversation"]).describe("Omit it for the brand-level read. Omitting it prices the brand across EVERY funnel it declared (see the endpoint description) — a first-class request, not a missing parameter. Legacy meaning: active optimization goal. signup + websiteVisit + formSubmission + whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. snake_case / kebab / display spellings are also accepted (website_visits, positive_replies, form_submissions, whatsapp_conversations, 'WhatsApp conversations'). For whatsappConversation the outcome is a click on the brand's WhatsApp link (reuses the existing click evidence — cost-per-outcome = cpcCents, outcome count = evidence.websiteClicks); null-safe when no click data exists yet.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every per-audience MONEY metric (metrics.cpcCents / cpprCents / cpfsCents + the brand-parent cascade). Omit or 'gross' → real undiscounted numbers (DEFAULT — byte-identical to today). 'net' → the org's discounted figures, sourced from runs-service's FROZEN net cost amounts (frozen at cost-declaration time; features-service does NOT recompute the discount); fail-loud (502) if the frozen net figures are unavailable — never a silent fallback to gross. A non-discounted org's frozen net equals gross, so net == gross for it. Non-money fields (evidence counts, conversion.rate) are identical either way. NOTE: campaign-service reads metrics.cpcCents byte-equal — it does NOT send pricing, so it always gets gross.").optional(),
+      brandProfileId: z.string().describe("Optional brand-profile version to scope evidence, echoed back on the response. Null when omitted (brand-service retired versioned brand-profile storage — no current-profile lookup).").optional(),
+      offerId: z.string().describe("Optional OFFER scope for the STATS — the grain between the brand and its campaigns (Org > Brand > Offer > Campaign). Resolves to the campaigns selling the offer and narrows every per-audience cost and engagement numerator to exactly those; the campaignId scope below is the one-member case of the same thing. AUDIENCES themselves stay brand-wide, as they do under a campaign scope: an audience is a brand-level entity several offers may address, and hiding one this offer has not reached yet would answer a question about the audience list with one about the spend. Mutually exclusive with campaignId (400). Omitted → byte-identical to today. An offer no campaign of this brand sells is a 404 with reason \'offer_has_no_campaigns\'.").optional(),
+      campaignId: z.string().describe("Optional CAMPAIGN scope for the STATS, answered for the campaign's whole IDENTITY - (org, brand, sales funnel, acquisition channel), campaign-service's own key. A campaign is stored as MANY rows (a new one per workflow switch, ancestors kept), so naming any member narrows the per-audience cost + outcome numerators to EVERY member: the same subject /features/{slug}/revenue?campaignId= answers for, so the two reads on one screen cannot state different numbers about one campaign. The resolved identity is echoed as `campaignIdentity`. Audiences themselves stay brand-wide (they are brand-scoped entities). Absent -> brand-wide numbers, byte-identical to today. Cost comes from runs-service (grouped by audienceId, co-grouped by campaign for a multi-member identity) and outcomes from email-gateway, read once per member and summed - a send carries one campaign, so nobody is counted twice. With campaign-service unreachable the read degrades to the single named row (narrower than the truth, never the brand's numbers under this campaign's name). Powers the dashboard's per-campaign audience view.").optional(),
+      limit: z.string().describe("Optional positive integer row limit after sorting.").optional(),
       statuses: z
         .string()
-        .optional()
         .describe(
           "Optional comma-separated subset of audience lifecycle statuses to include: active, paused, archived. " +
             "Absent → active only (preserves the active-only ranking used by the Top-audiences card). " +
             "When present, returns evidence rows for audiences in any of the given statuses (e.g. statuses=active,paused,archived surfaces archived audiences' historical outreach). " +
             "Any token outside {active, paused, archived} (e.g. suggested, deprecated) is rejected with 400.",
-        ),
+        )
+        .optional(),
     }),
   },
   responses: {
@@ -1729,14 +1729,14 @@ const offerRevenueChannelGroupSchema = offerChannelSchema.extend({
 
 
 
-const windowDaysParam = z.string().optional().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, emails queued right now (snapshot), actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.");
+const windowDaysParam = z.string().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, emails queued right now (snapshot), actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.").optional();
 
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     offerId: z.string(),
     brandId: z.string(),
-    window: revenueWindowRef.optional().describe("Present ONLY when ?windowDays= was asked. See RevenueWindow."),
+    window: revenueWindowRef.describe("Present ONLY when ?windowDays= was asked. See RevenueWindow.").optional(),
     channels: z
       .array(offerRevenueChannelGroupSchema)
       .describe(
@@ -1762,9 +1762,9 @@ registry.registerPath({
     query: z.object({
       brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
       windowDays: windowDaysParam,
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
-      cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
-      leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.").optional(),
+      cause: z.string().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`.").optional(),
+      leads: z.enum(["outcomes", "full"]).describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.").optional(),
     }),
   },
   responses: {
@@ -1932,7 +1932,7 @@ const exclusiveLadderSchema = z.object({
     people: z.object({ limit: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).describe("Highest value first, capped at limit; counted whole in count. reachedAt = when they were contacted."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
     conversionHistory: conversionHistorySchema,
-    expectedConversionFromRowAbove: expectedConversionRef.optional().describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."),
+    expectedConversionFromRowAbove: expectedConversionRef.describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion).").optional(),
   }).describe("PEOPLE CONTACTED, NOTHING YET: on the same one-row-per-person basis."),
   rows: z.array(z.object({
     step: stepRefSchema,
@@ -1949,7 +1949,7 @@ const exclusiveLadderSchema = z.object({
     hot: z.object({ limit: z.number().int(), count: z.number().int(), leads: z.array(exclusiveStepPersonSchema) }).nullable().describe("HOT LEADS ON THIS ROW: the row's people in pipeline.hotLeads (the same verdict, every hot person counted, not only the listed top), highest value first, capped at limit. A hot person is in people.ours or people.notOurs, never lost. Σ rows[].hot.count + total.hot.onContactedRow + total.hot.onNoRow = hotLeads.totalCount. Null when hotLeads is null (unpriced offer)."),
     conversionFromRowAbove: conversionFromRowAboveSchema,
     conversionHistory: conversionHistorySchema,
-    expectedConversionFromRowAbove: expectedConversionRef.optional().describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion)."),
+    expectedConversionFromRowAbove: expectedConversionRef.describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion).").optional(),
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
     people: z.number().int().describe("Distinct people on a row (contacted row included)."),
@@ -2061,9 +2061,9 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure. Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."),
-      cause: z.string().optional().describe("Which cause states are PRICED (value, ROI) — comma-separated subset of outreach | other | unstated, default outreach. Every cause is always COUNTED."),
-      conversionHistory: z.enum(["true", "false"]).optional().describe("true: serve pipeline.exclusiveLadder rows[].conversionHistory and contacted.conversionHistory (the sliced % Conversion per day since the offer's first delivery). Default false (both null). Every other figure is byte-identical either way."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every money figure. Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud.").optional(),
+      cause: z.string().describe("Which cause states are PRICED (value, ROI) — comma-separated subset of outreach | other | unstated, default outreach. Every cause is always COUNTED.").optional(),
+      conversionHistory: z.enum(["true", "false"]).describe("true: serve pipeline.exclusiveLadder rows[].conversionHistory and contacted.conversionHistory (the sliced % Conversion per day since the offer's first delivery). Default false (both null). Every other figure is byte-identical either way.").optional(),
     }),
   },
   responses: {
@@ -2134,7 +2134,7 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      cause: z.string().optional().describe("Which cause states are PRICED, as on /offers/{offerId}/outcomes (default outreach)."),
+      cause: z.string().describe("Which cause states are PRICED, as on /offers/{offerId}/outcomes (default outreach).").optional(),
     }),
   },
   responses: {
@@ -2329,7 +2329,7 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud."),
+      pricing: z.enum(["gross", "net"]).describe("Omit or 'gross' (default); 'net' reads runs-service's frozen net amounts, fail-loud.").optional(),
     }),
   },
   responses: {
@@ -2425,7 +2425,7 @@ const offerSalesPathsResponseRef = registry.register(
     selectedLegKeys: z.array(z.string()),
     unknownLegKeys: z.array(z.string()),
     lifetimeRevenueUsd: z.number().nullable().describe("The offer's lifetime revenue per paying client every ROI divides: stated, else the fleet median of stated offer values (owner 2026-10-09). Null only when no offer in the fleet states one."),
-    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().optional().describe("Where lifetimeRevenueUsd came from: offer_stated = the customer stated it; fleet_median = the fleet median stands in for an unstated offer."),
+    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().describe("Where lifetimeRevenueUsd came from: offer_stated = the customer stated it; fleet_median = the fleet median stands in for an unstated offer.").optional(),
     pricing: z.literal("net"),
     paths: z.array(salesPathSchema),
     selectedSalesPaths: z
@@ -2531,8 +2531,8 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      scope: z.enum(["ticked", "catalogue"]).optional().describe("ticked (default): the offer's ticked legs × the managed channels. catalogue: the same ticked chains × the owner's channel shortlist, benchmark-priced where unmeasured."),
-      creditUsd: z.string().optional().describe("Dollars of credit campaigns[].outcomesForCredit is computed for (default 100). A positive number up to 1000000, else 400 credit_unrecognised."),
+      scope: z.enum(["ticked", "catalogue"]).describe("ticked (default): the offer's ticked legs × the managed channels. catalogue: the same ticked chains × the owner's channel shortlist, benchmark-priced where unmeasured.").optional(),
+      creditUsd: z.string().describe("Dollars of credit campaigns[].outcomesForCredit is computed for (default 100). A positive number up to 1000000, else 400 credit_unrecognised.").optional(),
     }),
   },
   responses: {
@@ -2639,7 +2639,7 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     params: z.object({ leadId: z.string().describe("lead-service lead id (the person page's id).") }),
-    query: z.object({ campaignId: z.string().optional().describe("Only this campaign's writer records.") }),
+    query: z.object({ campaignId: z.string().describe("Only this campaign's writer records.").optional() }),
   },
   responses: {
     200: { description: "The person's writer records", content: { "application/json": { schema: writtenByResponseRef } } },
@@ -2732,8 +2732,8 @@ const sourcingDescription =
   "Counted: the whole cost subtree of every lead-service lead-serve run of the brand (Jev pre-pay screens of the candidates, provider reveal / enrichment, email finding and verification, LinkedIn engagement and buying-signal reads) and apollo-service audience-companies runs (company lists pulled when an audience is built). Not counted: outreach (email writing, sending, reply reading), brand/offer setup, the LLM audience split, the audience-preview email pre-check. " +
   "Per person = the serve runs lead-service recorded as handing that person out (read per campaign, so a person served by two campaigns carries both serves). Per company = Σ its people, keyed on human-service's companyKey. Billed basis is list price before the org's usage discount; net is what the org pays after it.";
 const sourcingPaging = z.object({
-  limit: z.string().optional().describe("1..500, default 100."),
-  offset: z.string().optional().describe("Default 0."),
+  limit: z.string().describe("1..500, default 100.").optional(),
+  offset: z.string().describe("Default 0.").optional(),
 });
 
 registry.registerPath({
@@ -2757,7 +2757,7 @@ registry.registerPath({
   request: {
     params: z.object({ brandId: z.string() }),
     headers: identityHeaders,
-    query: sourcingPaging.extend({ apolloPersonIds: z.string().optional().describe("Comma-separated, ≤500: only these people (the human-service page being rendered).") }),
+    query: sourcingPaging.extend({ apolloPersonIds: z.string().describe("Comma-separated, ≤500: only these people (the human-service page being rendered).").optional() }),
   },
   responses: {
     200: { description: "People", content: { "application/json": { schema: sourcingPeopleResponseRef } } },
@@ -2775,8 +2775,8 @@ registry.registerPath({
     params: z.object({ brandId: z.string() }),
     headers: identityHeaders,
     query: sourcingPaging.extend({
-      companyKeys: z.string().optional().describe("Comma-separated human-service company keys, ≤500 (exclusive with domains)."),
-      domains: z.string().optional().describe("Comma-separated, ≤500, case-insensitive."),
+      companyKeys: z.string().describe("Comma-separated human-service company keys, ≤500 (exclusive with domains).").optional(),
+      domains: z.string().describe("Comma-separated, ≤500, case-insensitive.").optional(),
     }),
   },
   responses: {
@@ -2806,10 +2806,10 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error."),
-      statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
-      limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
+      goal: z.string().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error.").optional(),
+      statuses: z.string().describe("Comma-separated audience statuses. Same meaning as the per-feature read.").optional(),
+      limit: z.string().describe("Maximum number of audience rows. Same meaning as the per-feature read.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read.").optional(),
     }),
   },
   responses: {
@@ -2840,9 +2840,9 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       brandId: z.string().describe("Brand UUID (required)."),
-      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
+      days: z.string().describe("Number of days to return. Defaults to 7.").optional(),
       timezone: z.string().describe("IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Accepted for parity with the sibling reads and folded into the cache key. Every series answered at this grain is an event count, so neither basis changes a number here."),
+      pricing: z.enum(["gross", "net"]).describe("Accepted for parity with the sibling reads and folded into the cache key. Every series answered at this grain is an event count, so neither basis changes a number here.").optional(),
     }),
   },
   responses: {
@@ -2893,7 +2893,7 @@ const brandRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     brandId: z.string(),
-    window: revenueWindowRef.optional().describe("Present ONLY when ?windowDays= was asked. See RevenueWindow."),
+    window: revenueWindowRef.describe("Present ONLY when ?windowDays= was asked. See RevenueWindow.").optional(),
     channels: z
       .array(brandRevenueChannelGroupSchema)
       .describe(
@@ -2919,9 +2919,9 @@ registry.registerPath({
     params: z.object({ brandId: z.string() }),
     query: z.object({
       windowDays: windowDaysParam,
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
-      cause: z.string().optional().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`."),
-      leads: z.enum(["outcomes", "full"]).optional().describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.").optional(),
+      cause: z.string().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`.").optional(),
+      leads: z.enum(["outcomes", "full"]).describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.").optional(),
     }),
   },
   responses: {
@@ -2946,7 +2946,7 @@ const brandOfferRowSchema = z.object({
   channels: z.array(brandChannelSchema).describe("The acquisition channels THIS OFFER is sold through, ascending by slug, with the campaigns carrying each — the exact scope this row's figures were computed over, so a reader can see what a row is made of without a second call."),
   headline: featureRevenueResponseSchema.shape.headline,
   costEconomics: featureRevenueResponseSchema.shape.costEconomics,
-  maturity: scopeMaturitySchema.nullable().optional().describe("The offer's per-leg figures and verdict — the object its own /offers/:offerId/revenue read serves."),
+  maturity: scopeMaturitySchema.nullable().describe("The offer's per-leg figures and verdict — the object its own /offers/:offerId/revenue read serves.").optional(),
 });
 
 const brandOffersResponseSchema = z.object({
@@ -2980,8 +2980,8 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross."),
-      cause: z.string().optional().describe("WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'."),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.").optional(),
+      cause: z.string().describe("WHOSE WINS EACH ROW COUNTS — a comma-separated subset of outreach | other | unstated, the same parameter and the same three states /brands/{brandId}/revenue takes (see there for why the third is not a missing answer). Threaded so a lean table row and the full read it drills into can never be built on two different bases. Omitted → all three, byte-identical to today. An unrecognised word is a 400 with reason 'cause_unrecognised'.").optional(),
     }),
   },
   responses: {
@@ -3113,12 +3113,12 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      offerId: z.string().optional().describe("Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent."),
+      offerId: z.string().describe("Only this offer's funnel campaigns. Omitted: every offer of the brand, each priced on its own offer's terms.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every money figure (omitted = gross). The dashboard reads `net`. NET fails loud (502) when runs' frozen net amounts are absent.").optional(),
       fields: z
         .enum(["copy"])
-        .optional()
-        .describe("`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged)."),
+        .describe("`copy` (owner 2026-10-13): each row's COPY only (name, face, status, Type label, path, units), no money, no activity: campaign-service's live list + the catalogue structure, well under a second, so a campaign created seconds ago is painted at once. The money of a campaign created in the last 15 minutes is computed behind this answer, so the full read that follows is a hit. Omitted: the full rows (unchanged).")
+        .optional(),
     }),
   },
   responses: {
@@ -3142,7 +3142,7 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
-    body: { content: { "application/json": { schema: z.object({ offerId: z.string().nullable().optional().describe("The new campaign's offer (its offer-scoped read is warmed first). Omitted: brand-wide shapes only.") }) } } },
+    body: { content: { "application/json": { schema: z.object({ offerId: z.string().nullable().describe("The new campaign's offer (its offer-scoped read is warmed first). Omitted: brand-wide shapes only.").optional() }) } } },
   },
   responses: {
     202: { description: "Accepted; the reads are computed behind.", content: { "application/json": { schema: z.object({ brandId: z.string(), offerId: z.string().nullable(), accepted: z.literal(true) }) } } },
@@ -3238,8 +3238,8 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      offerId: z.string().optional().describe("Only this offer's people, and the spend of the campaigns that sell it. Omitted: every offer."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis for every money figure (omitted = gross)."),
+      offerId: z.string().describe("Only this offer's people, and the spend of the campaigns that sell it. Omitted: every offer.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every money figure (omitted = gross).").optional(),
     }),
   },
   responses: {
@@ -3255,7 +3255,7 @@ const callCountsSchema = z.object({
   placed: z.number().int().describe("Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."),
   accepted: z.number().int().describe("Calls the rep ANSWERED and took (pressed 1). Subset of placed."),
   connected: z.number().int().describe("Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."),
-  outcomes: z.record(z.number().int()).describe("Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."),
+  outcomes: z.record(z.string(), z.number().int()).describe("Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."),
   billedMinutes: z.number().describe("Minutes billed on the leg to the rep."),
   connectBilledMinutes: z.number().describe("Minutes billed on the bridged leg to the prospect."),
   totalBilledMinutes: z.number().describe("billedMinutes + connectBilledMinutes."),
@@ -3345,7 +3345,7 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
-    query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Pricing basis of the call pipes' spend (omitted = gross). The dashboard reads `net`.") }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).describe("Pricing basis of the call pipes' spend (omitted = gross). The dashboard reads `net`.").optional() }),
   },
   responses: {
     200: { description: "The campaign's funnel and pipes.", content: { "application/json": { schema: salesFunnelCampaignActivityResponseRef } } },
@@ -3569,7 +3569,7 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
-    query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Default gross; the dashboard sends net.") }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).describe("Default gross; the dashboard sends net.").optional() }),
   },
   responses: {
     200: { description: "The campaign's and its pipes' charts.", content: { "application/json": { schema: funnelCampaignSpendChartsResponseRef } } },
@@ -3588,7 +3588,7 @@ registry.registerPath({
   request: {
     headers: identityHeaders,
     params: z.object({ offerId: z.string() }),
-    query: z.object({ brandId: z.string(), pricing: z.enum(["gross", "net"]).optional().describe("Default gross; the dashboard sends net.") }),
+    query: z.object({ brandId: z.string(), pricing: z.enum(["gross", "net"]).describe("Default gross; the dashboard sends net.").optional() }),
   },
   responses: {
     200: { description: "The offer's chart.", content: { "application/json": { schema: offerSpendChartsResponseRef } } },
@@ -3729,9 +3729,9 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      limit: z.string().optional().describe("Rows per page, 1..5000, default 1000."),
-      cursor: z.string().optional().describe("The `nextCursor` of the previous page."),
-      leadIds: z.string().optional().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor."),
+      limit: z.string().describe("Rows per page, 1..5000, default 1000.").optional(),
+      cursor: z.string().describe("The `nextCursor` of the previous page.").optional(),
+      leadIds: z.string().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor.").optional(),
     }),
   },
   responses: {
@@ -3762,8 +3762,8 @@ const brandDealsValueResponseSchema = z.object({
     leads: z.array(z.object({
       leadId: z.string(),
       valueUsd: z.number().nullable(),
-      valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().optional().describe("Won column only."),
-      zeroValueReason: z.enum(["ruled_out", "step_not_priced"]).nullable().optional().describe("Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, it went cold, or lead-service holds its Disqualified mark on the person: GET /orgs/leads/disqualifications), `step_not_priced` (the steps it reached are on no funnel the brand is priced on)."),
+      valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Won column only.").optional(),
+      zeroValueReason: z.enum(["ruled_out", "step_not_priced"]).nullable().describe("Interested only: why the engine prices this card at exactly 0 — `ruled_out` (a human ruled it out, it went cold, or lead-service holds its Disqualified mark on the person: GET /orgs/leads/disqualifications), `step_not_priced` (the steps it reached are on no funnel the brand is priced on).").optional(),
     })).describe("One card per person in the column, ordered by lead id (valued columns only)."),
   })),
 });
@@ -3787,7 +3787,7 @@ registry.registerPath({
 
 const offerGrainLeadValueQuery = {
   brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
-  pricing: z.enum(["gross", "net"]).optional().describe("Accepted and validated like every offer read. No figure here is a cost, so it moves nothing."),
+  pricing: z.enum(["gross", "net"]).describe("Accepted and validated like every offer read. No figure here is a cost, so it moves nothing.").optional(),
 };
 const offerLeadValueErrors = {
   400: { description: "Missing brandId, an invalid pricing value, or invalid paging parameters", content: { "application/json": { schema: errorResponse } } },
@@ -3885,8 +3885,8 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       ...offerGrainLeadValueQuery,
-      columns: z.enum(["standing", "lifecycle", "company_lifecycle"]).optional().describe("Which body: `standing` (default, lead-service standings), `lifecycle` (the board on the lifecycle ladder) or `company_lifecycle` (each organisation's rung and the per-rung counts)."),
-      campaignId: z.string().optional().describe("`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it."),
+      columns: z.enum(["standing", "lifecycle", "company_lifecycle"]).describe("Which body: `standing` (default, lead-service standings), `lifecycle` (the board on the lifecycle ladder) or `company_lifecycle` (each organisation's rung and the per-rung counts).").optional(),
+      campaignId: z.string().describe("`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it.").optional(),
     }),
   },
   responses: {
@@ -3921,9 +3921,9 @@ registry.registerPath({
     params: z.object({ offerId: z.string() }),
     query: z.object({
       ...offerGrainLeadValueQuery,
-      limit: z.string().optional().describe("Rows per page, 1..5000, default 1000."),
-      cursor: z.string().optional().describe("The `nextCursor` of the previous page."),
-      leadIds: z.string().optional().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor."),
+      limit: z.string().describe("Rows per page, 1..5000, default 1000.").optional(),
+      cursor: z.string().describe("The `nextCursor` of the previous page.").optional(),
+      leadIds: z.string().describe("Comma-separated lead ids (≤1000): return only those rows. Cannot be combined with cursor.").optional(),
     }),
   },
   responses: {
@@ -3950,10 +3950,10 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      goal: z.string().optional().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error."),
-      statuses: z.string().optional().describe("Comma-separated audience statuses. Same meaning as the per-feature read."),
-      limit: z.string().optional().describe("Maximum number of audience rows. Same meaning as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read."),
+      goal: z.string().describe("Same vocabulary and same meaning as the per-feature read. Omitting the goal is the brand-level read, not an error.").optional(),
+      statuses: z.string().describe("Comma-separated audience statuses. Same meaning as the per-feature read.").optional(),
+      limit: z.string().describe("Maximum number of audience rows. Same meaning as the per-feature read.").optional(),
+      pricing: z.enum(["gross", "net"]).describe("Same gross/net selector, same fail-loud NET rule, as the per-feature read.").optional(),
     }),
   },
   responses: {
@@ -3983,9 +3983,9 @@ registry.registerPath({
     headers: identityHeaders,
     params: z.object({ brandId: z.string() }),
     query: z.object({
-      days: z.string().optional().describe("Number of days to return. Defaults to 7."),
+      days: z.string().describe("Number of days to return. Defaults to 7.").optional(),
       timezone: z.string().describe("IANA timezone used for calendar day ordering. Same acceptance and same 400-naming-the-parameter behaviour as the per-feature read."),
-      pricing: z.enum(["gross", "net"]).optional().describe("Prices the forecast's cost divisor at what the org actually pays, exactly as on the per-feature read; folded into the cache key so a gross and a net request never share a body."),
+      pricing: z.enum(["gross", "net"]).describe("Prices the forecast's cost divisor at what the org actually pays, exactly as on the per-feature read; folded into the cache key so a gross and a net request never share a body.").optional(),
     }),
   },
   responses: {
@@ -4091,9 +4091,9 @@ const publicWorkflowEngagementLatencyResponseSchema = z.object({
 
 const rankedQueryParams = z.object({
   featureSlug: z.string().describe("Feature slug (required)"),
-  objective: z.string().optional().describe("Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)"),
+  objective: z.string().describe("Stats key to sort by (defaults to costPerRecipientPositiveReplyCents)").optional(),
   groupBy: z.enum(["workflow", "brand"]).describe("Group results by workflow or by brand"),
-  limit: z.string().optional().describe("Max results (default 3)"),
+  limit: z.string().describe("Max results (default 3)").optional(),
 });
 
 const bestQueryParams = z.object({
@@ -4148,7 +4148,7 @@ const publicRevenueResultSchema = z.object({
     totalPipelineUsd: z.number().nullable().describe("Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no pair prices (no offer states a lifetime revenue)."),
   }),
   costEconomics: revenueCostEconomicsSchema,
-  timeline: z.array(revenueTimeSeriesPointSchema).optional().describe("Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."),
+  timeline: z.array(revenueTimeSeriesPointSchema).describe("Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist.").optional(),
 });
 
 const publicRevenueResponseSchema = z.object({
@@ -4180,7 +4180,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       groupBy: z.literal("brand").describe("Group results by brand (only supported value)."),
-      rollup: z.literal("true").optional().describe("If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup."),
+      rollup: z.literal("true").describe("If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup.").optional(),
     }),
   },
   responses: {
@@ -4238,7 +4238,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     query: z.object({
-      days: z.coerce.number().int().min(1).max(90).optional().describe("Future horizon in days (default 14, max 90). A 7-day past tail is always included."),
+      days: z.coerce.number().int().min(1).max(90).describe("Future horizon in days (default 14, max 90). A 7-day past tail is always included.").optional(),
     }),
   },
   responses: {
@@ -4386,7 +4386,7 @@ const accountRowSchema = z.object({
   orgBalanceUsd: z.number().nullable().describe("Org SPENDABLE credit balance in USD (billing balance_cents/100; committed usage incl. provisioned holds subtracted; 0 if no funded wallet). Display only. null = billing's balance read failed for this org (status 'unknown', named in unreadOrgReads), never 0."),
   orgActualBalanceUsd: z.number().nullable().describe("Org ACTUAL credit balance in USD (billing actual_balance_cents/100; only ACTUALIZED usage subtracted). The figure the active verdict gates on. null = billing's balance read failed (status 'unknown')."),
   autoTopupEnabled: z.boolean().nullable().describe("null = billing's balance read failed. " +"Whether the org has auto-topup enabled (billing has_auto_topup). An auto-topup org never runs dry → active regardless of momentary balance. false when absent."),
-  statusUnknownReason: z.string().nullable().optional().describe("Why status is 'unknown' (billing payment-outlook and/or balance unreadable for the org, capped at 300 chars). Absent whenever the status is known."),
+  statusUnknownReason: z.string().nullable().describe("Why status is 'unknown' (billing payment-outlook and/or balance unreadable for the org, capped at 300 chars). Absent whenever the status is known.").optional(),
   churnedReason: z.string().nullable().describe("billing's reason the account is churned (subscription_ended | subscription_canceling) when status is 'churned'; null otherwise."),
   status: z.enum(["active", "payment_declined", "no_payment_method", "unknown", "out_of_credit", "reactive_only", "paused", "inactive", "churned"]).describe("'churned' FIRST (owner rule 2026-10-16, BOARD-CHURNED-TRIAL-1016: a current client has paid or is in a free trial still running): billing-service's revenue class for the org (GET /internal/revenue/fleet classReason) says the customer CANCELLED, subscription_ended (subscription canceled, e.g. a trial cancelled before its first charge) or subscription_canceling (cancel pending at period end), whatever its campaigns still say; billing's reason rides churnedReason; excluded from every running/MRR/money total like paused/inactive. A trial still running (subscription_trialing) and a prepaid org without a subscription keep their bucket; an org billing could not read, or a failed fleet read (stats.churnUnavailableReason), is never churned. 'unknown' = a per-org billing read (payment-outlook or balance) failed for this org: no verdict is invented, the row is excluded from every money total and the org is named in unreadOrgReads. Otherwise: Precedence payment_declined / no_payment_method > active > paused > inactive: 'no_payment_method' iff billing cannot charge the org because it has no chargeable card (payment-outlook charge_blocked / no_chargeable_card; campaign-service stops it with stopReason no_payment_method); 'payment_declined' iff billing cannot charge it for any other reason (card declined, unusable, retries exhausted, or unsupported card country; stopReason payment_declined), whatever budget is configured or still reported running; billing's reason rides paymentDeclinedReason. Else 'active' iff runningDailyBudgetUsd>0 (PROACTIVE) && (autoTopupEnabled || orgActualBalanceUsd>runningDailyBudgetUsd); else 'out_of_credit' iff runningDailyBudgetUsd>0 (a proactive campaign still runs but the balance cannot fund one more day and nothing reloads it: a BILLING state, staff ask the client to top up; never 'paused', which is the customer's own choice; until 2026-10-11 such a row read 'paused'); else 'reactive_only' iff runningDailyBudgetUsd==0 && reactiveRunningDailyCapUsd>0 (every proactive campaign stopped, a reactive one still on: starts no conversation, not active, not paused, excluded from every money total); else 'paused' iff configuredDailyBudgetUsd>0 (money posted, nothing running against it); else 'inactive'. There is no brand-level pause flag in this rule: that control was removed from the product and the flag lied in both directions."),
   paymentDeclinedReason: z.string().nullable().describe("billing's own reason it cannot charge this org (payment-outlook blockedReason: card_declined, card_unusable, retries_exhausted, no_chargeable_card, card_country_unsupported) when status is 'payment_declined'; null otherwise, and null if billing blocked without naming a reason."),
@@ -4746,9 +4746,9 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     query: z.object({
-      days: z.coerce.number().int().min(1).max(365).optional().describe("Trailing days in the daily series (default 90, max 365)."),
-      weeks: z.coerce.number().int().min(1).max(104).optional().describe("Trailing ISO weeks in the weekly series (default 26, max 104)."),
-      months: z.coerce.number().int().min(1).max(36).optional().describe("Trailing months in the monthly series (default 12, max 36)."),
+      days: z.coerce.number().int().min(1).max(365).describe("Trailing days in the daily series (default 90, max 365).").optional(),
+      weeks: z.coerce.number().int().min(1).max(104).describe("Trailing ISO weeks in the weekly series (default 26, max 104).").optional(),
+      months: z.coerce.number().int().min(1).max(36).describe("Trailing months in the monthly series (default 12, max 36).").optional(),
     }),
   },
   responses: {
@@ -5075,9 +5075,9 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     query: z.object({
-      days: z.coerce.number().int().min(1).max(365).optional().describe("Trailing days in the daily series (default 90, max 365)."),
-      weeks: z.coerce.number().int().min(1).max(104).optional().describe("Trailing ISO weeks in the weekly series (default 26, max 104)."),
-      months: z.coerce.number().int().min(1).max(36).optional().describe("Trailing months in the monthly series (default 12, max 36)."),
+      days: z.coerce.number().int().min(1).max(365).describe("Trailing days in the daily series (default 90, max 365).").optional(),
+      weeks: z.coerce.number().int().min(1).max(104).describe("Trailing ISO weeks in the weekly series (default 26, max 104).").optional(),
+      months: z.coerce.number().int().min(1).max(36).describe("Trailing months in the monthly series (default 12, max 36).").optional(),
     }),
   },
   responses: {
@@ -5175,8 +5175,8 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     query: z.object({
-      featureSlug: z.string().optional().describe("Narrow to one acquisition channel."),
-      legKey: z.string().optional().describe("Narrow to one leg."),
+      featureSlug: z.string().describe("Narrow to one acquisition channel.").optional(),
+      legKey: z.string().describe("Narrow to one leg.").optional(),
     }),
   },
   responses: {
@@ -5230,7 +5230,7 @@ registry.registerPath({
             workflowDynastySlug: z.string().describe("A dynasty workflow-service describes for this channel (any status)."),
             state: z.enum(["active", "deprecated"]).describe("`active` assigns or reactivates; `deprecated` retires it on this leg only."),
             decidedBy: z.string().describe("Who decided (a person, or an assistant acting for them)."),
-            note: z.string().nullable().optional().describe("Why. Never read by any computation."),
+            note: z.string().nullable().describe("Why. Never read by any computation.").optional(),
           }),
         },
       },
@@ -5294,7 +5294,7 @@ registry.registerPath({
       content: {
         "application/json": {
           schema: z.object({
-            apply: z.boolean().optional().describe("Write the plan. Absent/false = dry run."),
+            apply: z.boolean().describe("Write the plan. Absent/false = dry run.").optional(),
             decidedBy: z.string().describe("Who decided, stored on every history row."),
           }),
         },
@@ -5312,7 +5312,7 @@ registry.registerPath({
               featureSlug: z.string(),
               workflowDynastySlug: z.string(),
               judgedOn: z.object({ templateTypes: z.array(z.string()), description: z.string().nullable() }),
-              pick: z.object({ legKey: z.string(), confidence: z.number(), probabilities: z.record(z.number()), model: z.string() }).nullable(),
+              pick: z.object({ legKey: z.string(), confidence: z.number(), probabilities: z.record(z.string(), z.number()), model: z.string() }).nullable(),
               kept: z.array(oneLegLegSchema).describe("`live_campaign` | `template_type` | `only_performed_leg`."),
               removed: z.array(oneLegLegSchema.extend({ emptiesPipe: z.boolean() })).describe("`leg_not_performed` | `one_leg`."),
             })),
@@ -5333,8 +5333,8 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     query: z.object({
-      orgId: z.string().uuid().optional().describe("Narrow to one org."),
-      brandId: z.string().uuid().optional().describe("Narrow to one brand."),
+      orgId: z.string().uuid().describe("Narrow to one org.").optional(),
+      brandId: z.string().uuid().describe("Narrow to one brand.").optional(),
     }),
   },
   responses: {
@@ -5359,9 +5359,9 @@ registry.registerPath({
             orgId: z.string().uuid().describe("The org that funds this brand. Required — the row is keyed on the pair."),
             brandId: z.string().uuid().describe("The brand the amount is about. Required — the row is keyed on the pair."),
             amountUsd: z.number().describe("What this brand is worth per month, USD. Zero or more; a stated 0 is a real answer."),
-            startDate: z.string().nullable().optional().describe("First UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = since the brand's first billed day."),
-            endDate: z.string().nullable().optional().describe("Last UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = still running."),
-            note: z.string().nullable().optional().describe("Why this figure. Never read by any computation."),
+            startDate: z.string().nullable().describe("First UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = since the brand's first billed day.").optional(),
+            endDate: z.string().nullable().describe("Last UTC day in force (`YYYY-MM-DD`, inclusive). Omit or null = still running.").optional(),
+            note: z.string().nullable().describe("Why this figure. Never read by any computation.").optional(),
           }),
         },
       },
@@ -5550,7 +5550,10 @@ const workflowCostPerOutcomeResponseSchema = z.object({
     observedClicks: z.number(),
     observedPositiveReplies: z.number(),
     costPerOutcomeUsd: z.number().nullable().describe("LIFETIME (all-history) pooled cost-per-outcome — what the workflow has cost per outcome over ALL history. Populated cost (projected cascade floor: max(spent, fleet unit cost) when the outcome denominator is 0), so non-null whenever the workflow has spend and fleet economics exist."),
-    maturity: legMaturityFiguresSchema.nullable().describe("THIS WORKFLOW ON THE OBJECTIVE'S LEG, flash and mature (features-service#1196): every org's campaigns performing that leg only (a workflow's figure is its figure on one leg), the positive replies counted on PEOPLE — the byte-same evidence a leg-keyed workflow-projection's crossOrg grain reads. OBSERVED, never floored. Null for an objective with no single leg (a projected one), and until the leg's first background warm has landed."),
+    maturity: legMaturityFiguresSchema
+      .nullable()
+      // zod-to-openapi 8 drops `nullable` on a ref to an allOf component: state it (its metadata type omits the key).
+      .openapi({ nullable: true, description: "THIS WORKFLOW ON THE OBJECTIVE'S LEG, flash and mature (features-service#1196): every org's campaigns performing that leg only (a workflow's figure is its figure on one leg), the positive replies counted on PEOPLE — the byte-same evidence a leg-keyed workflow-projection's crossOrg grain reads. OBSERVED, never floored. Null for an objective with no single leg (a projected one), and until the leg's first background warm has landed." } as { description: string }),
     recentCostPerOutcomeUsd: z.number().nullable().describe("RECENT going rate — the trailing-window moving-average cost-per-outcome over the workflow's most recent ~windowOutcomes base outcomes (same window semantics as /public/stats/cost-per-outcome-trend, scoped to this dynasty). Distinct from the lifetime costPerOutcomeUsd. Null (never a false $0) when the workflow has no backed recent window, no fleet economics, or the projected objective's rate is absent."),
   })).describe("One row per workflow dynasty, sorted by spend desc. Each row carries BOTH the lifetime cost-per-outcome and the recent trailing-window moving-average cost-per-outcome for the objective."),
   fleet: fleetMatureBenchmarkSchema.nullable().describe("The benchmark on the objective's leg over MATURE workflows only. Null for an objective with no single leg, and until the leg's first background warm has landed."),
@@ -5678,8 +5681,8 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       objective: objectiveQueryParam,
-      days: z.string().optional().describe("Number of trailing display days to emit (default 30, max 180)."),
-      windowOutcomes: z.string().optional().describe("Target outcomes per moving-average window (default 100)."),
+      days: z.string().describe("Number of trailing display days to emit (default 30, max 180).").optional(),
+      windowOutcomes: z.string().describe("Target outcomes per moving-average window (default 100).").optional(),
     }),
   },
   responses: {
@@ -5702,7 +5705,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       objective: objectiveQueryParam,
-      windowOutcomes: z.string().optional().describe("Trailing-window size (base outcomes) for recentCostPerOutcomeUsd. Default 100, clamped to 100000 — same default/clamp as /public/stats/cost-per-outcome-trend."),
+      windowOutcomes: z.string().describe("Trailing-window size (base outcomes) for recentCostPerOutcomeUsd. Default 100, clamped to 100000 — same default/clamp as /public/stats/cost-per-outcome-trend.").optional(),
     }),
   },
   responses: {
@@ -5760,17 +5763,17 @@ const legWorkflowRankingRowSchema = z.object({
   contacted: z.number(),
   spentUsd: z.number(),
   roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
-  pipelineUsd: z.number().nullable().optional().describe("The numerator of `roiMultiple`: the fleet pipeline (USD) for the workflow on the leg, lifetime. Null = unknown."),
-  billedSpendUsd: z.number().nullable().optional().describe("The denominator of `roiMultiple`: what clients were billed (USD, net) for the workflow on the leg, lifetime. Null = unknown."),
+  pipelineUsd: z.number().nullable().describe("The numerator of `roiMultiple`: the fleet pipeline (USD) for the workflow on the leg, lifetime. Null = unknown.").optional(),
+  billedSpendUsd: z.number().nullable().describe("The denominator of `roiMultiple`: what clients were billed (USD, net) for the workflow on the leg, lifetime. Null = unknown.").optional(),
   goesFirst: z.boolean().describe("Rank 1, when selectable."),
   moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
   explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
   place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
-  figures: legWorkflowFiguresSchema.optional().describe("On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy)."),
-  lastRunAt: z.string().nullable().optional().describe("When a run of this workflow (any version) last started on the pipe, every org (ISO). Null = never ran on it, or `lastRunUnavailableReason`. Absent on a copy built before it shipped."),
-  lastRunUnavailableReason: z.enum(["never_ran", "run_time_not_served", "not_read_on_pipe"]).nullable().optional().describe("Set whenever `lastRunAt` is null. `never_ran`: no spend and nobody contacted on the pipe. `run_time_not_served`: it ran but the run-time read states no date. `not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet."),
-  tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().optional().describe("The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`."),
-  tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().optional().describe("`not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (unknown, never an empty list). `[]` with no reason = judged, follows none. The email angle (blind / named / offer) is a TEMPLATE tactic since RESEARCH-WF-FIGURES-1022, so it is never listed here."),
+  figures: legWorkflowFiguresSchema.describe("On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy).").optional(),
+  lastRunAt: z.string().nullable().describe("When a run of this workflow (any version) last started on the pipe, every org (ISO). Null = never ran on it, or `lastRunUnavailableReason`. Absent on a copy built before it shipped.").optional(),
+  lastRunUnavailableReason: z.enum(["never_ran", "run_time_not_served", "not_read_on_pipe"]).nullable().describe("Set whenever `lastRunAt` is null. `never_ran`: no spend and nobody contacted on the pipe. `run_time_not_served`: it ran but the run-time read states no date. `not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet.").optional(),
+  tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`.").optional(),
+  tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (unknown, never an empty list). `[]` with no reason = judged, follows none. The email angle (blind / named / offer) is a TEMPLATE tactic since RESEARCH-WF-FIGURES-1022, so it is never listed here.").optional(),
   icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
 });
 
@@ -5810,7 +5813,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string(),
       leg: z.string().describe("Any pipe's leg key (either outbound spelling)."),
-      strategyId: z.string().optional().describe("A strategy id (404 `strategy_not_found`)."),
+      strategyId: z.string().describe("A strategy id (404 `strategy_not_found`).").optional(),
     }),
   },
   responses: {
@@ -5845,7 +5848,7 @@ registry.registerPath({
                     .describe("Per model, newest first: its share of the row, read on the row's basis (they add up to it). Zero for a version that never wrote. Empty on an internal pipe (its ledger names the alias, not the version)."),
                 }),
               ),
-              dynastiesUnavailableReason: z.string().nullable().optional().describe("`llm_dynasties_unreadable` when chat-service's dynasties could not be read this build (every model its own row)."),
+              dynastiesUnavailableReason: z.string().nullable().describe("`llm_dynasties_unreadable` when chat-service's dynasties could not be read this build (every model its own row).").optional(),
             }),
           }),
         },
@@ -5923,7 +5926,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       leg: z.string().describe("Any pipe's leg key (required): a funnel leg (e.g. start_to_conversation, an outbound channel's lead_found_to_*) or a leg of the channel's own no funnel walks, e.g. the sourcing leg start_to_lead_found (ranked on Lead found). A word naming no leg of the channel = 400."),
-      pricing: z.enum(["gross", "net"]).optional().describe("The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`."),
+      pricing: z.enum(["gross", "net"]).describe("The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`.").optional(),
     }),
   },
   responses: {
@@ -5946,9 +5949,9 @@ registry.registerPath({
             }),
             meetingPopulation: meetingPopulationSchema
               .nullable()
-              .optional()
-              .describe("On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped."),
-            pricing: z.enum(["gross", "net"]).optional().describe("The pricing of every row's `figures`."),
+              .describe("On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped.")
+              .optional(),
+            pricing: z.enum(["gross", "net"]).describe("The pricing of every row's `figures`.").optional(),
             rows: z.array(legWorkflowRankingRowSchema),
           }),
         },
@@ -6035,7 +6038,7 @@ registry.registerPath({
                 workflowDynastyName: z.string().nullable(),
                 unavailableReason: z.string().nullable(),
                 basis: z.enum(["recorded", "recomputed"]).describe("`recorded`: written live that day. `recomputed`: rebuilt later as of that day (`basisRule`)."),
-                inputs: z.record(z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
+                inputs: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
               }),
             ),
           }),
@@ -6110,7 +6113,7 @@ registry.registerPath({
 const workflowReturnHistoryQuery = z.object({
   featureSlug: z.string().describe("Feature slug (required)."),
   workflowDynastySlug: z.string().describe("The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."),
-  leg: z.string().optional().describe("Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`."),
+  leg: z.string().describe("Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`.").optional(),
 });
 
 const workflowReturnHistoryBase = {
@@ -6118,7 +6121,7 @@ const workflowReturnHistoryBase = {
   workflowDynastySlug: z.string(),
   workflowDynastyName: z.string().nullable(),
   scope: z.literal("fleet").describe("Every org and brand that ran the feature. An aggregate: no org or brand is named."),
-  legKey: z.string().optional().describe("Echo of the canonical `?leg=` when one was named: the curve counts only the campaigns performing that leg. Absent on the fleet-wide read."),
+  legKey: z.string().describe("Echo of the canonical `?leg=` when one was named: the curve counts only the campaigns performing that leg. Absent on the fleet-wide read.").optional(),
   totalPipelineUsd: z.number().nullable().describe("Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."),
   valueCoverage: z.object({
     pairsPriced: z.number().int().describe("(org, brand) pairs whose value leg was computed."),
@@ -6210,8 +6213,8 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       objective: objectiveQueryParam,
-      days: z.string().optional().describe("Number of trailing display days to emit (default 30, max 180)."),
-      windowOutcomes: z.string().optional().describe("Target outcomes per moving-average window (default 100)."),
+      days: z.string().describe("Number of trailing display days to emit (default 30, max 180).").optional(),
+      windowOutcomes: z.string().describe("Target outcomes per moving-average window (default 100).").optional(),
     }),
   },
   responses: {
@@ -6326,7 +6329,7 @@ const channelCatalogueResponseSchema = registry.register(
           coded: z.boolean().describe("A service fires it today. False = declared, not fired yet: no channel we run names it."),
           origin: z.enum(["code", "declared"]).describe("`code`: stated in this service's code. `declared`: created at run time through POST /internal/declarations/trigger-types (never coded until a service runs a generic detector for its `kind`)."),
           kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod", "any_of"]).describe("`event`: a service detects something on a lead. `delay`: N days after a step, if nothing happened. `poll`: a new item appeared at a source. `reported`: a caller reports each occurrence to campaign-service's trigger-events record route (`params.reportedBy` names who). `github_issue_in_prod`: campaign-service's detector sees the GitHub issue a campaign waits on (stated per campaign at campaign-service) reach production. `any_of`: fires whenever any of its member triggers fires (`params.memberTriggerIds`); ONE such trigger, `lead_event` (\"Lead event\": any fact about a person), computed by campaign-service from its members, never callable, never declarable."),
-          params: z.record(z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; `any_of` `{memberTriggerIds: string[]}` = the canonical trigger ids it fires on (every fact about a person: every entry-door trigger but our own actions `lead_found`, `email_sent`, `email_pushed_via_api` and our requests `follow_up_due`, `github_issue_in_prod`; a fact trigger declared later joins by itself); null on an event and on another coded trigger."),
+          params: z.record(z.string(), z.unknown()).nullable().describe("The kind's parameters: `delay` `{afterStep, days | minutes, unlessStep?}`, `poll` `{source, everyMinutes}`, `reported` `{reportedBy}` on a declared one; `any_of` `{memberTriggerIds: string[]}` = the canonical trigger ids it fires on (every fact about a person: every entry-door trigger but our own actions `lead_found`, `email_sent`, `email_pushed_via_api` and our requests `follow_up_due`, `github_issue_in_prod`; a fact trigger declared later joins by itself); null on an event and on another coded trigger."),
           ...triggerVocabularyFields,
         }),
       )
@@ -6476,7 +6479,7 @@ registry.registerPath({
   description:
     "The published acquisition-channel catalogue: every channel a customer can book, the commercial terms they commit to before anything is measured (daily operating cost whatever the volume, minimum commitment in days, upper bound on how long until it starts producing), which LEG of a funnel it performs (the step it moves a lead FROM and the step it moves it TO), who operates it, and the sales funnels that follow from those legs (with `funnels` listing EVERY declared funnel in its own right, each stating the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so a consumer answers 'which funnels does this outcome lead into' from one read with no translation table of its own), each carrying `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, already composed against the channel's own term, plus `governedBy` saying which side produced it — so a payment screen renders ONE figure and never combines two of ours. That figure is a run length before the result is judgeable, NOT a lock-in: nothing enforces it and the only thing a buyer commits to is the daily operating cost. A funnel is sellable LEG BY LEG rather than only end to end, so the catalogue publishes channels for the internal steps a human performs — the ones a specialist of ours runs and the ones the customer runs themselves. An internal leg is published once per OPERATOR, and the channel's NAME says which: our AI, our agency by hand, or the customer's own team. A daily operating cost of 0 means only that no standing day-rate is charged for the channel — it does NOT imply the customer operates it, since an automated channel meters its real cost per run instead; `operatedBy` is the field that says who is on it. NO customer identity anywhere in the path — the marketing site is generated from this and must never be able to drift from what we actually charge. Every published channel is BOOKABLE: there is no availability or coming-soon flag to consult, and a channel we are slower to deliver says so through its own terms. Each offering appears EXACTLY ONCE, under the slug that is current: a feature whose slug has been RETIRED (it names its successor in `supersededBySlug` on the authenticated feature row) is not listed here and returns no pair on /public/channel-funnel-economics, while every authenticated per-brand and per-campaign read of it keeps working unchanged.",
   tags: ["Public"],
-  request: { query: z.object({ includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }) },
+  request: { query: z.object({ includeInline: z.enum(["true", "false"]).describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.").optional() }) },
   responses: {
     200: { description: "The acquisition-channel catalogue (`triggers[]`: entry doors only unless `includeInline=true`)", content: { "application/json": { schema: channelCatalogueResponseSchema } } },
     400: { description: "`include_inline_unrecognised`." },
@@ -6544,7 +6547,7 @@ registry.registerPath({
   tags: ["Public"],
   request: {
     query: z.object({
-      channelSlug: z.string().optional().describe("Narrow to one channel. Omitted returns every pair in the catalogue. An unknown slug is a 404, never an empty pair list."),
+      channelSlug: z.string().describe("Narrow to one channel. Omitted returns every pair in the catalogue. An unknown slug is a 404, never an empty pair list.").optional(),
     }),
   },
   responses: {
@@ -6601,7 +6604,7 @@ registry.registerPath({
     query: z.object({
       featureSlug: z.string().describe("Feature slug (required)."),
       objective: objectiveQueryParam,
-      buckets: z.string().optional().describe("Number of equal-width histogram bars (default 10, max 50)."),
+      buckets: z.string().describe("Number of equal-width histogram bars (default 10, max 50).").optional(),
     }),
   },
   responses: {
@@ -6696,7 +6699,7 @@ registry.registerPath({
   request: {
     query: z.object({
       featureSlug: z.string().describe("Acquisition-channel (feature) slug (required)."),
-      minSpendUsd: z.string().optional().describe("Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."),
+      minSpendUsd: z.string().describe("Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default.").optional(),
     }),
   },
   responses: {
@@ -6752,8 +6755,8 @@ registry.registerPath({
   tags: ["Public"],
   request: {
     query: z.object({
-      channelSlug: z.string().optional().describe("Narrow to one acquisition channel (feature slug). Omitted returns every published channel's pairs. An unknown slug is a 404, never an empty pair list."),
-      minSpendUsd: z.string().optional().describe("Spend floor in USD a brand must be past to enter a pair's population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."),
+      channelSlug: z.string().describe("Narrow to one acquisition channel (feature slug). Omitted returns every published channel's pairs. An unknown slug is a 404, never an empty pair list.").optional(),
+      minSpendUsd: z.string().describe("Spend floor in USD a brand must be past to enter a pair's population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default.").optional(),
     }),
   },
   responses: {
@@ -6833,7 +6836,7 @@ registry.registerPath({
   description:
     "Wave C4. One entry per acquisition channel: every outcome (step) its paths reach with the cheapest projected price, every leg with its price, and every path (= one /public/channel-funnel-economics pair row, named by its leg keys) with its full priced chain, cost per paying client and PROJECTED return per dollar. Built from the SAME pair rows (same pooled dataset, same cache windows), so a channel selling one path reads byte-same figures. Also answers the funnel questions /public/channels answers (which outcomes follow, the composed minimum commitment) without naming a funnel. No field names a funnel. PROJECTED — never relabel as the realized /public/stats/outcome-return-on-spend.",
   tags: ["Public"],
-  request: { query: z.object({ channelSlug: z.string().optional().describe("Narrow to one channel. Unknown = 404.") }) },
+  request: { query: z.object({ channelSlug: z.string().describe("Narrow to one channel. Unknown = 404.").optional() }) },
   responses: {
     200: { description: "Per-outcome / per-leg projected economics", content: { "application/json": { schema: z.object({ channelSlug: z.string().nullable(), channels: z.array(channelOutcomeEconomicsSchema) }) } } },
     404: { description: "Acquisition channel not found", content: { "application/json": { schema: errorResponse } } },
@@ -6864,8 +6867,8 @@ registry.registerPath({
   tags: ["Public"],
   request: {
     query: z.object({
-      channelSlug: z.string().optional().describe("Narrow to one channel. Unknown = 404."),
-      minSpendUsd: z.string().optional().describe("Spend floor in USD (default 100). Non-numeric or negative = 400."),
+      channelSlug: z.string().describe("Narrow to one channel. Unknown = 404.").optional(),
+      minSpendUsd: z.string().describe("Spend floor in USD (default 100). Non-numeric or negative = 400.").optional(),
     }),
   },
   responses: {
@@ -7071,8 +7074,8 @@ registry.registerPath({
       mode: z.enum(["moment", "stored"]).optional(),
       brandId: z.string().optional(),
       view: z.string().optional(),
-      limit: z.string().optional().describe("1-2000, default 50"),
-      readWithinHours: z.string().optional().describe("Only cells a customer read within this many hours"),
+      limit: z.string().describe("1-2000, default 50").optional(),
+      readWithinHours: z.string().describe("Only cells a customer read within this many hours").optional(),
     }),
   },
   responses: {
@@ -7188,7 +7191,7 @@ const triggerTypeViewSchema = z.object({
   coded: z.boolean().describe("A service fires it today. A leg may only name a coded trigger."),
   origin: z.enum(["code", "declared"]),
   kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod", "any_of"]),
-  params: z.record(z.unknown()).nullable(),
+  params: z.record(z.string(), z.unknown()).nullable(),
   ...triggerVocabularyFields,
   displayOrder: z.number().int(),
   createdBy: z.string().nullable(),
@@ -7217,10 +7220,10 @@ const declaredSalesPathViewSchema = z.object({
 
 /** A customer write (2026-10-16): the gateway sets it for a non-staff key. Refused outright on what a customer never creates. */
 const customerNeverCreates = (what: string) =>
-  z.boolean().optional().describe(`True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): ${what} is staff only, 403 \`staff_only\` (a new one is a feature request). Absent or false = staff. Anything else = 400 \`runnable_only_invalid\`.`);
+  z.boolean().describe(`True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): ${what} is staff only, 403 \`staff_only\` (a new one is a feature request). Absent or false = staff. Anything else = 400 \`runnable_only_invalid\`.`).optional();
 
 const actorFields = {
-  requestedByOrgId: z.string().nullable().optional().describe("The client org that asked for it (provenance only, never scope)."),
+  requestedByOrgId: z.string().nullable().describe("The client org that asked for it (provenance only, never scope).").optional(),
 };
 
 registry.registerPath({
@@ -7301,7 +7304,7 @@ registry.registerPath({
             dailyOperatingCostCents: z.number().int().optional(),
             minimumCommitmentDays: z.number().int().optional(),
             maxDaysToFirstProduction: z.number().int().optional(),
-            published: z.boolean().optional().describe("true publishes it to every client; false withdraws it."),
+            published: z.boolean().describe("true publishes it to every client; false withdraws it.").optional(),
             updatedBy: z.string(),
           }),
         },
@@ -7346,8 +7349,8 @@ registry.registerPath({
             fromStep: z.string().nullable().describe("`steps[].key` of /public/channels; null = from nothing. Required."),
             toStep: z.string(),
             mode: z.enum(["proactive", "reactive"]),
-            triggerId: z.string().nullable().optional().describe("Required on a reactive leg; absent/null on a proactive one."),
-            published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), 
+            triggerId: z.string().nullable().describe("Required on a reactive leg; absent/null on a proactive one.").optional(),
+            published: z.boolean().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`).").optional(), 
             createdBy: z.string(),
             runnableOnly: customerNeverCreates("a new pipe"),
             ...actorFields,
@@ -7399,7 +7402,7 @@ registry.registerPath({
   summary: "List the trigger types: entry doors only unless includeInline=true (internal, api-key)",
   description: DECLARATIONS_DESCRIPTION,
   tags: ["Internal"],
-  request: { query: z.object({ includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }) },
+  request: { query: z.object({ includeInline: z.enum(["true", "false"]).describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.").optional() }) },
   responses: { 400: { description: "`include_inline_unrecognised`." }, 200: { description: "Coded and declared.", content: { "application/json": { schema: z.object({ triggerTypes: z.array(triggerTypeViewSchema) }) } } } },
 });
 
@@ -7432,9 +7435,9 @@ registry.registerPath({
             description: z.string(),
             icon: z.string().describe("A Phosphor icon name."),
             kind: z.enum(["event", "delay", "poll", "reported", "github_issue_in_prod", "any_of"]),
-            fromStep: z.string().nullable().optional().describe("`event` / `reported` only: the step a lead reached (event) or stands at (reported) when it fires."),
-            firedBy: z.string().optional().describe("`event` only: the service that would detect it (default `not_built`)."),
-            params: z.record(z.unknown()).optional().describe("`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days | minutes, unlessStep?}` (a step key; EXACTLY ONE of days >= 1 or minutes >= 5; optional unlessStep = another step: the occurrence is cancelled when the person reached it by the due time, e.g. `{afterStep: signup, minutes: 30, unlessStep: paid_client}`). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text."),
+            fromStep: z.string().nullable().describe("`event` / `reported` only: the step a lead reached (event) or stands at (reported) when it fires.").optional(),
+            firedBy: z.string().describe("`event` only: the service that would detect it (default `not_built`).").optional(),
+            params: z.record(z.string(), z.unknown()).describe("`reported`: `{reportedBy}` (required: the service that reports each occurrence, e.g. `chat-service`). `delay`: `{afterStep, days | minutes, unlessStep?}` (a step key; EXACTLY ONE of days >= 1 or minutes >= 5; optional unlessStep = another step: the occurrence is cancelled when the person reached it by the due time, e.g. `{afterStep: signup, minutes: 30, unlessStep: paid_client}`). `poll`: `{source, everyMinutes}` (everyMinutes >= 5); `source` = ONE treg call, object or JSON text, `{endpoint, method? GET|POST, query? (strings), body? (object), items (dot path, '' = the answer), itemId? (dot path), maxMicro (1..1000000 micro-USD per call)}`, stored as JSON text.").optional(),
             createdBy: z.string(),
             runnableOnly: customerNeverCreates("a new trigger"),
             ...actorFields,
@@ -7552,9 +7555,9 @@ const cataloguePage = (row: z.ZodTypeAny, object: string, costUnit: string) =>
     truncated: z.boolean(),
     rows: z.array(row),
   });
-const catalogueLimit = z.string().optional().describe("1..25, default 10.");
-const catalogueQ = z.string().optional().describe("Text search: every word must appear in the row's text (name, line, id).");
-const catalogueRunnable = z.enum(["true", "false"]).optional().describe("`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.");
+const catalogueLimit = z.string().describe("1..25, default 10.").optional();
+const catalogueQ = z.string().describe("Text search: every word must appear in the row's text (name, line, id).").optional();
+const catalogueRunnable = z.enum(["true", "false"]).describe("`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.").optional();
 const catalogueRunnableField = { runnable: z.boolean().describe("We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects.") };
 const catalogueErrors = {
   400: { description: "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)." },
@@ -7586,9 +7589,9 @@ const catalogueLifecycleLadder = z
   .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
   .describe("The lifecycle ladder itself, lowest rung first.");
 
-const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().optional().describe("Present (true) on a step declared at run time."), ...catalogueLifecycleFields });
+const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().describe("Present (true) on a step declared at run time.").optional(), ...catalogueLifecycleFields });
 const catalogueTriggerField = { trigger: z.object({ slug: z.string(), name: z.string() }).nullable().describe("A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."), };
-const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().optional().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows."), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").optional().describe("Sales path rows only."), trigger: catalogueTriggerField.trigger.optional() });
+const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows.").optional(), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").describe("Sales path rows only.").optional(), trigger: catalogueTriggerField.trigger.optional() });
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
 const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
 const catalogueFunnelCopy = {
@@ -7628,7 +7631,7 @@ const catalogueExpectedDetail = catalogueExpectedRow.extend({
       costBasis: catalogueExpectedBasis.nullable().describe("Null on a customer-team leg (costs nothing) or when unpriced."),
     }),
   ),
-});
+}).describe(catalogueExpectedRow.description ?? "");
 const catalogueFunnelRow = z.object({ ...catalogueFunnelCopy, id: z.string(), name: z.string(), face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."), line: z.string().describe("Who works each leg, in order."), ...catalogueEcon, expected: catalogueExpectedRow, ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean().optional() });
 const catalogueFace = z.object({ animal: z.string(), color: z.string(), eyes: z.string(), mouth: z.string(), accessory: z.string(), svgPath: z.string() });
 
@@ -7729,13 +7732,13 @@ const idParam = (what: string) => ({ id: z.string().describe(`${what} (URL-encod
 catalogueRead("/internal/catalogue/steps", "List steps (internal, api-key)", { q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueStepRow, "step", "per_outcome").extend({ lifecycleLadder: catalogueLifecycleLadder }));
 catalogueRead("/internal/catalogue/steps/{id}", "One step (internal, api-key)", {}, catalogueStepDetail, idParam("A step key or label"));
 const catalogueOfferQuery = {
-  offerId: z.string().optional().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."),
-  brandId: z.string().optional().describe("The offer's brand (required with offerId)."),
+  offerId: z.string().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.").optional(),
+  brandId: z.string().describe("The offer's brand (required with offerId).").optional(),
 };
 const catalogueOfferEcho = z
   .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate.") })
-  .optional()
-  .describe("Present on a per-offer read only.");
+  .describe("Present on a per-offer read only.")
+  .optional();
 const catalogueStepRef = z.object({ id: z.string().describe("Step key."), name: z.string() });
 const catalogueOfferSteps = z
   .object({
@@ -7744,8 +7747,8 @@ const catalogueOfferSteps = z
     statedAt: z.string().nullable(),
     alwaysPresent: z.array(catalogueStepRef).describe("Steps every business has by definition (Lead found, Paid client), counted present."),
   })
-  .optional()
-  .describe("Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has.");
+  .describe("Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has.")
+  .optional();
 const catalogueSetAside = z
   .object({
     total: z.number().int(),
@@ -7759,24 +7762,24 @@ const catalogueSetAside = z
       }),
     ),
   })
-  .optional()
-  .describe("Per-offer read only: the rows matching every other filter but walking a step the offer lacks (same order and limit as `rows`). Never proposable as is.");
+  .describe("Per-offer read only: the rows matching every other filter but walking a step the offer lacks (same order and limit as `rows`). Never proposable as is.")
+  .optional();
 const catalogueSetAsideByStep = z
   .array(z.object({ id: z.string(), name: z.string(), setAsideCount: z.number().int().describe("Set-aside rows lacking this step.") }))
-  .optional()
-  .describe("Per-offer read only: each missing step and how many set-aside rows it accounts for, most first.");
+  .describe("Per-offer read only: each missing step and how many set-aside rows it accounts for, most first.")
+  .optional();
 const catalogueOfferListFit = { offer: catalogueOfferEcho, offerSteps: catalogueOfferSteps, setAside: catalogueSetAside, setAsideByStep: catalogueSetAsideByStep };
 const catalogueOfferDetailFit = {
   offer: catalogueOfferEcho,
   offerSteps: catalogueOfferSteps,
-  setAside: z.boolean().optional().describe("Per-offer read only: true when this walks a step the offer's business does not have."),
-  missingSteps: z.array(catalogueStepRef).optional().describe("Per-offer read only: the steps it walks that the offer lacks (empty when kept)."),
+  setAside: z.boolean().describe("Per-offer read only: true when this walks a step the offer's business does not have.").optional(),
+  missingSteps: z.array(catalogueStepRef).describe("Per-offer read only: the steps it walks that the offer lacks (empty when kept).").optional(),
 };
-catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().optional().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client").extend(catalogueOfferListFit));
 catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal, api-key)", { ...catalogueOfferQuery }, cataloguePathDetail.extend(catalogueOfferDetailFit), idParam("A sales path id"));
-catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().optional().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them."), legKeys: z.string().optional().describe("Comma list of leg keys."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
+catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them.").optional(), legKeys: z.string().describe("Comma list of leg keys.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
-catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids: pipes on their legs."), channels: z.string().optional().describe("Comma list of channel slugs."), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
+catalogueRead("/internal/catalogue/pipes", "List pipes (internal, api-key)", { paths: z.string().describe("Comma list of sales path ids: pipes on their legs.").optional(), channels: z.string().describe("Comma list of channel slugs.").optional(), legKeys: z.string().optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(cataloguePipeRow, "pipe", "per_outcome"));
 const pipeStatsReason = (values: [string, ...string[]], why: string) => z.enum(values).nullable().describe(why);
 const pipePeriodRow = z.object({
   period: z.string().describe("`2026-Q1` (quarter), `2026-10` (month), or `since_inception`."),
@@ -7790,6 +7793,9 @@ const pipePeriodRow = z.object({
   spendUsd: z.number().nullable().describe("NET spend of ours in the period; null when the figure has no spend of ours (customer time)."),
   costPerOutcomeUsd: z.number().nullable().describe("spendUsd ÷ the period's outcome count; null with no outcome, no spend, or no spend of ours."),
 });
+// zod 4 `.extend()` drops the base object's description: carry it over.
+const extendKeepingDescription = <T extends z.ZodRawShape, S extends z.ZodRawShape>(base: z.ZodObject<T>, shape: S) =>
+  base.extend(shape).describe(base.description ?? "");
 const pipePeriodsSchema = (counts: string, rates: string) =>
   z
     .object({
@@ -7895,8 +7901,10 @@ const pipeStatsSchema = z
             }),
           )
           .describe("One CUMULATIVE point per UTC day from firstActivityDay to today; undated counts enter on the last point, so the last point IS the snapshot (rows + impact)."),
-        periods: pipePeriodsSchema("`teamAloneFrom`, `teamAloneTo`, `teamPlusPipeFrom`, `teamPlusPipeTo`", "`teamAlone`, `teamPlusPipe`; spend and cost per outcome = this pipe's (the team + pipe row)")
-          .extend({ impactPointsDiff: z.record(z.string(), z.number().nullable()).describe("Period (`period` of each row, `since_inception` included) -> teamPlusPipe rate − teamAlone rate in POINTS; null when either rate is.") }),
+        periods: extendKeepingDescription(
+          pipePeriodsSchema("`teamAloneFrom`, `teamAloneTo`, `teamPlusPipeFrom`, `teamPlusPipeTo`", "`teamAlone`, `teamPlusPipe`; spend and cost per outcome = this pipe's (the team + pipe row)"),
+          { impactPointsDiff: z.record(z.string(), z.number().nullable()).describe("Period (`period` of each row, `since_inception` included) -> teamPlusPipe rate − teamAlone rate in POINTS; null when either rate is.") },
+        ),
       })
       .nullable()
       .describe("PLATFORM pipe whose leg (same `from`, same `to`) also has a customer-team pipe only, else null (owner 2026-10-12): the table \"your team alone\" vs \"your team + this pipe\" and this pipe's impact, one rule for every such pipe. Additive."),
@@ -7949,20 +7957,20 @@ const pipeStatsSchema = z
       .describe("One point per UTC day from firstActivityDay to today, every figure cumulative. The last point IS the snapshot (undated counts enter there)."),
     periods: pipePeriodsSchema("the volume keys (`volumes[].key`)", "the conversion rate keys (`conversionRates[].key`); spend/cost per outcome on every pipe but customer_team"),
   })
-  .optional()
-  .describe("Present only with `stats=true`.");
+  .describe("Present only with `stats=true`.")
+  .optional();
 catalogueRead(
   "/internal/catalogue/pipes/{id}",
   "One pipe (internal, api-key)",
   {
-    stats: z.enum(["true"]).optional().describe("Owner 2026-10-12 (staff Pipe page): add `stats`, the pipe's own volumes, net spend, cost per outcome and ROI since inception, with their daily history. Held 15 min fresh / 6 h stale per (pipe, scope); a producer failure = 502 `pipe_stats_unreadable`."),
-    brandId: z.string().optional().describe("With stats=true: only this brand's campaigns on the pipe."),
-    offerId: z.string().optional().describe("With stats=true: only the campaigns of this offer of `brandId` (400 `brand_required` without it)."),
+    stats: z.enum(["true"]).describe("Owner 2026-10-12 (staff Pipe page): add `stats`, the pipe's own volumes, net spend, cost per outcome and ROI since inception, with their daily history. Held 15 min fresh / 6 h stale per (pipe, scope); a producer failure = 502 `pipe_stats_unreadable`.").optional(),
+    brandId: z.string().describe("With stats=true: only this brand's campaigns on the pipe.").optional(),
+    offerId: z.string().describe("With stats=true: only the campaigns of this offer of `brandId` (400 `brand_required` without it).").optional(),
   },
   cataloguePipeDetail.extend({ stats: pipeStatsSchema }),
   idParam("A pipe id `<channel slug>|<leg key>`"),
 );
-catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."), containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().describe("Comma list of sales path ids (default: every path).").optional(), containsChannels: z.string().describe("Comma list of channel slugs: funnels containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOfferListFit));
 catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", { ...catalogueOfferQuery }, catalogueFunnelDetail.extend(catalogueOfferDetailFit), idParam("A sales funnel id"));
 catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (internal, api-key)", { pipe: z.string().describe("A pipe id (required)."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "workflow", "per_outcome").extend({ pipeId: z.string() }));
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
@@ -7984,8 +7992,8 @@ const catalogueTriggerRow = z.object({
   origin: z.enum(["code", "declared"]),
   pipeCount: z.number().int().describe("Reactive pipes that name this trigger."),
 });
-catalogueRead("/internal/catalogue/triggers", "List triggers: the entry doors a reactive campaign starts on (internal, api-key)", { q: catalogueQ, limit: catalogueLimit, includeInline: z.enum(["true", "false"]).optional().describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.") }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
-catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
+catalogueRead("/internal/catalogue/triggers", "List triggers: the entry doors a reactive campaign starts on (internal, api-key)", { q: catalogueQ, limit: catalogueLimit, includeInline: z.enum(["true", "false"]).describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.").optional() }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
+catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.string(), z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
 
 const catalogueFunnelsCarryingPlay = z
   .object({
@@ -8048,7 +8056,7 @@ catalogueRead("/internal/catalogue/strategies/{id}", "One strategy (internal, ap
 catalogueRead(
   "/internal/catalogue/plays",
   "List plays: a pipe x a strategy (internal, api-key)",
-  { pipe: z.string().optional().describe("A pipe id: its plays, default first. Absent: every play of every pipe cataloguing plays."), limit: catalogueLimit },
+  { pipe: z.string().describe("A pipe id: its plays, default first. Absent: every play of every pipe cataloguing plays.").optional(), limit: catalogueLimit },
   z.object({ object: z.literal("play"), order: z.literal("pipe_then_default_first"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTacticPlayRow) }).describe(tacticsNote),
 );
 catalogueRead(
@@ -8086,13 +8094,13 @@ const catalogueCreate = (path: string, summary: string, extra: string, body: z.Z
     },
   });
 
-const catalogueActor = { createdBy: z.string().describe("Who makes the write (staff identity or the agent)."), requestedByOrgId: z.string().nullable().optional().describe("Which client asked (provenance, never scope).") };
+const catalogueActor = { createdBy: z.string().describe("Who makes the write (staff identity or the agent)."), requestedByOrgId: z.string().nullable().describe("Which client asked (provenance, never scope).").optional() };
 
 catalogueCreate(
   "/internal/catalogue/steps",
   "Declare a step (internal, api-key)",
   "A step names what something produces (\"LinkedIn post\", \"Email found\"); declared legs (pipes) may then start or end on it. It states where it leads (`towardStep` reached at `towardRatePct`), so it has a value from the start: towardRatePct/100 x value(towardStep).",
-  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().optional().describe("The endpoint or service producing it."), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().optional().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`."), subjectKind: z.enum(["person", "object"]).describe("REQUIRED: what one occurrence is about. Absent = 400 `subjectKind_required`, anything else = 400 `subject_kind_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
+  z.object({ key: z.string().describe("snake_case, new."), label: z.string(), description: z.string(), shortDescription: z.string().describe("<= 80 characters."), icon: z.string().describe("Phosphor icon name."), towardStep: z.string(), towardRatePct: z.number().describe("(0, 100]."), producedBy: z.string().nullable().describe("The endpoint or service producing it.").optional(), lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).nullable().describe("Its rung on the lifecycle ladder, or `none` (on no rung). Absent = not stated (served null; state it later with PATCH /internal/catalogue/steps/{id}). Anything else = 400 `lifecycle_rung_invalid`.").optional(), subjectKind: z.enum(["person", "object"]).describe("REQUIRED: what one occurrence is about. Absent = 400 `subjectKind_required`, anything else = 400 `subject_kind_invalid`."), runnableOnly: customerNeverCreates("a new outcome"), ...catalogueActor }),
   z.object({ object: z.literal("step"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), valueUsd: z.number().nullable(), declared: z.literal(true), producedBy: z.string().nullable(), ...catalogueLifecycleFields }),
 );
 
@@ -8118,21 +8126,21 @@ catalogueCreate(
   "/internal/catalogue/pipes",
   "Declare a pipe (internal, api-key)",
   "One leg on one channel (a declared leg, `POST /internal/declarations/channels/{slug}/legs` rules: a reactive pipe names a trigger something fires, unless it is a customer-team pipe or a draft). WHERE A PIPE ON A TRIGGER STARTS: at Start (`fromStep: null`, leg `start_to_<toStep>`), the trigger starts it, like every running reactive campaign; or out of a real step a trigger stands for (Positive reply, Form submitted...). NEVER at Lead found: that is where a source hands its leads to a proactive pipe, those leads never fire a trigger, so no sales funnel could take the pipe (400 `reactive_pipe_from_lead_found`, naming the entry leg to declare). A trigger's `fromStep` is where a lead stands when it fires, not where a reactive pipe starts: to reuse a proactive pipe leaving that step, head a sales funnel with the trigger (`POST /internal/catalogue/sales-funnels` `triggerId`). A leg out of a step nothing rates states `conversionRatePct` (400 `conversion_rate_required`). Named with a never-given bird. Created live (owner 2026-10-12): clients see it at once. A pipe created by mistake: `POST /internal/catalogue/pipes/{id}/retire`.",
-  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().optional().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`)."), runnableOnly: customerNeverCreates("a new pipe"), ...catalogueActor }),
+  z.object({ channelSlug: z.string(), fromStep: z.string().nullable().describe("null = from nothing."), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable().optional(), conversionRatePct: z.number().optional(), published: z.boolean().describe("Default true (live). false = a DRAFT (owner 2026-10-12): internal reads only, never runnable; the only way a PLATFORM leg may name a trigger nothing fires yet (a proposal). Publishing it later re-checks the trigger (409 `trigger_not_fired`).").optional(), runnableOnly: customerNeverCreates("a new pipe"), ...catalogueActor }),
   cataloguePipeDetail,
 );
 catalogueCreate(
   "/internal/catalogue/sales-paths",
   "Declare a sales path (internal, api-key)",
   "The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
-  z.object({ legKeys: z.array(z.string()), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): every leg must be worked by at least one pipe we run today (`runnable`), else 400 `leg_not_runnable` naming the leg. Absent or false = staff, any leg. Anything else = 400 `runnable_only_invalid`."), triggerId: z.string().optional().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."), ...catalogueActor }),
+  z.object({ legKeys: z.array(z.string()), runnableOnly: z.boolean().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): every leg must be worked by at least one pipe we run today (`runnable`), else 400 `leg_not_runnable` naming the leg. Absent or false = staff, any leg. Anything else = 400 `runnable_only_invalid`.").optional(), triggerId: z.string().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id).").optional(), ...catalogueActor }),
   catalogueGlyphRow.extend({ created: z.boolean() }),
 );
 catalogueCreate(
   "/internal/catalogue/sales-funnels",
   "Declare a sales funnel (internal, api-key)",
   "One pipe id per leg of a sales path, in order (a leg the customer's own team works: its `Your Team` pipe). A bare leg key is refused 400 `bare_leg_refused` (owner 2026-10-11: every leg a channel). ONE CHANNEL PER LEG (owner 2026-10-11): the sourcing leg (Start -> Lead found) included, named by ONE pipe: a source (`sourcing-apollo-cold-filters|start_to_lead_found`, ...) or Lead Sourcing (`lead-sourcing|start_to_lead_found`, we pick the sources). Two pipes on one leg = 400 `one_channel_per_leg`; a path leg no pipe names = 400 `leg_without_channel`; a source an outreach channel does not take (your CRM contacts before cold email) = 400 `funnel_invalid`. The funnel id names every leg (`start_to_lead_found@<source>+...`); a legacy id (it starts out of Lead found) reads as its Lead Sourcing funnel. Persisted (the declared sales path store the offer read already knows) and named by what it does (2 or 3 plain words, never given before) + a face; an existing funnel answers 200 `created: false` with its name. Campaign-service and billing-service key a campaign on this id.",
-  z.object({ pipeIds: z.array(z.string()), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key; owner 2026-10-16): every pipe must be one we run today (the `runnable` every catalogue read serves), else 400 `pipe_not_runnable` naming the pipe and why. Absent or false = staff, any pipe. Anything else = 400 `runnable_only_invalid`."), triggerId: z.string().optional().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id)."), ...catalogueActor }),
+  z.object({ pipeIds: z.array(z.string()), runnableOnly: z.boolean().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key; owner 2026-10-16): every pipe must be one we run today (the `runnable` every catalogue read serves), else 400 `pipe_not_runnable` naming the pipe and why. Absent or false = staff, any pipe. Anything else = 400 `runnable_only_invalid`.").optional(), triggerId: z.string().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id).").optional(), ...catalogueActor }),
   catalogueFunnelDetail.extend({ created: z.boolean() }),
 );
 
@@ -8143,8 +8151,8 @@ catalogueCreate(
   z.object({
     name: z.string(),
     description: z.string(),
-    clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients."),
-    appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."),
+    clientLine: z.string().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients.").optional(),
+    appliesTo: z.enum(["workflow", "template", "llm"]).describe("What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`.").optional(),
     createdBy: z.string(),
   }),
   catalogueTacticRow,
@@ -8172,7 +8180,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A tactic id") }),
-    body: { content: { "application/json": { schema: z.object({ description: z.string().optional().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent."), clientLine: z.string().optional().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."), appliesTo: z.enum(["workflow", "template", "llm"]).optional().describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+    body: { content: { "application/json": { schema: z.object({ description: z.string().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent.").optional(), clientLine: z.string().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did).").optional(), appliesTo: z.enum(["workflow", "template", "llm"]).describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`.").optional(), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
   },
   responses: {
     200: {
@@ -8207,9 +8215,9 @@ registry.registerPath({
       content: {
         "application/json": {
           schema: z.object({
-            requires: z.array(z.string()).optional().describe("Tactic ids a workflow must follow: the FULL new list (absent = unchanged)."),
-            excludes: z.array(z.string()).optional().describe("Tactic ids a workflow must not follow: the FULL new list (absent = unchanged)."),
-            description: z.string().optional().describe("<= 500 characters (absent = unchanged)."),
+            requires: z.array(z.string()).describe("Tactic ids a workflow must follow: the FULL new list (absent = unchanged).").optional(),
+            excludes: z.array(z.string()).describe("Tactic ids a workflow must not follow: the FULL new list (absent = unchanged).").optional(),
+            description: z.string().describe("<= 500 characters (absent = unchanged).").optional(),
             updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated staff member)."),
           }),
         },
@@ -8248,7 +8256,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded. A play id is refused 404: retire its pipe.") }),
-    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters.") }) } } },
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().describe("Why, at most 500 characters.").optional() }) } } },
   },
   responses: {
     200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("pipe"), id: z.string(), name: z.string().nullable(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable() }) } } },
@@ -8269,7 +8277,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("The sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id), URL-encoded.") }),
-    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters."), allowStoppedCampaigns: z.boolean().optional().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`."), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.") }) } } },
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().describe("Why, at most 500 characters.").optional(), allowStoppedCampaigns: z.boolean().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`.").optional(), runnableOnly: z.boolean().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.").optional() }) } } },
   },
   responses: {
     200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("sales_funnel"), id: z.string(), name: z.string().nullable(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable(), stillComposable: z.boolean().describe("True when the pipes still compose this funnel (no trigger head): its declaration is retired, the funnel is not gone.") , stoppedCampaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), status: z.string().nullable() })).describe("The stopped campaigns on it that `allowStoppedCampaigns` let through (empty otherwise).") }) } } },
@@ -8290,7 +8298,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("The trigger id (`GET /internal/catalogue/triggers` rows[].id).") }),
-    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters."), allowStoppedCampaigns: z.boolean().optional().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`."), runnableOnly: z.boolean().optional().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.") }) } } },
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().describe("Why, at most 500 characters.").optional(), allowStoppedCampaigns: z.boolean().describe("Default false: a STOPPED campaign blocks the retire like a running one (it can be restarted). true = staff knows the stopped campaigns listed in the 409 (e.g. a test that already ran, whose history campaign-service keeps): they no longer block; a RUNNING campaign always blocks. The 200 lists them in `stoppedCampaigns`.").optional(), runnableOnly: z.boolean().describe("True when the write acts for a CUSTOMER: refused 403 `staff_only`, the catalogue is ours.").optional() }) } } },
   },
   responses: {
     200: { description: "Retired.", content: { "application/json": { schema: z.object({ object: z.literal("trigger"), id: z.string(), name: z.string(), retired: z.literal(true), retiredAt: z.string(), retiredBy: z.string(), note: z.string().nullable() , stoppedCampaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), status: z.string().nullable() })).describe("The stopped campaigns on it that `allowStoppedCampaigns` let through (empty otherwise).") }) } } },
@@ -8314,8 +8322,8 @@ registry.registerPath({
       content: {
         "application/json": {
           schema: z.object({
-            apply: z.boolean().optional().describe("true writes the renames; absent or false answers the plan only."),
-            firstKeys: z.array(z.string()).optional().describe("Funnel ids named first, in this order (the ones customers run)."),
+            apply: z.boolean().describe("true writes the renames; absent or false answers the plan only.").optional(),
+            firstKeys: z.array(z.string()).describe("Funnel ids named first, in this order (the ones customers run).").optional(),
           }),
         },
       },
@@ -8394,7 +8402,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A play id (`<pipe id>~<strategy id>`), URL-encoded.") }),
-    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().optional().describe("Why, at most 500 characters.") }) } } },
+    body: { content: { "application/json": { schema: z.object({ retiredBy: z.string().describe("Who retires it (staff identity)."), note: z.string().nullable().describe("Why, at most 500 characters.").optional() }) } } },
   },
   responses: {
     200: {
@@ -8417,8 +8425,8 @@ registry.registerPath({
   tags: ["Public"],
   request: {
     query: z.object({
-      paths: z.string().optional().describe("Comma list of sales path ids (default: every path)."),
-      containsChannels: z.string().optional().describe("Comma list of channel slugs: funnels containing AT LEAST ONE."),
+      paths: z.string().describe("Comma list of sales path ids (default: every path).").optional(),
+      containsChannels: z.string().describe("Comma list of channel slugs: funnels containing AT LEAST ONE.").optional(),
       q: catalogueQ,
       limit: catalogueLimit,
     }),
@@ -8481,30 +8489,30 @@ registry.registerPath({
 // ── GET /internal/research[/conclusions|/studies] (LIVE-RESEARCH-1018) ───────────────────
 
 const researchPointSchema = z.object({
-  key: z.string().optional().describe("On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...)."),
+  key: z.string().describe("On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...).").optional(),
   label: z.string(),
   value: z.number(),
   display: z.string().describe("The value as the page prints it."),
   note: z.string().describe("The counts behind the value."),
   thin: z.boolean().describe("LEARNING under the maturity rule (historical field name)."),
-  partial: z.boolean().optional().describe("On a month chart: the month the maturity cutoff falls inside (drawn dotted)."),
+  partial: z.boolean().describe("On a month chart: the month the maturity cutoff falls inside (drawn dotted).").optional(),
 });
 const researchChartSchema = z.object({
   kind: z.enum(["bars", "months"]),
   title: z.string(),
   lowerIsBetter: z.boolean(),
   points: z.array(researchPointSchema),
-  cumulative: z.object({ title: z.string(), points: z.array(researchPointSchema) }).optional().describe("On a months chart: the average since inception at the end of each month."),
+  cumulative: z.object({ title: z.string(), points: z.array(researchPointSchema) }).describe("On a months chart: the average since inception at the end of each month.").optional(),
   curve: z
     .object({ title: z.string(), points: z.array(researchPointSchema) })
-    .optional()
     .describe(
       "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart.",
-    ),
+    )
+    .optional(),
   compare: z
     .object({ title: z.string(), points: z.array(researchPointSchema) })
-    .optional()
-    .describe("A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none."),
+    .describe("A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none.")
+    .optional(),
   note: z.string().optional(),
 });
 const researchVerdictSchema = z.object({
@@ -8517,7 +8525,7 @@ const researchStudySchema = registry.register(
   z.object({
     id: z.string().describe("Stable study id, e.g. `cold-email-website-visit-workflow-roi`."),
     pipe: z.string().nullable().describe("The pipe (leg x channel) the study belongs to (`cold-email-positive-reply`, `cold-email-website-visit`, `meeting-booking`; one of `pipes[].id`); null on an outcome study."),
-    outcome: z.enum(["meeting", "judgment", "positive-reply"]).optional().describe("Set exactly when `pipe` is null."),
+    outcome: z.enum(["meeting", "judgment", "positive-reply"]).describe("Set exactly when `pipe` is null.").optional(),
     topic: z.string(),
     goal: z.enum(["roi", "rate"]),
     question: z.string(),
@@ -8542,8 +8550,8 @@ const researchStudySchema = registry.register(
           )
           .describe("The tiles in order p10, p25, median, p75, p90, average."),
       })
-      .optional()
-      .describe("On a delay study only (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): lead-service's time from the first message to the first positive reply, fleet-wide since inception, with its percentiles."),
+      .describe("On a delay study only (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): lead-service's time from the first message to the first positive reply, fleet-wide since inception, with its percentiles.")
+      .optional(),
     conclusion: z.array(z.string()),
   }),
 );
@@ -8566,7 +8574,7 @@ const researchFileSchema = registry.register(
     computedAt: z.string(),
     freshness: researchFreshnessSchema,
     allOrgs: z.literal(true),
-    view: z.enum(["mature", "flash"]).optional().describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it."),
+    view: z.enum(["mature", "flash"]).describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it.").optional(),
     costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
     unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
     window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
@@ -8579,8 +8587,8 @@ const researchFileSchema = registry.register(
         linkedEmails: z.number().int().describe("Emails our own sender sent on the website-visit leg (the only ones a visit can come from)."),
         byMonth: z.array(z.object({ label: z.string(), emails: z.number().int() })),
       })
-      .optional()
-      .describe("The page-wide counts. Absent when they could not be read this build, never 0."),
+      .describe("The page-wide counts. Absent when they could not be read this build, never 0.")
+      .optional(),
     maturation: z.object({
       rule: z.literal("run_start"),
       days: z.number(),
@@ -8590,8 +8598,8 @@ const researchFileSchema = registry.register(
         reply: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
         visit: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
       }),
-      excludedEmails: z.number().int().optional().describe("Emails of sequences first written on or after their leg's cutoff: too young to count yet."),
-      noRunStart: z.number().int().optional().describe("People no serve record dates: counted in the mature cohort, in no month."),
+      excludedEmails: z.number().int().describe("Emails of sequences first written on or after their leg's cutoff: too young to count yet.").optional(),
+      noRunStart: z.number().int().describe("People no serve record dates: counted in the mature cohort, in no month.").optional(),
       note: z.string(),
     }),
     pipes: z
@@ -8603,10 +8611,10 @@ const researchFileSchema = registry.register(
       z.object({
         id: z.string(),
         outcome: z.string(),
-        step: z.string().optional().describe("The lead STATE the section is (RESEARCH-STATE-SECTIONS-1025: `lead_interested` on `positive-reply`, `meeting_booked` on `meeting`, `meeting_attended`, `paid_client`, `lead_visited`); absent on a section that is no step (`judgment`)."),
-        pipes: z.array(z.string()).optional().describe("The page's pipes whose leg's to-step puts a lead in the state (a signup / form / booking call pipe lands on Lead interested)."),
-        family: z.enum(["interest", "visit"]).optional().describe("RESEARCH-STATE-SECTIONS-1025: the lead-state family the page groups the section under, never summed across: `interest` (Lead interested < Meeting booked < Meeting attended < Paid client), `visit` (Lead visited). Absent on `judgment`."),
-        familyLabel: z.string().optional().describe("The family in the page's words: `CRM lifecycle` | `Website visits`."),
+        step: z.string().describe("The lead STATE the section is (RESEARCH-STATE-SECTIONS-1025: `lead_interested` on `positive-reply`, `meeting_booked` on `meeting`, `meeting_attended`, `paid_client`, `lead_visited`); absent on a section that is no step (`judgment`).").optional(),
+        pipes: z.array(z.string()).describe("The page's pipes whose leg's to-step puts a lead in the state (a signup / form / booking call pipe lands on Lead interested).").optional(),
+        family: z.enum(["interest", "visit"]).describe("RESEARCH-STATE-SECTIONS-1025: the lead-state family the page groups the section under, never summed across: `interest` (Lead interested < Meeting booked < Meeting attended < Paid client), `visit` (Lead visited). Absent on `judgment`.").optional(),
+        familyLabel: z.string().describe("The family in the page's words: `CRM lifecycle` | `Website visits`.").optional(),
         description: z.string(),
         population: z.string(),
       }),
@@ -8618,10 +8626,10 @@ const researchFileSchema = registry.register(
 const researchFactSchema = z.object({ statement: z.string(), sample: z.string().nullable() });
 const researchViewParam = z
   .enum(["mature", "flash"])
-  .optional()
   .describe(
     "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
-  );
+  )
+  .optional();
 const researchNotYet = { description: "`research_not_computed_yet`: the first build after this deploy is running.", content: { "application/json": { schema: errorResponse } } };
 
 registry.registerPath({
@@ -8631,7 +8639,7 @@ registry.registerPath({
   description:
     "Every Research study the staff Research page shows, computed from live production evidence off the request path (rebuilt on a clock every 15 min; the persisted last build is served meanwhile, its age stated in `freshness`). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
   tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional().describe("Default `user` (billed)."), view: researchViewParam }) },
+  request: { query: z.object({ basis: z.enum(["user", "actual"]).describe("Default `user` (billed).").optional(), view: researchViewParam }) },
   responses: {
     200: { description: "The research file", content: { "application/json": { schema: researchFileSchema } } },
     400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
@@ -8698,8 +8706,8 @@ const researchRefSchema = z.object({
   version: z
     .object({ key: z.string(), label: z.string() })
     .nullable()
-    .optional()
-    .describe("On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs."),
+    .describe("On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs.")
+    .optional(),
 });
 const researchCatalogFigures = {
   rank: z.number().int().nullable().describe("Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."),
@@ -8851,7 +8859,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
   responses: {
-    200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(researchCatalogPipeSchema) } } },
+    200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(z.string(), researchCatalogPipeSchema) } } },
     400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
@@ -8963,7 +8971,7 @@ registry.registerPath({
   responses: {
     200: {
       description: "The Performance tab per pipe",
-      content: { "application/json": { schema: z.object({ computedAt: z.string(), freshness: researchFreshnessSchema, costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(researchPerformancePipeSchema) }) } },
+      content: { "application/json": { schema: z.object({ computedAt: z.string(), freshness: researchFreshnessSchema, costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(z.string(), researchPerformancePipeSchema) }) } },
     },
     400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
@@ -8977,7 +8985,7 @@ registry.registerPath({
   description: "Template id -> its prompt text, as content-generation-service stores it (a versioned id never changes).",
   tags: ["Internal"],
   responses: {
-    200: { description: "Template texts", content: { "application/json": { schema: z.record(z.string()) } } },
+    200: { description: "Template texts", content: { "application/json": { schema: z.record(z.string(), z.string()) } } },
     503: researchNotYet,
   },
 });
