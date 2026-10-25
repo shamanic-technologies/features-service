@@ -3,6 +3,8 @@
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export const n = (v: number): string => Number(v).toLocaleString("en-US");
+/** "a" or "an" before a noun: "an interested lead", "a booked meeting". */
+export const aOrAn = (noun: string): string => `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
 export const usd = (v: number): string => (Math.abs(v) < 10 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString("en-US")}`);
 /** `YYYY-MM` → "Sep". */
 export const monthLabel = (ym: string): string => MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym;

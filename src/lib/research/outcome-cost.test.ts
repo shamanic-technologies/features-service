@@ -99,3 +99,12 @@ describe("cost per outcome, every path (COST-ACCOUNTING-1023-P2)", () => {
     expect(outcomeCostStudy({ ...base, unit: loop, coveragePct: 99 })).toMatchObject({ status: "not_enough_data", headline: "Not priceable yet." });
   });
 });
+
+describe("copy: a / an (RESEARCH-STATE-SECTIONS-1025)", () => {
+  it("an interested lead, a booked meeting", async () => {
+    const { aOrAn } = await import("./format.js");
+    expect(aOrAn("interested lead")).toBe("an interested lead");
+    expect(aOrAn("attended meeting")).toBe("an attended meeting");
+    expect(aOrAn("booked meeting")).toBe("a booked meeting");
+  });
+});
