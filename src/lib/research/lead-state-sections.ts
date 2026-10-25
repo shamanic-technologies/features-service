@@ -32,8 +32,6 @@ export type ResearchLeadTrack = "crm_lifecycle" | "website_visits";
 const LEAD_TRACK_OF: Readonly<Record<LeadStateFamily, ResearchLeadTrack>> = { interest: "crm_lifecycle", visit: "website_visits" };
 /** The lead track in the page's words (the section group title). */
 export const LEAD_TRACK_LABELS: Readonly<Record<ResearchLeadTrack, string>> = { crm_lifecycle: "CRM lifecycle", website_visits: "Website visits" };
-/** DEPRECATED `family` value of each track: served beside `leadTrack` until the dashboard reads `leadTrack` (then removed). */
-const LEGACY_FAMILY_OF: Readonly<Record<ResearchLeadTrack, LeadStateFamily>> = { crm_lifecycle: "interest", website_visits: "visit" };
 
 export interface LeadStateSection {
   state: LeadStateKey;
@@ -149,8 +147,6 @@ export function leadStateOutcomeEntry(
     step: s.state,
     leadTrack,
     leadTrackLabel: LEAD_TRACK_LABELS[leadTrack],
-    family: LEGACY_FAMILY_OF[leadTrack],
-    familyLabel: LEAD_TRACK_LABELS[leadTrack],
     pipes: pipesReachingState(s.state, studied, otherPipes),
     description: s.description,
     population: "Every client and every path since the ledger's first day, each lead counted once in the state.",

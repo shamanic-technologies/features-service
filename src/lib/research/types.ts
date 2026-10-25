@@ -118,10 +118,6 @@ export interface ResearchOutcomeEntry {
   leadTrack?: "crm_lifecycle" | "website_visits";
   /** The lead track in the page's words: "CRM lifecycle" | "Website visits" (the group title). */
   leadTrackLabel?: string;
-  /** DEPRECATED (= `leadTrack`): served until the dashboard reads `leadTrack`, then removed. */
-  family?: "interest" | "visit";
-  /** DEPRECATED (= `leadTrackLabel`): same. */
-  familyLabel?: string;
   description: string;
   population: string;
 }

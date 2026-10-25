@@ -33852,23 +33852,11 @@
                     "crm_lifecycle",
                     "website_visits"
                   ],
-                  "description": "RESEARCH-LEAD-TRACK-1025 (owner's words, « CRM Lifecycle et Website visits »): the lead track the page groups the section under, never summed across: `crm_lifecycle` (Lead interested < Meeting booked < Meeting attended < Paid client), `website_visits` (Lead visited). Absent on `judgment`. Replaces `family` + `familyLabel`."
+                  "description": "RESEARCH-LEAD-TRACK-1025 (owner's words, « CRM Lifecycle et Website visits »): the lead track the page groups the section under, never summed across: `crm_lifecycle` (Lead interested < Meeting booked < Meeting attended < Paid client), `website_visits` (Lead visited). Absent on `judgment`. Replaced `family` + `familyLabel` (removed once the dashboard read it)."
                 },
                 "leadTrackLabel": {
                   "type": "string",
                   "description": "The lead track in the page's words: `CRM lifecycle` | `Website visits` (the group title)."
-                },
-                "family": {
-                  "type": "string",
-                  "enum": [
-                    "interest",
-                    "visit"
-                  ],
-                  "description": "DEPRECATED, = `leadTrack` (`interest` = crm_lifecycle, `visit` = website_visits): served until the dashboard reads `leadTrack`, then removed."
-                },
-                "familyLabel": {
-                  "type": "string",
-                  "description": "DEPRECATED, = `leadTrackLabel`: same."
                 },
                 "description": {
                   "type": "string"
