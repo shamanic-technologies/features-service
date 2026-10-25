@@ -38,6 +38,7 @@ import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-inde
 import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
+import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import { startGenerationSequencesCopy } from "./lib/generation-sequences-copy.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
@@ -126,6 +127,7 @@ app.use(fleetIndexesRoutes);
 app.use(researchRoutes);
 app.use(legWriterRankingRoutes);
 app.use(customerHealthRoutes);
+app.use(securityAdvisoriesRoutes);
 
 // 404 handler
 app.use((req, res) => {
