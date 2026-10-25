@@ -269,7 +269,7 @@ describe("assembleResearch", () => {
     expect(st.outcome).toBe("positive-reply");
     expect(st.status).toBe("not_enough_data");
     expect(st.headline).toBe("Not readable right now.");
-    expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "conversation", pipes: ["cold-email-positive-reply"] });
+    expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "lead_interested", family: "interest", pipes: ["cold-email-positive-reply"] });
   });
 
   it("OUTCOME-SECTION-PIPES-1023: an outcome section names EVERY pipe landing on its step, never one pipe", () => {
@@ -279,7 +279,8 @@ describe("assembleResearch", () => {
       { entry: { id: "ai-follow-up-email|conversation_to_meeting_booked", channel: "ai-follow-up-email", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "x" }, toStep: "meeting_booked" },
     ];
     const read = assembleResearch({ ...input, replyDelay: null, otherPipes });
-    expect(read.outcomes.find((o) => o.id === "positive-reply")?.pipes).toEqual(["cold-email-positive-reply", "email-sending|start_to_conversation"]);
+    // RESEARCH-STATE-SECTIONS-1025: a signup is a yes, so its pipe lands on Lead interested too
+    expect(read.outcomes.find((o) => o.id === "positive-reply")?.pipes).toEqual(["cold-email-positive-reply", "email-sending|start_to_conversation", "cold-whatsapp-outreach|start_to_signup"]);
     expect(read.outcomes.find((o) => o.id === "meeting")).toMatchObject({ step: "meeting_booked", pipes: ["meeting-booking", "ai-follow-up-email|conversation_to_meeting_booked"] });
     // every pipe named by a section is a pipe of the file
     const ids = new Set(read.pipes.map((p) => p.id));
@@ -312,12 +313,86 @@ describe("assembleResearch", () => {
     expect(pr.result?.unit).toBe("per interested lead, every path, production cost");
     expect(pr.conclusion).toContain("Waste apart, in no figure: $7.00 (work on a lead that had already reached its state $7.00).");
     const lv = read.studies.find((x) => x.id === "lead-visited-cost-every-path")!;
-    expect(lv).toMatchObject({ pipe: "cold-email-website-visit", topic: "cost" });
+    expect(lv).toMatchObject({ pipe: null, outcome: "lead-visited", topic: "cost" });
     expect(lv.result?.display).toBe("$0.50");
     const mb = read.studies.find((x) => x.id === "meeting-cost-every-path")!;
     expect(mb).toMatchObject({ outcome: "meeting", status: "not_enough_data", headline: "No booked meeting declared to the ledger yet." });
     const down = assembleResearch({ ...input, replyDelay: null, outcomeLedger: { totals: null, labelOf, outputOf: () => null, pipeOutputs: new Set<string>() } });
     expect(down.studies.find((x) => x.id === "positive-reply-cost-every-path")?.headline).toBe("Not readable right now.");
+  });
+
+  it("RESEARCH-STATE-SECTIONS-1025: one section per lead state, two families, each with its every-path cost and its price over time", () => {
+    const totals = {
+      produced: [
+        { outcomeKey: "message_sent", campaignId: "c1", produced: 2000, ownCostUsd: 40 },
+        { outcomeKey: "lead_interested", campaignId: null, produced: 40, ownCostUsd: 4 },
+        { outcomeKey: "lead_visited", campaignId: "c2", produced: 10, ownCostUsd: 5 },
+        { outcomeKey: "meeting_booked", campaignId: "c3", produced: 4, ownCostUsd: 2 },
+      ],
+      consumed: [
+        { consumerKey: "lead_interested", consumedKey: "message_sent", campaignId: null, count: 40 },
+        { consumerKey: "meeting_booked", consumedKey: "lead_interested", campaignId: "c3", count: 40 },
+      ],
+      coveragePct: 99,
+      daysMissing: 0,
+      coverageByOrg: new Map(),
+      supportUsd: 0,
+      supportByFunction: [],
+      supportDaysMissing: 0,
+      abnormalUsd: 7,
+      abnormalByReason: [{ reason: "target_already_reached", usd: 7 }],
+    };
+    const outputOf = (c: string) => ({ c1: "lead_interested", c2: "lead_visited", c3: "meeting_booked" })[c] ?? null;
+    const pipeOutputs = new Set(["lead_interested", "lead_visited", "meeting_booked", "meeting_attended", "paid_client"]);
+    const past = (day: string, value: number | null, reason: string | null = null) => ({ day, value, status: "noise", outcomes: 3, unavailableReason: reason, inputs: { coveragePct: 98, daysMissing: reason ? 4 : 0, abnormalUsd: 2, floor: "no" }, basis: "recomputed" });
+    const history = new Map([
+      ["lead_interested", [past("2026-10-15", 1.4), past("2026-10-16", null, "ledger_being_recomputed")]],
+      ["meeting_booked", []],
+      ["meeting_attended", []],
+      ["paid_client", null],
+      ["lead_visited", [past("2026-10-16", 0.6)]],
+    ]);
+    const otherPipes = [{ entry: { id: "cold-whatsapp-outreach|start_to_signup", channel: "cold-whatsapp-outreach", leg: "start_to_signup", outcome: "Signup", description: "x" }, toStep: "signup" }];
+    const read = assembleResearch({ ...input, otherPipes, outcomeLedger: { totals, labelOf: (k: string) => k, outputOf, pipeOutputs }, leadStateHistory: history });
+    // five state sections with their family, then Jev; the positive reply section is Lead interested (id kept)
+    expect(read.outcomes.map((o) => [o.id, o.step, o.family ?? null, o.familyLabel ?? null])).toEqual([
+      ["positive-reply", "lead_interested", "interest", "CRM lifecycle"],
+      ["meeting", "meeting_booked", "interest", "CRM lifecycle"],
+      ["meeting-attended", "meeting_attended", "interest", "CRM lifecycle"],
+      ["paid-client", "paid_client", "interest", "CRM lifecycle"],
+      ["lead-visited", "lead_visited", "visit", "Website visits"],
+      ["judgment", undefined, null, null],
+    ]);
+    // a signup pipe puts its lead in Lead interested (a yes), never in Lead visited
+    expect(read.outcomes.find((o) => o.id === "positive-reply")!.pipes).toEqual(["cold-email-positive-reply", "cold-whatsapp-outreach|start_to_signup"]);
+    expect(read.outcomes.find((o) => o.id === "lead-visited")!.pipes).toEqual(["cold-email-website-visit"]);
+    for (const id of ["positive-reply", "meeting", "meeting-attended", "paid-client", "lead-visited"]) {
+      const every = read.studies.find((x) => x.id === `${id}-cost-every-path`)!;
+      const over = read.studies.find((x) => x.id === `${id}-cost-over-time`)!;
+      expect(every, id).toMatchObject({ pipe: null, outcome: id, topic: "cost" });
+      expect(over, id).toMatchObject({ pipe: null, outcome: id, topic: "cost" });
+    }
+    // the over-time last point IS the every-path figure (today, built off the same roll-up)
+    for (const id of ["positive-reply", "meeting", "lead-visited"]) {
+      const every = read.studies.find((x) => x.id === `${id}-cost-every-path`)!;
+      const over = read.studies.find((x) => x.id === `${id}-cost-over-time`)!;
+      expect(over.result?.display, id).toBe(every.result?.display);
+      expect(over.charts[0]!.kind).toBe("months");
+      expect(over.charts[0]!.points.at(-1)!.display, id).toBe(every.result!.display);
+    }
+    // a past day the ledger was still recomputing reads no figure, and says so
+    const interested = read.studies.find((x) => x.id === "positive-reply-cost-over-time")!;
+    expect(interested.charts[0]!.points.map((p) => p.label)).toEqual(["Oct 15", "Oct 18"]);
+    expect(interested.conclusion.some((c) => c.startsWith("1 day reads no figure: the ledger was still recomputing"))).toBe(true);
+    // nothing priced on a state = not measured, a series that cannot be read says so
+    expect(read.studies.find((x) => x.id === "meeting-attended-cost-over-time")).toMatchObject({ status: "not_enough_data", headline: "No attended meeting priced on the ledger yet." });
+    expect(read.studies.find((x) => x.id === "paid-client-cost-over-time")).toMatchObject({ status: "not_enough_data", headline: "Not readable right now." });
+    // today still recomputing = "Being recomputed.", never a figure on part of the days
+    const busy = assembleResearch({ ...input, outcomeLedger: { totals: { ...totals, daysMissing: 3 }, labelOf: (k: string) => k, outputOf, pipeOutputs }, leadStateHistory: history });
+    const busyOver = busy.studies.find((x) => x.id === "positive-reply-cost-over-time")!;
+    expect(busyOver.headline).toContain("Being recomputed.");
+    expect(busyOver.charts[0]!.points.map((p) => p.label)).toEqual(["Oct 15"]);
+    expect(busy.studies.find((x) => x.id === "positive-reply-cost-every-path")!.headline).toBe("Being recomputed.");
   });
 
   it("every one of today's 45 study ids is served or listed unavailable, never both, never neither", () => {

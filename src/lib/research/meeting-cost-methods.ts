@@ -22,7 +22,6 @@ import { clientMedian } from "./pipe-series.js";
 import { COVERAGE_BAR_PCT } from "./outcome-cost.js";
 import type { ResearchChart, ResearchPoint } from "./types.js";
 import type { FleetIndexPoint } from "../fleet-indexes.js";
-import type { OutcomeUnitCost } from "../outcome-unit-costs.js";
 import type { MeetingPriceArithmetic, OutcomePrice } from "../outcome-prices.js";
 
 export const MEETING_COST_INDEX_SLUG = "cold-email-cost-per-meeting";
@@ -104,28 +103,6 @@ export function outcomePricesPoint(price: MeetingPriceRead | null): FleetIndexPo
   };
 }
 
-/**
- * PURE. The point the build records for the ledger's cost per booked meeting; null = nothing priced to record. Ledger days
- * still being recomputed price nothing (RESEARCH-LEDGER-RECOMPUTING-1024, MEETING-INDEX-ZERO-1025: the every-path study reads
- * "Being recomputed.", this series read $0.013 beside it).
- */
-export function ledgerPoint(unit: OutcomeUnitCost | null, coveragePct: number | null, daysMissing: number, outcomesRequired: number): FleetIndexPoint | null {
-  if (daysMissing > 0) return null;
-  if (!unit || unit.unpricedReason || unit.unitCostUsd === null || unit.unitCostUsd <= 0 || unit.produced <= 0) return null;
-  const floor = coveragePct === null || coveragePct < COVERAGE_BAR_PCT || daysMissing > 0;
-  return {
-    indexSlug: MEETING_COST_LEDGER_SLUG,
-    value: unit.unitCostUsd,
-    status: floor || unit.produced < outcomesRequired ? "noise" : "signal",
-    outcomes: Math.round(unit.produced),
-    contacted: null,
-    workflowDynastySlug: null,
-    workflowDynastyName: null,
-    unavailableReason: null,
-    inputs: { floor: floor ? "yes" : "no", coveragePct, daysMissing, unpricedInputs: unit.unpricedInputs.length },
-  };
-}
-
 const DAY_MS = 86_400_000;
 const addDays = (day: string, k: number): string => new Date(Date.parse(`${day}T00:00:00.000Z`) + k * DAY_MS).toISOString().slice(0, 10);
 const dayRange = (first: string, last: string): string[] => {
@@ -142,23 +119,6 @@ export function ledgerHistoryDays(firstDay: string | null, today: string, stored
   if (!firstDay || firstDay >= today) return [];
   const fresh = new Set(stored.filter((r) => r.basis === "recorded" || (r.recordedAt ?? "").slice(0, 10) >= today).map((r) => r.day));
   return dayRange(firstDay, addDays(today, -1)).filter((d) => !fresh.has(d));
-}
-
-/** PURE. A past day's ledger point (recomputed): the priced point, else a null one so the day is not asked again. */
-export function ledgerHistoryPoint(unit: OutcomeUnitCost | null, coveragePct: number | null, daysMissing: number, outcomesRequired: number): FleetIndexPoint {
-  return (
-    ledgerPoint(unit, coveragePct, daysMissing, outcomesRequired) ?? {
-      indexSlug: MEETING_COST_LEDGER_SLUG,
-      value: null,
-      status: "noise",
-      outcomes: Math.round(unit?.produced ?? 0),
-      contacted: null,
-      workflowDynastySlug: null,
-      workflowDynastyName: null,
-      unavailableReason: daysMissing > 0 ? "ledger_being_recomputed" : "no_meeting_priced_yet",
-      inputs: { coveragePct, daysMissing },
-    }
-  );
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);

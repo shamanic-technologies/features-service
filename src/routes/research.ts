@@ -59,8 +59,6 @@ import { ledgerMeetingIndexPoint, type FleetIndexPoint, type LedgerMeetingCost }
 import type { FleetIndexPointRow } from "../db/schema.js";
 import {
   ledgerHistoryDays,
-  ledgerHistoryPoint,
-  ledgerPoint,
   MEETING_COST_INDEX_SLUG,
   MEETING_COST_LEDGER_SLUG,
   MEETING_COST_OUTCOME_PRICES_SLUG,
@@ -77,6 +75,8 @@ import { fetchFirstOutcomeDay, fetchOutcomeLedgerTotals, type OutcomeLedgerTotal
 import { estimateStudy, LLM_DIMENSION, TEMPLATE_DIMENSION, workflowEstimateStudy, type WorkflowEstimateGroup } from "../lib/research/workflow-estimate.js";
 import { estimateReplayStudy, type ReplayBucket } from "../lib/research/estimate-replay.js";
 import { outcomeCostByClientStudy, type ClientCostRow } from "../lib/research/outcome-cost-by-client.js";
+import { LEAD_STATE_SECTIONS, leadStatePoint, methodDayOf, type LeadStateSection } from "../lib/research/lead-state-sections.js";
+import type { LeadStateKey } from "../lib/lead-states.js";
 import { rollUpByOrg, rollUpOutcomeUnitCosts, workflowUnitCosts, type OutcomeUnitCost } from "../lib/outcome-unit-costs.js";
 import { fetchOutcomeLedgerByWorkflow } from "../lib/outcome-cost-totals-client.js";
 import { workflowLedgerStudy } from "../lib/research/workflow-ledger.js";
@@ -892,13 +892,16 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
   // The ledger beside today's figure, per client (COST-ACCOUNTING-1023-P4): billed basis only (today's figure is billed).
   const ledger = await ledgerP;
   const ledgerStudies = basis === "user" ? [await clientCostStudyOf(ledger, reply.persons, reply.spend)] : [];
-  const meetingCostMethods = basis === "user" ? await meetingCostMethodsOf(ledger, now) : undefined;
+  // Each lead state's price over time (RESEARCH-STATE-SECTIONS-1025): today recorded, past days recomputed behind. Billed only.
+  const leadStateHistory = basis === "user" ? await leadStateHistoryOf(ledger, now) : undefined;
+  const meetingCostMethods = basis === "user" ? await meetingCostMethodsOf(ledger, now, leadStateHistory!) : undefined;
   if (basis === "user" && reply.input.rankingRows) estimateStudies.push(await workflowLedgerStudyOf(ledger, reply.input));
   const file = assembleResearch({
     replyDelay,
     estimateStudies,
     ledgerStudies,
     outcomeLedger: ledger,
+    ...(leadStateHistory ? { leadStateHistory } : {}),
     sends,
     generationStudies: gens.studies,
     countryStudies: countries,
@@ -1686,88 +1689,137 @@ const methodDayOfRow = (r: FleetIndexPointRow): MethodDay => ({
   recordedAt: r.recordedAt.toISOString(),
 });
 
-/** Past ledger days recomputed per pass, oldest missing first (each is one fleet ledger read). */
+/** Past ledger days recomputed per pass, oldest missing first (each is one fleet ledger read, ~5 s, ~1 MB). */
 const LEDGER_HISTORY_DAYS_PER_PASS = 40;
 let ledgerHistoryInFlight = false;
+/** Each lead state's first ledger day, read once per UTC day (one small read per state). */
+let firstStateDays: { day: string; byState: Map<LeadStateKey, string | null> } | null = null;
+
+type LedgerRead = { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> };
+
+/** The roll-up, or an empty one (logged): a roll-up never fails the build. */
+function unitsOf(totals: OutcomeLedgerTotals, ledger: Pick<LedgerRead, "outputOf" | "pipeOutputs">, what: string): ReadonlyMap<string, OutcomeUnitCost> {
+  try {
+    return rollUpOutcomeUnitCosts(totals.produced, totals.consumed, ledger.outputOf, ledger.pipeOutputs).units;
+  } catch (err) {
+    console.error(`[features-service] research lead states: the ledger roll-up failed (${what}), nothing priced there:`, err);
+    return new Map();
+  }
+}
+
+const dayFactsOf = (t: OutcomeLedgerTotals) => ({ coveragePct: t.coveragePct, daysMissing: t.daysMissing, abnormalUsd: t.abnormalUsd });
 
 /**
- * The ledger's cost per booked meeting AS OF the end of each past UTC day: runs-service's ledger read with `until` (still
- * since inception), rolled up like today's. History starts on the first day the ledger holds a booked meeting (an
- * occurrence is dated by its effective declaration time: re-dated meetings move it earlier). Every past day is
- * recomputed once per UTC day and stored `recomputed` (a meeting re-dated later changes every day after it); a
- * recorded day is never touched. Single flight, in the background of the build, a bounded number of days per pass.
+ * RESEARCH-STATE-SECTIONS-1025: every lead state's price over time. Records TODAY's priced point of each state (a day
+ * still recomputing records nothing: the study reads it live), reads every stored day per state, and kicks the history
+ * pass. A state whose series cannot be read maps to null (its study says so).
  */
-function backfillMeetingLedgerHistory(
-  ledger: { outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
-  stored: readonly MethodDay[],
+async function leadStateHistoryOf(ledger: LedgerRead, now: Date): Promise<Map<LeadStateKey, MethodDay[] | null>> {
+  if (ledger.totals) {
+    const units = unitsOf(ledger.totals, ledger, "today");
+    const facts = dayFactsOf(ledger.totals);
+    const priced = LEAD_STATE_SECTIONS.map((sec) => leadStatePoint(sec, units.get(sec.state) ?? null, facts)).filter((p) => p.value !== null);
+    if (priced.length) {
+      await recordFleetIndexPoints(priced, now).catch((err) => console.error("[features-service] research lead states: today's points not recorded (served live):", err));
+    }
+  }
+  const series = (sec: LeadStateSection): Promise<MethodDay[] | null> =>
+    readFleetIndexSeries(sec.seriesSlug).then(
+      (rows) => rows.map(methodDayOfRow),
+      (err) => {
+        console.error(`[features-service] research lead states: ${sec.seriesSlug} unreadable:`, err);
+        return null;
+      },
+    );
+  const [stored, index] = await Promise.all([
+    Promise.all(LEAD_STATE_SECTIONS.map(series)),
+    readFleetIndexSeries(MEETING_COST_INDEX_SLUG).then(
+      (rows) => rows.map(methodDayOfRow),
+      (err) => {
+        console.error(`[features-service] research lead states: ${MEETING_COST_INDEX_SLUG} unreadable, no history pass this build:`, err);
+        return null;
+      },
+    ),
+  ]);
+  const out = new Map(LEAD_STATE_SECTIONS.map((sec, i) => [sec.state, stored[i]!] as [LeadStateKey, MethodDay[] | null]));
+  if (ledger.totals && index) backfillLeadStateHistory(ledger, out, index, utcDay(now));
+  return out;
+}
+
+/**
+ * Every lead state's every-path cost AS OF the end of each past UTC day: runs-service's ledger read with `until` (still
+ * since inception), ONE read per day rolled up once for every state. A state's history starts on the first day the
+ * ledger holds it (an occurrence is dated by its effective declaration time: a re-dated one moves it earlier). Every
+ * past day is recomputed once per UTC day and stored `recomputed` (a fact dated later changes every day after it); a
+ * recorded day is never touched. The public Cost Per Meeting Index IS the booked meeting's figure (MEETING-COST-METHODS-1024):
+ * its past days are written beside it. Single flight, in the background of the build, a bounded number of days per pass.
+ */
+function backfillLeadStateHistory(
+  ledger: Pick<LedgerRead, "outputOf" | "pipeOutputs">,
+  stored: ReadonlyMap<LeadStateKey, readonly MethodDay[] | null>,
   storedIndex: readonly MethodDay[],
   today: string,
 ): void {
   if (ledgerHistoryInFlight) return;
   ledgerHistoryInFlight = true;
   void (async () => {
-    const first = await fetchFirstOutcomeDay("meeting_booked");
-    // The public Cost Per Meeting Index IS this figure (MEETING-COST-METHODS-1024): its past days are written beside it.
-    const days = [...new Set([...ledgerHistoryDays(first, today, stored), ...ledgerHistoryDays(first, today, storedIndex)])].sort().slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
+    if (!firstStateDays || firstStateDays.day !== today) {
+      const firsts = await Promise.all(LEAD_STATE_SECTIONS.map((sec) => fetchFirstOutcomeDay(sec.state)));
+      firstStateDays = { day: today, byState: new Map(LEAD_STATE_SECTIONS.map((sec, i) => [sec.state, firsts[i]!])) };
+    }
+    const firsts = firstStateDays.byState;
+    const due = new Map(
+      LEAD_STATE_SECTIONS.map((sec) => {
+        const rows = stored.get(sec.state);
+        return [sec.state, new Set(rows ? ledgerHistoryDays(firsts.get(sec.state) ?? null, today, rows) : [])] as const;
+      }),
+    );
+    const indexDue = new Set(ledgerHistoryDays(firsts.get("meeting_booked") ?? null, today, storedIndex));
+    const days = [...new Set([...[...due.values()].flatMap((d) => [...d]), ...indexDue])].sort().slice(0, LEDGER_HISTORY_DAYS_PER_PASS);
     if (!days.length) return;
-    const outcomesRequired = legMaturity("start_to_meeting_booked").outcomesRequired;
     for (const day of days) {
       const totals = await fetchOutcomeLedgerTotals("gross", day);
-      const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null;
-      await writeRecomputedFleetIndexPoints(
-        [
-          { day, point: ledgerHistoryPoint(unit, totals.coveragePct, totals.daysMissing, outcomesRequired) },
-          { day, point: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)), inputs: { ...ledgerMeetingIndexPoint(ledgerMeetingCostOf(unit, totals)).inputs, asOfDay: day } } },
-        ],
-        new Date(),
-      );
+      const units = unitsOf(totals, ledger, `as of ${day}`);
+      const facts = dayFactsOf(totals);
+      const writes = LEAD_STATE_SECTIONS.filter((sec) => due.get(sec.state)!.has(day)).map((sec) => ({ day, point: leadStatePoint(sec, units.get(sec.state) ?? null, facts) }));
+      if (indexDue.has(day)) {
+        const p = ledgerMeetingIndexPoint(ledgerMeetingCostOf(units.get("meeting_booked") ?? null, totals));
+        writes.push({ day, point: { ...p, inputs: { ...p.inputs, asOfDay: day } } });
+      }
+      await writeRecomputedFleetIndexPoints(writes, new Date());
     }
-    console.log(`[features-service] research meeting-cost: ledger history recomputed for ${days.length} day(s), ${days[0]}..${days[days.length - 1]}`);
+    console.log(`[features-service] research lead states: ledger history recomputed for ${days.length} day(s), ${days[0]}..${days[days.length - 1]}`);
   })()
-    .catch((err) => console.error("[features-service] research meeting-cost: ledger history pass failed, retried next build:", err))
+    .catch((err) => console.error("[features-service] research lead states: ledger history pass failed, retried next build:", err))
     .finally(() => {
       ledgerHistoryInFlight = false;
     });
 }
 
 /**
- * MEETING-COST-METHODS-1024: the meeting-cost study's recorded methods. Records TODAY's outcome-prices and ledger points
- * (neither is stored anywhere else; a past day is never recomputed), then reads every stored day of them and of the
- * public meeting index. A method whose input is unreadable and that has no stored day is null (its row says so).
+ * MEETING-COST-METHODS-1024: the meeting-cost study's recorded methods. Records TODAY's outcome-prices point (stored
+ * nowhere else; a past day is recomputed by the fleet index history run), then reads every stored day of it. The LEDGER
+ * row is the booked meeting's price over time (`leadStateHistoryOf`: one series, one figure), today's point live.
  */
-async function meetingCostMethodsOf(
-  ledger: { totals: OutcomeLedgerTotals | null; outputOf: (c: string) => string | null; pipeOutputs: ReadonlySet<string> },
-  now: Date,
-): Promise<MeetingCostMethods> {
+async function meetingCostMethodsOf(ledger: LedgerRead, now: Date, stateHistory: ReadonlyMap<LeadStateKey, MethodDay[] | null>): Promise<MeetingCostMethods> {
   const day = utcDay(now);
-  let unit: OutcomeUnitCost | null = null;
-  try {
-    unit = ledger.totals ? (rollUpOutcomeUnitCosts(ledger.totals.produced, ledger.totals.consumed, ledger.outputOf, ledger.pipeOutputs).units.get("meeting_booked") ?? null) : null;
-  } catch (err) {
-    console.error("[features-service] research meeting-cost methods: ledger roll-up failed, no ledger point today:", err);
-  }
-  const ledgerToday = ledger.totals ? ledgerPoint(unit, ledger.totals.coveragePct, ledger.totals.daysMissing, legMaturity("start_to_meeting_booked").outcomesRequired) : null;
+  const meeting = LEAD_STATE_SECTIONS.find((sec) => sec.seriesSlug === MEETING_COST_LEDGER_SLUG)!;
+  const ledgerToday = ledger.totals ? methodDayOf(day, leadStatePoint(meeting, unitsOf(ledger.totals, ledger, "meeting methods").get(meeting.state) ?? null, dayFactsOf(ledger.totals))) : null;
   const price = await readOutcomePricesMeetingBooked(OUTCOME_PRICES_WAIT_MS);
   const pricesToday = outcomePricesPoint(price);
-  const toRecord = [ledgerToday, pricesToday].filter((p): p is FleetIndexPoint => p !== null);
-  if (toRecord.length) {
-    await recordFleetIndexPoints(toRecord, now).catch((err) => console.error("[features-service] research meeting-cost methods: today's points not recorded (served live):", err));
+  if (pricesToday) {
+    await recordFleetIndexPoints([pricesToday], now).catch((err) => console.error("[features-service] research meeting-cost methods: today's point not recorded (served live):", err));
   }
-  const asDay = (p: FleetIndexPoint | null): MethodDay | null => (p ? { day, value: p.value, status: p.status, outcomes: p.outcomes, unavailableReason: p.unavailableReason, inputs: p.inputs } : null);
-  const series = (slug: string, today: FleetIndexPoint | null): Promise<MethodDay[] | null> =>
-    readFleetIndexSeries(slug).then(
-      (rows) => withToday(rows.map(methodDayOfRow), asDay(today)),
-      (err) => {
-        console.error(`[features-service] research meeting-cost methods: ${slug} unreadable:`, err);
-        return today ? [asDay(today)!] : null;
-      },
-    );
-  const [prices, index, ledgerDays] = await Promise.all([
-    series(MEETING_COST_OUTCOME_PRICES_SLUG, pricesToday),
-    series(MEETING_COST_INDEX_SLUG, null),
-    series(MEETING_COST_LEDGER_SLUG, ledgerToday),
-  ]);
-  if (ledger.totals && ledgerDays && index) backfillMeetingLedgerHistory(ledger, ledgerDays, index, day);
+  const asDay = (p: FleetIndexPoint | null): MethodDay | null => (p ? methodDayOf(day, p) : null);
+  const prices = await readFleetIndexSeries(MEETING_COST_OUTCOME_PRICES_SLUG).then(
+    (rows) => withToday(rows.map(methodDayOfRow), asDay(pricesToday)),
+    (err) => {
+      console.error(`[features-service] research meeting-cost methods: ${MEETING_COST_OUTCOME_PRICES_SLUG} unreadable:`, err);
+      return pricesToday ? [asDay(pricesToday)!] : null;
+    },
+  );
+  const stored = stateHistory.get(meeting.state) ?? null;
+  const ledgerDays = stored ? withToday(stored, ledgerToday) : ledgerToday ? [ledgerToday] : null;
   return {
     outcomePrices: prices && (prices.length || price) ? prices : null,
     ledger: ledgerDays && (ledgerDays.length || ledger.totals) ? ledgerDays : null,

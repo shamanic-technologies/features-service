@@ -33595,14 +33595,26 @@
                 },
                 "step": {
                   "type": "string",
-                  "description": "The catalogue step the outcome is (`conversation` on `positive-reply`); absent on a section that is no step."
+                  "description": "The lead STATE the section is (RESEARCH-STATE-SECTIONS-1025: `lead_interested` on `positive-reply`, `meeting_booked` on `meeting`, `meeting_attended`, `paid_client`, `lead_visited`); absent on a section that is no step (`judgment`)."
                 },
                 "pipes": {
                   "type": "array",
                   "items": {
                     "type": "string"
                   },
-                  "description": "The page's pipes that land on it."
+                  "description": "The page's pipes whose leg's to-step puts a lead in the state (a signup / form / booking call pipe lands on Lead interested)."
+                },
+                "family": {
+                  "type": "string",
+                  "enum": [
+                    "interest",
+                    "visit"
+                  ],
+                  "description": "RESEARCH-STATE-SECTIONS-1025: the lead-state family the page groups the section under, never summed across: `interest` (Lead interested < Meeting booked < Meeting attended < Paid client), `visit` (Lead visited). Absent on `judgment`."
+                },
+                "familyLabel": {
+                  "type": "string",
+                  "description": "The family in the page's words: `CRM lifecycle` | `Website visits`."
                 },
                 "description": {
                   "type": "string"

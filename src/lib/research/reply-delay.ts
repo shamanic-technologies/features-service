@@ -12,7 +12,7 @@
 import { n } from "./format.js";
 import { notMeasuredStudy } from "./studies.js";
 import { headlineFor } from "./verdict.js";
-import type { ResearchChart, ResearchOutcomeEntry, ResearchPoint, ResearchStudy } from "./types.js";
+import type { ResearchChart, ResearchPoint, ResearchStudy } from "./types.js";
 
 export const REPLY_DELAY_STUDY_ID = "positive-reply-delay";
 export const POSITIVE_REPLY_OUTCOME_ID = "positive-reply" as const;
@@ -105,18 +105,6 @@ export function firstDayClaim(k: number, total: number): { lowPct: number; highP
   const high = Math.min(1, centre + half);
   return { lowPct: Math.round(low * 100), highPct: Math.round(high * 100), floorPct: Math.floor((low * 100) / 5) * 5 };
 }
-
-/**
- * The outcome section the study sits in. Its `pipes` are every pipe of the file landing on the step, added where the
- * file is assembled (`assembleResearch`): an outcome section is never one pipe's.
- */
-export const POSITIVE_REPLY_OUTCOME: ResearchOutcomeEntry = {
-  id: POSITIVE_REPLY_OUTCOME_ID,
-  outcome: "Positive reply",
-  step: "conversation",
-  description: "A prospect answers one of our messages with interest, on any pipe whose leg ends on a positive reply.",
-  population: "Every client's campaigns on a pipe ending on a positive reply, since the first message we sent.",
-};
 
 const QUESTION = "How long before a first positive reply?";
 const base = {
