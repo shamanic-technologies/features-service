@@ -1,3 +1,5 @@
+import { BrandOwnershipError } from "./brand-ownership.js";
+
 /**
  * A CONTACTED lead's value needs two reads: the send dates (email-gateway `/orgs/status`, the 30-day expiry runs off
  * the last send) and the brand's contacted pricing cell (entry rates per campaign × workflow). Until 2026-10-21 both
@@ -34,7 +36,18 @@ export function contactedValueUnavailableBody(err: ContactedValueUnavailableErro
   };
 }
 
-/** One retry, then loud. `what` names the read in the log. */
+/**
+ * One retry, then loud. `what` names the read in the log.
+ *
+ * A `BrandOwnershipError` is NOT an unreadable read: brand-service ANSWERED that the caller's org does not hold
+ * the brand (403) or that the brand is gone (404). That verdict is rethrown at once, as itself — never retried
+ * (it cannot change in a second), never relabelled `ContactedValueUnavailableError` — so every caller keeps its
+ * own ownership handling: a dashboard route refuses the foreign brand, a fleet sweep over feature memberships
+ * skips the stale (org, brand) pair. Measured 2026-10-25 (CONTACTED-PRICING-403-1025): the public revenue sweep
+ * walks lead-service memberships whose org no longer holds the brand (7 of the 10 brands have no owner at all),
+ * and each such pair logged a retry + "contacted value UNAVAILABLE" for a cell no org could ever compute under
+ * that identity, while the owners' own cells were computed fine.
+ */
 export async function readOrUnavailable<T>(
   brandId: string,
   reason: ContactedValueUnavailableReason,
@@ -44,10 +57,12 @@ export async function readOrUnavailable<T>(
   try {
     return await read();
   } catch (first) {
+    if (first instanceof BrandOwnershipError) throw first;
     console.warn(`[features-service] ${what} failed for brand ${brandId}, retrying once: ${(first as Error).message}`);
     try {
       return await read();
     } catch (second) {
+      if (second instanceof BrandOwnershipError) throw second;
       console.error(`[features-service] ${what} failed twice for brand ${brandId}: contacted value UNAVAILABLE (${reason})`);
       throw new ContactedValueUnavailableError(reason, brandId, (second as Error).message);
     }
