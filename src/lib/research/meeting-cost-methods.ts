@@ -104,8 +104,13 @@ export function outcomePricesPoint(price: MeetingPriceRead | null): FleetIndexPo
   };
 }
 
-/** PURE. The point the build records for the ledger's cost per booked meeting; null = nothing priced to record. */
+/**
+ * PURE. The point the build records for the ledger's cost per booked meeting; null = nothing priced to record. Ledger days
+ * still being recomputed price nothing (RESEARCH-LEDGER-RECOMPUTING-1024, MEETING-INDEX-ZERO-1025: the every-path study reads
+ * "Being recomputed.", this series read $0.013 beside it).
+ */
 export function ledgerPoint(unit: OutcomeUnitCost | null, coveragePct: number | null, daysMissing: number, outcomesRequired: number): FleetIndexPoint | null {
+  if (daysMissing > 0) return null;
   if (!unit || unit.unpricedReason || unit.unitCostUsd === null || unit.unitCostUsd <= 0 || unit.produced <= 0) return null;
   const floor = coveragePct === null || coveragePct < COVERAGE_BAR_PCT || daysMissing > 0;
   return {
@@ -150,7 +155,7 @@ export function ledgerHistoryPoint(unit: OutcomeUnitCost | null, coveragePct: nu
       contacted: null,
       workflowDynastySlug: null,
       workflowDynastyName: null,
-      unavailableReason: "no_meeting_priced_yet",
+      unavailableReason: daysMissing > 0 ? "ledger_being_recomputed" : "no_meeting_priced_yet",
       inputs: { coveragePct, daysMissing },
     }
   );
@@ -268,7 +273,7 @@ export function ledgerChart(rows: readonly MethodDay[]): ResearchChart | null {
     title: `Ledger, production cost every path (= the public Cold Email Cost Per Meeting Index): day by day from ${firstDayText(rows)}`,
     lowerIsBetter: true,
     points,
-    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared. Each day reads the ledger as of the end of that day (since inception up to it), rolled up with today's rules: past days recomputed, recorded live from Oct 24, 2026. The public Cold Email Cost Per Meeting Index publishes this figure since Oct 25, 2026.`,
+    note: `Measured on runs-service's ledger since inception (the study "What does a booked meeting cost, every path?"): every client, every path, what each run declared it produced and consumed. A floor (≥) while under ${COVERAGE_BAR_PCT}% of the outcome spend is declared; no figure while ledger days are being recomputed. Each day reads the ledger as of the end of that day (since inception up to it), rolled up with today's rules: past days recomputed, recorded live from Oct 24, 2026. The public Cold Email Cost Per Meeting Index publishes this figure only once it is a price (every day computed, at least ${COVERAGE_BAR_PCT}% declared).`,
   };
 }
 
@@ -289,8 +294,10 @@ export function methodLines(m: MeetingCostMethods): string[] {
     !m.ledger
       ? "Ledger: not readable right now."
       : lg?.value != null
-        ? `Ledger, every path (the public Cold Email Cost Per Meeting Index): ${lg.inputs.floor === "yes" ? "at least " : ""}${usd(lg.value)} per meeting booked today (${lg.day})${lg.inputs.floor === "yes" ? ", a floor while the ledger misses part of the spend" : ""}.`
-        : "Ledger, every path: no booked meeting priced on the ledger yet.",
+        ? `Ledger, every path: ${lg.inputs.floor === "yes" ? "at least " : ""}${usd(lg.value)} per meeting booked today (${lg.day})${lg.inputs.floor === "yes" ? ", a floor while the ledger misses part of the spend (the public Cold Email Cost Per Meeting Index publishes no figure until it is a price)" : " (the public Cold Email Cost Per Meeting Index)"}.`
+        : lg?.unavailableReason === "ledger_being_recomputed"
+          ? "Ledger, every path: being recomputed, no figure until every ledger day is in."
+          : "Ledger, every path: no booked meeting priced on the ledger yet.",
   );
   return out;
 }

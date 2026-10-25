@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, ledgerMeetingIndexPoint, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 
 function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
@@ -87,14 +87,17 @@ describe("fleet indexes", () => {
     expect(p.has("cold-email-cost-per-meeting")).toBe(false);
   });
 
-  it("MEETING-COST-METHODS-1024: the Cost Per Meeting Index is the ledger's figure, a floor (noise) while coverage is short", () => {
-    const ledger = { unitCostUsd: 866.47, produced: 8, coveragePct: 90.5, daysMissing: 0, unpricedInputs: 1 };
-    const floor = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: null, meetingPipe: null, meetingLedger: ledger })).get("cold-email-cost-per-meeting")!;
-    expect(floor).toMatchObject({ value: 866.47, status: "noise", outcomes: 8, unavailableReason: null, inputs: { method: "ledger_every_path", floor: "yes", coveragePct: 90.5 } });
-    const full = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: null, meetingPipe: null, meetingLedger: { ...ledger, coveragePct: 97, produced: 12 } })).get("cold-email-cost-per-meeting")!;
-    expect(full).toMatchObject({ status: "signal", inputs: { floor: "no" } });
-    const none = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: null, meetingPipe: null, meetingLedger: { ...ledger, unitCostUsd: null, produced: 0 } })).get("cold-email-cost-per-meeting")!;
-    expect(none).toMatchObject({ value: null, unavailableReason: "no_meeting_priced_on_ledger" });
+  it("MEETING-INDEX-ZERO-1025: the Cost Per Meeting Index serves the ledger's price, or nothing while the ledger is incomplete", () => {
+    const point = (l: Partial<Parameters<typeof ledgerMeetingIndexPoint>[0]>) =>
+      byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: null, meetingPipe: null, meetingLedger: { unitCostUsd: 866.47, produced: 12, coveragePct: 97, daysMissing: 0, unpricedInputs: 0, ...l } })).get("cold-email-cost-per-meeting")!;
+    expect(point({})).toMatchObject({ value: 866.47, status: "signal", outcomes: 12, unavailableReason: null, inputs: { method: "ledger_every_path", coveragePct: 97 } });
+    // prod 2026-10-25: 265 days recomputing, 62.2% coverage, $0.013 per booked meeting on the landing hero
+    const prod = point({ unitCostUsd: 0.01317, produced: 83, coveragePct: 62.2, daysMissing: 265, unpricedInputs: 2 });
+    expect(prod).toMatchObject({ value: null, status: "noise", unavailableReason: "ledger_being_recomputed", inputs: { ledgerUnitCostUsd: 0.01317, daysMissing: 265 } });
+    expect(point({ daysMissing: 1 })).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
+    expect(point({ coveragePct: 90.5 })).toMatchObject({ value: null, status: "noise", unavailableReason: "ledger_coverage_short" });
+    expect(point({ coveragePct: null })).toMatchObject({ value: null, unavailableReason: "ledger_coverage_short" });
+    expect(point({ unitCostUsd: null, produced: 0 })).toMatchObject({ value: null, unavailableReason: "no_meeting_priced_on_ledger" });
   });
 
   it("a mature meeting workflow wins; the chain is as trustworthy as its weakest link", () => {
