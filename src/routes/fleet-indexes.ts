@@ -17,6 +17,7 @@ import {
   fleetIndexBySlug,
   type BrandEngagement,
   type ClientReturnInput,
+  type ExpectedMeetingPrice,
   type FleetIndexDefinition,
   type MeetingPipeEvidence,
 } from "../lib/fleet-indexes.js";
@@ -26,7 +27,7 @@ import { meetingResearchPoints } from "../lib/research/pipe-series.js";
 import { fetchFleetEngagementByBrand } from "../lib/fleet-positive-repliers.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
-import { readFleetReturnOnSpend, readLegWorkflowRanking, readPublicRanked } from "./public.js";
+import { readFleetReturnOnSpend, readLegWorkflowRanking, readOutcomePricesMeetingBooked, readPublicRanked } from "./public.js";
 
 const router = Router();
 
@@ -38,6 +39,12 @@ const BASIS_RULE = {
   recomputed:
     "Recomputed later with today's rules, on what had happened by the end of that day: the workflows that could run then, their spend and the replies and human clicks dated by then.",
 } as const;
+
+/** `expected` = the value is a quoted price, not a measurement (MEETING-INDEX-EXPECTED-1025); a landing labels it. */
+function valueKindOf(row: FleetIndexPointRow | undefined): "measured" | "expected" {
+  const inputs = row?.inputs as Record<string, unknown> | null | undefined;
+  return inputs?.valueKind === "expected" ? "expected" : "measured";
+}
 
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
   return {
@@ -58,6 +65,7 @@ function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefine
     workflowDynastySlug: row?.workflowDynastySlug ?? null,
     workflowDynastyName: row?.workflowDynastyName ?? null,
     unavailableReason: row ? row.unavailableReason : "not_recorded_yet",
+    valueKind: valueKindOf(row),
     recordedAt: row ? row.recordedAt.toISOString() : null,
   };
 }
@@ -94,6 +102,7 @@ router.get("/public/indexes/:slug", async (req, res) => {
         workflowDynastyName: r.workflowDynastyName,
         unavailableReason: r.unavailableReason,
         basis: r.basis,
+        valueKind: valueKindOf(r),
         inputs: r.inputs,
       })),
     });
@@ -181,6 +190,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   ]);
   // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024, owner 2026-10-24 « go ledger accounting direct »).
   const meetingLedger = await (await import("./research.js")).readLedgerMeetingCost();
+  // While the ledger is not a price, the index serves the outcome prices' meeting price, labelled expected (MEETING-INDEX-EXPECTED-1025).
+  const meetingExpected = await readExpectedMeetingPrice();
   if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
   if (!reply) console.warn("[features-service] fleet indexes: positive-reply ranking unreadable, its indexes not recorded this tick");
   const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
@@ -192,12 +203,20 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
     brandEngagement,
     clientReturn,
     meetingLedger,
+    meetingExpected,
   });
   // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
   if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));
   await recordFleetIndexPoints(points, now);
   console.log(`[features-service] fleet indexes: recorded ${points.length} point(s) for ${now.toISOString().slice(0, 10)}`);
   return points.length;
+}
+
+async function readExpectedMeetingPrice(): Promise<ExpectedMeetingPrice | null> {
+  const price = await readOutcomePricesMeetingBooked(RANKING_WAIT_MS);
+  if (!price) return null;
+  const outcomes = Math.min(...price.legs.map((l) => l.figures?.outcomes ?? 0));
+  return { priceUsd: price.priceUsd, maturity: price.maturity, outcomes: Number.isFinite(outcomes) ? outcomes : 0, unmeasuredReason: price.unmeasuredReason ?? null };
 }
 
 const FIRST_RECORD_AFTER_MS = 60_000;
