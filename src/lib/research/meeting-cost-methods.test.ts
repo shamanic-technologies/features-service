@@ -78,6 +78,9 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
     expect(ledgerPoint(unit, 97, 0, 10)!.status).toBe("signal");
     expect(ledgerPoint({ ...unit, unitCostUsd: null }, 97, 0, 10)).toBeNull();
     expect(ledgerPoint(null, 97, 0, 10)).toBeNull();
+    // MEETING-INDEX-ZERO-1025: ledger days still being recomputed record no figure (prod 2026-10-25: 265 days, $0.013)
+    expect(ledgerPoint({ ...unit, unitCostUsd: 0.01317, produced: 83 }, 62.2, 265, 10)).toBeNull();
+    expect(ledgerHistoryPoint(unit, 97, 3, 10)).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
     const chart = ledgerChart([day("2026-10-24", 79.2, { floor: "yes", coveragePct: 62, daysMissing: 0 }, "signal", 12)])!;
     expect(chart.points[0]).toMatchObject({ display: "≥ $79", thin: true });
   });
@@ -102,7 +105,7 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
   it("states each method's figure today, and the gap between the two expected ones", () => {
     const lines = methodLines(methods);
     expect(lines[0]).toBe("Expected, outcome prices: $794 per meeting booked today (2026-10-24).");
-    expect(lines[1]).toContain("(the public Cold Email Cost Per Meeting Index): at least $79 per meeting booked today");
+    expect(lines[1]).toBe("Ledger, every path: at least $79 per meeting booked today (2026-10-24), a floor while the ledger misses part of the spend (the public Cold Email Cost Per Meeting Index publishes no figure until it is a price).");
     expect(methodLines({ outcomePrices: null, ledger: null })).toEqual([
       "Expected, outcome prices: not readable right now.",
       "Ledger: not readable right now.",
