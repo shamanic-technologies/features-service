@@ -144,7 +144,7 @@ describe("recording", () => {
     expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
-    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 866.47, status: "noise", inputs: { method: "ledger_every_path", floor: "yes" } });
+    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: null, status: "noise", unavailableReason: "ledger_coverage_short", inputs: { method: "ledger_every_path", ledgerUnitCostUsd: 866.47 } });
     expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.15 * 0.25, 6);
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
     // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting

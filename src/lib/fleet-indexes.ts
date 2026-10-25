@@ -409,25 +409,39 @@ export interface LedgerMeetingCost {
   unpricedInputs: number;
 }
 
-/** Below this share of the outcome spend declared, the ledger's figure is a floor (`COVERAGE_BAR_PCT`, research). */
+/** Below this share of the outcome spend declared, the ledger's figure misses spend behind the meeting (`COVERAGE_BAR_PCT`, research). */
 const LEDGER_COVERAGE_BAR_PCT = 95;
 
-/** PURE. The Cost Per Meeting Index point off the ledger: a floor (noise) while coverage is short. */
+/**
+ * PURE. The Cost Per Meeting Index point off the ledger. A public index serves a PRICE or nothing (MEETING-INDEX-ZERO-1025,
+ * supersedes "a floor (noise) while coverage is short"): ledger days still being recomputed price nothing
+ * (RESEARCH-LEDGER-RECOMPUTING-1024, the Research study reads "Being recomputed."), and a figure short of the coverage bar
+ * misses spend behind the meeting (prod 2026-10-25: 265 days computing, 62% coverage, $0.013 per booked meeting on the
+ * landing hero beside $794 on Research).
+ */
 export function ledgerMeetingIndexPoint(l: LedgerMeetingCost): FleetIndexPoint {
-  const floor = l.coveragePct === null || l.coveragePct < LEDGER_COVERAGE_BAR_PCT || l.daysMissing > 0;
+  const recomputing = l.daysMissing > 0;
+  const coverageShort = l.coveragePct === null || l.coveragePct < LEDGER_COVERAGE_BAR_PCT;
   const priced = l.unitCostUsd !== null && l.unitCostUsd > 0 && l.produced > 0;
+  const unavailableReason = recomputing
+    ? "ledger_being_recomputed"
+    : !priced
+      ? "no_meeting_priced_on_ledger"
+      : coverageShort
+        ? "ledger_coverage_short"
+        : null;
   return {
     indexSlug: COST_PER_MEETING.slug,
-    value: priced ? l.unitCostUsd : null,
-    status: priced && !floor ? indexStatus(Math.round(l.produced), true) : "noise",
+    value: unavailableReason === null ? l.unitCostUsd : null,
+    status: unavailableReason === null ? indexStatus(Math.round(l.produced), true) : "noise",
     outcomes: Math.round(l.produced),
     contacted: null,
     workflowDynastySlug: null,
     workflowDynastyName: null,
-    unavailableReason: priced ? null : "no_meeting_priced_on_ledger",
+    unavailableReason,
     inputs: {
       method: "ledger_every_path",
-      floor: floor ? "yes" : "no",
+      ledgerUnitCostUsd: l.unitCostUsd,
       coveragePct: l.coveragePct,
       daysMissing: l.daysMissing,
       unpricedInputs: l.unpricedInputs,
