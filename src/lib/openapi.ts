@@ -8611,8 +8611,10 @@ const researchFileSchema = registry.register(
       z.object({
         id: z.string(),
         outcome: z.string(),
-        step: z.string().describe("The catalogue step the outcome is (`conversation` on `positive-reply`); absent on a section that is no step.").optional(),
-        pipes: z.array(z.string()).describe("The page's pipes that land on it.").optional(),
+        step: z.string().describe("The lead STATE the section is (RESEARCH-STATE-SECTIONS-1025: `lead_interested` on `positive-reply`, `meeting_booked` on `meeting`, `meeting_attended`, `paid_client`, `lead_visited`); absent on a section that is no step (`judgment`).").optional(),
+        pipes: z.array(z.string()).describe("The page's pipes whose leg's to-step puts a lead in the state (a signup / form / booking call pipe lands on Lead interested).").optional(),
+        family: z.enum(["interest", "visit"]).describe("RESEARCH-STATE-SECTIONS-1025: the lead-state family the page groups the section under, never summed across: `interest` (Lead interested < Meeting booked < Meeting attended < Paid client), `visit` (Lead visited). Absent on `judgment`.").optional(),
+        familyLabel: z.string().describe("The family in the page's words: `CRM lifecycle` | `Website visits`.").optional(),
         description: z.string(),
         population: z.string(),
       }),

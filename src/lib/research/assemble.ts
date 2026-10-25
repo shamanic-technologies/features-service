@@ -18,10 +18,10 @@ import { imageJudgeRivalsStudy } from "./image-judge-rivals.js";
 import { bestWorkflowByMonth, clientMedianByMonth, overTimeStudies, type BestPoint, type MedianPoint } from "./pipe-series.js";
 import { dayText, monthLabel } from "./format.js";
 import { TIME_TO_REPLY_MIN_SAMPLE } from "../campaign-next-steps.js";
-import { POSITIVE_REPLY_OUTCOME, POSITIVE_REPLY_OUTCOME_ID, replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
-import { legMaturity } from "../maturity.js";
+import { replyDelayStudy, type ReplyDelayRead } from "./reply-delay.js";
 import { outcomeCostStudy } from "./outcome-cost.js";
-import type { MeetingCostMethods } from "./meeting-cost-methods.js";
+import { withToday, type MeetingCostMethods, type MethodDay } from "./meeting-cost-methods.js";
+import { LEAD_STATE_SECTIONS, leadStateCostOverTimeStudy, leadStateOutcomeEntry, leadStatePoint, methodDayOf, outcomesRequiredOf } from "./lead-state-sections.js";
 import { rollUpOutcomeUnitCosts } from "../outcome-unit-costs.js";
 import type { OutcomeLedgerTotals } from "../outcome-cost-totals-client.js";
 
@@ -35,25 +35,6 @@ export const STUDIED_PIPES: readonly ResearchPipeEntry[] = [
   { id: WEBSITE_VISIT_PIPE, channel: "sales-cold-email-outreach", leg: "lead_found_to_website_visit", outcome: "Website visit", description: "Cold email that brings a prospect to the website." },
   { id: MEETING_BOOKING_PIPE, channel: "ai-meeting-booking", leg: "conversation_to_meeting_booked", outcome: "Meeting booked", description: "Turns a positive reply into a booked meeting." },
 ];
-
-/** The step each studied pipe lands on (its leg's `to` step). */
-const STUDIED_PIPE_TO_STEP: Readonly<Record<string, string>> = {
-  [POSITIVE_REPLY_PIPE]: "conversation",
-  [WEBSITE_VISIT_PIPE]: "website_visit",
-  [MEETING_BOOKING_PIPE]: "meeting_booked",
-};
-
-/**
- * PURE. The pipes of the file landing on a step, in the file's order: what an outcome section names. An outcome
- * section is never one pipe's (owner 2026-10-23: the Positive reply section read "Pipe: Dotterel" while its study read
- * every pipe ending on a positive reply).
- */
-export function pipesLandingOn(step: string, otherPipes: ReadonlyArray<{ entry: ResearchPipeEntry; toStep: string }>): string[] {
-  return [
-    ...STUDIED_PIPES.filter((p) => STUDIED_PIPE_TO_STEP[p.id] === step).map((p) => p.id),
-    ...otherPipes.filter((p) => p.toStep === step).map((p) => p.entry.id),
-  ];
-}
 
 /** One cold email pipe's evidence, read on one cost basis. */
 export interface ColdEmailPipeInput {
@@ -143,6 +124,12 @@ export interface ResearchInput {
     /** Every step a catalogue pipe ends on. */
     pipeOutputs: ReadonlySet<string>;
   };
+  /**
+   * Each lead state's price over time (RESEARCH-STATE-SECTIONS-1025), the days STORED so far, keyed by state; today's point
+   * is built here off the same roll-up as the every-path study, so the last point IS its figure. A state mapped to null =
+   * its series could not be read (its study says so); absent = not asked (no over-time study).
+   */
+  leadStateHistory?: ReadonlyMap<string, readonly MethodDay[] | null>;
   /**
    * Every other pipe of the channel catalogue holding a workflow (WA-PIPE-RESEARCH-1023), listed after the three studied
    * ones: its Workflows / Templates / Models / Performance tabs are served on the catalogue and performance reads.
@@ -381,8 +368,8 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
   studies.push(...(input.countryStudies ?? []));
   studies.push(...(input.nicheStudies ?? []));
   studies.push(...(input.estimateStudies ?? []));
-  // a ledger study names the positive reply section: served only when that section is
-  if (input.replyDelay !== undefined) studies.push(...(input.ledgerStudies ?? []));
+  // a ledger study names the Lead interested section, listed whenever a study sits in it
+  studies.push(...(input.ledgerStudies ?? []));
   if (input.replyDelay !== undefined) studies.push(replyDelayStudy(input.replyDelay, TIME_TO_REPLY_MIN_SAMPLE));
   if (input.outcomeLedger) {
     const l = input.outcomeLedger;
@@ -400,13 +387,18 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
       unattributedCostUsd: units?.unattributedCostUsd ?? 0,
       ...(l.totals ? { support: { byFunction: l.totals.supportByFunction, daysMissing: l.totals.supportDaysMissing }, abnormal: l.totals.abnormalByReason } : {}),
     };
-    // LEAD-STATES-1024: a lead STATE reached once per lead, never an event (3 replies = 1 interested lead, a meeting
-    // booked with no reply = interested too); the cost of each run goes to the state its lead had not reached yet.
-    if (input.replyDelay !== undefined) {
-      studies.push(outcomeCostStudy({ outcome: POSITIVE_REPLY_OUTCOME_ID, noun: "interested lead", nounPlural: "interested leads", unit: unitOf("lead_interested"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_conversation").outcomesRequired, labelOf: l.labelOf }));
+    // LEAD-STATES-1024 + RESEARCH-STATE-SECTIONS-1025: one section per lead STATE (reached once per lead, never an event:
+    // 3 replies = 1 interested lead), each with its every-path cost and its price over time. One loop, no state named.
+    const today = input.now.toISOString().slice(0, 10);
+    for (const sec of LEAD_STATE_SECTIONS) {
+      const unit = unitOf(sec.state);
+      studies.push(outcomeCostStudy({ outcome: sec.outcomeId, idStem: sec.idStem, noun: sec.noun, nounPlural: sec.nounPlural, unit, ...ledgerFacts, coveragePct, outcomesRequired: outcomesRequiredOf(sec), labelOf: l.labelOf }));
+      if (!input.leadStateHistory) continue;
+      const stored = input.leadStateHistory.get(sec.state) ?? null;
+      const todayRow = l.totals && units ? methodDayOf(today, leadStatePoint(sec, unit, { coveragePct, daysMissing: l.totals.daysMissing, abnormalUsd: l.totals.abnormalUsd })) : null;
+      const rows = stored ? withToday(stored, todayRow) : null;
+      studies.push(leadStateCostOverTimeStudy(sec, rows, input.costBasis));
     }
-    studies.push(outcomeCostStudy({ pipe: WEBSITE_VISIT_PIPE, idStem: "lead-visited", noun: "visiting lead", nounPlural: "visiting leads", unit: unitOf("lead_visited"), ...ledgerFacts, coveragePct, outcomesRequired: legMaturity("start_to_website_visit").outcomesRequired, labelOf: l.labelOf }));
-    studies.push(outcomeCostStudy({ outcome: "meeting", noun: "booked meeting", nounPlural: "booked meetings", unit: unitOf("meeting_booked"), ...ledgerFacts, coveragePct, outcomesRequired: input.meetingOutcomeRequired ?? input.meetingOutcomesRequired, labelOf: l.labelOf }));
   }
   studies.push(...jevStudies({ ...input.jev, costBasis: input.costBasis, readOn: input.now.toISOString().slice(0, 10) }));
   // a one-off hand-checked benchmark, committed (IMAGE-JUDGE-STUDY-1021): the same on both bases, it prices nothing
@@ -454,17 +446,13 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     },
     // The three studied pipes, then every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023).
     pipes: [...STUDIED_PIPES, ...(input.otherPipes ?? []).map((p) => p.entry)],
+    // A lead-state section is listed whenever a study sits in it (every study names a section of the file), in ladder
+    // order per family; then the sections that are no lead state (Jev).
     outcomes: [
-      ...(input.replyDelay !== undefined ? [{ ...POSITIVE_REPLY_OUTCOME, pipes: pipesLandingOn("conversation", input.otherPipes ?? []) }] : []),
+      ...LEAD_STATE_SECTIONS.filter((sec) => studies.some((st) => st.pipe === null && st.outcome === sec.outcomeId)).map((sec) =>
+        leadStateOutcomeEntry(sec, STUDIED_PIPES, input.otherPipes ?? []),
+      ),
       JUDGMENT_OUTCOME,
-      {
-        id: "meeting",
-        outcome: "Meeting booked",
-        step: "meeting_booked",
-        pipes: pipesLandingOn("meeting_booked", input.otherPipes ?? []),
-        description: "One outcome across every leg, from the first cold email to the meeting.",
-        population: "The brands whose AI Meeting Booking went live, each split at its own go-live.",
-      },
     ],
     studies,
     // A study served is never listed as waiting; a timing study a leg cannot rank yet (every hour Learning) stays listed.
