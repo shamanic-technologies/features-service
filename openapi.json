@@ -33914,6 +33914,265 @@
           "studies",
           "unavailable"
         ]
+      },
+      "SecurityAdvisoryRepoDayPoint": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string",
+            "description": "UTC day (YYYY-MM-DD)."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "red",
+              "green",
+              "missing"
+            ],
+            "description": "red = a critical or high finding, or the audit could not run; green = none; missing = the repo was not in that day's report (or no report that day)."
+          },
+          "critical": {
+            "type": "integer",
+            "nullable": true
+          },
+          "high": {
+            "type": "integer",
+            "nullable": true
+          },
+          "moderate": {
+            "type": "integer",
+            "nullable": true
+          },
+          "low": {
+            "type": "integer",
+            "nullable": true
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Package names with a high or critical finding."
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the audit could not run, when it could not."
+          }
+        },
+        "required": [
+          "day",
+          "status",
+          "critical",
+          "high",
+          "moderate",
+          "low",
+          "packages",
+          "error"
+        ]
+      },
+      "SecurityAdvisoriesView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "red",
+              "green"
+            ],
+            "description": "The served verdict, rendered as-is. Red when the latest report has any repo with critical or high > 0 or an audit error, when no report arrived for more than staleAfterHours, or when nothing was ever reported."
+          },
+          "reason": {
+            "type": "string",
+            "description": "The verdict in plain words (which repos and why, or how long the job has been silent)."
+          },
+          "staleAfterHours": {
+            "type": "integer"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "True when no report arrived for more than staleAfterHours (or never)."
+          },
+          "lastReportAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "When the latest report was received (ISO), null when none ever was."
+          },
+          "hoursSinceLastReport": {
+            "type": "number",
+            "nullable": true
+          },
+          "latestDay": {
+            "type": "string",
+            "nullable": true,
+            "description": "UTC day of the latest report."
+          },
+          "redRepos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "critical": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "high": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "packages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "error": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "repo",
+                "reason",
+                "critical",
+                "high",
+                "packages",
+                "error"
+              ]
+            },
+            "description": "The repos that are red in the latest report."
+          },
+          "windowDays": {
+            "type": "integer"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The window's UTC days, oldest first (every day, reported or not)."
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "reported": {
+                  "type": "boolean"
+                },
+                "repoCount": {
+                  "type": "integer"
+                },
+                "critical": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Sum over the day's repos; null when no repo stated a count that day."
+                },
+                "high": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "moderate": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "low": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "failedAudits": {
+                  "type": "integer"
+                },
+                "redRepoCount": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "day",
+                "reported",
+                "repoCount",
+                "critical",
+                "high",
+                "moderate",
+                "low",
+                "failedAudits",
+                "redRepoCount"
+              ]
+            },
+            "description": "Fleet totals per day, one point per window day."
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repo": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "red",
+                    "green",
+                    "missing"
+                  ],
+                  "description": "The repo's status in the latest report (missing = not in it)."
+                },
+                "inLatestReport": {
+                  "type": "boolean"
+                },
+                "latest": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SecurityAdvisoryRepoDayPoint"
+                    },
+                    {
+                      "nullable": true
+                    }
+                  ]
+                },
+                "series": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SecurityAdvisoryRepoDayPoint"
+                  },
+                  "description": "One point per window day."
+                }
+              },
+              "required": [
+                "repo",
+                "status",
+                "inLatestReport",
+                "latest",
+                "series"
+              ]
+            },
+            "description": "Every repo of the latest report or seen in the window; red first, then by name."
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "staleAfterHours",
+          "stale",
+          "lastReportAt",
+          "hoursSinceLastReport",
+          "latestDay",
+          "redRepos",
+          "windowDays",
+          "days",
+          "daily",
+          "repos"
+        ]
       }
     },
     "parameters": {}
@@ -74504,6 +74763,228 @@
           },
           "503": {
             "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/security-advisories/reports": {
+      "post": {
+        "summary": "Store one day's security audit report of every prod repo (internal, api-key)",
+        "description": "The owner's daily audit job (npm/pnpm audit over the repos running in prod) delivers one report per day. Stored per (UTC day, repo); re-sending the same day REPLACES that day (idempotent). A repo whose audit could not run sends `error` and may omit its counts. api-key only (x-api-key); no identity headers.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "day": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "description": "UTC day the report is for (`YYYY-MM-DD`). Defaults to today (UTC). Re-sending a day replaces it."
+                  },
+                  "repos": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "repo": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "description": "Repo name, e.g. `features-service`."
+                        },
+                        "critical": {
+                          "type": "integer",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Open critical advisories. Required unless `error` is set."
+                        },
+                        "high": {
+                          "type": "integer",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Open high advisories. Required unless `error` is set."
+                        },
+                        "moderate": {
+                          "type": "integer",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Open moderate advisories. Required unless `error` is set."
+                        },
+                        "low": {
+                          "type": "integer",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Open low advisories. Required unless `error` is set."
+                        },
+                        "packages": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "maxItems": 500,
+                          "default": [],
+                          "description": "Package names with a high or critical finding."
+                        },
+                        "error": {
+                          "type": "string",
+                          "nullable": true,
+                          "minLength": 1,
+                          "maxLength": 2000,
+                          "description": "Why the audit could not run for this repo (counts may then be null). A repo with an error is red."
+                        }
+                      },
+                      "required": [
+                        "repo"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "description": "Every prod repo audited, one entry each."
+                  }
+                },
+                "required": [
+                  "repos"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "repoCount": {
+                      "type": "integer"
+                    },
+                    "reportedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "day",
+                    "repoCount",
+                    "reportedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/security-advisories": {
+      "get": {
+        "summary": "Open security advisories per prod repo per day, with the served red/green verdict (internal, api-key)",
+        "description": "Feeds the staff Monitoring hub chart. The last `days` UTC days (default 30, max 365) per repo and fleet totals per day, plus the verdict: red when the latest report has any repo with critical or high > 0 or an audit error, red when no report arrived for more than 36 hours (a silent job is never read as clean), red when nothing was ever reported. api-key only; staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Window in days, 1 to 365 (default 30)."
+            },
+            "required": false,
+            "description": "Window in days, 1 to 365 (default 30).",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The series and the verdict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityAdvisoriesView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
             "content": {
               "application/json": {
                 "schema": {
