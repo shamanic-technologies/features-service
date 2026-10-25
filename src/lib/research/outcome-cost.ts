@@ -11,7 +11,7 @@
  * (COST-SUPPORT-1024-FEATURES): support spend (payment fees, brand setup, Copilot, a retired product...) produces no
  * outcome by design, is stated apart per function in one line, and is in neither side of the share.
  */
-import { n, usd } from "./format.js";
+import { n, usd, aOrAn } from "./format.js";
 import { headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy } from "./studies.js";
 import type { ResearchOutcomeId, ResearchPipeId, ResearchStudy } from "./types.js";
@@ -91,7 +91,7 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
     ...(input.outcome ? { outcome: input.outcome } : {}),
     topic: "cost" as const,
     goal: "roi" as const,
-    question: `What does a ${input.noun} cost, every path?`,
+    question: `What does ${aOrAn(input.noun)} cost, every path?`,
   };
   const u = input.unit;
   if (!u) return notMeasuredStudy({ ...base, headline: "Not readable right now.", reason: "runs-service's outcome ledger could not be read this time. The study comes back on the next build." });
@@ -104,7 +104,7 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
     return notMeasuredStudy({ ...base, headline: "Not priceable yet.", reason: `Each ${input.noun} declared consumes one ${input.noun} or more of the same kind, so the ledger's declarations draw a loop with no finite cost. The declaring service has to state what each one really consumed.` });
   }
   if (u.produced === 0 || u.unitCostUsd === null) {
-    return notMeasuredStudy({ ...base, headline: `No ${input.noun} declared to the ledger yet.`, reason: `No run has declared a ${input.noun} to runs-service's ledger yet, so nothing prices one. Every service that spends is being wired to declare what it produces.` });
+    return notMeasuredStudy({ ...base, headline: `No ${input.noun} declared to the ledger yet.`, reason: `No run has declared ${aOrAn(input.noun)} to runs-service's ledger yet, so nothing prices one. Every service that spends is being wired to declare what it produces.` });
   }
   // Occurrences declared but no spend carried yet (the ledger spreads a day's spend on its next pass): never a $0 price.
   if (u.unitCostUsd <= 0) {
@@ -146,7 +146,7 @@ export function outcomeCostStudy(input: OutcomeCostInput): ResearchStudy {
           note: `${s.requirementPerUnit < 10 ? s.requirementPerUnit.toFixed(2) : n(Math.round(s.requirementPerUnit))} ${input.labelOf(s.outcomeKey).toLowerCase()} per ${input.noun}`,
           thin: floor || learning,
         })),
-        note: `Each stage's production cost per ${input.noun}: every occurrence the pipes ending on a ${input.noun} produced, the ones that led nowhere included (an unanswered send rides the replies), and what it bought from earlier pipes at their own unit cost. The stages add up to the figure.`,
+        note: `Each stage's production cost per ${input.noun}: every occurrence the pipes ending on ${aOrAn(input.noun)} produced, the ones that led nowhere included (an unanswered send rides the replies), and what it bought from earlier pipes at their own unit cost. The stages add up to the figure.`,
       },
     ],
     conclusion: [

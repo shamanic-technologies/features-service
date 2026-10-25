@@ -13,7 +13,7 @@
  * A day whose ledger still had days being recomputed reads no figure (RESEARCH-LEDGER-RECOMPUTING-1024), never a figure
  * on part of the days. One table, one code path for every state: nothing below names a state.
  */
-import { dayText, n, usd } from "./format.js";
+import { dayText, n, usd, aOrAn } from "./format.js";
 import { headlineFor, type Verdict } from "./verdict.js";
 import { notMeasuredStudy } from "./studies.js";
 import { COVERAGE_BAR_PCT } from "./outcome-cost.js";
@@ -213,7 +213,7 @@ export function leadStateCostOverTimeStudy(s: LeadStateSection, rows: readonly M
     outcome: s.outcomeId,
     topic: "cost" as const,
     goal: "roi" as const,
-    question: `What did a ${s.noun} cost on each day, every path?`,
+    question: `What did ${aOrAn(s.noun)} cost on each day, every path?`,
   };
   if (costBasis === "actual") {
     return notMeasuredStudy({ ...base, headline: "Not measured on vendor cost yet.", reason: "The price over time is recorded on what clients were charged only. Switch to the billed basis to read it." });
