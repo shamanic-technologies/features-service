@@ -447,7 +447,7 @@ export function assembleResearch(input: ResearchInput): ResearchFile {
     // The three studied pipes, then every other pipe of the catalogue holding a workflow (WA-PIPE-RESEARCH-1023).
     pipes: [...STUDIED_PIPES, ...(input.otherPipes ?? []).map((p) => p.entry)],
     // A lead-state section is listed whenever a study sits in it (every study names a section of the file), in ladder
-    // order per family; then the sections that are no lead state (Jev).
+    // order per lead track; then the sections that are no lead state (Jev).
     outcomes: [
       ...LEAD_STATE_SECTIONS.filter((sec) => studies.some((st) => st.pipe === null && st.outcome === sec.outcomeId)).map((sec) =>
         leadStateOutcomeEntry(sec, STUDIED_PIPES, input.otherPipes ?? []),

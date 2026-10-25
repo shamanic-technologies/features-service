@@ -269,7 +269,7 @@ describe("assembleResearch", () => {
     expect(st.outcome).toBe("positive-reply");
     expect(st.status).toBe("not_enough_data");
     expect(st.headline).toBe("Not readable right now.");
-    expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "lead_interested", family: "interest", pipes: ["cold-email-positive-reply"] });
+    expect(read.outcomes.find((o) => o.id === "positive-reply")).toMatchObject({ step: "lead_interested", leadTrack: "crm_lifecycle", pipes: ["cold-email-positive-reply"] });
   });
 
   it("OUTCOME-SECTION-PIPES-1023: an outcome section names EVERY pipe landing on its step, never one pipe", () => {
@@ -354,14 +354,14 @@ describe("assembleResearch", () => {
     ]);
     const otherPipes = [{ entry: { id: "cold-whatsapp-outreach|start_to_signup", channel: "cold-whatsapp-outreach", leg: "start_to_signup", outcome: "Signup", description: "x" }, toStep: "signup" }];
     const read = assembleResearch({ ...input, otherPipes, outcomeLedger: { totals, labelOf: (k: string) => k, outputOf, pipeOutputs }, leadStateHistory: history });
-    // five state sections with their family, then Jev; the positive reply section is Lead interested (id kept)
-    expect(read.outcomes.map((o) => [o.id, o.step, o.family ?? null, o.familyLabel ?? null])).toEqual([
-      ["positive-reply", "lead_interested", "interest", "CRM lifecycle"],
-      ["meeting", "meeting_booked", "interest", "CRM lifecycle"],
-      ["meeting-attended", "meeting_attended", "interest", "CRM lifecycle"],
-      ["paid-client", "paid_client", "interest", "CRM lifecycle"],
-      ["lead-visited", "lead_visited", "visit", "Website visits"],
-      ["judgment", undefined, null, null],
+    // five state sections with their lead track, then Jev; the positive reply section is Lead interested (id kept)
+    expect(read.outcomes.map((o) => [o.id, o.step, o.leadTrack ?? null])).toEqual([
+      ["positive-reply", "lead_interested", "crm_lifecycle"],
+      ["meeting", "meeting_booked", "crm_lifecycle"],
+      ["meeting-attended", "meeting_attended", "crm_lifecycle"],
+      ["paid-client", "paid_client", "crm_lifecycle"],
+      ["lead-visited", "lead_visited", "website_visits"],
+      ["judgment", undefined, null],
     ]);
     // a signup pipe puts its lead in Lead interested (a yes), never in Lead visited
     expect(read.outcomes.find((o) => o.id === "positive-reply")!.pipes).toEqual(["cold-email-positive-reply", "cold-whatsapp-outreach|start_to_signup"]);
