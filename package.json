@@ -16,13 +16,13 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@sentry/node": "^11.8.0",
     "cors": "^2.8.5",
     "drizzle-orm": "^0.45.4",
     "express": "^4.22.3",
     "postgres": "^3.4.0",
-    "zod": "^3.23.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -46,7 +46,7 @@
       "source-map-js@^1.0.0": "^1.2.2",
       "proxy-addr@^2.0.0": "^2.0.8",
       "qs@<6.16.0": "^6.16.1",
-      "body-parser@^1.0.0": "^1.20.6",
+      "body-parser@^1.0.0": "^1.20.9",
       "@esbuild-kit/core-utils>esbuild": "^0.28.1"
     }
   }
