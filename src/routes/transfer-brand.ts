@@ -11,11 +11,13 @@ import { viewCacheRole } from "../lib/view-refresher.js";
  */
 const router = Router();
 
+// `z.guid()` = any 8-4-4-4-12 hex id, the acceptance zod 3's `.uuid()` had (zod 4's `.uuid()` also checks
+// the RFC version/variant bits).
 export const TransferBrandBody = z.object({
-  sourceBrandId: z.string().uuid(),
-  sourceOrgId: z.string().uuid(),
-  targetOrgId: z.string().uuid(),
-  targetBrandId: z.string().uuid().optional(),
+  sourceBrandId: z.guid(),
+  sourceOrgId: z.guid(),
+  targetOrgId: z.guid(),
+  targetBrandId: z.guid().optional(),
 });
 
 /**
