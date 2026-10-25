@@ -111,12 +111,16 @@ export interface ResearchOutcomeEntry {
   /** The page's pipes that land on it. */
   pipes?: ResearchPipeId[];
   /**
-   * A lead-state section's family (RESEARCH-STATE-SECTIONS-1025): `interest` = the CRM lifecycle ladder (Lead interested <
-   * Meeting booked < Meeting attended < Paid client), `visit` = Website visits (Lead visited). Never summed across. Absent on
-   * a section that is no lead state (Jev).
+   * The lead track a lead-state section is on (RESEARCH-LEAD-TRACK-1025, owner's words): `crm_lifecycle` (Lead interested <
+   * Meeting booked < Meeting attended < Paid client) or `website_visits` (Lead visited). Never summed across. Absent on a
+   * section that is no lead state (Jev).
    */
+  leadTrack?: "crm_lifecycle" | "website_visits";
+  /** The lead track in the page's words: "CRM lifecycle" | "Website visits" (the group title). */
+  leadTrackLabel?: string;
+  /** DEPRECATED (= `leadTrack`): served until the dashboard reads `leadTrack`, then removed. */
   family?: "interest" | "visit";
-  /** The family in the page's words: "CRM lifecycle" | "Website visits". */
+  /** DEPRECATED (= `leadTrackLabel`): same. */
   familyLabel?: string;
   description: string;
   population: string;
