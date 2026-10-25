@@ -3,6 +3,7 @@ import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-open
 import { z } from "zod";
 import { featureResponseSchema } from "./schemas.js";
 import { CHANNEL_TYPES } from "./channel-types.js";
+import { SecurityAdvisoryReportSchema } from "./security-advisories.js";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
@@ -8991,6 +8992,111 @@ registry.registerPath({
   responses: {
     200: { description: "Template texts", content: { "application/json": { schema: z.record(z.string(), z.string()) } } },
     503: researchNotYet,
+  },
+});
+
+// ── Security advisories monitor (SEC-ADVISORIES-SERIES-1025) ─────────────
+
+const secAdvPointStatus = z.enum(["red", "green", "missing"]);
+const secAdvRepoDayPoint = registry.register(
+  "SecurityAdvisoryRepoDayPoint",
+  z.object({
+    day: z.string().describe("UTC day (YYYY-MM-DD)."),
+    status: secAdvPointStatus.describe("red = a critical or high finding, or the audit could not run; green = none; missing = the repo was not in that day's report (or no report that day)."),
+    critical: z.number().int().nullable(),
+    high: z.number().int().nullable(),
+    moderate: z.number().int().nullable(),
+    low: z.number().int().nullable(),
+    packages: z.array(z.string()).describe("Package names with a high or critical finding."),
+    error: z.string().nullable().describe("Why the audit could not run, when it could not."),
+  }),
+);
+const secAdvView = registry.register(
+  "SecurityAdvisoriesView",
+  z.object({
+    status: z.enum(["red", "green"]).describe("The served verdict, rendered as-is. Red when the latest report has any repo with critical or high > 0 or an audit error, when no report arrived for more than staleAfterHours, or when nothing was ever reported."),
+    reason: z.string().describe("The verdict in plain words (which repos and why, or how long the job has been silent)."),
+    staleAfterHours: z.number().int(),
+    stale: z.boolean().describe("True when no report arrived for more than staleAfterHours (or never)."),
+    lastReportAt: z.string().nullable().describe("When the latest report was received (ISO), null when none ever was."),
+    hoursSinceLastReport: z.number().nullable(),
+    latestDay: z.string().nullable().describe("UTC day of the latest report."),
+    redRepos: z.array(
+      z.object({
+        repo: z.string(),
+        reason: z.string(),
+        critical: z.number().int().nullable(),
+        high: z.number().int().nullable(),
+        packages: z.array(z.string()),
+        error: z.string().nullable(),
+      }),
+    ).describe("The repos that are red in the latest report."),
+    windowDays: z.number().int(),
+    days: z.array(z.string()).describe("The window's UTC days, oldest first (every day, reported or not)."),
+    daily: z.array(
+      z.object({
+        day: z.string(),
+        reported: z.boolean(),
+        repoCount: z.number().int(),
+        critical: z.number().int().nullable().describe("Sum over the day's repos; null when no repo stated a count that day."),
+        high: z.number().int().nullable(),
+        moderate: z.number().int().nullable(),
+        low: z.number().int().nullable(),
+        failedAudits: z.number().int(),
+        redRepoCount: z.number().int(),
+      }),
+    ).describe("Fleet totals per day, one point per window day."),
+    repos: z.array(
+      z.object({
+        repo: z.string(),
+        status: secAdvPointStatus.describe("The repo's status in the latest report (missing = not in it)."),
+        inLatestReport: z.boolean(),
+        latest: secAdvRepoDayPoint.nullable(),
+        series: z.array(secAdvRepoDayPoint).describe("One point per window day."),
+      }),
+    ).describe("Every repo of the latest report or seen in the window; red first, then by name."),
+  }),
+);
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/security-advisories/reports",
+  summary: "Store one day's security audit report of every prod repo (internal, api-key)",
+  description:
+    "The owner's daily audit job (npm/pnpm audit over the repos running in prod) delivers one report per day. Stored per " +
+    "(UTC day, repo); re-sending the same day REPLACES that day (idempotent). A repo whose audit could not run sends `error` " +
+    "and may omit its counts. api-key only (x-api-key); no identity headers.",
+  tags: ["Internal"],
+  request: { body: { content: { "application/json": { schema: SecurityAdvisoryReportSchema } } } },
+  responses: {
+    200: {
+      description: "Stored.",
+      content: {
+        "application/json": {
+          schema: z.object({ day: z.string(), repoCount: z.number().int(), reportedAt: z.string() }),
+        },
+      },
+    },
+    400: { description: "Invalid body", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/security-advisories",
+  summary: "Open security advisories per prod repo per day, with the served red/green verdict (internal, api-key)",
+  description:
+    "Feeds the staff Monitoring hub chart. The last `days` UTC days (default 30, max 365) per repo and fleet totals per day, " +
+    "plus the verdict: red when the latest report has any repo with critical or high > 0 or an audit error, red when no report " +
+    "arrived for more than 36 hours (a silent job is never read as clean), red when nothing was ever reported. api-key only; " +
+    "staff-gated at api-service.",
+  tags: ["Internal"],
+  request: { query: z.object({ days: z.string().optional().describe("Window in days, 1 to 365 (default 30).") }) },
+  responses: {
+    200: { description: "The series and the verdict.", content: { "application/json": { schema: secAdvView } } },
+    400: { description: "Invalid days", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

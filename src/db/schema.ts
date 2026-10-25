@@ -821,3 +821,30 @@ export const nicheGrades = pgTable(
   },
   (t) => [primaryKey({ name: "niche_grades_pk", columns: [t.orgId, t.brandId, t.offerId] })],
 );
+
+/**
+ * SECURITY ADVISORIES (`security_advisory_reports`, SEC-ADVISORIES-SERIES-1025; `lib/security-advisories.ts`): one row per
+ * (UTC day, prod repo) = that repo's open npm/pnpm audit findings as the owner's daily audit job reported them. Re-sending a
+ * day REPLACES that day's rows (a repo absent from the new report is gone from that day). Counts are null only when the audit
+ * could not run (`error` says why), never a 0 for unknown.
+ */
+export const securityAdvisoryReports = pgTable(
+  "security_advisory_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** UTC calendar day (`YYYY-MM-DD`). */
+    day: text("day").notNull(),
+    repo: text("repo").notNull(),
+    critical: integer("critical"),
+    high: integer("high"),
+    moderate: integer("moderate"),
+    low: integer("low"),
+    /** Package names carrying a high or critical finding. */
+    packages: text("packages").array().notNull().default([]),
+    error: text("error"),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("idx_security_advisory_reports_day_repo").on(table.day, table.repo)],
+);
+
+export type SecurityAdvisoryReportRow = typeof securityAdvisoryReports.$inferSelect;
