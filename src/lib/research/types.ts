@@ -12,7 +12,11 @@ import type { VerdictKind } from "./verdict.js";
  */
 export type StudiedPipeId = "cold-email-positive-reply" | "cold-email-website-visit" | "meeting-booking";
 export type ResearchPipeId = StudiedPipeId | (string & {});
-export type ResearchOutcomeId = "meeting" | "judgment" | "positive-reply";
+/**
+ * The outcome sections: one per lead STATE (RESEARCH-STATE-SECTIONS-1025, `lib/research/lead-state-sections.ts`; the two
+ * sections that existed before keep their ids: `positive-reply` = Lead interested, `meeting` = Meeting booked) + `judgment`.
+ */
+export type ResearchOutcomeId = "positive-reply" | "meeting" | "meeting-attended" | "paid-client" | "lead-visited" | "judgment";
 export type ResearchTopic =
   | "llm"
   | "cost"
@@ -106,6 +110,14 @@ export interface ResearchOutcomeEntry {
   step?: string;
   /** The page's pipes that land on it. */
   pipes?: ResearchPipeId[];
+  /**
+   * A lead-state section's family (RESEARCH-STATE-SECTIONS-1025): `interest` = the CRM lifecycle ladder (Lead interested <
+   * Meeting booked < Meeting attended < Paid client), `visit` = Website visits (Lead visited). Never summed across. Absent on
+   * a section that is no lead state (Jev).
+   */
+  family?: "interest" | "visit";
+  /** The family in the page's words: "CRM lifecycle" | "Website visits". */
+  familyLabel?: string;
   description: string;
   population: string;
 }

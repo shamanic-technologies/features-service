@@ -2,12 +2,9 @@ import { describe, expect, it } from "vitest";
 import { meetingCostStudy, type ReportingBrand } from "./meetings.js";
 import {
   ledgerHistoryDays,
-  ledgerHistoryPoint,
   ledgerChart,
-  ledgerPoint,
   medianChart,
   methodLines,
-  MEETING_COST_LEDGER_SLUG,
   MEETING_COST_OUTCOME_PRICES_SLUG,
   outcomePricesChart,
   outcomePricesPoint,
@@ -15,7 +12,6 @@ import {
   type MeetingCostMethods,
   type MethodDay,
 } from "./meeting-cost-methods.js";
-import type { OutcomeUnitCost } from "../outcome-unit-costs.js";
 
 // MEETING-COST-METHODS-1024: every way we compute a booked meeting's cost, one row each on the meeting-cost study.
 
@@ -70,17 +66,7 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
     expect(withToday([], day("2026-10-24", 3)).map((r) => r.day)).toEqual(["2026-10-24"]);
   });
 
-  it("the ledger point is a floor while coverage is under the bar, and nothing is recorded when nothing is priced", () => {
-    const unit: OutcomeUnitCost = { outcomeKey: "meeting_booked", produced: 12, byProducts: 0, unitCostUsd: 79.2, ownUnitCostUsd: 3, stages: [], unpricedInputs: [] };
-    const p = ledgerPoint(unit, 62, 0, 10)!;
-    expect(p).toMatchObject({ indexSlug: MEETING_COST_LEDGER_SLUG, value: 79.2, status: "noise", inputs: { floor: "yes" } });
-    expect(ledgerPoint(unit, 97, 0, 10)!.inputs.floor).toBe("no");
-    expect(ledgerPoint(unit, 97, 0, 10)!.status).toBe("signal");
-    expect(ledgerPoint({ ...unit, unitCostUsd: null }, 97, 0, 10)).toBeNull();
-    expect(ledgerPoint(null, 97, 0, 10)).toBeNull();
-    // MEETING-INDEX-ZERO-1025: ledger days still being recomputed record no figure (prod 2026-10-25: 265 days, $0.013)
-    expect(ledgerPoint({ ...unit, unitCostUsd: 0.01317, produced: 83 }, 62.2, 265, 10)).toBeNull();
-    expect(ledgerHistoryPoint(unit, 97, 3, 10)).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
+  it("the ledger chart marks a floor (the point builder is the lead-state one, lead-state-sections.test.ts)", () => {
     const chart = ledgerChart([day("2026-10-24", 79.2, { floor: "yes", coveragePct: 62, daysMissing: 0 }, "signal", 12)])!;
     expect(chart.points[0]).toMatchObject({ display: "≥ $79", thin: true });
   });
@@ -121,8 +107,6 @@ describe("meeting-cost study, every method (MEETING-COST-METHODS-1024)", () => {
     expect(ledgerHistoryDays("2026-10-19", "2026-10-24", stored)).toEqual(["2026-10-19", "2026-10-21", "2026-10-22"]);
     expect(ledgerHistoryDays(null, "2026-10-24", stored)).toEqual([]);
     expect(ledgerHistoryDays("2026-10-24", "2026-10-24", stored)).toEqual([]);
-    const none = ledgerHistoryPoint(null, 90, 0, 10);
-    expect(none).toMatchObject({ indexSlug: MEETING_COST_LEDGER_SLUG, value: null, unavailableReason: "no_meeting_priced_yet" });
     const chart = ledgerChart([{ ...day("2026-10-22", null), basis: "recomputed" }, { ...day("2026-10-23", 866.47, { floor: "yes", coveragePct: 90.5, daysMissing: 0 }, "noise", 8), basis: "recomputed" }])!;
     expect(chart.title).toContain("from Oct 23");
     expect(chart.points).toHaveLength(1);
