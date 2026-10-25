@@ -24,11 +24,16 @@ import type { FleetIndexPoint } from "../fleet-indexes.js";
 import type { OutcomeUnitCost } from "../outcome-unit-costs.js";
 import type { ResearchOutcomeEntry, ResearchOutcomeId, ResearchPipeEntry, ResearchStudy } from "./types.js";
 
-/** The family in the page's words (the dashboard groups the sections under it). */
-export const LEAD_STATE_FAMILY_LABELS: Readonly<Record<LeadStateFamily, string>> = {
-  interest: "CRM lifecycle",
-  visit: "Website visits",
-};
+/**
+ * The lead TRACK a section is on, in the owner's words (RESEARCH-LEAD-TRACK-1025: « deux dimensions CRM Lifecycle et
+ * Website visits »; a specific two-word name, never `family`): the page groups the sections under it, never sums them.
+ */
+export type ResearchLeadTrack = "crm_lifecycle" | "website_visits";
+const LEAD_TRACK_OF: Readonly<Record<LeadStateFamily, ResearchLeadTrack>> = { interest: "crm_lifecycle", visit: "website_visits" };
+/** The lead track in the page's words (the section group title). */
+export const LEAD_TRACK_LABELS: Readonly<Record<ResearchLeadTrack, string>> = { crm_lifecycle: "CRM lifecycle", website_visits: "Website visits" };
+/** DEPRECATED `family` value of each track: served beside `leadTrack` until the dashboard reads `leadTrack` (then removed). */
+const LEGACY_FAMILY_OF: Readonly<Record<ResearchLeadTrack, LeadStateFamily>> = { crm_lifecycle: "interest", website_visits: "visit" };
 
 export interface LeadStateSection {
   state: LeadStateKey;
@@ -47,7 +52,7 @@ export interface LeadStateSection {
   description: string;
 }
 
-/** Every lead state's section, in ladder order per family (interest, then visit). */
+/** Every lead state's section, in ladder order per lead track (CRM lifecycle, then Website visits). */
 export const LEAD_STATE_SECTIONS: readonly LeadStateSection[] = [
   {
     state: "lead_interested",
@@ -106,7 +111,7 @@ export const LEAD_STATE_SECTIONS: readonly LeadStateSection[] = [
   },
 ];
 
-const familyOf = (state: LeadStateKey): LeadStateFamily => LEAD_STATES.find((s) => s.key === state)!.family;
+const leadTrackOf = (state: LeadStateKey): ResearchLeadTrack => LEAD_TRACK_OF[LEAD_STATES.find((s) => s.key === state)!.family];
 export const outcomesRequiredOf = (s: LeadStateSection): number => legMaturity(s.maturityLeg).outcomesRequired;
 
 /** The step each studied pipe lands on (its leg's `to` step). */
@@ -137,13 +142,15 @@ export function leadStateOutcomeEntry(
   studied: readonly ResearchPipeEntry[],
   otherPipes: ReadonlyArray<{ entry: ResearchPipeEntry; toStep: string }>,
 ): ResearchOutcomeEntry {
-  const family = familyOf(s.state);
+  const leadTrack = leadTrackOf(s.state);
   return {
     id: s.outcomeId,
     outcome: s.outcome,
     step: s.state,
-    family,
-    familyLabel: LEAD_STATE_FAMILY_LABELS[family],
+    leadTrack,
+    leadTrackLabel: LEAD_TRACK_LABELS[leadTrack],
+    family: LEGACY_FAMILY_OF[leadTrack],
+    familyLabel: LEAD_TRACK_LABELS[leadTrack],
     pipes: pipesReachingState(s.state, studied, otherPipes),
     description: s.description,
     population: "Every client and every path since the ledger's first day, each lead counted once in the state.",
