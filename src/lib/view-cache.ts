@@ -523,11 +523,13 @@ async function serveCell(
       return servedBody(); // fresh hit
     }
     if (ageMs >= maxStale) {
+      countRefresh(view, "miss");
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
     }
     // The keeper refreshing a cell nobody read for a day: compute it now, inside the keeper's own
     // concurrency bound (lib/view-keeper.ts), rather than behind an answer nobody waits for.
     if (keeperRefreshesStale() && ageMs >= factsGateMaxMs()) {
+      countRefresh(view, "keeper_refresh");
       return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta, await currentFingerprint(meta).catch(() => null));
     }
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas). The
@@ -565,6 +567,7 @@ async function serveCell(
       console.error(`[features-service] view-cache family read failed (computing live) view=${view}: ${(err as Error).message}`);
     }
     if (prior && Date.now() - new Date(prior.computedAt).getTime() <= factsGateMaxMs()) {
+      countRefresh(view, "rotation");
       void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
       });
@@ -573,6 +576,7 @@ async function serveCell(
   }
 
   // Miss — compute live ONCE (fail-loud on error: propagate to the endpoint), then persist.
+  countRefresh(view, "miss");
   return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
 }
 
@@ -694,7 +698,87 @@ function factsGateEnabled(): boolean {
 /** In-process count of refreshes the gate skipped / let through — read by the keeper's status route. */
 export const factsGateStats = { skipped: 0, recomputed: 0, noFingerprint: 0 };
 
-/** Background refresh of one stale cell. Single-flight via a conditional claim; never throws. */
+/**
+ * WHAT THE CACHE RECOMPUTES, measured in-process (BOX-OVERLOAD-1026), per view since boot and over the last
+ * {@link REFRESH_STATS_WINDOW_MS}: every compute by its reason (`miss`, a blocking first read; `stale_facts_moved`,
+ * `stale_ceiling` = facts unchanged but older than the gate's ceiling, `stale_no_fingerprint` = nothing to gate on;
+ * `keeper_refresh`; `rotation`), every stale read the facts gate answered WITHOUT a compute (`gate_skipped`), and
+ * the claims lost to another refresher (`claim_lost`). A refresh is always caused by a READ (the keeper's are
+ * counted apart), so `stale_*` = recomputed cells somebody read, split by whether their inputs changed. Served on
+ * `GET /internal/view-cache/keeper` as `refreshes`.
+ */
+export type RefreshReason =
+  | "miss"
+  | "stale_facts_moved"
+  | "stale_ceiling"
+  | "stale_no_fingerprint"
+  | "keeper_refresh"
+  | "rotation"
+  | "gate_skipped"
+  | "claim_lost";
+const REFRESH_STATS_WINDOW_MS = 10 * 60_000;
+const refreshTotals = new Map<string, Map<RefreshReason, number>>();
+/** One entry per minute: `minute → view → reason → count`; at most the window's minutes are kept. */
+const refreshByMinute = new Map<number, Map<string, Map<RefreshReason, number>>>();
+const bump = <K>(m: Map<K, number>, k: K) => m.set(k, (m.get(k) ?? 0) + 1);
+
+export function countRefresh(view: string, reason: RefreshReason, now = Date.now()): void {
+  const total = refreshTotals.get(view) ?? new Map<RefreshReason, number>();
+  refreshTotals.set(view, total);
+  bump(total, reason);
+  const minute = Math.floor(now / 60_000);
+  let views = refreshByMinute.get(minute);
+  if (!views) {
+    views = new Map();
+    refreshByMinute.set(minute, views);
+    for (const m of refreshByMinute.keys()) if (m <= minute - REFRESH_STATS_WINDOW_MS / 60_000) refreshByMinute.delete(m);
+  }
+  const reasons = views.get(view) ?? new Map<RefreshReason, number>();
+  views.set(view, reasons);
+  bump(reasons, reason);
+}
+
+export interface RefreshStats {
+  windowMinutes: number;
+  /** Computes per minute over the window (every reason but `gate_skipped` and `claim_lost`). */
+  computesPerMinute: number;
+  sinceBoot: Record<string, Partial<Record<RefreshReason, number>>>;
+  lastWindow: Record<string, Partial<Record<RefreshReason, number>>>;
+}
+
+export function refreshStats(now = Date.now()): RefreshStats {
+  const windowMinutes = REFRESH_STATS_WINDOW_MS / 60_000;
+  const first = Math.floor(now / 60_000) - windowMinutes + 1;
+  const lastWindow: Record<string, Partial<Record<RefreshReason, number>>> = {};
+  let computes = 0;
+  for (const [minute, views] of refreshByMinute) {
+    if (minute < first) continue;
+    for (const [view, reasons] of views) {
+      const out = (lastWindow[view] ??= {});
+      for (const [reason, n] of reasons) {
+        out[reason] = (out[reason] ?? 0) + n;
+        if (reason !== "gate_skipped" && reason !== "claim_lost") computes += n;
+      }
+    }
+  }
+  const sinceBoot: Record<string, Partial<Record<RefreshReason, number>>> = {};
+  for (const [view, reasons] of refreshTotals) sinceBoot[view] = Object.fromEntries(reasons);
+  return { windowMinutes, computesPerMinute: Math.round((computes / windowMinutes) * 10) / 10, sinceBoot, lastWindow };
+}
+
+/** Test seam. */
+export function __resetRefreshStats(): void {
+  refreshTotals.clear();
+  refreshByMinute.clear();
+}
+
+/**
+ * Background refresh of one stale cell; never throws. The facts gate is asked FIRST, with no write: a cell
+ * whose brand facts did not move costs one (shared, memoized) fingerprint read and nothing else. Only a cell
+ * that will recompute takes the single-flight claim on `refreshing_at`; before, every stale read of a cell
+ * nobody's facts had moved wrote the claim and its release, two UPDATEs per poll per cell (BOX-OVERLOAD-1026:
+ * Postgres's busiest statement on the box).
+ */
 async function revalidate(
   view: string,
   scopeKey: string,
@@ -703,9 +787,8 @@ async function revalidate(
   meta: CellMeta | null = null,
   gate: { storedFingerprint: string | null; ageMs: number } | null = null,
 ): Promise<void> {
+  let claimed = false;
   try {
-    const claimed = await claimRefresh(view, scopeKey);
-    if (!claimed) return; // another request/replica is already refreshing this cell
     // Taken BEFORE the compute reads anything: a fact landing mid-compute then moves the next
     // fingerprint and forces another refresh, never the other way round.
     const factsFp = await currentFingerprint(meta);
@@ -717,11 +800,20 @@ async function revalidate(
       gate.ageMs < factsGateMaxMs()
     ) {
       factsGateStats.skipped += 1;
-      await releaseRefresh(view, scopeKey);
+      countRefresh(view, "gate_skipped");
       return;
+    }
+    claimed = await claimRefresh(view, scopeKey);
+    if (!claimed) {
+      countRefresh(view, "claim_lost");
+      return; // another request/replica is already refreshing this cell
     }
     if (factsFp === null) factsGateStats.noFingerprint += 1;
     factsGateStats.recomputed += 1;
+    countRefresh(
+      view,
+      factsFp === null ? "stale_no_fingerprint" : gate && gate.storedFingerprint === factsFp ? "stale_ceiling" : "stale_facts_moved",
+    );
     const startedAt = new Date();
     const { body, persisted } = await compute();
     if (persisted) {
@@ -733,9 +825,9 @@ async function revalidate(
     }
     await upsertSnapshot(view, scopeKey, orgId, body, meta, factsFp);
   } catch (err) {
-    // Keep serving the stale body; release the claim so a later read can retry.
+    // Keep serving the stale body; release the claim (when taken) so a later read can retry.
     console.error(`[features-service] view-cache revalidate failed (serving stale) view=${view}: ${(err as Error).message}`);
-    await releaseRefresh(view, scopeKey).catch(() => {});
+    if (claimed) await releaseRefresh(view, scopeKey).catch(() => {});
   }
 }
 
