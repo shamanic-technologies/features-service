@@ -34173,6 +34173,336 @@
           "daily",
           "repos"
         ]
+      },
+      "BoxHealthView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "red",
+              "green"
+            ],
+            "description": "The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Every reason joined in plain words."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One plain sentence per failing check (one 'Box healthy' sentence when green)."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "True when the latest sample is older than staleAfterMinutes, or none exists."
+          },
+          "minutesSinceLastSample": {
+            "type": "number",
+            "nullable": true
+          },
+          "thresholds": {
+            "type": "object",
+            "properties": {
+              "loadPerCoreMax": {
+                "type": "number",
+                "description": "Red above this load (5 min) per core (1.5)."
+              },
+              "load5Max": {
+                "type": "number",
+                "nullable": true,
+                "description": "loadPerCoreMax x latest cores (12 on 8 cores); null when nothing sampled."
+              },
+              "memAvailableMinMb": {
+                "type": "number",
+                "description": "Red below this MemAvailable, MB (1024)."
+              },
+              "swapUsedPctMax": {
+                "type": "number",
+                "description": "Red above this swap used, % of swap total (50)."
+              },
+              "oomWindowHours": {
+                "type": "number",
+                "description": "Red when any OOM kill happened within this many hours (24)."
+              },
+              "staleAfterMinutes": {
+                "type": "number",
+                "description": "Red when no sample arrived for this many minutes (20)."
+              }
+            },
+            "required": [
+              "loadPerCoreMax",
+              "load5Max",
+              "memAvailableMinMb",
+              "swapUsedPctMax",
+              "oomWindowHours",
+              "staleAfterMinutes"
+            ]
+          },
+          "latest": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "sampledAt": {
+                "type": "string",
+                "description": "ISO instant."
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "sysstat"
+                ]
+              },
+              "load1": {
+                "type": "number"
+              },
+              "load5": {
+                "type": "number"
+              },
+              "load15": {
+                "type": "number"
+              },
+              "cores": {
+                "type": "integer"
+              },
+              "memTotalMb": {
+                "type": "number"
+              },
+              "memAvailableMb": {
+                "type": "number"
+              },
+              "swapTotalMb": {
+                "type": "number"
+              },
+              "swapUsedMb": {
+                "type": "number"
+              },
+              "swapUsedPct": {
+                "type": "number",
+                "nullable": true,
+                "description": "Swap used, % of total (0.1 precision); null when swap total = 0."
+              },
+              "oomKills": {
+                "type": "integer",
+                "nullable": true,
+                "description": "OOM kills reported by this sample (since the previous one); null = unknown."
+              },
+              "oomKillsLast24h": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Sum over the samples of the last 24 h; null when none stated a count."
+              },
+              "containers": {
+                "type": "array",
+                "nullable": true,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "cpuCores": {
+                      "type": "number"
+                    },
+                    "memMb": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "cpuCores",
+                    "memMb"
+                  ]
+                },
+                "description": "Per-container usage of this sample (CPU in cores); null for backfilled history."
+              }
+            },
+            "required": [
+              "sampledAt",
+              "source",
+              "load1",
+              "load5",
+              "load15",
+              "cores",
+              "memTotalMb",
+              "memAvailableMb",
+              "swapTotalMb",
+              "swapUsedMb",
+              "swapUsedPct",
+              "oomKills",
+              "oomKillsLast24h",
+              "containers"
+            ],
+            "description": "The most recent sample, all fields; null when nothing was ever sampled."
+          },
+          "windowDays": {
+            "type": "integer"
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string",
+                  "description": "UTC day (YYYY-MM-DD)."
+                },
+                "sampleCount": {
+                  "type": "integer"
+                },
+                "load5Mean": {
+                  "type": "number",
+                  "description": "Mean load (5 min) over the day's samples."
+                },
+                "load5Max": {
+                  "type": "number",
+                  "description": "Max load (5 min) over the day's samples."
+                },
+                "memAvailableMinMb": {
+                  "type": "number",
+                  "description": "Min MemAvailable over the day's samples, MB."
+                },
+                "swapUsedPctMax": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Max swap used % over the day; null when the box had no swap all day."
+                },
+                "oomKills": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "OOM kills that day; null when no sample stated a count."
+                }
+              },
+              "required": [
+                "day",
+                "sampleCount",
+                "load5Mean",
+                "load5Max",
+                "memAvailableMinMb",
+                "swapUsedPctMax",
+                "oomKills"
+              ]
+            },
+            "description": "One point per UTC day of the window THAT HAS SAMPLES, oldest first. A day without samples is ABSENT (a gap, never a zero)."
+          },
+          "recentHours": {
+            "type": "integer",
+            "description": "48."
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sampledAt": {
+                  "type": "string"
+                },
+                "load1": {
+                  "type": "number"
+                },
+                "load5": {
+                  "type": "number"
+                },
+                "load15": {
+                  "type": "number"
+                },
+                "memAvailableMb": {
+                  "type": "number"
+                },
+                "swapUsedPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "sampledAt",
+                "load1",
+                "load5",
+                "load15",
+                "memAvailableMb",
+                "swapUsedPct"
+              ]
+            },
+            "description": "Every sample of the last 48 hours, oldest first."
+          },
+          "topContainers": {
+            "type": "object",
+            "properties": {
+              "windowMinutes": {
+                "type": "integer",
+                "description": "60: averaged over the live agent samples of the last hour."
+              },
+              "sampleCount": {
+                "type": "integer",
+                "description": "How many agent samples the averages read (0 = no live per-container data in the last hour)."
+              },
+              "byCpu": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "cpuCores": {
+                      "type": "number",
+                      "description": "Mean CPU in cores (1.0 = one full core) over the last hour's agent samples in which the container appears."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "cpuCores"
+                  ]
+                },
+                "description": "Top 10 by CPU, highest first."
+              },
+              "byMemory": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "memMb": {
+                      "type": "number",
+                      "description": "Mean memory, MB, over the last hour's agent samples in which the container appears."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "memMb"
+                  ]
+                },
+                "description": "Top 10 by memory, highest first."
+              }
+            },
+            "required": [
+              "windowMinutes",
+              "sampleCount",
+              "byCpu",
+              "byMemory"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "reasons",
+          "stale",
+          "minutesSinceLastSample",
+          "thresholds",
+          "latest",
+          "windowDays",
+          "daily",
+          "recentHours",
+          "recent",
+          "topContainers"
+        ]
       }
     },
     "parameters": {}
@@ -75025,6 +75355,304 @@
           },
           "401": {
             "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/box-health/samples": {
+      "post": {
+        "summary": "Store samples of the production box: load, memory, swap, OOM kills, per-container usage (internal, api-key)",
+        "description": "The box cron (every 5 minutes, from inside this container on localhost) and the one-shot sysstat backfill deliver samples. Up to 2000 samples per batch (body limit 10 MB). A sample's identity is `sampledAt`: re-sending the same instant REPLACES it (idempotent). Samples older than 90 days are pruned on every write. api-key only (x-api-key); never exposed through the gateway.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "samples": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sampledAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the sample was taken (ISO 8601). The sample's identity: re-sending the same instant replaces it."
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "agent",
+                            "sysstat"
+                          ],
+                          "description": "`agent` = the live 5-minute box cron; `sysstat` = the one-shot history backfill."
+                        },
+                        "load1": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Load average over 1 minute."
+                        },
+                        "load5": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Load average over 5 minutes."
+                        },
+                        "load15": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Load average over 15 minutes."
+                        },
+                        "cores": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1024,
+                          "description": "Number of CPU cores of the box."
+                        },
+                        "memTotalMb": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Total RAM, MB."
+                        },
+                        "memAvailableMb": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "MemAvailable from /proc/meminfo, MB."
+                        },
+                        "swapTotalMb": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Total swap, MB (0 = no swap configured, which is red)."
+                        },
+                        "swapUsedMb": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "Swap in use, MB."
+                        },
+                        "oomKills": {
+                          "type": "integer",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "New kernel OOM kills since the previous sample. Absent/null when unknown (never read as 0)."
+                        },
+                        "containers": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "description": "Container name, e.g. `distribute-features-service-1`."
+                              },
+                              "cpuCores": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "CPU used by the container, in CORES (1.0 = one full core), averaged since the previous sample."
+                              },
+                              "memMb": {
+                                "type": "number",
+                                "minimum": 0,
+                                "description": "Memory used by the container, in MB."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "cpuCores",
+                              "memMb"
+                            ]
+                          },
+                          "maxItems": 500,
+                          "description": "Per-container usage. Absent for backfilled history."
+                        }
+                      },
+                      "required": [
+                        "sampledAt",
+                        "source",
+                        "load1",
+                        "load5",
+                        "load15",
+                        "cores",
+                        "memTotalMb",
+                        "memAvailableMb",
+                        "swapTotalMb",
+                        "swapUsedMb"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 2000,
+                    "description": "1 to 2000 samples."
+                  }
+                },
+                "required": [
+                  "samples"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stored": {
+                      "type": "integer"
+                    },
+                    "pruned": {
+                      "type": "integer",
+                      "description": "Rows older than 90 days deleted by this write."
+                    },
+                    "oldestSampledAt": {
+                      "type": "string"
+                    },
+                    "newestSampledAt": {
+                      "type": "string"
+                    },
+                    "receivedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "stored",
+                    "pruned",
+                    "oldestSampledAt",
+                    "newestSampledAt",
+                    "receivedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/box-health": {
+      "get": {
+        "summary": "Is the production box overloaded? Served red/green verdict, thresholds, daily + 48 h series, top containers (internal, api-key)",
+        "description": "Feeds the staff Monitoring hub chart. The verdict reads the latest sample (red on load5 > 1.5 x cores, MemAvailable < 1024 MB, swap > 50 %, no swap, an OOM kill in 24 h, or no sample for 20 minutes). `days` (default 30, max 90) bounds the daily series. api-key only; staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Window in days, 1 to 90 (default 30)."
+            },
+            "required": false,
+            "description": "Window in days, 1 to 90 (default 30).",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The verdict and the series.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoxHealthView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
             "content": {
               "application/json": {
                 "schema": {
