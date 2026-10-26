@@ -189,6 +189,48 @@ describe("LLM dynasties on the Research pages (LLM-DYNASTY-1022-FS)", () => {
     expect(mystery).toMatchObject({ dynasty: null, standaloneReason: "no_dynasty_in_chat_service" });
     expect(mystery.models.map((m) => m.key)).toEqual(["mystery-model"]);
   });
+
+  it("places a pipe's run costs in linear time, each page and version holding exactly its rows (BOX-OVERLOAD-1026)", () => {
+    // The page / version grouping re-spread a list per row and re-filtered every row per page: a pipe with tens of
+    // thousands of writing runs spent most of a Research build there. Same partition, now one pass.
+    const dyn = llmDynastyIndex([FLASH, OPUS]);
+    const g = generationBuckets(input([FLASH, OPUS]));
+    const models = ["gemini-3.7-flash", "gemini-3.8-flash", "claude-opus-5-5", "mystery-model"];
+    const generationCosts = Array.from({ length: 120_000 }, (_, i) => ({
+      createdAt: `2026-10-${String(10 + (i % 15)).padStart(2, "0")}T10:00:00Z`,
+      model: models[i % models.length]!,
+      inputCents: 0.1,
+      outputCents: 0.1,
+      tokensInput: 1000,
+      tokensOutput: 100,
+    }));
+    const began = Date.now();
+    const c = pipeCatalog({
+      terms,
+      workflows: [{ key: "azalea", label: "Azalea", basis: "mature", figures: { spentUsd: 400, contacted: 600, outcomes: 7 }, learning: false, months: null, strata: null }],
+      templates: g.tpl.rows,
+      models: g.llm.rows,
+      modelVersions: g.llmModels,
+      llmDynasties: dyn,
+      nameOf: () => null,
+      mainOf: () => ({ model: "gemini-3.7-flash", template: null }),
+      modelLabel: g.modelLabel,
+      dynastyOf: (s) => s.replace(/-v\d+$/, ""),
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set(),
+      runnableWorkflows: null,
+      writerOf: () => ({ ok: true, workflowSlug: "azalea-v2", version: 2, template: "cold-email-v35", modelAlias: "flash-pro", model: { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" } }),
+      servedModels: [],
+      generationCosts,
+    });
+    expect(Date.now() - began).toBeLessThan(1_500);
+    const flash = c.models.find((m) => m.key === "gemini-flash")!;
+    expect(flash.runCost.runs).toBe(60_000);
+    expect(flash.models.map((v) => [v.key, v.runCost.runs])).toEqual([["gemini-3.8-flash", 30_000], ["gemini-3.7-flash", 30_000], ["gemini-3.5-flash", 0]]);
+    expect(c.models.find((m) => m.key === "claude-opus")!.runCost.runs).toBe(30_000);
+    expect(c.models.find((m) => m.key === "mystery-model")!.runCost.runs).toBe(30_000);
+  });
 });
 
 describe("every model page and model version serves its OWN return (MODEL-ROI-1023)", () => {

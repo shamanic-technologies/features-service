@@ -236,6 +236,24 @@ export function keeperRefreshesStale(): boolean {
   return replayStore.getStore()?.refreshStale === true;
 }
 
+/** Server role: set once this process supervises a refresher (`startViewRefresher`). */
+let supervising = false;
+
+/**
+ * Server role: a refresher is supervised but not answering right now (it crashed and is respawning, or has
+ * not announced itself yet). A FLEET build asked in that window waits for it rather than running on the serving
+ * event loop: the refresher's OOM restarts used to drop whole Research builds onto this process
+ * (BOX-OVERLOAD-1026). False when no refresher is supervised (kill switch, tests): computes stay in-process.
+ */
+export function refresherRestarting(): boolean {
+  return supervising && viewCacheRole() === "server" && !process.env.VIEW_REFRESHER_PORT;
+}
+
+/** Test seam. */
+export function __setRefresherSupervisedForTest(value: boolean): void {
+  supervising = value;
+}
+
 /** The refresher's base URL when it is up (server role), else null. */
 export function refresherBaseUrl(): string | null {
   const port = process.env.VIEW_REFRESHER_PORT;
@@ -290,6 +308,7 @@ const RESPAWN_DELAY_MS = 5_000;
 export function startViewRefresher(entrypoint: string): void {
   if (process.env.VIEW_REFRESHER_ENABLED === "false" || viewCacheRole() !== "server") return;
   const port = Number(process.env.VIEW_REFRESHER_PORT_OVERRIDE ?? DEFAULT_REFRESHER_PORT);
+  supervising = true;
   const spawn = () => {
     const child: ChildProcess = fork(entrypoint, [], {
       env: { ...process.env, VIEW_CACHE_ROLE: "refresher", PORT: String(port), VIEW_REFRESHER_PORT: "" },

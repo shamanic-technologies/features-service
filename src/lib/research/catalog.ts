@@ -496,7 +496,16 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   );
   // A model page is its chat-service LLM DYNASTY (LLM-DYNASTY-1022-FS), keyed on the slug; a model it places in none keeps its model key.
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
-  const llmKeyOfId = (id: string) => llmDyn.dynastyOfName(id)?.slug ?? modelKey(p.modelLabel(id));
+  // Memoized: every run-cost row and run is placed by its model id, and a pipe holds far fewer ids than rows.
+  const llmKeyById = new Map<string, string>();
+  const llmKeyOfId = (id: string) => {
+    let key = llmKeyById.get(id);
+    if (key === undefined) {
+      key = llmDyn.dynastyOfName(id)?.slug ?? modelKey(p.modelLabel(id));
+      llmKeyById.set(id, key);
+    }
+    return key;
+  };
   const llmKeyOfModel = (m: { id: string; label: string }) => llmDyn.dynastyOfName(m.id)?.slug ?? modelKey(m.label);
   const llmLabelOf = (key: string, fallback: string) => llmDyn.bySlug(key)?.name ?? fallback;
   const nowTemplates = new Set<string>();
@@ -693,7 +702,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     };
   });
   const versionBarsOf = new Map<string, Array<ResearchBucket & { dynastyKey: string }>>();
-  for (const v of p.modelVersions ?? []) versionBarsOf.set(v.dynastyKey, [...(versionBarsOf.get(v.dynastyKey) ?? []), v]);
+  for (const v of p.modelVersions ?? []) pushTo(versionBarsOf, v.dynastyKey, v);
   const servedList = typeof p.servedModels === "object" ? p.servedModels : [];
   // A model's return is its OWN (MODEL-ROI-1023): the template rule, on the model bars' per-workflow-version shares.
   const pooledModelRoi = pooledRoi(p.modelFiguresByVersion, "pipe_models");
@@ -702,7 +711,11 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (pooledModelRoi ?? nowRoiOf(key, "model") ?? pipeRoi);
   };
   const costs = p.generationCosts ?? "run_costs_unreadable";
-  const costsOfPage = (key: string) => (typeof costs === "string" ? null : costs.filter((x) => llmKeyOfId(x.model) === key));
+  // The pipe's run-cost rows grouped by model page ONCE, in row order (each page's list is what a filter per page gave):
+  // filtering every row for every page, twice, was most of a Research build's CPU (BOX-OVERLOAD-1026).
+  const costsByPage = new Map<string, GenerationCostInput[]>();
+  if (typeof costs !== "string") for (const x of costs) pushTo(costsByPage, llmKeyOfId(x.model), x);
+  const costsOfPage = (key: string) => (typeof costs === "string" ? null : (costsByPage.get(key) ?? []));
   const pageRunCost = (key: string) => {
     const rows = costsOfPage(key);
     return rows ? runCostOf(rows) : unavailableRunCost(costs as RunCostUnavailableReason);
@@ -711,11 +724,18 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const withVersionRunCosts = (key: string, versions: Array<Omit<CatalogModelVersion, "runCost">>): CatalogModelVersion[] => {
     const rows = costsOfPage(key);
     if (!rows) return versions.map((v) => ({ ...v, runCost: unavailableRunCost(costs as RunCostUnavailableReason) }));
-    const versionOfRun = (m: string) => versions.find((v) => v.modelIds.includes(m))?.key ?? versions.find((v) => v.key === modelKey(p.modelLabel(m)))?.key ?? null;
+    const versionById = new Map<string, string | null>();
+    const versionOfRun = (m: string) => {
+      if (versionById.has(m)) return versionById.get(m)!;
+      const k = versions.find((v) => v.modelIds.includes(m))?.key ?? versions.find((v) => v.key === modelKey(p.modelLabel(m)))?.key ?? null;
+      versionById.set(m, k);
+      return k;
+    };
+    // Appended in place: re-spreading the version's list for every row copied it once per row (quadratic).
     const byVersion = new Map<string, GenerationCostInput[]>();
     for (const x of rows) {
       const k = versionOfRun(x.model);
-      if (k !== null) byVersion.set(k, [...(byVersion.get(k) ?? []), x]);
+      if (k !== null) pushTo(byVersion, k, x);
     }
     return versions.map((v) => ({ ...v, runCost: runCostOf(byVersion.get(v.key) ?? []) }));
   };
@@ -805,4 +825,11 @@ export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(
       return f ? { ...w, ...roiFields(catalogRoiOfFigure(f.roi)), figures: f } : w;
     }),
   };
+}
+
+/** Append `value` to `key`'s list, creating it: O(1) per row, where `[...(m.get(k) ?? []), v]` copies the list each time. */
+function pushTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
 }

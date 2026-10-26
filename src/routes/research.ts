@@ -18,7 +18,7 @@ import { leadStateOf } from "../lib/lead-states.js";
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
-import { refresherBaseUrl } from "../lib/view-refresher.js";
+import { refresherBaseUrl, refresherRestarting } from "../lib/view-refresher.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { legCutoffIso, legMaturity, startedBeforeParam } from "../lib/maturity.js";
@@ -1360,16 +1360,25 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([p, t]).finally(() => clearTimeout(timer));
 }
 
-/** Ask the refresher (whose fleet cells are warm) to compute; compute here when it cannot. */
+/** The refresher is restarting: the build waits for it (next loop tick or read), never runs on the serving loop. */
+class RefresherRestartingError extends Error {}
+
+/**
+ * Ask the refresher (whose fleet cells are warm) to compute. With no refresher supervised (kill switch) the build
+ * runs here; with one supervised but down (an OOM restart) it waits for it: a Research build on the serving event
+ * loop held a core for minutes and slowed every page (BOX-OVERLOAD-1026).
+ */
 async function buildResearch(basis: Basis, view: ResearchView): Promise<ResearchBuild> {
   const base = refresherBaseUrl();
-  if (!base) return computeResearch(basis, view);
+  if (!base) {
+    if (refresherRestarting()) throw new RefresherRestartingError(`refresher restarting: research ${basis}/${view} waits for it`);
+    return computeResearch(basis, view);
+  }
   let res: Response;
   try {
     res = await fetch(`${base}/internal/research/compute?basis=${basis}&view=${view}`, { headers: { "x-api-key": process.env.FEATURES_SERVICE_API_KEY ?? "" } });
   } catch (error) {
-    console.error(`[features-service] refresher unreachable for research ${basis}/${view}; computing locally:`, error);
-    return computeResearch(basis, view);
+    throw new RefresherRestartingError(`refresher unreachable for research ${basis}/${view}, waiting for it: ${(error as Error).message}`);
   }
   if (res.ok) return (await res.json()) as ResearchBuild;
   // The refresher ran the build and it failed: never run it again on the serving loop (the retry is in 10 min).
@@ -1396,14 +1405,22 @@ export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promi
   if (Date.now() - (failedAt.get(key) ?? 0) < RETRY_AFTER_FAILURE_MS) return Promise.resolve();
   const inFlight = warming.get(key);
   if (inFlight) return inFlight;
+  const began = Date.now();
   const p = withTimeout(buildResearch(basis, view), BUILD_TIMEOUT_MS, `research ${key}`)
     .then(async (value) => {
       const computedAt = Date.now();
+      // Measured per build (BOX-OVERLOAD-1026): the build is the refresher's heaviest recurring compute.
+      console.log(`[features-service] research ${key} built in ${computedAt - began}ms`);
       store.set(key, { value, computedAt });
       // A store that hangs must never hold the single flight (every later read would wait on it, nothing rebuilt).
       await withTimeout(storeFleetCell(cellKey(basis, view), JSON.stringify(value), computedAt), STORE_TIMEOUT_MS, `research ${key} store`);
     })
     .catch((error) => {
+      if (error instanceof RefresherRestartingError) {
+        // Not a failed build: retried on the next loop tick or read, once the refresher is back.
+        console.warn(`[features-service] ${error.message}; keeping the previous build`);
+        return;
+      }
       failedAt.set(key, Date.now());
       console.error(`[features-service] research ${key} build failed, keeping the previous one (next try in 10 min):`, error);
     })

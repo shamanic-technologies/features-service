@@ -54106,12 +54106,52 @@
                         "recomputed",
                         "noFingerprint"
                       ]
+                    },
+                    "refreshes": {
+                      "type": "object",
+                      "properties": {
+                        "windowMinutes": {
+                          "type": "number"
+                        },
+                        "computesPerMinute": {
+                          "type": "number",
+                          "description": "View computes per minute over the window (gate skips and lost claims excluded)."
+                        },
+                        "sinceBoot": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            }
+                          },
+                          "description": "Per view: count per reason since this process booted."
+                        },
+                        "lastWindow": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "number"
+                            }
+                          },
+                          "description": "Per view: count per reason over the last window."
+                        }
+                      },
+                      "required": [
+                        "windowMinutes",
+                        "computesPerMinute",
+                        "sinceBoot",
+                        "lastWindow"
+                      ],
+                      "description": "What the view cache recomputes, by reason: miss, stale_facts_moved, stale_ceiling, stale_no_fingerprint, keeper_refresh, rotation; plus gate_skipped (stale read the facts gate answered with no compute) and claim_lost."
                     }
                   },
                   "required": [
                     "lastRound",
                     "running",
-                    "factsGate"
+                    "factsGate",
+                    "refreshes"
                   ],
                   "additionalProperties": {
                     "nullable": true
