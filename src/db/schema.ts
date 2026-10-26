@@ -848,3 +848,32 @@ export const securityAdvisoryReports = pgTable(
 );
 
 export type SecurityAdvisoryReportRow = typeof securityAdvisoryReports.$inferSelect;
+
+/**
+ * BOX HEALTH (`box_health_samples`, BOX-OVERLOAD-1026-SERIES; `lib/box-health.ts`): one row per sample of the production
+ * Hetzner box (load, memory, swap, OOM kills, per-container CPU/memory), keyed on the instant it was taken: re-sending the
+ * same `sampled_at` REPLACES the row. `containers` is null for sysstat-backfilled history; `oom_kills` null = unknown. Rows
+ * older than 90 days are pruned on ingest.
+ */
+export const boxHealthSamples = pgTable(
+  "box_health_samples",
+  {
+    sampledAt: timestamp("sampled_at", { withTimezone: true }).primaryKey(),
+    /** `agent` (live 5-minute cron) or `sysstat` (history backfill). */
+    source: text("source").notNull(),
+    load1: doublePrecision("load1").notNull(),
+    load5: doublePrecision("load5").notNull(),
+    load15: doublePrecision("load15").notNull(),
+    cores: integer("cores").notNull(),
+    memTotalMb: doublePrecision("mem_total_mb").notNull(),
+    memAvailableMb: doublePrecision("mem_available_mb").notNull(),
+    swapTotalMb: doublePrecision("swap_total_mb").notNull(),
+    swapUsedMb: doublePrecision("swap_used_mb").notNull(),
+    oomKills: integer("oom_kills"),
+    /** `[{ name, cpuCores, memMb }]`, null when the sample carried no per-container list. */
+    containers: jsonb("containers").$type<Array<{ name: string; cpuCores: number; memMb: number }>>(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export type BoxHealthSampleRow = typeof boxHealthSamples.$inferSelect;

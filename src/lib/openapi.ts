@@ -4,6 +4,7 @@ import { z } from "zod";
 import { featureResponseSchema } from "./schemas.js";
 import { CHANNEL_TYPES } from "./channel-types.js";
 import { SecurityAdvisoryReportSchema } from "./security-advisories.js";
+import { BoxHealthBatchSchema } from "./box-health.js";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
@@ -9104,6 +9105,121 @@ registry.registerComponent("securitySchemes", "ApiKeyAuth", {
   type: "apiKey",
   in: "header",
   name: "x-api-key",
+});
+
+
+// ── Box health monitor (BOX-OVERLOAD-1026-SERIES) ─────────────
+
+const boxHealthView = registry.register(
+  "BoxHealthView",
+  z.object({
+    status: z.enum(["red", "green"]).describe("The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."),
+    reason: z.string().describe("Every reason joined in plain words."),
+    reasons: z.array(z.string()).describe("One plain sentence per failing check (one 'Box healthy' sentence when green)."),
+    stale: z.boolean().describe("True when the latest sample is older than staleAfterMinutes, or none exists."),
+    minutesSinceLastSample: z.number().nullable(),
+    thresholds: z.object({
+      loadPerCoreMax: z.number().describe("Red above this load (5 min) per core (1.5)."),
+      load5Max: z.number().nullable().describe("loadPerCoreMax x latest cores (12 on 8 cores); null when nothing sampled."),
+      memAvailableMinMb: z.number().describe("Red below this MemAvailable, MB (1024)."),
+      swapUsedPctMax: z.number().describe("Red above this swap used, % of swap total (50)."),
+      oomWindowHours: z.number().describe("Red when any OOM kill happened within this many hours (24)."),
+      staleAfterMinutes: z.number().describe("Red when no sample arrived for this many minutes (20)."),
+    }),
+    latest: z.object({
+      sampledAt: z.string().describe("ISO instant."),
+      source: z.enum(["agent", "sysstat"]),
+      load1: z.number(),
+      load5: z.number(),
+      load15: z.number(),
+      cores: z.number().int(),
+      memTotalMb: z.number(),
+      memAvailableMb: z.number(),
+      swapTotalMb: z.number(),
+      swapUsedMb: z.number(),
+      swapUsedPct: z.number().nullable().describe("Swap used, % of total (0.1 precision); null when swap total = 0."),
+      oomKills: z.number().int().nullable().describe("OOM kills reported by this sample (since the previous one); null = unknown."),
+      oomKillsLast24h: z.number().int().nullable().describe("Sum over the samples of the last 24 h; null when none stated a count."),
+      containers: z.array(z.object({ name: z.string(), cpuCores: z.number(), memMb: z.number() })).nullable().describe("Per-container usage of this sample (CPU in cores); null for backfilled history."),
+    }).nullable().describe("The most recent sample, all fields; null when nothing was ever sampled."),
+    windowDays: z.number().int(),
+    daily: z.array(
+      z.object({
+        day: z.string().describe("UTC day (YYYY-MM-DD)."),
+        sampleCount: z.number().int(),
+        load5Mean: z.number().describe("Mean load (5 min) over the day's samples."),
+        load5Max: z.number().describe("Max load (5 min) over the day's samples."),
+        memAvailableMinMb: z.number().describe("Min MemAvailable over the day's samples, MB."),
+        swapUsedPctMax: z.number().nullable().describe("Max swap used % over the day; null when the box had no swap all day."),
+        oomKills: z.number().int().nullable().describe("OOM kills that day; null when no sample stated a count."),
+      }),
+    ).describe("One point per UTC day of the window THAT HAS SAMPLES, oldest first. A day without samples is ABSENT (a gap, never a zero)."),
+    recentHours: z.number().int().describe("48."),
+    recent: z.array(
+      z.object({
+        sampledAt: z.string(),
+        load1: z.number(),
+        load5: z.number(),
+        load15: z.number(),
+        memAvailableMb: z.number(),
+        swapUsedPct: z.number().nullable(),
+      }),
+    ).describe("Every sample of the last 48 hours, oldest first."),
+    topContainers: z.object({
+      windowMinutes: z.number().int().describe("60: averaged over the live agent samples of the last hour."),
+      sampleCount: z.number().int().describe("How many agent samples the averages read (0 = no live per-container data in the last hour)."),
+      byCpu: z.array(z.object({ name: z.string(), cpuCores: z.number().describe("Mean CPU in cores (1.0 = one full core) over the last hour's agent samples in which the container appears.") })).describe("Top 10 by CPU, highest first."),
+      byMemory: z.array(z.object({ name: z.string(), memMb: z.number().describe("Mean memory, MB, over the last hour's agent samples in which the container appears.") })).describe("Top 10 by memory, highest first."),
+    }),
+  }),
+);
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/box-health/samples",
+  summary: "Store samples of the production box: load, memory, swap, OOM kills, per-container usage (internal, api-key)",
+  description:
+    "The box cron (every 5 minutes, from inside this container on localhost) and the one-shot sysstat backfill deliver samples. " +
+    "Up to 2000 samples per batch (body limit 10 MB). A sample's identity is `sampledAt`: re-sending the same instant REPLACES it " +
+    "(idempotent). Samples older than 90 days are pruned on every write. api-key only (x-api-key); never exposed through the gateway.",
+  tags: ["Internal"],
+  request: { body: { content: { "application/json": { schema: BoxHealthBatchSchema } } } },
+  responses: {
+    200: {
+      description: "Stored.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            stored: z.number().int(),
+            pruned: z.number().int().describe("Rows older than 90 days deleted by this write."),
+            oldestSampledAt: z.string(),
+            newestSampledAt: z.string(),
+            receivedAt: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid body", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/box-health",
+  summary: "Is the production box overloaded? Served red/green verdict, thresholds, daily + 48 h series, top containers (internal, api-key)",
+  description:
+    "Feeds the staff Monitoring hub chart. The verdict reads the latest sample (red on load5 > 1.5 x cores, MemAvailable < 1024 MB, " +
+    "swap > 50 %, no swap, an OOM kill in 24 h, or no sample for 20 minutes). `days` (default 30, max 90) bounds the daily series. " +
+    "api-key only; staff-gated at api-service.",
+  tags: ["Internal"],
+  request: { query: z.object({ days: z.string().optional().describe("Window in days, 1 to 90 (default 30).") }) },
+  responses: {
+    200: { description: "The verdict and the series.", content: { "application/json": { schema: boxHealthView } } },
+    400: { description: "Invalid days", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
 });
 
 const generator = new OpenApiGeneratorV3(registry.definitions);
