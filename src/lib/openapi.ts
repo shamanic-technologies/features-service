@@ -7039,6 +7039,16 @@ registry.registerPath({
               lastRound: keeperRoundSchema.nullable(),
               running: z.boolean(),
               factsGate: z.object({ skipped: z.number(), recomputed: z.number(), noFingerprint: z.number() }),
+              refreshes: z
+                .object({
+                  windowMinutes: z.number(),
+                  computesPerMinute: z.number().describe("View computes per minute over the window (gate skips and lost claims excluded)."),
+                  sinceBoot: z.record(z.string(), z.record(z.string(), z.number())).describe("Per view: count per reason since this process booted."),
+                  lastWindow: z.record(z.string(), z.record(z.string(), z.number())).describe("Per view: count per reason over the last window."),
+                })
+                .describe(
+                  "What the view cache recomputes, by reason: miss, stale_facts_moved, stale_ceiling, stale_no_fingerprint, keeper_refresh, rotation; plus gate_skipped (stale read the facts gate answered with no compute) and claim_lost.",
+                ),
             })
             .passthrough(),
         },

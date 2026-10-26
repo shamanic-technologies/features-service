@@ -59,7 +59,7 @@ vi.mock("./view-refresher.js", async (importOriginal) => ({
   refresherDelegation: () => null,
 }));
 
-const { servedCached, factsGateStats, __resetReadTouches } = await import("./view-cache.js");
+const { servedCached, factsGateStats, __resetReadTouches, refreshStats, __resetRefreshStats } = await import("./view-cache.js");
 
 const flush = () => new Promise((r) => setTimeout(r, 5));
 
@@ -83,6 +83,7 @@ beforeEach(() => {
   factsGateStats.recomputed = 0;
   factsGateStats.noFingerprint = 0;
   __resetReadTouches();
+  __resetRefreshStats();
   delete process.env.VIEW_FACTS_GATE_ENABLED;
 });
 
@@ -95,8 +96,37 @@ describe("the facts gate on a stale cell", () => {
     expect(body).toEqual({ pipeline: 7 });
     expect(compute).not.toHaveBeenCalled();
     expect(factsGateStats.skipped).toBe(1);
-    // the claim was released so a later read can refresh
-    expect(updates.some((u) => "refreshingAt" in u && u.refreshingAt === null)).toBe(true);
+    // BOX-OVERLOAD-1026: the gate answers BEFORE any claim, so an unchanged cell writes nothing (no claim, no release)
+    expect(updates.some((u) => "refreshingAt" in u)).toBe(false);
+    expect(refreshStats().lastWindow["brand-revenue"]).toEqual({ gate_skipped: 1 });
+  });
+
+  it("counts each compute by its reason: facts moved, ceiling, no fingerprint (BOX-OVERLOAD-1026)", async () => {
+    staleRow(60_000, "fp-0");
+    await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 9 }) });
+    await flush();
+    staleRow(6 * 60_000, "fp-1");
+    await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 9 }) });
+    await flush();
+    staleRow(60_000, "fp-1");
+    fingerprintNow = null;
+    await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 9 }) });
+    await flush();
+    storedRow = undefined;
+    await servedCached({ view: "brand-revenue", scopeKey: "k", orgId: "o", compute: async () => ({ pipeline: 9 }) });
+    const stats = refreshStats();
+    expect(stats.lastWindow["brand-revenue"]).toEqual({ stale_facts_moved: 1, stale_ceiling: 1, stale_no_fingerprint: 1, miss: 1 });
+    expect(stats.sinceBoot["brand-revenue"]).toEqual(stats.lastWindow["brand-revenue"]);
+    expect(stats.computesPerMinute).toBe(0.4);
+  });
+
+  it("forgets minutes past the window (memory bounded over uptime)", async () => {
+    const { countRefresh } = await import("./view-cache.js");
+    const t0 = Date.now();
+    for (let m = 0; m < 120; m++) countRefresh("v", "miss", t0 + m * 60_000);
+    const stats = refreshStats(t0 + 119 * 60_000);
+    expect(stats.lastWindow.v).toEqual({ miss: 10 });
+    expect(stats.sinceBoot.v).toEqual({ miss: 120 });
   });
 
   it("recomputes and stores the new fingerprint when the facts moved", async () => {

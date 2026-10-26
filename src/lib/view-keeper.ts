@@ -6,7 +6,7 @@ import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { fetchFeatureMemberships } from "./feature-memberships-client.js";
 import { isReplayableIdentity } from "./identity-headers.js";
-import { decodeSnapshotBody, factsGateStats, familyKeyOf } from "./view-cache.js";
+import { decodeSnapshotBody, factsGateStats, familyKeyOf, refreshStats, type RefreshStats } from "./view-cache.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
 import {
   brandScopesOf,
@@ -279,6 +279,7 @@ export async function materializeRound(): Promise<PrecomputeReport> {
 
   const now = Date.now();
   for (const [k, until] of refusedUntil) if (until < now) refusedUntil.delete(k);
+  for (const [k, v] of scopesCache) if (now - v.at >= SCOPES_TTL_MS) scopesCache.delete(k);
   for (const [k, until] of doneUntil) if (until < now) doneUntil.delete(k);
 
   // FIRST: every request read recently, as itself (its own reader's identity when well-formed, else the
@@ -401,8 +402,8 @@ export function startViewKeeper(): void {
   setInterval(() => void tick(), interval).unref();
 }
 
-export function keeperStatus(): { lastRound: PrecomputeReport | null; running: boolean; factsGate: typeof factsGateStats } {
-  return { lastRound: lastReport, running, factsGate: factsGateStats };
+export function keeperStatus(): { lastRound: PrecomputeReport | null; running: boolean; factsGate: typeof factsGateStats; refreshes: RefreshStats } {
+  return { lastRound: lastReport, running, factsGate: factsGateStats, refreshes: refreshStats() };
 }
 
 // ── Drift check ────────────────────────────────────────────────────────────────────────────────
