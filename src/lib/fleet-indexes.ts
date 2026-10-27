@@ -465,12 +465,37 @@ export interface ExpectedMeetingPrice {
  * PURE. The Cost Per Meeting Index point: the ledger's price when it is one, else the EXPECTED price, labelled
  * `inputs.valueKind: "expected"` (owner 2026-10-25, MEETING-INDEX-EXPECTED-1025: « A, prends B en attendant »: the
  * ledger stays the method, the public figure is the outcome prices' meeting price until the ledger reconciles).
- * Never the ledger's partial figure; nothing expected either = the ledger's null and its reason.
+ * Never the ledger's partial figure. While the outcome prices price no meeting (their meeting leg wants ONE workflow with a
+ * meeting; prod 2026-10-26 a second workflow's $0.31 on the same campaign made it mixed, `no_workflow_with_outcomes`, and
+ * the landing lost the figure, LANDING-MEETING-PRICE-1027) the expected price is the pipes' chain, the same formula the
+ * meeting rate index reads (`meetingPoint`: interest cost ÷ the meeting pipe's booking rate + its cost per meeting, the
+ * pipe pooled while no workflow owns a meeting), `method: "expected_pipe_chain"`. Nothing expected either = the ledger's
+ * null and its reason.
  */
-export function meetingCostIndexPoint(ledger: LedgerMeetingCost | null, expected: ExpectedMeetingPrice | null): FleetIndexPoint | null {
+export function meetingCostIndexPoint(
+  ledger: LedgerMeetingCost | null,
+  expected: ExpectedMeetingPrice | null,
+  chain: FleetIndexPoint | null = null,
+): FleetIndexPoint | null {
   const lp = ledger ? ledgerMeetingIndexPoint(ledger) : null;
   if (lp && lp.value !== null) return { ...lp, inputs: { ...lp.inputs, valueKind: "measured" } };
-  if (!expected || expected.priceUsd === null || !(expected.priceUsd > 0)) return lp;
+  const ledgerInputs = {
+    ledgerUnavailableReason: lp?.unavailableReason ?? "ledger_unreadable",
+    ...(lp ? { ledgerUnitCostUsd: lp.inputs.ledgerUnitCostUsd ?? null, coveragePct: lp.inputs.coveragePct ?? null, daysMissing: lp.inputs.daysMissing ?? null } : {}),
+  };
+  if (!expected || expected.priceUsd === null || !(expected.priceUsd > 0)) {
+    if (!chain || chain.value === null || !(chain.value > 0)) return lp;
+    return {
+      ...chain,
+      inputs: {
+        ...chain.inputs,
+        valueKind: "expected",
+        method: "expected_pipe_chain",
+        outcomePricesUnmeasuredReason: expected?.unmeasuredReason ?? (expected ? null : "outcome_prices_unreadable"),
+        ...ledgerInputs,
+      },
+    };
+  }
   return {
     indexSlug: COST_PER_MEETING.slug,
     value: expected.priceUsd,
@@ -485,8 +510,7 @@ export function meetingCostIndexPoint(ledger: LedgerMeetingCost | null, expected
       method: "expected_outcome_prices",
       formula: "reply_cost / meeting_rate + meeting_leg_cost",
       maturity: expected.maturity,
-      ledgerUnavailableReason: lp?.unavailableReason ?? "ledger_unreadable",
-      ...(lp ? { ledgerUnitCostUsd: lp.inputs.ledgerUnitCostUsd ?? null, coveragePct: lp.inputs.coveragePct ?? null, daysMissing: lp.inputs.daysMissing ?? null } : {}),
+      ...ledgerInputs,
     },
   };
 }
@@ -505,7 +529,8 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
     if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows));
     // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024); the meeting rate stays the pipes' chain.
     if (def.slug === COST_PER_MEETING.slug) {
-      const p = meetingCostIndexPoint(inputs.meetingLedger ?? null, inputs.meetingExpected ?? null);
+      const chain = inputs.positiveReplyRows && inputs.meetingPipe ? meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe) : null;
+      const p = meetingCostIndexPoint(inputs.meetingLedger ?? null, inputs.meetingExpected ?? null, chain);
       if (p) points.push(p);
     } else if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
       points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
