@@ -1459,10 +1459,18 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
     if (labels.has(label.toLowerCase())) throw new DeclarationError(409, "step_label_taken", `a step is already labelled ${JSON.stringify(label)}`);
     const icon = text(body, "icon", 64);
     if (!ICON_RE.test(icon)) throw bad("icon_invalid", `icon must be a Phosphor icon name (kebab-case), got ${JSON.stringify(icon)}`);
-    const towardRaw = text(body, "towardStep", 64);
-    const towardStep = matchChannelStepKey(towardRaw) ?? steps.find((s) => s.key === towardRaw)?.key ?? null;
-    if (!towardStep) throw new DeclarationError(404, "toward_step_not_found", `towardStep ${towardRaw} is no step`);
-    const towardRatePct = ratePct(body.towardRatePct, "towardRatePct");
+    // A step reached only AFTER Paid client (CLIENT-SATISFIED-1027: Client Satisfied) leads to no step on the way to a
+    // paying client: it states no toward step and has no value (null), never a made-up share of a client's value.
+    const leadsNowhere = body.towardStep === undefined || body.towardStep === null;
+    if (leadsNowhere && body.towardRatePct !== undefined && body.towardRatePct !== null) throw bad("towardStep_required", "towardRatePct needs a towardStep");
+    let towardStep: string | null = null;
+    let towardRatePct: number | null = null;
+    if (!leadsNowhere) {
+      const towardRaw = text(body, "towardStep", 64);
+      towardStep = matchChannelStepKey(towardRaw) ?? steps.find((s) => s.key === towardRaw)?.key ?? null;
+      if (!towardStep) throw new DeclarationError(404, "toward_step_not_found", `towardStep ${towardRaw} is no step`);
+      towardRatePct = ratePct(body.towardRatePct, "towardRatePct");
+    }
     const producedBy = body.producedBy === undefined || body.producedBy === null ? null : text(body, "producedBy", 200);
     const lifecycleRung = body.lifecycleRung === undefined || body.lifecycleRung === null ? null : lifecycleRungOf(body.lifecycleRung);
     // What one occurrence is about: the cost ledger's one per-outcome fact (COST-ACCOUNTING-1023), stated on every new outcome.
@@ -1484,7 +1492,7 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
     });
     await registerStepDeclarations();
     invalidateChannelCatalogue();
-    console.log(`[features-service] agent catalogue: step ${key} declared by ${createdBy} (toward ${towardStep} at ${towardRatePct}%)`);
+    console.log(`[features-service] agent catalogue: step ${key} declared by ${createdBy} (${towardStep ? `toward ${towardStep} at ${towardRatePct}%` : "leads to no step: no value"})`);
     const { model } = await loadModel();
     const s = model.steps.get(created.key)!;
     res.status(201).json({ object: "step", id: s.key, name: s.label, icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, declared: true, producedBy: s.producedBy, ...lifecycleWire(s) });

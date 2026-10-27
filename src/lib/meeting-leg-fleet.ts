@@ -26,6 +26,8 @@
  */
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "./fleet-leg-campaigns.js";
 import { fetchFollowupActedLeads } from "./followup-actions-client.js";
+import { fetchBrandJourneys } from "./brand-journeys-client.js";
+import type { Journey } from "./lived-sales-paths.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { fetchObservedStepFacts } from "./observed-steps.js";
 import { fetchQualifications } from "./qualifications-client.js";
@@ -110,6 +112,21 @@ export interface MeetingLegFleet {
 export interface PairActed {
   actedByCampaign: Map<string, Set<string>>;
   meetingLeadIds: Set<string>;
+  /**
+   * On a pipe landing on an OCCURRENCE step (a DECLARED step of subject kind `object`, CLIENT-SATISFIED-1027: one
+   * positive client message = one Client Satisfied): per reached lead, how many occurrences count. Every reached figure
+   * then counts occurrences, never persons (owner: « on compte le nombre de sentiments positifs »). Absent = persons.
+   */
+  occurrencesByLead?: Map<string, number>;
+}
+
+/** The keys one reached lead adds to a reached set: the person once, or one key per occurrence on an occurrence step. */
+export function reachedKeysOf(brandId: string | null, leadId: string, pair: PairActed): string[] {
+  if (!pair.meetingLeadIds.has(leadId)) return [];
+  const person = `${brandId}:${leadId}`;
+  if (!pair.occurrencesByLead) return [person];
+  const n = pair.occurrencesByLead.get(leadId) ?? 0;
+  return Array.from({ length: n }, (_, i) => `${person}#${i + 1}`);
 }
 
 /**
@@ -163,9 +180,9 @@ export function buildMeetingLegFleet(input: {
         const key = `${c.brandId}:${leadId}`;
         org.acted.add(key);
         pooled.acted.add(key);
-        if (pair!.meetingLeadIds.has(leadId)) {
-          org.reached.add(key);
-          pooled.reached.add(key);
+        for (const r of reachedKeysOf(c.brandId, leadId, pair!)) {
+          org.reached.add(r);
+          pooled.reached.add(r);
         }
       }
       orgs.set(c.orgId, org);
@@ -175,7 +192,7 @@ export function buildMeetingLegFleet(input: {
         brandId: c.brandId,
         spentUsd: [...ran.values()].reduce((a, b) => a + b, 0) / 100,
         acted: acted.map((l) => `${c.brandId}:${l}`),
-        reached: acted.filter((l) => pair!.meetingLeadIds.has(l)).map((l) => `${c.brandId}:${l}`),
+        reached: acted.flatMap((l) => reachedKeysOf(c.brandId, l, pair!)),
       });
     }
     // A workflow version that spent nothing on the campaign did not act for it: only spending dynasties attribute
@@ -194,9 +211,9 @@ export function buildMeetingLegFleet(input: {
       const key = `${c.brandId}:${leadId}`;
       if (counted) entry.acted.add(key);
       mine.acted.push(key);
-      if (pair!.meetingLeadIds.has(leadId)) {
-        if (counted) entry.meetings.add(key);
-        mine.reached.push(key);
+      for (const r of reachedKeysOf(c.brandId, leadId, pair!)) {
+        if (counted) entry.meetings.add(r);
+        mine.reached.push(r);
       }
     }
     perCampaign.push(mine);
@@ -229,10 +246,74 @@ export function buildMeetingLegFleet(input: {
   };
 }
 
+/** A step DECLARED at run time (no coded reading): its key and what one occurrence is about. */
+export interface DeclaredStepReading {
+  key: string;
+  subjectKind: string | null;
+}
+
+/**
+ * PURE. A DECLARED step's reading on one brand (CLIENT-SATISFIED-1027): the facts lead-service's timeline states under
+ * the step's key (`label === key`), on the leads the pipe's campaigns acted on, dated on or after the pipe's first act
+ * on that lead (an undated fact, or a lead with no dated act, counts: the producer states no time to cut on). One fact
+ * = one occurrence; a `person` step counts the lead once, any other kind counts every occurrence.
+ */
+export function declaredStepReached(
+  journeys: readonly Journey[],
+  actedIds: ReadonlySet<string>,
+  pipeCampaignIds: ReadonlySet<string>,
+  step: DeclaredStepReading,
+): Pick<PairActed, "meetingLeadIds" | "occurrencesByLead"> {
+  const firstAct = new Map<string, string>();
+  // A lead's timeline is served once per offer it stands on: the same fact can come back in each, so per lead and per
+  // instant the count is the most any one journey states, never their sum.
+  const occurrences = new Map<string, Map<string, number>>();
+  for (const j of journeys) {
+    if (!actedIds.has(j.leadId)) continue;
+    for (const a of j.acts) {
+      if (!a.campaignId || !pipeCampaignIds.has(a.campaignId) || !a.firstActedAt) continue;
+      const prev = firstAct.get(j.leadId);
+      if (!prev || a.firstActedAt < prev) firstAct.set(j.leadId, a.firstActedAt);
+    }
+    const mine = new Map<string, number>();
+    for (const f of j.facts) {
+      if (f.label !== step.key) continue;
+      const at = f.occurredAt ?? "";
+      mine.set(at, (mine.get(at) ?? 0) + 1);
+    }
+    const all = occurrences.get(j.leadId) ?? new Map<string, number>();
+    for (const [at, n] of mine) all.set(at, Math.max(all.get(at) ?? 0, n));
+    occurrences.set(j.leadId, all);
+  }
+  const meetingLeadIds = new Set<string>();
+  const occurrencesByLead = new Map<string, number>();
+  for (const [leadId, byInstant] of occurrences) {
+    const from = firstAct.get(leadId);
+    let n = 0;
+    for (const [at, count] of byInstant) if (!from || at === "" || at >= from) n += count;
+    if (n === 0) continue;
+    meetingLeadIds.add(leadId);
+    occurrencesByLead.set(leadId, n);
+  }
+  return step.subjectKind === "person" ? { meetingLeadIds } : { meetingLeadIds, occurrencesByLead };
+}
+
+/** The declared step of that key, read from the store (null when the key is no declared step). */
+async function declaredStepOf(key: string): Promise<DeclaredStepReading | null> {
+  const { listDeclaredSteps } = await import("./channel-declarations-store.js");
+  const d = (await listDeclaredSteps()).find((s) => s.key === key);
+  return d ? { key: d.key, subjectKind: d.subjectKind ?? null } : null;
+}
+
 /** One brand's acted leads and which of them reached `toStep` (every cause counts). */
-async function readPairActed(orgId: string, brandId: string, campaignIds: string[], toStep: string): Promise<PairActed> {
+async function readPairActed(orgId: string, brandId: string, campaignIds: string[], toStep: string, declared: DeclaredStepReading | null = null): Promise<PairActed> {
   const actedByCampaign = await fetchFollowupActedLeads(brandId, campaignIds);
   const actedIds = new Set([...actedByCampaign.values()].flatMap((s) => [...s]));
+  if (declared) {
+    if (actedIds.size === 0) return { actedByCampaign, meetingLeadIds: new Set(), ...(declared.subjectKind === "person" ? {} : { occurrencesByLead: new Map() }) };
+    const journeys = await fetchBrandJourneys(brandId, { orgId });
+    return { actedByCampaign, ...declaredStepReached(journeys, actedIds, new Set(campaignIds), declared) };
+  }
   const reached = stepReading(toStep);
   if (reached === "acted") return { actedByCampaign, meetingLeadIds: actedIds };
   if (actedIds.size === 0) return { actedByCampaign, meetingLeadIds: new Set() };
@@ -270,7 +351,9 @@ export class StepNotReadableError extends Error {
 
 /** Any INTERNAL pipe across every org, per workflow dynasty (the rule above). */
 export async function computeInternalPipeFleet(featureSlug: string, legKey: string, toStep: string): Promise<MeetingLegFleet> {
-  if (!stepReading(toStep)) throw new StepNotReadableError(toStep);
+  // A coded step reads on the engine's person; a step DECLARED at run time reads lead-service's timeline facts under its key.
+  const declared = stepReading(toStep) ? null : await declaredStepOf(toStep);
+  if (!stepReading(toStep) && !declared) throw new StepNotReadableError(toStep);
   const campaigns = await fetchFleetLegCampaigns(featureSlug, legKey);
   const ids = [...new Set(campaigns.map((c) => c.campaignId))].sort();
   const reporting = MEETING_STEPS.has(toStep) ? await getMeetingReporting() : null;
@@ -304,7 +387,7 @@ export async function computeInternalPipeFleet(featureSlug: string, legKey: stri
         dimensions: { ...g.dimensions, campaignId: id },
       })),
     ),
-    mapWithConcurrency([...byPair.values()], 2, async (p) => [p.brandId, await readPairActed(p.orgId, p.brandId, p.campaignIds, toStep)] as const),
+    mapWithConcurrency([...byPair.values()], 2, async (p) => [p.brandId, await readPairActed(p.orgId, p.brandId, p.campaignIds, toStep, declared)] as const),
   ]);
   return buildMeetingLegFleet({ campaigns, workflows, costGroups: costChunks.flat(), pairs: new Map(pairResults), legKey, reporting });
 }

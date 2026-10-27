@@ -96,7 +96,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   const seeded = SEED_FEATURES.filter((f) => f.status === "active");
   const register = async () => {
     registerDeclaredSteps(mem.steps);
-    registerDeclaredLegRates([...mem.steps.map((s) => ({ fromStep: s.key, toStep: s.towardStep, ratePct: s.towardRatePct })), ...mem.rates]);
+    registerDeclaredLegRates([...mem.steps.flatMap((s) => (s.towardStep ? [{ fromStep: s.key, toStep: s.towardStep, ratePct: s.towardRatePct }] : [])), ...mem.rates]);
     return { steps: mem.steps, rates: mem.rates };
   };
   return {
@@ -887,6 +887,24 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(409);
     expect((await request(app).patch("/internal/catalogue/steps/nope").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(404);
     expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ createdBy: "staff" })).body.reason).toBe("lifecycleRung_required");
+  });
+
+  it("CLIENT-SATISFIED-1027: a step after Paid client states no toward step, has no value, and a pipe can land on it", async () => {
+    const base = { key: "client_satisfied", label: "Client Satisfied", description: "A paying client writes us a positive message.", shortDescription: "Writes us something positive", icon: "smiley", lifecycleRung: "paid_client", subjectKind: "object", createdBy: "staff" };
+    const half = await request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, towardRatePct: 10 });
+    expect(half.status).toBe(400);
+    expect(half.body.reason).toBe("towardStep_required");
+    const created = await request(app).post("/internal/catalogue/steps").set(KEY).send(base);
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ id: "client_satisfied", name: "Client Satisfied", valueUsd: null, subjectKind: "object", lifecycleRung: "paid_client" });
+    const pipe = await request(app)
+      .post("/internal/catalogue/pipes")
+      .set(KEY)
+      .send({ channelSlug: "cold-whatsapp-outreach", fromStep: "paid_client", toStep: "client_satisfied", mode: "reactive", triggerId: "lead_event", conversionRatePct: 50, createdBy: "staff" });
+    expect(pipe.status).toBe(201);
+    expect(pipe.body.id).toBe("cold-whatsapp-outreach|paid_client_to_client_satisfied");
+    const pub = await request(app).get("/public/catalogue/steps");
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "client_satisfied")).toMatchObject({ name: "Client Satisfied" });
   });
 
   it("COST-ACCOUNTING-1023: every outcome states what one occurrence is about, a person or an object", async () => {
