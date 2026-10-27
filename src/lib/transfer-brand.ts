@@ -25,6 +25,7 @@ import { and, eq, inArray, or } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots, statedMonthlyAmounts } from "../db/schema.js";
 import { dropLeadCopiesForOrgs } from "./lead-copy.js";
+import { dropHeldLeadWalksForOrgs } from "./lead-walk-hold.js";
 import { __resetInteractiveMemo } from "./interactive-memo.js";
 import { __resetSharedReads } from "./fetch-retry.js";
 import { __resetHotBodies } from "./view-cache.js";
@@ -71,7 +72,7 @@ export function assertMoveFits(moving: RangeRow[], resident: RangeRow[]): void {
 
 /** Drop every in-process cache that could answer for the moved brand under either org. */
 export function dropInProcessCaches(orgIds: readonly string[]): number {
-  const dropped = dropLeadCopiesForOrgs(orgIds);
+  const dropped = dropLeadCopiesForOrgs(orgIds) + dropHeldLeadWalksForOrgs(orgIds);
   __resetInteractiveMemo();
   __resetSharedReads();
   __resetHotBodies();
