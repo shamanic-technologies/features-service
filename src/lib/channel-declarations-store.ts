@@ -84,10 +84,11 @@ const triggerOf = (r: TriggerRow): TriggerTypeRecord => ({
 
 /** Every trigger type still in the catalogue: a RETIRED one (CATALOGUE-RETIRE-1016) is out of every read. */
 export async function listTriggerTypes(): Promise<TriggerTypeRecord[]> {
-  const triggers = (await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder))).filter((r) => r.retiredAt == null).map(triggerOf);
+  const rows = await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder));
   // Every reader composing words out of a condition instance reads its parameters from here (`lib/trigger-conditions.ts`).
-  registerTriggerConditions(triggers);
-  return triggers;
+  // A RETIRED instance keeps its words: a funnel headed by it still names (and describes) its people.
+  registerTriggerConditions(rows.map(triggerOf));
+  return rows.filter((r) => r.retiredAt == null).map(triggerOf);
 }
 
 export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {

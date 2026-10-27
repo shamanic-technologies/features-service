@@ -74,6 +74,23 @@ describe("a sales funnel's name says what it does (owner 2026-10-16, FUNNEL-NAME
     expect(isComposedNameOf(COLD_AI_MEETINGS, "Victory")).toBe(false);
   });
 
+  it("a funnel customers run keeps its plain name even when a funnel nobody runs holds it (names may be shared)", () => {
+    const at = new Date(Date.UTC(2026, 9, 1));
+    const legacy = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client";
+    const rows = [
+      { combinationKey: legacy, name: "Cold Email Replies", assignedAt: at },
+      { combinationKey: COLD_REPLIES, name: "Cold Email Replies 2", assignedAt: at },
+    ];
+    expect(planFunnelRenames(rows, new Set(), [COLD_REPLIES], () => null)).toEqual([{ combinationKey: COLD_REPLIES, from: "Cold Email Replies 2", to: "Cold Email Replies" }]);
+  });
+
+  it("a funnel headed by a trigger answers that trigger's people, never its first pipe's trigger", () => {
+    const leadEvent = "trigger:lead_event+start_to_paid_client@ai-follow-up-email";
+    const signupPipe = () => "signup_not_paid_30_min";
+    expect(first(leadEvent, signupPipe)).toBe("Lead Follow-up");
+    expect(first(`${leadEvent}~current-clients`, signupPipe)).toBe("Client Lead Follow-up");
+  });
+
   it("a lead strategy is in every candidate: a funnel never reads like its default twin", () => {
     const due = COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~lead-follow-up-due+");
     const twoMonths = COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~valid-only-2-months+");
