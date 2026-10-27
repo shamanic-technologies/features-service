@@ -16,6 +16,7 @@ interface RawFact {
   attributable?: unknown;
   valueCents?: unknown;
   screened?: unknown;
+  sourceRef?: unknown;
 }
 interface RawAct {
   campaignId?: unknown;
@@ -50,6 +51,7 @@ export function toJourney(raw: RawJourney): Journey {
       const label = str(f.label);
       if (!label) throw new Error(`lead-service timeline-journeys: a fact of lead ${leadId} carries no label`);
       const source = str(f.source);
+      const sourceRef = str(f.sourceRef);
       return {
         label,
         ...(source ? { source } : {}),
@@ -59,6 +61,7 @@ export function toJourney(raw: RawJourney): Journey {
         valueCents: typeof f.valueCents === "number" && Number.isFinite(f.valueCents) ? f.valueCents : null,
         // A click: recorded by our tracker (judged human) or reported by the provider (unscreened).
         ...(typeof f.screened === "boolean" ? { screened: f.screened } : {}),
+        ...(sourceRef ? { sourceRef } : {}),
       };
     }),
     acts: (raw.acts ?? []).map((a) => {
