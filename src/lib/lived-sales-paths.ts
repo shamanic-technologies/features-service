@@ -55,6 +55,11 @@ export interface JourneyFact {
    * is kept), FALSE when the provider reported it (no request data, cannot be screened). Absent elsewhere.
    */
   screened?: boolean;
+  /**
+   * The producer's id of what the fact records (lead-service `sourceRef`: crm-service's fact id of a client message),
+   * absent when it states none. The SAME message stated on two lead rows of one person comes back twice under one id.
+   */
+  sourceRef?: string;
 }
 
 export interface JourneyAct {
