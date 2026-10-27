@@ -22,6 +22,7 @@ import { DEFAULT_PRICED_CAUSES } from "./outcome-cause.js";
 import { fetchFollowupActionRows, type FollowupActionRow } from "./followup-actions-client.js";
 export { fetchFollowupActionRows };
 import { fetchBrandCommittedSpendByDay } from "./brand-spend-by-day-client.js";
+import { addBrandLevelByDay, fetchBrandLevelSpend } from "./brand-level-spend.js";
 import { fetchSpendByTaskDay } from "./spend-by-task-day-client.js";
 import { resolvePipeSpendAttribution } from "./pipe-spend-attribution-io.js";
 import { withPipeSpendAttribution } from "./pipe-spend-attribution.js";
@@ -61,6 +62,11 @@ export interface ChartScope {
   leg: ChartLeg | null;
   /** A pipe: its own unit, read with the pipe's own spend attribution. */
   pipe: { campaignId: string; featureSlug: string } | null;
+  /**
+   * The offer grain: the brand's campaign-less work (setup, notifications) joins the spend IN FULL, per day, like on
+   * every offer money figure (owner 2026-10-22, ROI-SPENT-SAME-BASIS-1022, `lib/brand-level-spend.ts`).
+   */
+  brandLevelSpend: boolean;
 }
 
 export interface SpendChart {
@@ -253,8 +259,11 @@ export async function computeSpendChart(args: {
   const leg = scope.leg;
 
   const readSpend = async (): Promise<{ byDay: Map<string, number>; tasks: TaskSpendRow[] | null; tasksReason: string | null }> => {
-    const [byDay, tasks] = await Promise.all([
+    const [ownByDay, brandLevel, tasks] = await Promise.all([
       fetchBrandCommittedSpendByDay(brandId, scope.campaignIds, scope.featureSlugs, headers, pricing),
+      scope.brandLevelSpend
+        ? fetchBrandLevelSpend({ brandId, orgId: headers.orgId, pricing, featureScope: scope.featureSlugs, campaignScoped: true })
+        : Promise.resolve(null),
       fetchSpendByTaskDay(brandId, scope.campaignIds, scope.featureSlugs, headers, pricing).then(
         (rows) => ({ rows, reason: null as string | null }),
         (err: Error) => {
@@ -263,7 +272,8 @@ export async function computeSpendChart(args: {
         },
       ),
     ]);
-    return { byDay, tasks: tasks.rows, tasksReason: tasks.reason };
+    // The brand-level part is no runs task of the scope's campaigns: it shows in the day's `byActionGapUsd`.
+    return { byDay: addBrandLevelByDay(ownByDay, brandLevel), tasks: tasks.rows, tasksReason: tasks.reason };
   };
   const attribution = scope.pipe
     ? await resolvePipeSpendAttribution({ brandId, featureSlug: scope.pipe.featureSlug, pipeCampaignIds: scope.campaignIds, headers })
