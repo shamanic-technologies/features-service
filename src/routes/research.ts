@@ -1372,7 +1372,7 @@ async function buildResearch(basis: Basis, view: ResearchView): Promise<Research
   const base = refresherBaseUrl();
   if (!base) {
     if (refresherRestarting()) throw new RefresherRestartingError(`refresher restarting: research ${basis}/${view} waits for it`);
-    return computeResearch(basis, view);
+    return computeResearchShared(basis, view);
   }
   let res: Response;
   try {
@@ -1673,6 +1673,21 @@ router.get("/internal/research/templates", apiKeyOnly, async (_req, res) => {
   }
 });
 
+/**
+ * One compute per (basis, view) at a time on this process (BOX-DB-LOAD-1027-FEATURES): the server's ask gives up after
+ * ~5 min while the build keeps reading, and its next tick asked again, so builds piled up and every producer read was
+ * made once per overlapping build. A second ask joins the build in flight.
+ */
+const computing = new Map<string, Promise<ResearchBuild>>();
+export function computeResearchShared(basis: Basis, view: ResearchView, compute: typeof computeResearch = computeResearch): Promise<ResearchBuild> {
+  const key = keyOf(basis, view);
+  const inFlight = computing.get(key);
+  if (inFlight) return inFlight;
+  const p = compute(basis, view).finally(() => computing.delete(key));
+  computing.set(key, p);
+  return p;
+}
+
 /** The refresher's compute door (the server asks it; never cached here: the caller stores the answer). */
 router.get("/internal/research/compute", apiKeyOnly, async (req, res) => {
   const basis = basisOf(req.query.basis);
@@ -1683,7 +1698,7 @@ router.get("/internal/research/compute", apiKeyOnly, async (req, res) => {
   try {
     const view = viewOf(req.query.view);
     if (!view) return badView(res);
-    res.json(await computeResearch(basis, view));
+    res.json(await computeResearchShared(basis, view));
   } catch (error) {
     console.error(`[features-service] research compute (${basis}) failed:`, error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Internal server error" });
