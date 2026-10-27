@@ -18,8 +18,8 @@ afterEach(() => registerTriggerConditions([]));
 
 describe("one generic condition trigger, many instances (STD-VOCAB-CONDITION-1016)", () => {
   it("reads an instance's condition from its parameters, nothing else", () => {
-    expect(conditionOfTrigger(PROD_CONDITIONS[0])).toEqual({ afterStep: "signup", unlessStep: "paid_client" });
-    expect(conditionOfTrigger({ kind: "delay", params: { afterStep: "lead_found", days: 3 } })).toEqual({ afterStep: "lead_found", unlessStep: null });
+    expect(conditionOfTrigger(PROD_CONDITIONS[0])).toEqual({ afterStep: "signup", unlessStep: "paid_client", waitMinutes: 30 });
+    expect(conditionOfTrigger({ kind: "delay", params: { afterStep: "lead_found", days: 3 } })).toEqual({ afterStep: "lead_found", unlessStep: null, waitMinutes: 4320 });
     expect(conditionOfTrigger({ kind: "reported", params: { reportedBy: "chat-service" } })).toBeNull();
     expect(conditionOfTrigger({ kind: "delay", params: null })).toBeNull();
   });
@@ -30,13 +30,17 @@ describe("one generic condition trigger, many instances (STD-VOCAB-CONDITION-101
     expect(conditionAudience({ afterStep: "conversation", unlessStep: "meeting_booked" })).toBe("buyers who replied with interest but have not booked a meeting");
     expect(conditionAudience({ afterStep: "trial_started", unlessStep: "upgraded" })).toBe("people who reached trial started but did not reach upgraded");
     expect(conditionAudience({ afterStep: "lead_found", unlessStep: null })).toBeNull();
+    // The wait tells two instances of one pair apart (FUNNEL-NAMES-NO-NUMBERS-1027).
+    expect(conditionAudience({ afterStep: "signup", unlessStep: "paid_client", waitMinutes: 5 })).toBe("signups who have not paid within 5 minutes");
+    expect(conditionAudience({ afterStep: "signup", unlessStep: "paid_client", waitMinutes: 1440 })).toBe("signups who have not paid within 24 hours");
+    expect(conditionAudience({ afterStep: "website_visit", unlessStep: "signup", waitMinutes: 60 })).toBe("site visitors who did not sign up within an hour");
   });
 
   it("a NEW instance declared as data names its funnel and its sentence with no code", () => {
     registerTriggerConditions([...PROD_CONDITIONS, { id: "meeting_booked_not_paid_7_days", kind: "delay", params: { days: 7, afterStep: "meeting_booked", unlessStep: "paid_client" } }]);
-    expect(triggerCondition("meeting_booked_not_paid_7_days")).toEqual({ afterStep: "meeting_booked", unlessStep: "paid_client" });
+    expect(triggerCondition("meeting_booked_not_paid_7_days")).toEqual({ afterStep: "meeting_booked", unlessStep: "paid_client", waitMinutes: 10080 });
     const legs = [{ fromStep: null, toStep: "paid_client", channel: aiFollowUp, runByUs: true }];
-    expect(funnelShortDescription({ reactive: true, triggerId: "meeting_booked_not_paid_7_days", legs }).shortDescription).toBe("Our AI emails buyers who booked a meeting but have not paid yet.");
+    expect(funnelShortDescription({ reactive: true, triggerId: "meeting_booked_not_paid_7_days", legs }).shortDescription).toBe("Our AI emails buyers who booked a meeting but have not paid within 7 days.");
     expect(funnelNameCandidates("signup_to_paid_client@cold-whatsapp-outreach", () => "meeting_booked_not_paid_7_days")[0]).toBe("Meeting WhatsApp");
   });
 
@@ -47,7 +51,7 @@ describe("one generic condition trigger, many instances (STD-VOCAB-CONDITION-101
     expect(funnelNameCandidates("signup_to_paid_client@cold-whatsapp-outreach", () => "signup_not_paid_24_hours")).toEqual(["Signup WhatsApp", "Signup WhatsApp Deals", "Signup Deals"]);
     expect(funnelNameCandidates("website_visit_to_signup@ai-follow-up-email+signup_to_paid_client", () => "website_visit_no_signup_30_min")).toEqual(["Visitor Follow-up", "Visitor Follow-up Signups", "Visitor Signups"]);
     const legs = [{ fromStep: null, toStep: "paid_client", channel: aiFollowUp, runByUs: true }];
-    expect(funnelShortDescription({ reactive: true, triggerId: "signup_not_paid_30_min", legs }).shortDescription).toBe("Our AI emails signups who have not paid yet until they buy.");
+    expect(funnelShortDescription({ reactive: true, triggerId: "signup_not_paid_30_min", legs }).shortDescription).toBe("Our AI emails signups who have not paid within 30 minutes.");
   });
 });
 

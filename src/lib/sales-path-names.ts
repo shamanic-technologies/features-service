@@ -25,7 +25,9 @@
  *
  * SUPERSEDED FOR FUNNELS 2026-10-16 (owner, FUNNEL-NAMES-1016): a funnel's name says what it does, composed from its
  * key (`lib/funnel-names.ts`); every word-named funnel was renamed (`renameFunnelsToDescriptiveNames`) and its word
- * retired. Pipes and paths keep their families below.
+ * retired. Since 2026-10-27 (FUNNEL-NAMES-NO-NUMBERS-1027) a funnel name carries no number and may be shared by two
+ * funnels (UNIQUE holds for pipes and paths only, migration 0050); the same rename pass renamed every numbered one.
+ * Pipes and paths keep their families below.
  *
  * The pool is curated: English, one word, optimistic (success, height, glory, abundance, joy). Its size is
  * guarded against every combination the catalogue can form (`offer-sales-paths.test.ts`); an exhausted
@@ -267,8 +269,8 @@ export function planFunnelRenames(
 }
 
 /**
- * OWNER 2026-10-16 (FUNNEL-NAMES-1016): every sales funnel still named with a word ("Victory", "Epiphany") takes the
- * name that says what it does; the old word is RETIRED (`retired_names`, reason `funnel_renamed_descriptive`), never
+ * OWNER 2026-10-16 (FUNNEL-NAMES-1016): every sales funnel still named with a word ("Victory", "Epiphany"), or a number
+ * ("Cold Email Replies 6", FUNNEL-NAMES-NO-NUMBERS-1027), takes the name that says what it does; the old word is RETIRED (`retired_names`, reason `funnel_renamed_descriptive`), never
  * given again. Idempotent (a composed name stays), under the assignment lock. Dry run unless `apply`. `firstKeys`: the
  * funnels customers run, named first so they get the plain name (the caller reads them from campaign-service).
  */
