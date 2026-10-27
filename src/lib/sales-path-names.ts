@@ -261,9 +261,15 @@ export function planFunnelRenames(
     ...funnelNamingOrder(ranked.filter((r) => firstRank.has(r.key)).map((r) => ({ ...r, rank: firstRank.get(r.key)! }))),
     ...funnelNamingOrder(ranked.filter((r) => !firstRank.has(r.key))),
   ];
+  // Names may be shared (FUNNEL-NAMES-NO-NUMBERS-1027): a funnel customers run competes only with the OTHER funnels
+  // customers run (a plain cold email funnel keeps "Cold Email Replies" even when a funnel nobody runs holds it).
+  const customerTaken = new Set(held);
+  for (const r of funnels) if (!todo.includes(r) && firstRank.has(r.combinationKey)) customerTaken.add(r.name);
   return ordered.map(({ row }) => {
-    const to = nextFunnelName(row.combinationKey, taken, triggerOf);
+    const first = firstRank.has(row.combinationKey);
+    const to = nextFunnelName(row.combinationKey, first ? customerTaken : taken, triggerOf);
     taken.add(to);
+    if (first) customerTaken.add(to);
     return { combinationKey: row.combinationKey, from: row.name, to };
   });
 }
