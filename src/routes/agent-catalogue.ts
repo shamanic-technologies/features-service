@@ -1737,7 +1737,9 @@ router.post("/internal/catalogue/sales-funnels/descriptive-names", apiKeyOnly, a
       ),
     );
     const triggerOf = (slug: string, legKey: string) => triggers.get(`${slug}|${legKey}`) ?? seedPipeTriggerOf(slug, legKey);
-    const plan = await renameFunnelsToDescriptiveNames({ apply: body.apply === true, firstKeys: firstKeys as string[], triggerOf });
+    // A campaign's funnel id is read as the funnel it resolves to (legacy id, retired play): that funnel is named first.
+    const canonicalFirstKeys = [...new Set((firstKeys as string[]).map((k) => funnelById(model, k)?.id ?? k))];
+    const plan = await renameFunnelsToDescriptiveNames({ apply: body.apply === true, firstKeys: canonicalFirstKeys, triggerOf });
     const renames = plan.map((r) => {
       const f = funnelById(model, r.combinationKey);
       return { ...r, shortDescription: f ? funnelShortDescriptionOf(model, f).shortDescription : null };
@@ -2446,6 +2448,9 @@ export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): Funne
   return { items, legs };
 }
 
+/** The strategy of a leg's play when it is not the pipe's default (a default play reads like the bare pipe). */
+const strategyOfLeg = (p: CatalogueFunnel["legs"][number]["pipe"]): string | null => (p?.play && !p.play.isDefault ? p.play.strategyId : null);
+
 /** PURE: the funnel's short customer sentence, read off its path view (one channel per leg). */
 export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunnel): ReturnType<typeof funnelShortDescription> {
   const view = funnelPathView(model, f);
@@ -2457,11 +2462,12 @@ export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunn
   return funnelShortDescription({
     reactive: headCondition !== null || first?.mode === "reactive",
     triggerId: headCondition ?? (first?.mode === "reactive" ? first.triggerId : null),
-    legs: view.legs.map((l) => ({
+    legs: view.legs.map((l, i) => ({
       fromStep: l.fromStep === "start" ? null : l.fromStep,
       toStep: l.toStep,
       channel: l.channelSlug ? (bySlug.get(l.channelSlug) ?? null) : null,
       runByUs: l.runByUs,
+      strategy: strategyOfLeg(f.legs[i]?.pipe ?? null),
     })),
   });
 }

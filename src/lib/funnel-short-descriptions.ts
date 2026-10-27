@@ -6,7 +6,8 @@
  * `sales_path_combination_names.description` stays unread). This one is COMPOSED, never stored: it is a pure
  * function of the funnel's legs, so a wording fix reaches every row at once.
  *
- * What it says: what WE do in that funnel, in the funnel's order. The client's own team legs are left out. A
+ * What it says: what WE do in that funnel, in the funnel's order, to whom (a play's lead strategy names who it reaches
+ * and when it writes again, `lib/strategy-words.ts`, so two funnels of one brand never share a sentence). The client's own team legs are left out. A
  * sourcing leg is not a phrase of its own: it names WHO the next leg reaches ("buyers showing intent"), so a cold
  * email funnel reads "We email new buyers until they reply with interest." A reactive funnel names who it answers.
  * When the first thing we do is done by our AI (a conversion channel run by software: AI meeting booking, AI
@@ -29,8 +30,12 @@
 import type { PublicChannel } from "./channel-catalogue.js";
 import { canonicalTriggerId, triggerForStep } from "./channel-triggers.js";
 import { conditionAudience, triggerCondition } from "./trigger-conditions.js";
+import { strategySentenceWho } from "./strategy-words.js";
 
 export const MAX_WORDS = 12;
+
+/** Marks where the named people end inside a sentence being composed (never served). */
+const WHO_END = "\u0001";
 
 export type SummaryChannel = Pick<PublicChannel, "slug" | "name" | "channelType" | "performedBy" | "operatedBy">;
 
@@ -41,6 +46,8 @@ export interface SummaryLeg {
   channel: SummaryChannel | null;
   /** The leg's channel is ours (`operatedBy: "platform"`). */
   runByUs: boolean;
+  /** The lead strategy of the leg's play when it is not the pipe's default (`lib/strategy-words.ts`); absent = none. */
+  strategy?: string | null;
 }
 
 export interface SummaryInput {
@@ -52,6 +59,7 @@ export interface SummaryInput {
 
 /** Who a sourcing channel finds: the object of the leg that reaches them. */
 const SOURCED: Readonly<Record<string, string>> = {
+  "sourcing-apollo-cold-filters": "buyers matching your filters",
   "sourcing-apollo-buying-signals": "buyers showing intent",
   "sourcing-linkedin-engagement-signals": "LinkedIn-active buyers",
   "sourcing-crm-contacts": "your CRM contacts",
@@ -162,6 +170,8 @@ const DEFAULT_AUDIENCE = "your leads";
 const TRIGGER_AUDIENCE: Readonly<Record<string, string>> = {
   follow_up_due: "leads due a follow-up",
   email_pushed_via_api: "the leads you send us",
+  lead_event: "leads the moment they act",
+  github_issue_in_prod: "leads waiting on a feature you ship",
 };
 
 /** A phrase of one of our legs. `first(o)`: it opens the sentence and names who (`o`); `later`: object-free. */
@@ -302,10 +312,12 @@ export function funnelShortDescription(input: SummaryInput): { shortDescription:
     if (!leg.runByUs || !leg.channel) continue;
     const next = input.legs[i + 1]?.toStep ?? null;
     if (leg.channel.channelType === "sourcing" || leg.toStep === "lead_found") {
-      sourced = SOURCED[leg.channel.slug] ?? DEFAULT_SOURCED;
+      sourced = strategySentenceWho(leg.strategy ?? null, SOURCED[leg.channel.slug] ?? DEFAULT_SOURCED);
       continue;
     }
-    if (phrases.length === 0) who = sourced ?? whoIsAnswered(input, leg);
+    // A lead strategy says who the funnel reaches and when it writes again: two funnels a brand runs never read alike
+    // (owner 2026-10-27, FUNNEL-NAMES-NO-NUMBERS-1027).
+    if (phrases.length === 0) who = strategySentenceWho(leg.strategy ?? null, sourced ?? whoIsAnswered(input, leg));
     // Two legs in a row on one channel are one thing we do, read up to the further step ("follow up until they buy").
     if (lastSlug === leg.channel.slug) phrases[phrases.length - 1] = phraseOf(leg, next);
     else phrases.push(phraseOf(leg, next));
@@ -316,7 +328,9 @@ export function funnelShortDescription(input: SummaryInput): { shortDescription:
     if (sourced) return { shortDescription: sourced === SOURCED["sourcing-crm-contacts"] ? "We pick the right contacts from your CRM." : `We find ${sourced} for you.`, reason: null };
     return { shortDescription: null, reason: "no_step_run_by_us" };
   }
-  const o = who ?? DEFAULT_SOURCED;
+  // A who carrying its own comma ("new buyers, unconfirmed addresses included") closes it before what follows.
+  const whoText = who ?? DEFAULT_SOURCED;
+  const o = `${whoText}${WHO_END}`;
   const [p0, ...rest] = phrases;
   const last = rest[rest.length - 1];
   const candidates: Array<[string, string[]]> = [
@@ -327,7 +341,10 @@ export function funnelShortDescription(input: SummaryInput): { shortDescription:
     [p0.first.short(o), last ? [last.later.short] : []],
     [p0.first.short(o), []],
   ];
-  const sentences = candidates.map(([f, l]) => sentence(p0.ai, f, l));
+  const sentences = candidates.map(([f, l]) => {
+    const raw = sentence(p0.ai, f, l);
+    return (whoText.includes(",") ? raw.replace(new RegExp(`${WHO_END}(?= )`, "g"), ",") : raw).split(WHO_END).join("");
+  });
   return { shortDescription: sentences.find((s) => words(s) <= MAX_WORDS) ?? sentences[sentences.length - 1], reason: null };
 }
 

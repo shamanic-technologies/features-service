@@ -17,6 +17,8 @@
 export interface TriggerCondition {
   afterStep: string;
   unlessStep: string | null;
+  /** How long after `afterStep` it fires (`minutes`, or `days` x 1440); null when the params state neither. */
+  waitMinutes?: number | null;
 }
 
 const CONDITIONS = new Map<string, TriggerCondition>();
@@ -24,9 +26,10 @@ const CONDITIONS = new Map<string, TriggerCondition>();
 /** PURE: the condition a trigger record states, null when it is not a `delay` instance with a readable `afterStep`. */
 export function conditionOfTrigger(t: { kind?: string | null; params?: Record<string, unknown> | null }): TriggerCondition | null {
   if (t.kind !== "delay" || !t.params) return null;
-  const { afterStep, unlessStep } = t.params;
+  const { afterStep, unlessStep, minutes, days } = t.params;
   if (typeof afterStep !== "string" || afterStep === "") return null;
-  return { afterStep, unlessStep: typeof unlessStep === "string" && unlessStep !== "" ? unlessStep : null };
+  const waitMinutes = typeof minutes === "number" ? minutes : typeof days === "number" ? days * 1440 : null;
+  return { afterStep, unlessStep: typeof unlessStep === "string" && unlessStep !== "" ? unlessStep : null, waitMinutes };
 }
 
 /** Register every condition instance of a trigger read (replaces the previous registration). */
@@ -78,6 +81,19 @@ const words = (step: string): string => step.split("_").join(" ");
 export function conditionAudience(c: TriggerCondition): string | null {
   if (c.unlessStep === null) return null;
   const who = WHO_REACHED[c.afterStep] ?? `people who reached ${words(c.afterStep)}`;
-  const stillNot = STILL_NOT[c.unlessStep] ?? `who did not reach ${words(c.unlessStep)}`;
+  const still = STILL_NOT[c.unlessStep] ?? `who did not reach ${words(c.unlessStep)}`;
+  // The wait says what tells two instances of one pair apart (owner 2026-10-27, FUNNEL-NAMES-NO-NUMBERS-1027: every
+  // description unique within a brand; "signups who have not paid yet" read the same at 5 and 30 minutes).
+  const wait = waitWords(c.waitMinutes ?? null);
+  const stillNot = wait ? `${still.replace(/ yet$/, "")} within ${wait}` : still;
   return / who /.test(who) ? `${who} ${stillNot.replace(/^who /, "but ")}` : `${who} ${stillNot}`;
+}
+
+/** PURE: a wait in plain words ("5 minutes", "an hour", "24 hours", "3 days"), null when unknown. */
+export function waitWords(minutes: number | null): string | null {
+  if (minutes === null || !Number.isFinite(minutes) || minutes <= 0) return null;
+  const unit = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
+  if (minutes % 1440 === 0 && minutes > 1440) return unit(minutes / 1440, "a day", "days");
+  if (minutes % 60 === 0) return unit(minutes / 60, "an hour", "hours");
+  return unit(minutes, "a minute", "minutes");
 }

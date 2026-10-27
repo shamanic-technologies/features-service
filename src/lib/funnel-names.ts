@@ -15,16 +15,21 @@
  * <what it brings> is the furthest step OUR legs (a leg carrying `@channel`) reach; a site visit is a means, so a
  * funnel bringing people to the site names what the visit should become (signups, orders, meetings).
  *
- * Names stay UNIQUE (one table for every family, UNIQUE on the name): each funnel tries its candidates in order
- * (`funnelNameCandidates`), the first one nobody holds wins; the plainest funnels are named first (`funnelNamingOrder`),
- * so the variant (a wider address check, our team closing) takes the longer candidate. Only once every candidate is
- * held does a number follow ("Cold Email Meetings 2"): never a word-pool word again.
+ * A name NEVER carries a number (owner 2026-10-27, FUNNEL-NAMES-NO-NUMBERS-1027, « j'ai marre de tes campagnes avec
+ * des noms avec des chiffres »; supersedes "only once every candidate is held does a number follow"). Each funnel tries
+ * its candidates in order (`funnelNameCandidates`), the first one nobody holds wins; the plainest funnels are named
+ * first (`funnelNamingOrder`), so the variant takes the longer candidate; when every candidate is held the funnel SHARES
+ * its first one (names are unique per pipe and path, not per funnel: migration 0050). What makes a funnel different is
+ * in its name: a lead strategy's who and re-contact window (`lib/strategy-words.ts`) is in EVERY candidate of a funnel
+ * that runs one ("Active Email Replies": people who acted; "Frequent Wide Email": re-contacted after 2 months). Never a
+ * word-pool word again.
  *
  * Copy rules (humanizer): English, plain words, no dash, no internal word (funnel, pipe, leg, workflow, channel,
- * agency, catch-all). Guard: `lib/funnel-names.test.ts`.
+ * agency, catch-all), no digit. Guard: `lib/funnel-names.test.ts` (over the whole prod catalogue).
  */
 
 import { triggerCondition } from "./trigger-conditions.js";
+import { strategyNameWords } from "./strategy-words.js";
 
 /** One leg of a combination key: `<from>_to_<to>` and, when a channel of ours works it, `@<slug>[~<strategy>]`. */
 export interface KeyLeg {
@@ -65,22 +70,6 @@ const SOURCING_WHO: Readonly<Record<string, string>> = {
   "sourcing-apollo-buying-signals": "Intent",
   "sourcing-linkedin-engagement-signals": "Engaged",
   "sourcing-crm-contacts": "CRM",
-};
-
-/** A lead strategy on a sourcing or outreach leg, in customer words (who it reaches). Null = same people. */
-const STRATEGY_WHO: Readonly<Record<string, string | null>> = {
-  "valid-only": null,
-  "everyone-in-the-source": null,
-  "leads-only": null,
-  "valid-catch-all": "Wide",
-  "valid-catch-all-unknown": "Wider",
-  "contacted-pure-prospects": null,
-  "warm-never-converted": "Warm",
-  "customers-prospects": "Prospect",
-  "all-crm-contacts": "CRM",
-  "reachable-by-email": "CRM",
-  "reachable-by-phone": "CRM",
-  "replies-with-documents": "Document",
 };
 
 /** What we do, proactive (one or two words, read after <who>). */
@@ -241,8 +230,13 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
     if (wordCount(name) >= 2 && wordCount(name) <= 3 && !out.includes(name)) out.push(name);
   };
 
-  // Who: a strategy names the people best ("Warm"), else the sourcing origin, else "Cold" when a funnel finds people.
-  const strategyWho = [sourcing, first].map((l) => (l?.strategy ? (STRATEGY_WHO[l.strategy] ?? null) : null)).find((w) => w) ?? null;
+  // What a lead strategy changes (`lib/strategy-words.ts`): who it reaches ("Active", "Wide") and when it writes again
+  // ("Frequent"). Once a funnel carries one, EVERY candidate names it: a funnel never reads like its default twin
+  // (FUNNEL-NAMES-NO-NUMBERS-1027: "Cold Email Replies 6" was the follow-up-due funnel, "53" the 2-month one).
+  const marks = [sourcing, ...acting].map((l) => strategyNameWords(l?.strategy ?? null));
+  const strategyWho = marks.map((m) => m.who).find((w) => w) ?? null;
+  const windowWord = marks.map((m) => m.window).find((w) => w) ?? null;
+  const marked = strategyWho !== null || windowWord !== null;
   const sourceWho = sourcing ? (SOURCING_WHO[sourcing.channel!] ?? "New") : null;
   const reactiveHead = headTrigger !== null ? (headTrigger === "lead_found" ? "lead_found" : headTrigger) : null;
   const startsAt = legs[0]?.fromStep ?? "start";
@@ -252,6 +246,10 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
   if (!first) {
     // Only a sourcing leg of ours: we find people.
     const who = strategyWho ?? sourceWho ?? "New";
+    if (windowWord) {
+      add(windowWord, who, "Leads");
+      return out.length > 0 ? out : [`${windowWord} ${who}`];
+    }
     add(who, "Leads");
     add(who, "Lead", "Finder");
     if (result !== "Leads") add(who, "Lead", result);
@@ -262,45 +260,62 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
   const second = acting.find((l) => l.channel !== first.channel) ?? null;
   if (proactive) {
     const who = strategyWho ?? (PERSON_OUTREACH.has(first.channel!) || sourcing ? (sourceWho ?? "Cold") : null);
-    const whos = [who, ...(strategyWho && sourceWho && strategyWho !== sourceWho ? [sourceWho] : [])];
     // What it brings: our furthest step, unless that is a means (a site visit): then what the visit should become.
     const brought = broughtStep(legs);
     const results = [...new Set(MEANS.has(brought) ? [motion, brought] : [brought, motion])].map(resultOf);
-    for (const w of whos) for (const r of results) add(w, action, r);
-    // A second thing we do names the variant ("Cold Email Booking": we also book the meetings).
-    if (second) for (const w of whos) add(w, action, actionOf(second.channel!));
-    for (const r of results) add(action, r);
-    if (second) for (const r of results) add(action, actionOf(second.channel!), r);
+    if (windowWord) {
+      // Three words hold the window, who and what we do ("Frequent Wide Email"); without a who, what it brings.
+      if (who) add(windowWord, who, action);
+      for (const r of results) add(windowWord, action, r);
+      if (second) add(windowWord, action, actionOf(second.channel!));
+    } else {
+      for (const r of results) add(who, action, r);
+      // A second thing we do names the variant ("Cold Email Booking": we also book the meetings).
+      if (second) add(who, action, actionOf(second.channel!));
+      if (marked) add(who, action);
+      if (!marked) {
+        for (const r of results) add(action, r);
+        if (second) for (const r of results) add(action, actionOf(second.channel!), r);
+      }
+    }
   } else {
     const firstTrigger = legs[0]?.channel ? triggerOf(legs[0].channel, `${legs[0].fromStep}_to_${legs[0].toStep}`) : null;
     // A funnel HEADED by a condition instance answers the people of its condition (`trigger:<instance>+...`).
     const headCondition = headTrigger !== null ? triggerCondition(headTrigger) : null;
     const answers = (headCondition ? ANSWERS[headCondition.afterStep] : undefined)
       ?? (firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
-    add(strategyWho, answers, action);
-    add(answers, action);
-    add(answers, action, result);
-    if (second) add(answers, action, actionOf(second.channel!));
-    add(answers, result);
+    const mark = [windowWord, strategyWho].filter((w): w is string => !!w);
+    if (mark.length > 0) {
+      add(...mark, answers, action);
+      add(...mark, answers, result);
+      add(...mark, action);
+      add(...mark, action, result);
+    } else {
+      add(answers, action);
+      add(answers, action, result);
+      if (second) add(answers, action, actionOf(second.channel!));
+      add(answers, result);
+    }
   }
-  return out.length > 0 ? out : [`${action} ${result}`];
+  if (out.length > 0) return out;
+  const mark = [windowWord, strategyWho].filter((w): w is string => !!w);
+  return [mark.length > 0 ? `${mark.join(" ")} ${action}` : `${action} ${result}`];
 }
 
-/** PURE: true when `name` is one this composer gives `key` (a candidate, or a candidate + " <n>"). */
+/** PURE: true when `name` is one this composer gives `key`. A numbered name ("Cold Email Replies 6") never is. */
 export function isComposedNameOf(key: string, name: string, triggerOf?: PipeTriggerOf): boolean {
-  const base = name.replace(/ \d+$/, "");
-  return funnelNameCandidates(key, triggerOf).includes(base);
+  return funnelNameCandidates(key, triggerOf).includes(name);
 }
 
-/** PURE: the first candidate of `key` that `taken` does not hold, else the first candidate numbered 2, 3, ... */
+/**
+ * PURE: the first candidate of `key` that `taken` does not hold, else its first candidate, SHARED with the funnel that
+ * holds it (owner 2026-10-27, FUNNEL-NAMES-NO-NUMBERS-1027: never a number). Two funnels sharing a name differ only in
+ * what this composer does not name; a brand running both reads them apart by their sentence
+ * (`lib/funnel-short-descriptions.ts`).
+ */
 export function nextFunnelName(key: string, taken: ReadonlySet<string>, triggerOf?: PipeTriggerOf): string {
   const candidates = funnelNameCandidates(key, triggerOf);
-  const free = candidates.find((c) => !taken.has(c));
-  if (free) return free;
-  for (let n = 2; ; n += 1) {
-    const numbered = `${candidates[0]} ${n}`;
-    if (!taken.has(numbered)) return numbered;
-  }
+  return candidates.find((c) => !taken.has(c)) ?? candidates[0];
 }
 
 /**
