@@ -282,8 +282,13 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
     const firstTrigger = legs[0]?.channel ? triggerOf(legs[0].channel, `${legs[0].fromStep}_to_${legs[0].toStep}`) : null;
     // A funnel HEADED by a condition instance answers the people of its condition (`trigger:<instance>+...`).
     const headCondition = headTrigger !== null ? triggerCondition(headTrigger) : null;
-    const answers = (headCondition ? ANSWERS[headCondition.afterStep] : undefined)
-      ?? (firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[reactiveHead ?? startsAt] ?? "Lead";
+    // A funnel HEADED by a trigger answers that trigger's people, never its first pipe's own trigger ("Lead event" read
+    // "Signup Follow-up" off the 30-minute signup pipe it reuses, FUNNEL-NAMES-NO-NUMBERS-1027).
+    const answers = headCondition
+      ? (ANSWERS[headCondition.afterStep] ?? "Lead")
+      : reactiveHead !== null
+        ? (ANSWERS[reactiveHead] ?? "Lead")
+        : ((firstTrigger ? answersOfTrigger(firstTrigger) : undefined) ?? ANSWERS[startsAt] ?? "Lead");
     const mark = [windowWord, strategyWho].filter((w): w is string => !!w);
     if (mark.length > 0) {
       add(...mark, answers, action);
