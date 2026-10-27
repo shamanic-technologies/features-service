@@ -378,6 +378,41 @@ export async function readReportingBrands(read: Promise<MeetingAttributionRead> 
   }
 }
 
+type ListedRun = { workflowSlug: string | null; status: string; startedAt: string; completedAt: string | null; totalCostInUsdCents?: string };
+
+/**
+ * How long one org's run list is reused (BOX-DB-LOAD-1027-FEATURES): the Research page's own stale bound (twice its 15 min
+ * cadence). Builds overlap (mature, flash, the vendor twin, a build re-asked while the previous one still reads) and each
+ * asked runs-service for the same (org, campaign set) list: ~147k reads a day, 30% of runs-service's database time.
+ */
+export const WORKFLOW_RUNS_REUSE_MS = 30 * 60_000;
+const runLists = new Map<string, { at: number; runs: Promise<ListedRun[]> }>();
+
+/** Test seam. */
+export function __resetWorkflowRunsCache(): void {
+  runLists.clear();
+}
+
+/** One org's 200 newest execute-workflow runs of a campaign set, shared by every build for `WORKFLOW_RUNS_REUSE_MS` (in flight included). A failed read is never kept. */
+function listOrgRuns(orgId: string, campaignIds: readonly string[]): Promise<ListedRun[]> {
+  const key = `${orgId}|${[...campaignIds].sort().join(",")}`;
+  const now = Date.now();
+  const held = runLists.get(key);
+  if (held && now - held.at < WORKFLOW_RUNS_REUSE_MS) return held.runs;
+  for (const [k, v] of runLists) if (now - v.at >= WORKFLOW_RUNS_REUSE_MS) runLists.delete(k);
+  const runs = (async () => {
+    const q = new URLSearchParams({ campaignIds: campaignIds.join(","), taskName: "execute-workflow", limit: "200", include: "subtreeCost" });
+    const res = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/v1/runs?${q}`, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "", "x-org-id": orgId } });
+    if (!res.ok) throw new Error(`runs-service /v1/runs ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return ((await res.json()) as { runs?: ListedRun[] }).runs ?? [];
+  })();
+  runLists.set(key, { at: now, runs });
+  runs.catch(() => {
+    if (runLists.get(key)?.runs === runs) runLists.delete(key);
+  });
+  return runs;
+}
+
 /**
  * The last execute-workflow runs of every workflow on a leg (the catalogue's "last runs"), newest first, with what each
  * run's whole subtree cost as billed (null on the vendor basis: the run list states no vendor cost). One read per org
@@ -389,11 +424,7 @@ export async function readWorkflowRuns(campaigns: ReadonlyArray<{ campaignId: st
   const out: WorkflowRun[] = [];
   await mapWithConcurrency([...byOrg], 3, async ([orgId, ids]) => {
     try {
-      const q = new URLSearchParams({ campaignIds: [...new Set(ids)].slice(0, 500).join(","), taskName: "execute-workflow", limit: "200", include: "subtreeCost" });
-      const res = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/v1/runs?${q}`, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "", "x-org-id": orgId } });
-      if (!res.ok) throw new Error(`runs-service /v1/runs ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      const body = (await res.json()) as { runs?: Array<{ workflowSlug: string | null; status: string; startedAt: string; completedAt: string | null; totalCostInUsdCents?: string }> };
-      for (const r of body.runs ?? []) {
+      for (const r of await listOrgRuns(orgId, [...new Set(ids)].slice(0, 500))) {
         if (!r.workflowSlug) continue;
         out.push({ workflowSlug: r.workflowSlug, dynasty: dynastyOf(r.workflowSlug), status: r.status, startedAt: r.startedAt, completedAt: r.completedAt, costUsd: basis === "user" && r.totalCostInUsdCents ? Number(r.totalCostInUsdCents) / 100 : null });
       }
