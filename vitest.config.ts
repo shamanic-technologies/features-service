@@ -13,6 +13,8 @@ export default defineConfig({
     // The live lead copy (src/lib/lead-copy.ts) is module state that would carry one test's leads
     // into the next. Route suites mock the whole-population WALK; the copy has its own suites
     // (lead-copy.test.ts, routes/live-lead-copy.test.ts), which switch it on explicitly.
-    env: { LEAD_COPY_ENABLED: "false", DOWNSTREAM_READ_SHARE_MS: "0" },
+    // The held fleet walk (src/lib/lead-walk-hold.ts) is module state too: off by default, its own
+    // suite (lead-walk-hold.test.ts) switches it on.
+    env: { LEAD_COPY_ENABLED: "false", DOWNSTREAM_READ_SHARE_MS: "0", LEAD_WALK_HOLD_MS: "0" },
   },
 });

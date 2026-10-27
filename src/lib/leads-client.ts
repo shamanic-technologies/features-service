@@ -3,7 +3,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { isMemberAddress, loadOrgMemberKeys } from "./org-members.js";
-import { fingerprintScopeKey, liveLeadCopyRequested, readLeadCopy, registerEmailFingerprints, type CompactLeadRow } from "./lead-copy.js";
+import { fingerprintScopeKey, insideInteractiveView, liveLeadCopyRequested, readLeadCopy, registerEmailFingerprints, type CompactLeadRow } from "./lead-copy.js";
+import { countLeadWalk, heldLeadWalk } from "./lead-walk-hold.js";
 
 /**
  * Shape of one leads_campaigns row returned by lead-service GET /orgs/leads.
@@ -171,7 +172,7 @@ interface LeadPage {
  * goes through the process-wide slot limiter, so N concurrent walks still put at most
  * `LEAD_READ_CONCURRENCY` requests on lead-service at any instant.
  */
-async function walkLeadPages(baseUrl: string, reqHeaders: Record<string, string>): Promise<LeadRow[]> {
+async function walkLeadPages(baseUrl: string, reqHeaders: Record<string, string>): Promise<{ rows: LeadRow[]; pages: number }> {
   const rows: LeadRow[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | null = null;
@@ -196,7 +197,10 @@ async function walkLeadPages(baseUrl: string, reqHeaders: Record<string, string>
     rows.push(...data.leads);
 
     const next = data.nextCursor ?? null;
-    if (next === null) return rows;
+    if (next === null) {
+      countLeadWalk(page + 1);
+      return { rows, pages: page + 1 };
+    }
     if (seenCursors.has(next)) {
       throw new Error(`lead-service /orgs/leads returned a repeating cursor for ${baseUrl} — refusing to loop`);
     }
@@ -237,11 +241,15 @@ async function fetchLeadChanges(
  * walk, one parse, both callers served: identical inputs cannot have different answers, so this
  * changes no number. Callers only READ these rows (each maps its own persons), so sharing is safe.
  */
-const inFlightLeadPages = new Map<string, Promise<LeadRow[]>>();
+const inFlightLeadPages = new Map<string, Promise<{ rows: LeadRow[]; pages: number }>>();
 
-async function sharedLeadPage(baseUrl: string, reqHeaders: Record<string, string>): Promise<LeadRow[]> {
-  // The org is what scopes the answer; the rest of the identity headers are context, not filters.
-  const key = `${reqHeaders["x-org-id"]}|${baseUrl}`;
+/** The key a walk is shared and held under: the org scopes the answer, the rest of the headers are context. */
+function leadWalkKey(baseUrl: string, reqHeaders: Record<string, string>): string {
+  return `${reqHeaders["x-org-id"]}|${baseUrl}`;
+}
+
+async function sharedLeadPage(baseUrl: string, reqHeaders: Record<string, string>): Promise<{ rows: LeadRow[]; pages: number }> {
+  const key = leadWalkKey(baseUrl, reqHeaders);
   const existing = inFlightLeadPages.get(key);
   if (existing) return existing;
 
@@ -273,7 +281,7 @@ export async function fetchLeadIdsByStanding(
   const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId, "x-brand-id": brandId };
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
-  const rows = await walkLeadPages(`${url}/orgs/leads?${params}`, reqHeaders);
+  const { rows } = await walkLeadPages(`${url}/orgs/leads?${params}`, reqHeaders);
   return new Set(rows.map((r) => r.leadId).filter((id): id is string => typeof id === "string" && id !== ""));
 }
 
@@ -335,7 +343,8 @@ export async function fetchLeadsForRevenue(
 
   // An interactive view (servedCached) reads a LIVE COPY patched through lead-service's change feed
   // instead of re-walking the whole population (lib/lead-copy.ts, features-service#1045); every
-  // other caller keeps the walk. Both return the same compact rows for the same scope.
+  // other caller walks, and that walk is held a few minutes for the next sweep (lib/lead-walk-hold.ts).
+  // All return the same compact rows for the same scope.
   // The org's own TEAM is never a lead of its brands (TEAM-OUT-OF-UNIBOX-1017, `org-members.ts`): read beside the
   // leads, FAIL LOUD (an empty set would price the team as leads again).
   const membersPromise = loadOrgMemberKeys(headers.orgId);
@@ -347,8 +356,14 @@ export async function fetchLeadsForRevenue(
     );
     registerEmailFingerprints(fingerprintScopeKey(headers.orgId, brandId, campaignId), copyRows);
     allRows = copyRows as unknown as LeadRow[];
+  } else if (insideInteractiveView()) {
+    // An interactive read with the live copy switched off (`LEAD_COPY_ENABLED=false`) walks fresh.
+    allRows = (await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders)).rows;
   } else {
-    allRows = await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders);
+    // A fleet sweep / boot warm: the same walk is held a few minutes for the next sweep asking for this
+    // exact request (lib/lead-walk-hold.ts) — same rows, so the same figures, read once instead of ~10×.
+    const walkUrl = `${url}/orgs/leads?${params}`;
+    allRows = await heldLeadWalk(leadWalkKey(walkUrl, reqHeaders), () => sharedLeadPage(walkUrl, reqHeaders));
   }
   const members = await membersPromise;
   const scoped = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
