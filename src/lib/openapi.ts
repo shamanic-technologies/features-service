@@ -3600,6 +3600,70 @@ registry.registerPath({
   },
 });
 
+const outcomeCostExpectedSchema = z.object({
+  costPerOutcomeUsd: z.number().nullable().describe("Expected cost of one outcome of this step on the offer's expected sales path: the platform cost of every leg up to the step per paying client, divided by the step's outcomes needed per paying client (a step's cost carries the lower steps it needed). Null with unavailableReason."),
+  basis: z.string().nullable().describe("Weakest input of the expected model (measured, stated, fleet, default). Null with unavailableReason."),
+  combinationKey: z.string().nullable().describe("The sales path the figure is read off."),
+  unavailableReason: z.string().nullable().describe("step_not_on_expected_path | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."),
+});
+const outcomeCostMonthSchema = z.object({
+  month: z.string().describe("YYYY-MM (UTC)."),
+  spendUsd: z.number().describe("What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."),
+  outcomes: z.number().int().describe("People we contacted who first reached the step this month (undated ones count in the last month)."),
+  costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes. Null at 0 outcomes (never the spend as a floor)."),
+  cumulativeSpendUsd: z.number(),
+  cumulativeOutcomes: z.number().int(),
+  cumulativeCostPerOutcomeUsd: z.number().nullable().describe("Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."),
+  learning: z.boolean().describe("True while cumulativeOutcomes is below learningOutcomesRequired."),
+});
+const outcomeCostSeriesResponseRef = registry.register(
+  "OfferOutcomeCostSeriesResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    pricing: z.enum(["gross", "net"]),
+    costBasis: z.literal("charged"),
+    firstSpendDay: z.string().nullable().describe("The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."),
+    steps: z
+      .array(
+        z.object({
+          stepKey: z.enum(["paid_client", "meeting_attended", "meeting_booked", "signup", "form_submitted", "conversation", "website_visit", "lead_found"]),
+          learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
+          sinceInception: z.object({
+            spendUsd: z.number(),
+            outcomes: z.number().int(),
+            undatedOutcomes: z.number().int().describe("Of outcomes, those with no date (counted in the last month)."),
+            costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead)."),
+            learning: z.boolean(),
+          }),
+          expected: outcomeCostExpectedSchema,
+          months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
+        }),
+      )
+      .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/outcome-cost-series",
+  summary: "Cost of one outcome per month and since inception, every outcome step of an offer",
+  description:
+    "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work), the SAME spend for every step (full absorption: a step's cost carries the lower steps it needed). Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ offerId: z.string() }),
+    query: z.object({ brandId: z.string(), pricing: z.enum(["gross", "net"]).describe("Default gross; the dashboard sends net.").optional() }),
+  },
+  responses: {
+    200: { description: "One series per outcome step.", content: { "application/json": { schema: outcomeCostSeriesResponseRef } } },
+    400: { description: "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found, or offer_has_no_campaigns.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A spend or people read failed: no figure is guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const measuredArrowRateSchema = z.object({
   basis: z.enum(["our_leads", "crm"]).describe("WHERE this leg was measured. crm: the brand's CRM directly evidences BOTH ends of the leg, so it is measured on the client's WHOLE CRM history (crm-service funnel reach, contactsAtOrBeyond(TO) / contactsAtOrBeyond(FROM)). our_leads: on this brand's leads. fromReached is the population either way, so a consumer can say 'measured on 251 contacts in your CRM' or 'measured on 26 of our leads'."),
   outcomesCounted: z.enum(["all", "caused_by_our_outreach"]).nullable().describe("On our_leads, which outcomes the counts include: caused_by_our_outreach whenever the brand's CRM is available (crm.status used) — a leg only our outreach can observe is not credited with CRM outcomes our outreach did not cause; all otherwise (today's rule). Null on a crm-measured leg. Measurement only: what the ROI prices is unchanged."),

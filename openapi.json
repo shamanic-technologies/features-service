@@ -24368,6 +24368,188 @@
           "offer"
         ]
       },
+      "OfferOutcomeCostSeriesResponse": {
+        "type": "object",
+        "properties": {
+          "offerId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "firstSpendDay": {
+            "type": "string",
+            "nullable": true,
+            "description": "The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "stepKey": {
+                  "type": "string",
+                  "enum": [
+                    "paid_client",
+                    "meeting_attended",
+                    "meeting_booked",
+                    "signup",
+                    "form_submitted",
+                    "conversation",
+                    "website_visit",
+                    "lead_found"
+                  ]
+                },
+                "learningOutcomesRequired": {
+                  "type": "integer",
+                  "description": "Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."
+                },
+                "sinceInception": {
+                  "type": "object",
+                  "properties": {
+                    "spendUsd": {
+                      "type": "number"
+                    },
+                    "outcomes": {
+                      "type": "integer"
+                    },
+                    "undatedOutcomes": {
+                      "type": "integer",
+                      "description": "Of outcomes, those with no date (counted in the last month)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead)."
+                    },
+                    "learning": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "spendUsd",
+                    "outcomes",
+                    "undatedOutcomes",
+                    "costPerOutcomeUsd",
+                    "learning"
+                  ]
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Expected cost of one outcome of this step on the offer's expected sales path: the platform cost of every leg up to the step per paying client, divided by the step's outcomes needed per paying client (a step's cost carries the lower steps it needed). Null with unavailableReason."
+                    },
+                    "basis": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Weakest input of the expected model (measured, stated, fleet, default). Null with unavailableReason."
+                    },
+                    "combinationKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The sales path the figure is read off."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "step_not_on_expected_path | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."
+                    }
+                  },
+                  "required": [
+                    "costPerOutcomeUsd",
+                    "basis",
+                    "combinationKey",
+                    "unavailableReason"
+                  ]
+                },
+                "months": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "month": {
+                        "type": "string",
+                        "description": "YYYY-MM (UTC)."
+                      },
+                      "spendUsd": {
+                        "type": "number",
+                        "description": "What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."
+                      },
+                      "outcomes": {
+                        "type": "integer",
+                        "description": "People we contacted who first reached the step this month (undated ones count in the last month)."
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "spendUsd / outcomes. Null at 0 outcomes (never the spend as a floor)."
+                      },
+                      "cumulativeSpendUsd": {
+                        "type": "number"
+                      },
+                      "cumulativeOutcomes": {
+                        "type": "integer"
+                      },
+                      "cumulativeCostPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."
+                      },
+                      "learning": {
+                        "type": "boolean",
+                        "description": "True while cumulativeOutcomes is below learningOutcomesRequired."
+                      }
+                    },
+                    "required": [
+                      "month",
+                      "spendUsd",
+                      "outcomes",
+                      "costPerOutcomeUsd",
+                      "cumulativeSpendUsd",
+                      "cumulativeOutcomes",
+                      "cumulativeCostPerOutcomeUsd",
+                      "learning"
+                    ]
+                  },
+                  "description": "Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."
+                }
+              },
+              "required": [
+                "stepKey",
+                "learningOutcomesRequired",
+                "sinceInception",
+                "expected",
+                "months"
+              ]
+            },
+            "description": "One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."
+          }
+        },
+        "required": [
+          "offerId",
+          "brandId",
+          "pricing",
+          "costBasis",
+          "firstSpendDay",
+          "steps"
+        ]
+      },
       "BrandConversionRatesResponse": {
         "type": "object",
         "properties": {
@@ -43710,6 +43892,156 @@
           },
           "502": {
             "description": "A spend or people read failed: no chart is guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/outcome-cost-series": {
+      "get": {
+        "summary": "Cost of one outcome per month and since inception, every outcome step of an offer",
+        "description": "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work), the SAME spend for every step (full absorption: a step's cost carries the lower steps it needed). Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross; the dashboard sends net."
+            },
+            "required": false,
+            "description": "Default gross; the dashboard sends net.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One series per outcome step.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferOutcomeCostSeriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found, or offer_has_no_campaigns.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A spend or people read failed: no figure is guessed.",
             "content": {
               "application/json": {
                 "schema": {
