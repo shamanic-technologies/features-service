@@ -24,6 +24,7 @@ import { expectedReturnForCampaign, expectedReturnForFunnelCampaign, expectedRet
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { computeSpendChart, fetchFollowupActionRows, type ChartLeg, type ChartScope, type SpendChart } from "../lib/spend-charts-io.js";
 import type { FollowupActionRow } from "../lib/followup-actions-client.js";
+import { fetchOfferChannelMap, type OfferChannel } from "../lib/offer-channels.js";
 
 const router = Router();
 
@@ -103,20 +104,30 @@ export function pipeScope(row: SalesFunnelCampaignRow, u: SalesFunnelUnitRow, st
     actingCampaignIds: [u.campaignId],
     leg,
     pipe: { campaignId: u.campaignId, featureSlug: u.featureSlug },
+    brandLevelSpend: false,
   };
 }
 
-/** PURE. A set of funnel campaigns as ONE scope (a campaign, an offer), charted on `leg`. */
-export function groupScope(rows: readonly SalesFunnelCampaignRow[], leg: ChartLeg | null): ChartScope {
+/**
+ * PURE. A set of funnel campaigns as ONE scope (a campaign, an offer), charted on `leg`.
+ *
+ * `offerChannels` (offer grain only, SPEND-CHARTS-INCEPTION-1027): EVERY campaign the offer ran, per channel, the
+ * campaigns from before the funnel-campaign era included (campaign-service rows stating the offer and no sales funnel),
+ * so "since you started" is since the offer's first activity, and the offer's brand-level work joins the spend like on
+ * every offer money figure (`lib/brand-level-spend.ts`). The scope is then the byte-same campaign and channel set the
+ * brand offers read (`/brands/:id/offers`) prices that offer on.
+ */
+export function groupScope(rows: readonly SalesFunnelCampaignRow[], leg: ChartLeg | null, offerChannels?: readonly OfferChannel[]): ChartScope {
   const units = rows.flatMap((r) => r.units);
-  const ids = [...new Set(units.map((u) => u.campaignId))].sort();
+  const ids = [...new Set([...units.map((u) => u.campaignId), ...(offerChannels ?? []).flatMap((c) => c.campaignIds)])].sort();
   return {
     campaignIds: ids,
-    featureSlugs: [...new Set(units.map((u) => u.featureSlug))].sort(),
+    featureSlugs: [...new Set([...units.map((u) => u.featureSlug), ...(offerChannels ?? []).map((c) => c.featureSlug)])].sort(),
     personCampaignIds: ids,
     actingCampaignIds: ids,
     leg,
     pipe: null,
+    brandLevelSpend: offerChannels !== undefined,
   };
 }
 
@@ -184,6 +195,7 @@ export async function computeOfferSpendCharts(
   offerId: string,
   brandId: string,
   rows: readonly SalesFunnelCampaignRow[],
+  offerChannels: readonly OfferChannel[],
   pricing: Pricing,
   headers: DownstreamHeaders,
 ): Promise<OfferSpendChartsBody> {
@@ -193,7 +205,7 @@ export async function computeOfferSpendCharts(
     chartContext(brandId, rows.flatMap((r) => r.units.map((u) => u.campaignId)), pricing, headers),
     expectedReturnForOffer(identity, brandId, offerId, null),
   ]);
-  const offer = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps)), expected);
+  const offer = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps), offerChannels), expected);
   return { offerId, brandId, pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), offer };
 }
 
@@ -239,20 +251,28 @@ router.get("/offers/:offerId/spend-charts", apiKeyAuth, async (req, res) => {
     const pricing = pricingOrRefuse(req.query.pricing);
     if (pricing === null) return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
-    const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerId, headers), assertBrandHeld(brandId, headers)]);
+    const [rows, channelMap] = await Promise.all([
+      fetchSalesFunnelCampaigns(brandId, offerId, headers),
+      fetchOfferChannelMap(brandId, headers),
+      assertBrandHeld(brandId, headers),
+    ]);
     const ofOffer = rows.filter((r) => r.offerId === offerId);
     if (ofOffer.length === 0) return void res.status(404).json({ error: "This offer runs no sales funnel campaign on this brand", reason: "offer_has_no_campaigns" });
+    const offerChannels = channelMap.channelsOf(offerId);
     const body = await servedCached({
       view: "offer-spend-charts",
       scopeKey: buildScopeKey(offerId, {
         orgId: headers.orgId,
         brandId,
         units: ofOffer.flatMap((r) => r.units.map((u) => `${u.campaignId}:${u.legKey}`)).sort().join("+"),
+        // Every campaign of the offer, legacy ones included (SPEND-CHARTS-INCEPTION-1027): a cell built on the funnel
+        // units alone keys differently and is never served again.
+        campaigns: `inception:${offerChannels.map((c) => `${c.featureSlug}>${c.campaignIds.join("+")}`).join(",")}`,
         pricing,
       }),
       orgId: headers.orgId,
       responseShape: routeResponseShapeFingerprint("/offers/{offerId}/spend-charts"),
-      compute: () => computeOfferSpendCharts(offerId, brandId, ofOffer, pricing, headers),
+      compute: () => computeOfferSpendCharts(offerId, brandId, ofOffer, offerChannels, pricing, headers),
     });
     res.json(body);
   } catch (err) {
