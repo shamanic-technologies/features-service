@@ -515,14 +515,183 @@ interface ServeRunRow {
   campaignId?: string | null;
   audienceId?: string | null;
   featureSlug?: string | null;
+  startedAt?: string | null;
   totalCostInUsdCents?: string;
   netTotalCostInUsdCents?: string;
 }
 
+/** One serve as held between reads: the producer's own cost strings, priced at read time. */
+interface HeldServe {
+  id: string;
+  campaignId: string;
+  audienceId: string | null;
+  featureSlug: string | null;
+  /** NaN = the row stated no readable start: the campaign is walked whole next time. */
+  startedAtMs: number;
+  totalCostInUsdCents: unknown;
+  netTotalCostInUsdCents: unknown;
+}
+
+interface HeldCampaignServes {
+  /** Newest first, as runs-service lists them. */
+  rows: HeldServe[];
+  /** When the last WHOLE walk of the campaign ran. */
+  fullAt: number;
+  usedAt: number;
+}
+
+/**
+ * The serve walk is HELD per (org, brand, campaign) (BOX-DB-LOAD-1027-FEATURES-SERVES): a finished serve's
+ * subtree cost does not move once its work is done, and the same walk was repeated on every refresh of every
+ * offer cell (~1,500 `/v1/runs` lead-serve pages an hour, each OFFSET page re-scanning the ones before it).
+ * A read re-walks only the serves started within `OFFER_SERVE_SETTLE_MS` (2 h; runs-service `startedAfter`,
+ * usually one page) and keeps every older serve it holds; the whole campaign is re-walked every
+ * `OFFER_SERVE_FULL_WALK_MS` (6 h), so a rare late cost on an old serve is picked up within that bound.
+ * Same rows, same order, same strings as a whole walk whenever no serve older than the settle window moved.
+ * Kill switch / suite default: `OFFER_SERVE_HOLD_ENABLED=false` (every read walks the whole campaign).
+ */
+function serveHoldEnabled(): boolean {
+  return process.env.OFFER_SERVE_HOLD_ENABLED !== "false";
+}
+function msEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const n = raw === undefined || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+const serveSettleMs = () => msEnv("OFFER_SERVE_SETTLE_MS", 2 * 60 * 60_000);
+const serveFullWalkMs = () => msEnv("OFFER_SERVE_FULL_WALK_MS", 6 * 60 * 60_000);
+/** A campaign nobody read for this long is dropped; the held total stays under the row cap (oldest use out). */
+const SERVE_HOLD_IDLE_MS = 12 * 60 * 60_000;
+const SERVE_HOLD_MAX_ROWS = 100_000;
+
+const heldServes = new Map<string, HeldCampaignServes>();
+const serveWalksInFlight = new Map<string, Promise<HeldServe[]>>();
+const serveWalkStats = { fullWalks: 0, recentWalks: 0, pages: 0 };
+
+/** Test seam: forget every held walk and zero the counters. */
+export function __resetOfferServeHold(): void {
+  heldServes.clear();
+  serveWalksInFlight.clear();
+  serveWalkStats.fullWalks = 0;
+  serveWalkStats.recentWalks = 0;
+  serveWalkStats.pages = 0;
+}
+/** Test seam: how many walks and `/v1/runs` pages were read since the last reset. */
+export function __offerServeWalkStats(): { fullWalks: number; recentWalks: number; pages: number } {
+  return { ...serveWalkStats };
+}
+
+/**
+ * One newest-first walk of a campaign's serve runs (all of them, or those started at/after `startedAfter`);
+ * a run inserted mid-walk shifts the pages down: a repeat, deduped by id (first seen kept), never a skip.
+ */
+async function walkCampaignServes(
+  url: string,
+  headers: Record<string, string>,
+  brandId: string,
+  campaignId: string,
+  startedAfter: string | null,
+): Promise<HeldServe[]> {
+  const byId = new Map<string, HeldServe>();
+  for (let page = 0; ; page += 1) {
+    if (page >= MAX_SERVE_PAGES) throw new Error(`runs-service serve walk exceeded ${MAX_SERVE_PAGES} pages for campaign ${campaignId}`);
+    const params = new URLSearchParams({
+      brandId,
+      campaignId,
+      serviceName: "lead-service",
+      taskName: "lead-serve",
+      include: "subtreeCost",
+      limit: String(SERVE_PAGE),
+      offset: String(page * SERVE_PAGE),
+    });
+    if (startedAfter) params.set("startedAfter", startedAfter);
+    serveWalkStats.pages += 1;
+    const response = await fetchWithRetry(`${url}/v1/runs?${params}`, { headers });
+    if (!response.ok) throw new Error(`runs-service /v1/runs (serves) failed (${response.status}): ${await response.text()}`);
+    const data = (await response.json()) as { runs?: ServeRunRow[] };
+    if (!Array.isArray(data.runs)) throw new Error("runs-service /v1/runs returned no runs array");
+    for (const r of data.runs) {
+      // A repeat keeps its first position and takes the later page's figures (Map.set on a held key).
+      byId.set(r.id, {
+        id: r.id,
+        campaignId: r.campaignId ?? campaignId,
+        audienceId: r.audienceId ?? null,
+        featureSlug: r.featureSlug ?? null,
+        startedAtMs: r.startedAt ? Date.parse(r.startedAt) : NaN,
+        totalCostInUsdCents: r.totalCostInUsdCents,
+        netTotalCostInUsdCents: r.netTotalCostInUsdCents,
+      });
+    }
+    if (data.runs.length < SERVE_PAGE) return [...byId.values()];
+  }
+}
+
+function evictHeldServes(now: number, keep: string): void {
+  let total = 0;
+  for (const [key, h] of heldServes) {
+    if (key !== keep && now - h.usedAt > SERVE_HOLD_IDLE_MS) heldServes.delete(key);
+    else total += h.rows.length;
+  }
+  if (total <= SERVE_HOLD_MAX_ROWS) return;
+  const byUse = [...heldServes.entries()].filter(([k]) => k !== keep).sort((a, b) => a[1].usedAt - b[1].usedAt);
+  for (const [key, h] of byUse) {
+    if (total <= SERVE_HOLD_MAX_ROWS) break;
+    heldServes.delete(key);
+    total -= h.rows.length;
+  }
+}
+
+/** The campaign's serves: a whole walk, or the held settled serves + a fresh walk of the recent ones. */
+async function campaignServes(
+  url: string,
+  headers: Record<string, string>,
+  orgId: string,
+  brandId: string,
+  campaignId: string,
+): Promise<HeldServe[]> {
+  if (!serveHoldEnabled()) {
+    serveWalkStats.fullWalks += 1;
+    return walkCampaignServes(url, headers, brandId, campaignId, null);
+  }
+  const key = `${orgId}|${brandId}|${campaignId}`;
+  const inFlight = serveWalksInFlight.get(key);
+  if (inFlight) return inFlight;
+  const walk = (async () => {
+    const now = Date.now();
+    const held = heldServes.get(key);
+    const settledBefore = now - serveSettleMs();
+    const incremental =
+      held !== undefined && now - held.fullAt < serveFullWalkMs() && held.rows.every((r) => Number.isFinite(r.startedAtMs));
+    let rows: HeldServe[];
+    let fullAt: number;
+    if (incremental) {
+      serveWalkStats.recentWalks += 1;
+      // runs-service `startedAfter` is inclusive (>=): the fresh walk and the held settled rows partition the campaign.
+      const fresh = await walkCampaignServes(url, headers, brandId, campaignId, new Date(settledBefore).toISOString());
+      const freshIds = new Set(fresh.map((r) => r.id));
+      rows = [...fresh, ...held!.rows.filter((r) => r.startedAtMs < settledBefore && !freshIds.has(r.id))];
+      fullAt = held!.fullAt;
+    } else {
+      serveWalkStats.fullWalks += 1;
+      rows = await walkCampaignServes(url, headers, brandId, campaignId, null);
+      fullAt = now;
+    }
+    heldServes.set(key, { rows, fullAt, usedAt: now });
+    evictHeldServes(now, key);
+    return rows;
+  })();
+  serveWalksInFlight.set(key, walk);
+  try {
+    return await walk;
+  } finally {
+    serveWalksInFlight.delete(key);
+  }
+}
+
 /**
  * Every serve run of the given campaigns with its subtree's COMMITTED cost (runs `GET /v1/runs`,
- * `include=subtreeCost`), one sequential newest-first walk per campaign (a run inserted mid-walk shifts
- * the pages down: a repeat, deduped by id, never a skip), campaigns 4 at a time. Fails loud.
+ * `include=subtreeCost`), one sequential newest-first walk per campaign, campaigns 4 at a time; settled
+ * serves are held between reads (see `campaignServes`). Fails loud.
  */
 export async function fetchOfferServeCosts(
   brandId: string,
@@ -533,34 +702,16 @@ export async function fetchOfferServeCosts(
   const { url, apiKey } = runsEnv();
   const headers = runsHeaders(apiKey, brandId, identity);
   const perCampaign = await mapWithConcurrency(campaignIds, 4, async (campaignId) => {
-    const byId = new Map<string, ServeCost>();
-    for (let page = 0; ; page += 1) {
-      if (page >= MAX_SERVE_PAGES) throw new Error(`runs-service serve walk exceeded ${MAX_SERVE_PAGES} pages for campaign ${campaignId}`);
-      const params = new URLSearchParams({
-        brandId,
-        campaignId,
-        serviceName: "lead-service",
-        taskName: "lead-serve",
-        include: "subtreeCost",
-        limit: String(SERVE_PAGE),
-        offset: String(page * SERVE_PAGE),
-      });
-      const response = await fetchWithRetry(`${url}/v1/runs?${params}`, { headers });
-      if (!response.ok) throw new Error(`runs-service /v1/runs (serves) failed (${response.status}): ${await response.text()}`);
-      const data = (await response.json()) as { runs?: ServeRunRow[] };
-      if (!Array.isArray(data.runs)) throw new Error("runs-service /v1/runs returned no runs array");
-      for (const r of data.runs) {
-        const cents = selectCostCentsString(r, "totalCostInUsdCents", pricing);
-        byId.set(r.id, {
-          runId: r.id,
-          campaignId: r.campaignId ?? campaignId,
-          audienceId: r.audienceId ?? null,
-          featureSlug: r.featureSlug ?? null,
-          cents,
-        });
-      }
-      if (data.runs.length < SERVE_PAGE) return [...byId.values()];
-    }
+    const rows = await campaignServes(url, headers, identity.orgId, brandId, campaignId);
+    return rows.map(
+      (r): ServeCost => ({
+        runId: r.id,
+        campaignId: r.campaignId,
+        audienceId: r.audienceId,
+        featureSlug: r.featureSlug,
+        cents: selectCostCentsString(r, "totalCostInUsdCents", pricing),
+      }),
+    );
   });
   return perCampaign.flat();
 }

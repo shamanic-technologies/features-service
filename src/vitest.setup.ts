@@ -212,6 +212,12 @@ vi.mock("./lib/contacted-value-unavailable.js", async (importOriginal) => {
 process.env.SEND_DATES_MEMORY_MS = "0";
 process.env.SEND_DATES_BATCH_MS = "0";
 
+/**
+ * Suite-wide default: no offer serve walk is held between reads (lib/offer-sourcing.ts `OFFER_SERVE_HOLD_ENABLED`,
+ * on in production), so one test's runs fixture never answers another's. `offer-serve-hold.test.ts` turns it on.
+ */
+process.env.OFFER_SERVE_HOLD_ENABLED = "false";
+
 // The brand's campaign-less work on the offer/brand grains (lib/brand-level-spend.ts): none by default, so every
 // route suite reads its own spend unchanged. lib/brand-level-spend.test.ts drives the real fold.
 vi.mock("./lib/brand-level-spend.js", async (importOriginal) => {
