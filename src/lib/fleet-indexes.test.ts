@@ -83,8 +83,8 @@ describe("fleet indexes", () => {
       interestToMeetingPct: 25,
       population: "brands_reporting_meetings",
     });
-    // MEETING-COST-METHODS-1024: the cost index reads the ledger only: no ledger read, no cost point
-    expect(p.has("cold-email-cost-per-meeting")).toBe(false);
+    // LANDING-MEETING-PRICE-1027: no ledger read and no outcome prices = the pipes' chain, labelled expected
+    expect(p.get("cold-email-cost-per-meeting")).toMatchObject({ unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", ledgerUnavailableReason: "ledger_unreadable" } });
   });
 
   it("MEETING-INDEX-ZERO-1025: the Cost Per Meeting Index serves the ledger's price, or nothing while the ledger is incomplete", () => {
@@ -117,6 +117,34 @@ describe("fleet indexes", () => {
     expect(meetingCostIndexPoint(recomputing, { ...expected, priceUsd: null })).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
     expect(meetingCostIndexPoint(null, { ...expected, maturity: "learning" })).toMatchObject({ value: 794.46, status: "noise", inputs: { ledgerUnavailableReason: "ledger_unreadable" } });
     expect(meetingCostIndexPoint(null, null)).toBeNull();
+  });
+
+  it("LANDING-MEETING-PRICE-1027: ledger recomputing or short + outcome prices unmeasured = the pipes' chain, labelled expected", () => {
+    // prod 2026-10-26: the meeting pipe's 3 meetings sit on a campaign two workflows spent on, so no single workflow owns
+    // a meeting, the outcome prices read `leg_unmeasured`, and the index served null for two days
+    const meetingPipe: MeetingPipeEvidence = {
+      rows: [mbRow({ spentUsd: 0.31, contacted: 0, outcomes: 0 })],
+      pooled: { spentUsd: 5, contacted: 12, outcomes: 3, spentByDynasty: { "ai-meeting-booking-avior": 4.69, "ai-meeting-booking-torcular": 0.31 } },
+    };
+    const unmeasured = { priceUsd: null, maturity: null, outcomes: 0, unmeasuredReason: "leg_unmeasured" };
+    const replyRows = [row({ costPerOutcomeUsd: 141, outcomes: 44 })];
+    const expectedValue = 141 / 0.25 + 5 / 3;
+    for (const meetingLedger of [
+      { unitCostUsd: 114.32, produced: 73, coveragePct: 62.3, daysMissing: 258, unpricedInputs: 1 },
+      { unitCostUsd: 114.32, produced: 73, coveragePct: 62.3, daysMissing: 0, unpricedInputs: 1 },
+    ]) {
+      const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingPipe, meetingLedger, meetingExpected: unmeasured })).get("cold-email-cost-per-meeting")!;
+      expect(p.value).toBeCloseTo(expectedValue, 6);
+      expect(p).toMatchObject({ status: "noise", unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", meetingPipeSource: "pipe_all_workflows", outcomePricesUnmeasuredReason: "leg_unmeasured", ledgerUnitCostUsd: 114.32 } });
+      expect(p.inputs.ledgerUnavailableReason).toBe(meetingLedger.daysMissing > 0 ? "ledger_being_recomputed" : "ledger_coverage_short");
+    }
+    // the outcome prices' price, when they have one, still wins over the chain; a ledger price over both
+    const ledger = { unitCostUsd: 0.013, produced: 83, coveragePct: 62.2, daysMissing: 265, unpricedInputs: 2 };
+    const chain = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingPipe })).get("cold-email-cost-per-meeting")!;
+    expect(chain.value).toBeCloseTo(expectedValue, 6);
+    expect(meetingCostIndexPoint(ledger, { priceUsd: 733.78, maturity: "early", outcomes: 3, unmeasuredReason: null }, chain)).toMatchObject({ value: 733.78, inputs: { method: "expected_outcome_prices" } });
+    // no chain either (no meeting on the pipe): the ledger's null and its reason, never its partial figure
+    expect(meetingCostIndexPoint(ledger, unmeasured, null)).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
   });
 
   it("a mature meeting workflow wins; the chain is as trustworthy as its weakest link", () => {
