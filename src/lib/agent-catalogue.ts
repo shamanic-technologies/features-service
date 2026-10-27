@@ -194,8 +194,9 @@ export interface DeclaredStepInput {
   description: string;
   shortDescription: string;
   icon: string;
-  towardStep: string;
-  towardRatePct: number;
+  /** Null = reached only after Paid client: it leads to no step, so it has no value (CLIENT-SATISFIED-1027). */
+  towardStep: string | null;
+  towardRatePct: number | null;
   producedBy: string | null;
   /** Its rung on the lifecycle ladder or `none` (`lib/lifecycle-ladder.ts`); null/absent = never stated. */
   lifecycleRung?: string | null;
@@ -772,7 +773,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     else addArrow(p.fromStep, p.toStep, rateOf(p.fromStep, p.toStep).ratePct);
   }
   for (const l of FUNNEL_LEGS) if (l.fromStep) addArrow(l.fromStep.key, l.toStep.key, rateOf(l.fromStep.key, l.toStep.key).ratePct);
-  for (const d of inputs.declaredSteps) addArrow(d.key, d.towardStep, d.towardRatePct);
+  for (const d of inputs.declaredSteps) if (d.towardStep !== null) addArrow(d.key, d.towardStep, d.towardRatePct);
 
   const values = new Map<string, { value: number | null; via: { toStep: string; ratePct: number } | null }>();
   const valueOf = (step: string, seen: Set<string> = new Set()): number | null => {

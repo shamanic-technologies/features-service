@@ -543,8 +543,9 @@ export const declaredSteps = pgTable("declared_steps", {
   description: text("description").notNull(),
   shortDescription: text("short_description").notNull(),
   icon: text("icon").notNull(),
-  towardStep: text("toward_step").notNull(),
-  towardRatePct: doublePrecision("toward_rate_pct").notNull(),
+  /** Null = a step reached only after Paid client (CLIENT-SATISFIED-1027): it leads nowhere, so it has no value. */
+  towardStep: text("toward_step"),
+  towardRatePct: doublePrecision("toward_rate_pct"),
   /** What produces it, free text (an endpoint, a service): provenance for "ROI per API output". */
   producedBy: text("produced_by"),
   /** Its rung on the ONE lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */

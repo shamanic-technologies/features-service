@@ -318,8 +318,8 @@ export interface DeclaredStep {
   description: string;
   shortDescription: string;
   icon: string;
-  towardStep: string;
-  towardRatePct: number;
+  towardStep: string | null;
+  towardRatePct: number | null;
   producedBy: string | null;
   /** Its rung on the lifecycle ladder (`lib/lifecycle-ladder.ts`) or `none`; null = never stated. */
   lifecycleRung: string | null;
@@ -379,7 +379,10 @@ export async function listDeclaredSalesPathChains(): Promise<DeclaredSalesPathCh
 export async function registerStepDeclarations(): Promise<{ steps: DeclaredStep[]; rates: DeclaredLegRate[] }> {
   const [steps, rates] = await Promise.all([listDeclaredSteps(), listDeclaredLegRates()]);
   registerDeclaredSteps(steps.map((s) => ({ key: s.key as ChannelStepKey, label: s.label, description: s.description, shortDescription: s.shortDescription })));
-  registerDeclaredLegRates([...steps.map((s) => ({ fromStep: s.key, toStep: s.towardStep, ratePct: s.towardRatePct })), ...rates]);
+  registerDeclaredLegRates([
+    ...steps.flatMap((s) => (s.towardStep !== null && s.towardRatePct !== null ? [{ fromStep: s.key, toStep: s.towardStep, ratePct: s.towardRatePct }] : [])),
+    ...rates,
+  ]);
   return { steps, rates };
 }
 
