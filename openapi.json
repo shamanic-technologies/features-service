@@ -69339,7 +69339,7 @@
     "/internal/catalogue/sales-funnels/descriptive-names": {
       "post": {
         "summary": "Rename every word-named sales funnel to the name that says what it does (internal, api-key, staff)",
-        "description": "FUNNEL-NAMES-1016 (owner 2026-10-16): a sales funnel's name says what it does in 2 or 3 plain words (\"Cold Email Meetings\", \"Reply Booking\"), composed from its legs (`lib/funnel-names.ts`). Every funnel still named with a word (\"Victory\") takes its composed name; the old word is retired, never given again. Names stay unique: a funnel whose candidates are all held takes the first one numbered (\"Cold Email Meetings 2\"). Dry run unless `apply: true`; idempotent (a second run renames nothing). `firstKeys`: the funnel ids customers run, named first so they get the plainest name.",
+        "description": "FUNNEL-NAMES-1016 (owner 2026-10-16): a sales funnel's name says what it does in 2 or 3 plain words (\"Cold Email Meetings\", \"Reply Booking\"), composed from its legs (`lib/funnel-names.ts`). Every funnel still named with a word (\"Victory\") takes its composed name; the old word is retired, never given again. A name never carries a number (FUNNEL-NAMES-NO-NUMBERS-1027): a funnel whose candidates are all held shares its first one; a funnel running a lead strategy names it (\"Active Email Replies\"), and every numbered name is renamed. Dry run unless `apply: true`; idempotent (a second run renames nothing). `firstKeys`: the funnel ids customers run, named first so they get the plainest name.",
         "tags": [
           "Internal"
         ],

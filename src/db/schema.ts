@@ -1,4 +1,5 @@
 import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const features = pgTable(
   "features",
@@ -417,11 +418,13 @@ export const catalogueMarks = pgTable(
 export const salesPathCombinationNames = pgTable("sales_path_combination_names", {
   /** `combinationKeyOf` (`lib/offer-sales-paths.ts`): the legs in order, each managed leg `@<channel slug>`. */
   combinationKey: text("combination_key").primaryKey(),
-  name: text("name").notNull().unique(),
+  /** Unique per pipe (`campaign:`) and path (`path:`) only: two sales funnels may share one (migration 0050,
+   *  FUNNEL-NAMES-NO-NUMBERS-1027: a funnel name never carries a number). */
+  name: text("name").notNull(),
   assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
   /** WITHDRAWN 2026-10-11 (owner): the one-sentence funnel description, written once by v0.179.134. Kept, unread. */
   description: text("description"),
-});
+}, (t) => [uniqueIndex("sales_path_combination_names_catalogue_name_unique").on(t.name).where(sql`${t.combinationKey} LIKE 'campaign:%' OR ${t.combinationKey} LIKE 'path:%'`)]);
 
 /**
  * THE TRIGGER TYPES (`lib/channel-triggers.ts`, owner 2026-10-09): one row per KIND of event that runs a

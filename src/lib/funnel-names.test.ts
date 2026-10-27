@@ -65,12 +65,23 @@ describe("a sales funnel's name says what it does (owner 2026-10-16, FUNNEL-NAME
     }
   });
 
-  it("names stay unique: a taken name passes to the next candidate, then to a number", () => {
+  it("a taken name passes to the next candidate, and never to a number (owner 2026-10-27, FUNNEL-NAMES-NO-NUMBERS-1027)", () => {
     expect(nextFunnelName(COLD_AI_MEETINGS, new Set())).toBe("Cold Email Meetings");
+    expect(nextFunnelName(COLD_AI_MEETINGS, new Set(["Cold Email Meetings"]))).toBe(funnelNameCandidates(COLD_AI_MEETINGS)[1]);
     const taken = new Set(funnelNameCandidates(COLD_AI_MEETINGS));
-    expect(nextFunnelName(COLD_AI_MEETINGS, taken)).toBe("Cold Email Meetings 2");
-    expect(isComposedNameOf(COLD_AI_MEETINGS, "Cold Email Meetings 2")).toBe(true);
+    expect(nextFunnelName(COLD_AI_MEETINGS, taken)).toBe("Cold Email Meetings");
+    expect(isComposedNameOf(COLD_AI_MEETINGS, "Cold Email Meetings 2")).toBe(false);
     expect(isComposedNameOf(COLD_AI_MEETINGS, "Victory")).toBe(false);
+  });
+
+  it("a lead strategy is in every candidate: a funnel never reads like its default twin", () => {
+    const due = COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~lead-follow-up-due+");
+    const twoMonths = COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~valid-only-2-months+");
+    for (const c of funnelNameCandidates(due)) expect(c, c).toMatch(/\bActive\b/);
+    for (const c of funnelNameCandidates(twoMonths)) expect(c, c).toMatch(/\bFrequent\b/);
+    expect(first(due)).toBe("Active Email Replies");
+    expect(first(twoMonths)).toBe("Frequent Cold Email");
+    expect(first(COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~valid-only-6-months+"))).toBe("Patient Cold Email");
   });
 
   it("the plainest funnel is named first: a lead strategy or a trigger head yields", () => {
