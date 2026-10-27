@@ -254,10 +254,15 @@ export function ledgerLlmBars(
   for (const c of ran) {
     if (c.acted.length === 0) continue;
     const share = c.spentUsd / c.acted.length;
-    const reached = new Set(c.reached);
+    // A reached key is the person, or one key per occurrence (`<person>#<n>`) on an occurrence step (CLIENT-SATISFIED-1027).
+    const hits = new Map<string, number>();
+    for (const k of c.reached) {
+      const person = k.includes("#") ? k.slice(0, k.indexOf("#")) : k;
+      hits.set(person, (hits.get(person) ?? 0) + 1);
+    }
     for (const person of c.acted) {
       const w = writerOf(c.campaignId, person);
-      const hit = reached.has(person) ? 1 : 0;
+      const hit = hits.get(person) ?? 0;
       if (!w) {
         leftOut.contacted += 1;
         leftOut.outcomes += hit;
