@@ -40,6 +40,19 @@ describe("a declared step reads the timeline facts under its key", () => {
     expect(r.occurrencesByLead).toEqual(new Map([["l1", 1]]));
   });
 
+  it("one client message stated on two lead rows of the same person is ONE Client Satisfied (sourceRef)", () => {
+    const msg = { ...fact("client_satisfied", "2026-10-27T10:00:00Z"), sourceRef: "crm-fact-1" };
+    const other = { ...fact("client_satisfied", "2026-10-27T11:00:00Z"), sourceRef: "crm-fact-2" };
+    const r = declaredStepReached(
+      [journey("l2", [msg, other], [], null), journey("l1", [msg], [], null), journey("l1", [msg], [], "o1")],
+      new Set(["l1", "l2"]),
+      new Set(),
+      satisfied,
+    );
+    // crm-fact-1 is filed once (on l1, first by lead id), crm-fact-2 on l2: 2 messages, never 4.
+    expect(r.occurrencesByLead).toEqual(new Map([["l1", 1], ["l2", 1]]));
+  });
+
   it("a person step counts the person once, whatever the facts", () => {
     const r = declaredStepReached([journey("l1", [fact("x", "2026-10-27T10:00:00Z"), fact("x", "2026-10-28T10:00:00Z")])], new Set(["l1"]), new Set(), { key: "x", subjectKind: "person" });
     expect(r.meetingLeadIds).toEqual(new Set(["l1"]));

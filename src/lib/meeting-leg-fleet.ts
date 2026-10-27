@@ -256,7 +256,9 @@ export interface DeclaredStepReading {
  * PURE. A DECLARED step's reading on one brand (CLIENT-SATISFIED-1027): the facts lead-service's timeline states under
  * the step's key (`label === key`), on the leads the pipe's campaigns acted on, dated on or after the pipe's first act
  * on that lead (an undated fact, or a lead with no dated act, counts: the producer states no time to cut on). One fact
- * = one occurrence; a `person` step counts the lead once, any other kind counts every occurrence.
+ * = one occurrence; a `person` step counts the lead once, any other kind counts every occurrence. A fact carrying the
+ * producer's `sourceRef` is ONE occurrence for the brand however many lead rows (or offer journeys) state it: it is
+ * filed once, on the first acted lead (lead id order) whose cut it passes.
  */
 export function declaredStepReached(
   journeys: readonly Journey[],
@@ -277,7 +279,7 @@ export function declaredStepReached(
     }
     const mine = new Map<string, number>();
     for (const f of j.facts) {
-      if (f.label !== step.key) continue;
+      if (f.label !== step.key || f.sourceRef) continue;
       const at = f.occurredAt ?? "";
       mine.set(at, (mine.get(at) ?? 0) + 1);
     }
@@ -285,15 +287,41 @@ export function declaredStepReached(
     for (const [at, n] of mine) all.set(at, Math.max(all.get(at) ?? 0, n));
     occurrences.set(j.leadId, all);
   }
+  // Facts naming their source: one occurrence per source for the brand (the same client message on two lead rows).
+  const bySource = new Map<string, Array<{ leadId: string; occurredAt: string | null }>>();
+  for (const j of journeys) {
+    if (!actedIds.has(j.leadId)) continue;
+    for (const f of j.facts) {
+      if (f.label !== step.key || !f.sourceRef) continue;
+      const list = bySource.get(f.sourceRef) ?? [];
+      list.push({ leadId: j.leadId, occurredAt: f.occurredAt });
+      bySource.set(f.sourceRef, list);
+    }
+  }
+  const sourced = new Map<string, number>();
+  for (const stated of bySource.values()) {
+    const passing = stated
+      .filter((s) => {
+        const from = firstAct.get(s.leadId);
+        return !from || !s.occurredAt || s.occurredAt >= from;
+      })
+      .sort((a, b) => (a.leadId < b.leadId ? -1 : a.leadId > b.leadId ? 1 : 0));
+    if (passing.length === 0) continue;
+    sourced.set(passing[0]!.leadId, (sourced.get(passing[0]!.leadId) ?? 0) + 1);
+  }
   const meetingLeadIds = new Set<string>();
   const occurrencesByLead = new Map<string, number>();
+  for (const [leadId, n] of sourced) {
+    meetingLeadIds.add(leadId);
+    occurrencesByLead.set(leadId, n);
+  }
   for (const [leadId, byInstant] of occurrences) {
     const from = firstAct.get(leadId);
     let n = 0;
     for (const [at, count] of byInstant) if (!from || at === "" || at >= from) n += count;
     if (n === 0) continue;
     meetingLeadIds.add(leadId);
-    occurrencesByLead.set(leadId, n);
+    occurrencesByLead.set(leadId, (occurrencesByLead.get(leadId) ?? 0) + n);
   }
   return step.subjectKind === "person" ? { meetingLeadIds } : { meetingLeadIds, occurrencesByLead };
 }
