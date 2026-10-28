@@ -9296,6 +9296,197 @@ registry.registerPath({
   },
 });
 
+// ── GTM Factory step 1, shadow only (FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN; routes/factory-shadow.ts) ─────────────
+
+const factoryBasis = z.enum(["measured", "stated", "fleet", "default"]).nullable().describe("The weakest input the figure rests on: measured < stated < fleet < default.");
+const factoryExpectedLeg = z.object({
+  legKey: z.string(),
+  ratePct: z.number().nullable().describe("The leg's yield (null on the entry leg: its rate prices nothing)."),
+  rateSource: z.string().nullable(),
+  rateBasis: factoryBasis,
+  outcomesNeededPerPayingClient: z.number().nullable().describe("Outcomes of this leg needed per ONE Target (the catalogue's name: here the Target stands in for Paid client)."),
+  pipeId: z.string().nullable(),
+  costPerOutcomeUsd: z.number().nullable().describe("The pipe's OWN cost per outcome (its best workflow's; 0 on a leg the client's team works)."),
+  costSource: z.string().nullable(),
+  costBasis: factoryBasis,
+});
+const factoryTargetFigures = z.object({
+  costPerTargetUsd: z.number().nullable().describe("What one Target costs on this line: Σ each pipe's own cost per outcome x outcomes needed per Target (the DECIDE rule: each pipe's own cost and yield)."),
+  roi: z.number().nullable().describe("(Target value − what the people taken over were already worth) ÷ cost per Target."),
+  basis: factoryBasis,
+  unavailableReason: z.string().nullable().describe("Why there is no figure (`target_unvalued`, `pipe_unpriced:<pipe>`, `leg_unrated:<leg>`, `customer_time_only`...); null with figures."),
+  targetValueUsd: z.number().nullable().describe("What reaching the Target is worth: the offer's lifetime revenue on Paid client, else it x the catalogue's leg rates to Paid client."),
+  legs: z.array(factoryExpectedLeg),
+});
+const factoryPlanLine = z.object({
+  funnelId: z.string().describe("The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."),
+  line: z.string().describe("Start → [Channel] → Step → ... → Target, in words."),
+  legs: z.array(z.object({ legKey: z.string(), pipeId: z.string().nullable(), channelSlug: z.string().nullable(), channelName: z.string().nullable(), playId: z.string().nullable().describe("The play id when the leg runs a play with a strategy, else null."), strategyName: z.string().nullable() })),
+  figures: factoryTargetFigures,
+});
+const factoryShadowBody = registry.register(
+  "FactoryShadowPlan",
+  z.object({
+    campaignId: z.string(),
+    orgId: z.string(),
+    brandId: z.string(),
+    offerId: z.string(),
+    salesFunnelId: z.string(),
+    salesFunnelName: z.string(),
+    brief: z.string().nullable().describe("The brief the judge read (campaign-service's), null = none: every pipe on its default play."),
+    briefUpdatedAt: z.string().nullable(),
+    status: z.enum(["ok", "judge_failed", "plan_failed"]).describe("`judge_failed` = Jev could not answer for a pipe (the plan is still served, that pipe unconstrained); `plan_failed` = no line to the Target could be priced (or the campaign could not be read)."),
+    failure: z.string().nullable(),
+    picks: z.array(
+      z.object({
+        basePipeId: z.string(),
+        channelName: z.string(),
+        inRunningFunnel: z.boolean().describe("A pipe of the campaign today; false = a pipe only a candidate line to the Target uses."),
+        runningPipeId: z.string().nullable().describe("The pipe or play the campaign runs on it today (null when not in the running funnel)."),
+        runningPlayName: z.string().nullable(),
+        pickedPipeId: z.string().nullable().describe("The play Jev picked from the brief (the pipe id = its default play); null when the judge failed."),
+        pickedPlayName: z.string().nullable(),
+        confidence: z.number().nullable().describe("Jev's confidence; null when no Jev call was made."),
+        source: z.enum(["jev", "empty_brief", "single_play"]).nullable().describe("`empty_brief` / `single_play` = the default play, no Jev call."),
+        failure: z.string().nullable(),
+        differs: z.boolean().nullable().describe("The pick differs from what runs today (pipes of the running funnel only)."),
+      }),
+    ).describe("Every pipe with plays to choose from, the running funnel's first."),
+    pickDiffers: z.boolean(),
+    plan: z
+      .object({
+        target: z.string().describe("The catalogue step the campaign targets."),
+        targetSource: z.enum(["campaign", "funnel_last_step"]).describe("`funnel_last_step` while campaign-service states no Target yet."),
+        mode: z.enum(["proactive", "reactive"]),
+        triggerId: z.string().nullable(),
+        startStep: z.string().nullable().describe("Where every line starts: null = Start (proactive), else the trigger's step."),
+        running: z.union([
+          factoryPlanLine.extend({ reachesTarget: z.literal(true) }),
+          z.object({ funnelId: z.string(), reachesTarget: z.literal(false), unavailableReason: z.string() }),
+        ]).describe("The funnel running today, priced to the Target on the same basis."),
+        shadow: factoryPlanLine.nullable().describe("The best-ROI straight line to the Target (one pipe or play per leg, the brief's picks applied). Null with `shadowUnavailableReason`."),
+        shadowUnavailableReason: z.string().nullable(),
+        planDiffers: z.boolean().nullable().describe("The shadow line differs from the running one; null when either is missing."),
+        candidatesPriced: z.number().int(),
+        candidatesSetAside: z.number().int().describe("Chains left out because they walk a step the offer does not have."),
+      })
+      .nullable(),
+    computedAt: z.string(),
+  }).openapi({ description: "SHADOW ONLY: nothing here changes what the campaign runs." }),
+);
+const factoryOrgDay = z.object({
+  orgId: z.string(),
+  campaigns: z.number().int(),
+  planDiffers: z.number().int(),
+  pickDiffers: z.number().int(),
+  differs: z.number().int().describe("Campaigns whose plan OR a pick differs from what runs."),
+  judgeFailed: z.number().int(),
+  planFailed: z.number().int(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{id}/factory-shadow",
+  summary: "GTM Factory shadow of one funnel campaign: Jev's play per pipe from the brief, and the best-ROI line to its Target beside the running funnel",
+  description:
+    "SHADOW ONLY (FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN): the last stored pass (every 3 hours), never computed on the read. Per pipe with plays, the play Jev picked from " +
+    "the campaign's brief (judged once, re-judged when the brief or the pipe's plays change; empty brief = the default play, no Jev call) beside the play running today. " +
+    "Then the best-ROI straight line of pipes from where the campaign starts (Start, or its trigger's step) to its Target, priced on each pipe's own cost per outcome and " +
+    "yield, beside the running funnel priced the same way: expected cost per Target and ROI on both. Org-scoped (x-org-id). 404 `factory_shadow_not_computed` before the first pass.",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ brandId: z.string(), id: z.string() }) },
+  responses: {
+    200: { description: "The campaign's shadow.", content: { "application/json": { schema: factoryShadowBody } } },
+    404: { description: "Not computed yet (or not this org's / brand's)", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/factory-shadow/monitoring",
+  summary: "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
+  description:
+    "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` when, on the last pass, the judge or the plan failed for a " +
+    "campaign, or the last pass is older than 7 hours, or none ever ran. `campaigns` = the last pass, one row per campaign. `days` 1..90 (default 30). Staff-gated at api-service.",
+  tags: ["Internal"],
+  request: { query: z.object({ days: z.string().optional() }) },
+  responses: {
+    200: {
+      description: "Verdict, series, last pass.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["never_computed", "last_pass_stale", "judge_failed", "plan_failed"])) }),
+            lastPass: z.object({ sweptAt: z.string(), campaigns: z.number().int(), judgeFailed: z.number().int(), planFailed: z.number().int(), durationMs: z.number() }).nullable(),
+            everyHours: z.number(),
+            series: z.array(factoryOrgDay.omit({ orgId: true }).extend({ day: z.string(), orgs: z.array(factoryOrgDay) })),
+            campaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), failure: z.string().nullable(), planDiffers: z.boolean().nullable(), pickDiffers: z.boolean() })),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid days", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/factory-shadow/sweep",
+  summary: "Run a GTM Factory shadow pass now (internal, api-key; 202, single flight)",
+  tags: ["Internal"],
+  responses: { 202: { description: "Started", content: { "application/json": { schema: z.object({ started: z.boolean() }) } } } },
+});
+
+const factoryEvalItem = z.object({
+  campaignId: z.string(),
+  orgId: z.string(),
+  salesFunnelName: z.string(),
+  basePipeId: z.string(),
+  brief: z.string(),
+  expectedPipeId: z.string(),
+  pickedPipeId: z.string().nullable(),
+  confidence: z.number().nullable(),
+  agrees: z.boolean().nullable(),
+  failure: z.string().nullable(),
+});
+registry.registerPath({
+  method: "post",
+  path: "/internal/factory-shadow/eval",
+  summary: "Run the brief judge's proof in the background (internal, api-key; 202)",
+  description: "On every live funnel campaign, a brief is written from the descriptions of the plays it runs today and Jev re-picks per pipe. Never stored as verdicts, never read by a plan.",
+  tags: ["Internal"],
+  responses: { 202: { description: "Started", content: { "application/json": { schema: z.object({ started: z.boolean() }) } } } },
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/factory-shadow/eval",
+  summary: "The brief judge's last proof: agreement rate and every disagreement (internal, api-key)",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "The last eval.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string(),
+            campaigns: z.number().int(),
+            judged: z.number().int(),
+            agreed: z.number().int(),
+            agreementPct: z.number().nullable(),
+            emptyBriefPipes: z.number().int().describe("Pipes with plays on campaigns running only default plays: the brief is empty, the rule picks the default, no Jev call."),
+            failed: z.number().int(),
+            disagreements: z.array(factoryEvalItem),
+            items: z.array(factoryEvalItem),
+          }),
+        },
+      },
+    },
+    404: { description: "Never run", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const generator = new OpenApiGeneratorV3(registry.definitions);
 
 export const openApiDocument = generator.generateDocument({

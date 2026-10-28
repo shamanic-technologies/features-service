@@ -432,7 +432,7 @@ const setAsideByStepWire = (m: CatalogueModel, setAside: ReadonlyArray<{ missing
 const offerEcho = (o: OfferContext | null) =>
   o ? { offerId: o.offerId, brandId: o.brandId, lifetimeRevenueUsd: o.lifetimeRevenueUsd, lifetimeRevenueSource: o.lifetimeRevenueSource, ownRateLegs: o.rates.size } : null;
 
-async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
+async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates"> | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
   const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels] = await Promise.all([
@@ -471,6 +471,15 @@ async function loadModel(offer: OfferContext | null = null): Promise<Loaded> {
     if (p && p.economics.status === "learning") p.economics = { ...p.economics, reason: "measurement_unreadable" };
   }
   return { model, measurements, names, cat: all };
+}
+
+/**
+ * The catalogue model priced on ONE offer's lifetime revenue and the FLEET's pipe figures and leg rates (no brand rate
+ * read: the GTM Factory shadow plan decides on each pipe's own cost and yield, `lib/factory-shadow.ts`). Off the request
+ * path only.
+ */
+export async function loadCatalogueModelForLifetimeRevenue(lifetimeRevenueUsd: number | null, lifetimeRevenueSource: OfferContext["lifetimeRevenueSource"]): Promise<CatalogueModel> {
+  return (await loadModel({ lifetimeRevenueUsd, lifetimeRevenueSource, rates: new Map() })).model;
 }
 
 const nameKeyOfPipe = (p: Pick<CataloguePipe, "channelSlug" | "legKey">): string => campaignNameKeyOf(p.channelSlug, p.legKey);

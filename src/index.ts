@@ -40,6 +40,7 @@ import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
+import factoryShadowRoutes, { startFactoryShadowLoop } from "./routes/factory-shadow.js";
 import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import { startGenerationSequencesCopy } from "./lib/generation-sequences-copy.js";
 import transferBrandRoutes from "./routes/transfer-brand.js";
@@ -96,6 +97,7 @@ app.use(legacyLegKeyArrivalsMiddleware);
 
 // Routes
 app.use(healthRoutes);
+app.use(factoryShadowRoutes);
 app.use(publicRoutes);
 app.use(featuresRoutes);
 app.use(statsRoutes);
@@ -221,6 +223,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Both views of the billed basis (MATURITY-VIEW-1023), one after the other, two minutes in, then every 5 minutes
         // (RESEARCH-STALE-1024: rebuilt on a clock, never only when someone reads the page).
         startResearchRefreshLoop();
+        // GTM Factory step 1, shadow only (routes/factory-shadow.ts): the brief judge + shadow plan of every live funnel campaign,
+        // ten minutes in, then every 3 hours; never computed on a read.
+        startFactoryShadowLoop();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()

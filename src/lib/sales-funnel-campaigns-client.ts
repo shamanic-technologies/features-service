@@ -23,6 +23,14 @@ export interface SalesFunnelCampaignRow {
   stopReason: string | null;
   createdAt: string;
   units: SalesFunnelUnitRow[];
+  /** FACTORY-P1 (campaign-service): the catalogue step it targets; null only while not backfilled. Absent on an older build. */
+  target?: string | null;
+  /** Its strategy in plain language (null = none), and when it was last edited. */
+  brief?: string | null;
+  briefUpdatedAt?: string | null;
+  /** What it starts from: Start (`proactive`) or a trigger (`reactive`, `triggerId` when the funnel names it). */
+  mode?: "proactive" | "reactive" | null;
+  triggerId?: string | null;
 }
 
 /** campaign-service's funnel campaigns of one brand (optionally one offer), org-scoped. FAIL-LOUD. */
