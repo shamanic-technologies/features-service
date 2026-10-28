@@ -166,15 +166,24 @@ describe("held fleet lead walk (lib/lead-walk-hold.ts)", () => {
     expect(s.pages()).toBe(9);
   });
 
-  it("never holds a failed walk (fail loud), and never serves an interactive read", async () => {
+  it("never holds a failed walk (fail loud), and serves an interactive read only a walk of the same 30 s instant", async () => {
     process.env.LEAD_WALK_HOLD_MS = "600000";
     const s = serveLeads(ROWS, { failFirst: true });
     await expect(fetchLeadsForRevenue("brand-1", undefined, HEADERS)).rejects.toThrow(/400/);
     await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
     expect(s.pages()).toBe(3);
-    // Inside a view compute (live copy switched off by the suite env) the read walks fresh every time.
+    // Inside a view compute (live copy switched off by the suite env): a walk taken this instant is reused...
     await withLiveLeadCopy(() => fetchLeadsForRevenue("brand-1", undefined, HEADERS));
-    expect(s.pages()).toBe(6);
+    expect(s.pages()).toBe(3);
+    // ...an older one never is: the read walks fresh.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 31_000);
+      await withLiveLeadCopy(() => fetchLeadsForRevenue("brand-1", undefined, HEADERS));
+      expect(s.pages()).toBe(6);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a brand transfer drops the orgs' held walks", async () => {
