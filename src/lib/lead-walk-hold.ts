@@ -34,6 +34,7 @@
 import { gzip, gunzip } from "node:zlib";
 import { promisify } from "node:util";
 import { createSlotLimiter } from "./concurrency.js";
+import { liveCopyCounters } from "./lead-copy.js";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -96,9 +97,14 @@ function count(field: keyof WalkCounters, n: number): void {
   console.log(
     `[features-service] lead walks, last ${Math.round((now - windowStartedAt) / 60_000)} min: ` +
       `${w.pagesRead} lead-service pages read (${w.walks} walks), ${w.heldHits} reads served from a held walk ` +
-      `sparing ${w.pagesSpared} pages (${asked} pages asked without the hold); held ${held.size} scopes, ${heldBytes} bytes`,
+      `sparing ${w.pagesSpared} pages (${asked} pages asked without the hold); held ${held.size} scopes, ${heldBytes} bytes; ` +
+      `interactive reads: ${liveCopyCounters.copyReads} from a live copy, ${liveCopyCounters.freshWalks} fresh walks (scope not read often enough to keep a feed); ` +
+      `${liveCopyCounters.fleetPeeks} fleet reads served from a live copy`,
   );
   windowCounters = { walks: 0, pagesRead: 0, heldHits: 0, pagesSpared: 0 };
+  liveCopyCounters.copyReads = 0;
+  liveCopyCounters.freshWalks = 0;
+  liveCopyCounters.fleetPeeks = 0;
   windowStartedAt = now;
 }
 
@@ -230,12 +236,20 @@ export function countLeadWalk(pages: number): void {
  * The rows of the walk named by `key` (org + exact request URL): a held walk of the same request taken
  * less than {@link leadWalkHoldMs} ago, else a fresh `walk()` that is then held. Concurrent asks of one
  * key share one walk. `walk` counts the pages it really reads ({@link countLeadWalk}).
+ *
+ * `maxAgeMs` (an interactive read, lib/lead-copy.ts: the same READ INSTANT, 30 s) takes a held walk only
+ * that young, else walks now (or joins the walk already in flight) — and HOLDS what it read, so the fleet
+ * sweeps asking the same request in the next minutes read it instead of walking again.
  */
-export async function heldLeadWalk<Row>(key: string, walk: () => Promise<{ rows: Row[]; pages: number }>): Promise<Row[]> {
+export async function heldLeadWalk<Row>(
+  key: string,
+  walk: () => Promise<{ rows: Row[]; pages: number }>,
+  opts: { maxAgeMs?: number } = {},
+): Promise<Row[]> {
   const holdMs = leadWalkHoldMs();
   if (holdMs === 0) return (await walk()).rows;
   const entry = held.get(key);
-  if (entry && Date.now() - entry.heldAt < holdMs) {
+  if (entry && Date.now() - entry.heldAt < Math.min(holdMs, opts.maxAgeMs ?? holdMs)) {
     count("heldHits", 1);
     count("pagesSpared", entry.pages);
     return decodedRows(key, entry) as Promise<Row[]>;

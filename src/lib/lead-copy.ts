@@ -15,9 +15,19 @@
  * sorts (the engine's leads/events carry their own deterministic sort), so no figure depends on it.
  *
  * WHEN IT IS USED. Only inside a `servedCached` view compute ({@link withLiveLeadCopy}) — the
- * interactive views a customer polls. The fleet sweeps (cross-org revenue, customer health, the
- * return snapshots) read each brand once an hour and keep the plain walk: opening a feed per brand
- * there would make lead-service keep dozens of feeds warm for nobody watching them.
+ * interactive views a customer polls — and only for a scope READ OFTEN ENOUGH TO PAY FOR ITS FEED
+ * ({@link liveCopyPaysFor}). The fleet sweeps (cross-org revenue, customer health, the return
+ * snapshots) keep the plain walk: opening a feed per brand there would make lead-service keep dozens
+ * of feeds warm for nobody watching them. A fleet read may still be served a copy this process
+ * synced within the walk-hold window ({@link peekLeadCopy}): no call at all, same freshness bound.
+ *
+ * WHAT A FEED COSTS lead-service (BOX-LOAD-1028-FEATURES-LEADREADS). One read keeps the feed warm
+ * 30 min, and a warm feed is RECONCILED (the whole scope re-read and re-hashed, as heavy as a walk)
+ * every 3 min: one read of a scope nobody reads again costs ~10 whole-scope reads, a walk costs one.
+ * Measured 2026-10-28: 49 feeds warm, 44 of them read once in a burst (cells of ~40 brands computed
+ * together) and never again, so most of lead-service's reconcile work kept feeds warm for nobody. A
+ * feed pays for itself only on a scope read at least every ~3 min; any other interactive read walks
+ * the scope FRESH (a held walk only if taken inside the same 30 s read instant).
  *
  * BOUNDS. The copies live in this process's 384 MB heap, so they are capped by TOTAL ROWS
  * ({@link LEAD_COPY_MAX_ROWS}, least-recently-read evicted first) and dropped once nobody has read
@@ -47,6 +57,8 @@ interface LeadCopy {
   cursor: string | null;
   rows: Map<string, CompactLeadRow>;
   lastReadAt: number;
+  /** When this copy was last brought current (the instant its sync was asked). */
+  syncedAt: number;
 }
 
 function positiveIntEnv(name: string, fallback: number): number {
@@ -63,6 +75,55 @@ function positiveIntEnv(name: string, fallback: number): number {
 export const LEAD_COPY_MAX_ROWS = positiveIntEnv("LEAD_COPY_MAX_ROWS", 120_000);
 /** A copy nobody read for this long is dropped (lead-service keeps its feed warm 30 min). */
 export const LEAD_COPY_IDLE_MS = positiveIntEnv("LEAD_COPY_IDLE_MS", 15 * 60_000);
+
+/**
+ * A scope's feed is opened (or kept advancing) only once it was read at {@link LEAD_COPY_OPEN_READS}
+ * distinct instants within {@link LEAD_COPY_OPEN_WINDOW_MS}, i.e. at least every ~3 min: below that
+ * rate a fresh walk per read costs lead-service less than the reconciles a warm feed costs. Reads less
+ * than {@link LEAD_COPY_READ_GAP_MS} apart are ONE instant (one compute reads a scope several times).
+ */
+export const LEAD_COPY_OPEN_READS = positiveIntEnv("LEAD_COPY_OPEN_READS", 3);
+export const LEAD_COPY_OPEN_WINDOW_MS = positiveIntEnv("LEAD_COPY_OPEN_WINDOW_MS", 6 * 60_000);
+export const LEAD_COPY_READ_GAP_MS = positiveIntEnv("LEAD_COPY_READ_GAP_MS", 30_000);
+
+/** Per scope key: the distinct read instants inside the window, oldest first. */
+const readInstants = new Map<string, number[]>();
+
+/** What the copy decision did since the last log window (read by the walk log, lib/lead-walk-hold.ts). */
+export const liveCopyCounters = { copyReads: 0, freshWalks: 0, fleetPeeks: 0 };
+
+/**
+ * Record an interactive read of `key` and say whether the live copy pays for it (see the module doc).
+ * The answer only picks HOW the rows are read (feed vs fresh walk); both return the scope's current rows.
+ */
+export function liveCopyPaysFor(key: string, now = Date.now()): boolean {
+  const since = now - LEAD_COPY_OPEN_WINDOW_MS;
+  const kept = (readInstants.get(key) ?? []).filter((t) => t > since);
+  const last = kept[kept.length - 1];
+  if (last === undefined || now - last >= LEAD_COPY_READ_GAP_MS) kept.push(now);
+  readInstants.delete(key);
+  readInstants.set(key, kept);
+  // Bounded: scopes not read inside the window are forgotten, oldest first.
+  if (readInstants.size > 512) {
+    for (const [k, list] of readInstants) {
+      if (readInstants.size <= 512) break;
+      if (k !== key && (list[list.length - 1] ?? 0) <= since) readInstants.delete(k);
+    }
+  }
+  return kept.length >= LEAD_COPY_OPEN_READS;
+}
+
+/**
+ * The rows of a copy this process brought current less than `maxAgeMs` ago, WITHOUT asking lead-service
+ * (so no feed is kept warm by it), else undefined. For the fleet reads, whose held walk states the same
+ * bound: a copy synced inside it is at least as current as the walk the hold would serve.
+ */
+export function peekLeadCopy(key: string, maxAgeMs: number, now = Date.now()): CompactLeadRow[] | undefined {
+  if (maxAgeMs <= 0 || process.env.LEAD_COPY_ENABLED === "false") return undefined;
+  const copy = copies.get(key);
+  if (!copy || now - copy.syncedAt >= maxAgeMs || inFlightSyncs.has(key)) return undefined;
+  return [...copy.rows.values()];
+}
 
 /** Least-recently-read first: a Map keeps insertion order and a read re-inserts. */
 const copies = new Map<string, LeadCopy>();
@@ -113,6 +174,10 @@ export function __resetLeadCopies(): void {
   copies.clear();
   inFlightSyncs.clear();
   fingerprints.clear();
+  readInstants.clear();
+  liveCopyCounters.copyReads = 0;
+  liveCopyCounters.freshWalks = 0;
+  liveCopyCounters.fleetPeeks = 0;
 }
 
 /**
@@ -128,6 +193,7 @@ export function dropLeadCopiesForOrgs(orgIds: readonly string[]): number {
   for (const key of [...copies.keys()]) if (owned(key)) { copies.delete(key); dropped++; }
   for (const key of [...inFlightSyncs.keys()]) if (owned(key)) inFlightSyncs.delete(key);
   for (const key of [...fingerprints.keys()]) if (owned(key)) fingerprints.delete(key);
+  for (const key of [...readInstants.keys()]) if (owned(key)) readInstants.delete(key);
   return dropped;
 }
 
@@ -196,7 +262,7 @@ export async function readLeadCopy(
     }
 
     copies.delete(key);
-    copies.set(key, { cursor: answer.cursor, rows, lastReadAt: now });
+    copies.set(key, { cursor: answer.cursor, rows, lastReadAt: now, syncedAt: now });
     evict(now, key);
     return [...rows.values()];
   })();
