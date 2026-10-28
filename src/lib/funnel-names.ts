@@ -153,6 +153,7 @@ const ANSWERS: Readonly<Record<string, string>> = {
   signup: "Signup",
   form_submitted: "Form",
   purchase: "Buyer",
+  paid_client: "Client",
 };
 
 /** Who a reactive funnel answers when its first pipe runs on a trigger that is not its step's own (one word). A
@@ -284,7 +285,10 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
     const headCondition = headTrigger !== null ? triggerCondition(headTrigger) : null;
     // A funnel HEADED by a trigger answers that trigger's people, never its first pipe's own trigger ("Lead event" read
     // "Signup Follow-up" off the 30-minute signup pipe it reuses, FUNNEL-NAMES-NO-NUMBERS-1027).
-    const answers = headCondition
+    // An AFTER-SALE funnel (out of Paid client, CLIENT-SATISFIED-1027) answers clients, whatever event fires it.
+    const answers = startsAt === "paid_client"
+      ? ANSWERS.paid_client
+      : headCondition
       ? (ANSWERS[headCondition.afterStep] ?? "Lead")
       : reactiveHead !== null
         ? (ANSWERS[reactiveHead] ?? "Lead")

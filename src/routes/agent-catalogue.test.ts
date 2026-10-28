@@ -905,6 +905,17 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect(pipe.body.id).toBe("cold-whatsapp-outreach|paid_client_to_client_satisfied");
     const pub = await request(app).get("/public/catalogue/steps");
     expect(pub.body.rows.find((r: { key: string }) => r.key === "client_satisfied")).toMatchObject({ name: "Client Satisfied" });
+    // An AFTER-SALE funnel: Lead event heads the pipe out of Paid client, so a campaign can run it.
+    const funnel = await request(app)
+      .post("/internal/catalogue/sales-funnels")
+      .set(KEY)
+      .send({ pipeIds: ["cold-whatsapp-outreach|paid_client_to_client_satisfied"], createdBy: "staff" });
+    expect(funnel.status, JSON.stringify(funnel.body)).toBe(201);
+    expect(funnel.body.id).toBe("paid_client_to_client_satisfied@cold-whatsapp-outreach");
+    const detail = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(funnel.body.id)}`).set(KEY);
+    expect(detail.status, JSON.stringify(detail.body)).toBe(200);
+    expect(detail.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_event" } });
+    expect(detail.body).toMatchObject({ name: "Client WhatsApp", costUsd: null, status: "learning" });
   });
 
   it("COST-ACCOUNTING-1023: every outcome states what one occurrence is about, a person or an object", async () => {

@@ -892,6 +892,13 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   for (const p of pipes.values()) {
     if (p.mode !== "reactive" || p.fromStep === null || p.fromStep === SOURCED_STEP || p.toStep === SOURCED_STEP) continue;
     const first: PathLeg = { legKey: p.legKey, fromStep: p.fromStep, toStep: p.toStep };
+    // An AFTER-SALE pipe (out of Paid client, CLIENT-SATISFIED-1027: keep paying clients happy, measured like every
+    // outcome) is a path by itself: it never walks back to Paid client.
+    if (p.fromStep === "paid_client") {
+      const id = pathIdOf([p.legKey]);
+      paths.set(id, { id, legKeys: [p.legKey], type: "reactive", steps: [p.fromStep, p.toStep], rates: ratesOfChain([first]) });
+      continue;
+    }
     walk(p.toStep, [first], new Set([p.fromStep, p.toStep]), "reactive");
   }
 
@@ -963,7 +970,10 @@ export function triggerHeadRefusal(model: CatalogueModel, triggerId: string, leg
   if (!anyStep && legs[0]!.fromStep !== step) return "trigger_step_mismatch";
   for (let i = 1; i < legs.length; i += 1) if (legs[i]!.fromStep !== legs[i - 1]!.toStep) return "path_invalid";
   const steps = [...(anyStep ? [legs[0]!.fromStep ?? "start"] : [step]), ...legs.map((l) => l!.toStep)];
-  if (new Set(steps).size !== steps.length || legs[legs.length - 1]!.toStep !== "paid_client") return "path_invalid";
+  // A path ends at Paid client, or (CLIENT-SATISFIED-1027, owner 2026-10-27/28: keep paying clients happy and measure
+  // it) it is an AFTER-SALE path: its first leg leaves Paid client and it never comes back to it.
+  const afterSale = legs[0]!.fromStep === "paid_client";
+  if (new Set(steps).size !== steps.length || (!afterSale && legs[legs.length - 1]!.toStep !== "paid_client")) return "path_invalid";
   return null;
 }
 
