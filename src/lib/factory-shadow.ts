@@ -552,9 +552,31 @@ export function evalBriefOf(model: CatalogueModel, salesFunnelId: string): { bri
     const base = model.pipes.get(baseId);
     if (!base || playOptionsOf(model, base).length < 2) continue;
     expected.set(baseId, running.id);
-    if (running.play) sentences.push(`On ${base.channelName} (${stepLabel(model, base.fromStep ?? "start")} to ${stepLabel(model, base.toStep)}): ${running.play.strategyName}. ${running.play.strategyDescription}`);
+    const sentence = playSentenceOf(model, running);
+    if (sentence) sentences.push(sentence);
   }
   return { brief: sentences.join("\n"), expected };
+}
+
+/** PURE: one pipe's play in one plain line ("On Lead Sourcing (Start to Lead): Valid only. Sends only to ..."), from the
+ *  strategy's own description (what Jev reads among the options); null on a pipe with no strategy (its plain default). */
+export function playSentenceOf(model: CatalogueModel, running: CataloguePipe): string | null {
+  if (!running.play) return null;
+  const from = running.fromStep === null ? "Start" : stepLabel(model, running.fromStep);
+  return withoutDashes(`On ${running.channelName} (${from} to ${stepLabel(model, running.toStep)}): ${running.play.strategyName}. ${running.play.strategyDescription}`);
+}
+
+/** No em or en dash in client copy (owner rule): a dash between words becomes a comma. */
+export const withoutDashes = (text: string): string => text.replace(/\s*[\u2014\u2013]\s*/g, ", ");
+
+/**
+ * PURE: the brief a funnel campaign is PREFILLED with (owner 2026-10-28, FACTORY-P1-BRIEF-PREFILL): what it runs today, one
+ * line per pipe of its running funnel that runs a named strategy, so the judge re-picks the plays running today until the
+ * owner edits it. Null when every pipe runs its plain default (nothing to say: an empty brief already picks the defaults).
+ */
+export function prefillBriefOf(model: CatalogueModel, salesFunnelId: string): string | null {
+  const lines = [...runningPipesOf(model, salesFunnelId).values()].map((p) => playSentenceOf(model, p)).filter((l): l is string => l !== null);
+  return lines.length === 0 ? null : lines.join("\n");
 }
 
 // ── Monitoring: per org, per day ───────────────────────────────────────────────────────────────────
