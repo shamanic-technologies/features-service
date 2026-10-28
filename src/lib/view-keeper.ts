@@ -89,8 +89,24 @@ const DEFAULT_KEEPER_CONCURRENCY = 2;
 const DEFAULT_KEEPER_ROUND_BUDGET_MS = 4 * 60_000;
 /** A precompute the handler refused (e.g. a 404 for a campaign with no funnel) is not retried for this long. */
 const REFUSED_RETRY_MS = 6 * 60 * 60_000;
-/** A precompute that finished is not re-asked for this long, even if its cell was never written. */
-const DONE_RETRY_MS = 60 * 60_000;
+/**
+ * A precompute that answered 200 is not re-asked for this long, even if no cell carries its URL: an instance
+ * whose cell another scope's request already holds (one `workflow-projection-evidence` cell serves every
+ * campaign of a brand × leg) is answered as a HIT, writes nothing, and so never reads as held. Re-asked every
+ * hour, ~160 such instances ran their whole handler each hour for nothing (BOX-LOAD-1028-FEATURES-MEM). A read
+ * of one is a miss once and then joins the read set; a held cell is kept fresh by the facts gate on its reads.
+ */
+const DONE_RETRY_MS = REASK_AFTER_MS;
+
+/**
+ * A request under `/internal/` is a staff or fleet build (the Research build, the customer-health board), not a
+ * customer dashboard read: each has its own build loop. A cell computed inside one records that URL as its
+ * replay, and the keeper replayed it once an hour per org it named: 38 fleet Research builds and 8 board builds
+ * an hour in the refresher, none of them kept by anyone (BOX-LOAD-1028-FEATURES-MEM). Never a keeper request.
+ */
+export function isKeeperReplayable(url: string): boolean {
+  return !url.startsWith("/internal/");
+}
 /** A brand's campaign rows are re-read at most this often. */
 const SCOPES_TTL_MS = 15 * 60_000;
 
@@ -228,7 +244,7 @@ export async function materializeRound(): Promise<PrecomputeReport> {
   const shapeCutoff = began - SHAPE_WINDOW_MS;
   const readCutoff = began - READ_WINDOW_MS;
   for (const cell of cells) {
-    if (!cell.replayUrl) continue;
+    if (!cell.replayUrl || !isKeeperReplayable(cell.replayUrl)) continue;
     const computedMs = new Date(cell.computedAt).getTime();
     const key = heldKey(cell.orgId, canonicalRequest(cell.replayUrl));
     // A cell of an earlier build's shape is never served (its read is a miss): it holds nothing.

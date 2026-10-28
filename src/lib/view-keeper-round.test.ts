@@ -169,4 +169,35 @@ describe("materializeRound", () => {
     expect(asked).toEqual([]);
     expect(report.noIdentity).toBe(3);
   });
+  it("never replays a staff or fleet build (/internal/*) a cell recorded as its read (BOX-LOAD-1028-FEATURES-MEM)", async () => {
+    // A cell computed inside the Research build carries that build's URL as its replay: replayed per org it
+    // named, it re-ran the whole fleet Research build in the refresher every hour for nobody.
+    const oldShape = (await import("./response-shape.js")).withResponseShape("k|x=1", "0123456789ab");
+    for (const url of ["/internal/research/compute?basis=user&view=mature", "/internal/stats/customer-health"]) {
+      cells.push({ replayUrl: url, replayHeaders: HEADERS, orgId: "org-a", brandId: READ_BRAND, lastReadAt: new Date(now - 1_000).toISOString(), computedAt: recent, scopeKey: oldShape });
+    }
+    const report = await materializeRound();
+    const urls = asked.map((a) => a.url.replace("http://127.0.0.1:9999", ""));
+    expect(urls.some((u) => u.startsWith("/internal/"))).toBe(false);
+    expect(report.read.requests).toBe(2);
+  });
+
+  it("does not re-ask within a day an instance that answered 200 but holds no cell of its own (a hit on a shared cell)", async () => {
+    await materializeRound();
+    const first = asked.map((a) => a.url).sort();
+    expect(first.length).toBeGreaterThan(0);
+    asked.length = 0;
+    vi.useFakeTimers({ now: Date.now() + 2 * 3_600_000, toFake: ["Date"] });
+    try {
+      await materializeRound();
+      expect(asked).toEqual([]);
+      vi.setSystemTime(Date.now() + 23 * 3_600_000);
+      await materializeRound();
+      // A day on, they are asked again (beside the read cells, now a day old themselves).
+      const again = asked.map((a) => a.url);
+      for (const url of first) expect(again).toContain(url);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
