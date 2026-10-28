@@ -31,6 +31,10 @@ export interface SalesFunnelCampaignRow {
   /** What it starts from: Start (`proactive`) or a trigger (`reactive`, `triggerId` when the funnel names it). */
   mode?: "proactive" | "reactive" | null;
   triggerId?: string | null;
+  /** FACTORY-P1-FOLLOW-PLAN (campaign-service): the campaign runs the funnel of its latest plan (opt-in). Absent on an older build. */
+  followsPlan?: boolean;
+  /** The funnel it RUNS now: its plan's after a change, else `salesFunnelId` (which stays the billing caps key). Absent on an older build. */
+  runningSalesFunnelId?: string | null;
 }
 
 /** campaign-service's funnel campaigns of one brand (optionally one offer), org-scoped. FAIL-LOUD. */
