@@ -630,8 +630,10 @@ function measuredEntryRate(pipes: Iterable<CataloguePipe>, legKey: string): numb
 
 /** PURE: the cost per outcome an EXPECTED figure takes for a platform pipe (see the header); null on the customer's
  *  team and when nothing prices it. */
-export function expectedPipeCost(p: CataloguePipe, all: Iterable<CataloguePipe>): ExpectedPipeCost | null {
+export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CataloguePipe>): ExpectedPipeCost | null {
   if (p.operatedBy === "customer") return null;
+  // Read twice below (same leg, then same outcome): a `Map.values()` iterator is spent after one loop.
+  const all = [...allPipes];
   if (p.measurement?.basis === "mature" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "workflow", basis: "measured" };
   const key = `${p.computedLegKey}|${p.channelSlug}`;
   const seeded = DEFAULT_COST_PER_OUTCOME_USD.get(key);
