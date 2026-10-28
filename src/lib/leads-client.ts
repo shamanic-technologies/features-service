@@ -3,8 +3,19 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { isMemberAddress, loadOrgMemberKeys } from "./org-members.js";
-import { fingerprintScopeKey, insideInteractiveView, liveLeadCopyRequested, readLeadCopy, registerEmailFingerprints, type CompactLeadRow } from "./lead-copy.js";
-import { countLeadWalk, heldLeadWalk } from "./lead-walk-hold.js";
+import {
+  fingerprintScopeKey,
+  insideInteractiveView,
+  LEAD_COPY_READ_GAP_MS,
+  liveCopyCounters,
+  liveCopyPaysFor,
+  liveLeadCopyRequested,
+  peekLeadCopy,
+  readLeadCopy,
+  registerEmailFingerprints,
+  type CompactLeadRow,
+} from "./lead-copy.js";
+import { countLeadWalk, heldLeadWalk, leadWalkHoldMs } from "./lead-walk-hold.js";
 
 /**
  * Shape of one leads_campaigns row returned by lead-service GET /orgs/leads.
@@ -341,29 +352,45 @@ export async function fetchLeadsForRevenue(
   if (campaignId) reqHeaders["x-campaign-id"] = campaignId;
   if (headers.featureSlug) reqHeaders["x-feature-slug"] = headers.featureSlug;
 
-  // An interactive view (servedCached) reads a LIVE COPY patched through lead-service's change feed
-  // instead of re-walking the whole population (lib/lead-copy.ts, features-service#1045); every
-  // other caller walks, and that walk is held a few minutes for the next sweep (lib/lead-walk-hold.ts).
-  // All return the same compact rows for the same scope.
+  // An interactive view (servedCached) of a scope read often enough reads a LIVE COPY patched through
+  // lead-service's change feed (lib/lead-copy.ts, features-service#1045); any other interactive read
+  // walks FRESH and holds that walk; every other caller takes a held walk or a copy synced inside the
+  // hold window (lib/lead-walk-hold.ts). All return the same compact rows for the same scope.
   // The org's own TEAM is never a lead of its brands (TEAM-OUT-OF-UNIBOX-1017, `org-members.ts`): read beside the
   // leads, FAIL LOUD (an empty set would price the team as leads again).
   const membersPromise = loadOrgMemberKeys(headers.orgId);
   membersPromise.catch(() => undefined);
+  const copyKey = `${headers.orgId}|${url}|${scopeParams}`;
+  const walkUrl = `${url}/orgs/leads?${params}`;
+  const fingerprintKey = fingerprintScopeKey(headers.orgId, brandId, campaignId);
   let allRows: LeadRow[];
-  if (liveLeadCopyRequested()) {
-    const copyRows = await readLeadCopy(`${headers.orgId}|${url}|${scopeParams}`, (since) =>
+  if (liveLeadCopyRequested() && liveCopyPaysFor(copyKey)) {
+    liveCopyCounters.copyReads += 1;
+    const copyRows = await readLeadCopy(copyKey, (since) =>
       fetchLeadChanges(`${url}/orgs/leads/changes?${scopeParams}`, since, reqHeaders),
     );
-    registerEmailFingerprints(fingerprintScopeKey(headers.orgId, brandId, campaignId), copyRows);
+    registerEmailFingerprints(fingerprintKey, copyRows);
     allRows = copyRows as unknown as LeadRow[];
   } else if (insideInteractiveView()) {
-    // An interactive read with the live copy switched off (`LEAD_COPY_ENABLED=false`) walks fresh.
-    allRows = (await sharedLeadPage(`${url}/orgs/leads?${params}`, reqHeaders)).rows;
+    // An interactive read of a scope not read often enough to pay for a feed (or with the live copy
+    // switched off, `LEAD_COPY_ENABLED=false`) walks FRESH: the rows a feed snapshot would hold now
+    // (a walk held under 30 s, the same read instant, is reused). The walk is held, so the fleet sweeps
+    // asking this request next read it instead of walking.
+    liveCopyCounters.freshWalks += 1;
+    allRows = await heldLeadWalk(leadWalkKey(walkUrl, reqHeaders), () => sharedLeadPage(walkUrl, reqHeaders), { maxAgeMs: LEAD_COPY_READ_GAP_MS });
+    // The walked rows ARE the compact rows (same flags), so the incremental timestamp read keeps working.
+    if (liveLeadCopyRequested()) registerEmailFingerprints(fingerprintKey, allRows as unknown as CompactLeadRow[]);
   } else {
-    // A fleet sweep / boot warm: the same walk is held a few minutes for the next sweep asking for this
-    // exact request (lib/lead-walk-hold.ts) — same rows, so the same figures, read once instead of ~10×.
-    const walkUrl = `${url}/orgs/leads?${params}`;
-    allRows = await heldLeadWalk(leadWalkKey(walkUrl, reqHeaders), () => sharedLeadPage(walkUrl, reqHeaders));
+    // A fleet sweep / boot warm: a live copy this process brought current inside the hold window, with no
+    // call at all; else the same walk held a few minutes for the next sweep asking for this exact request
+    // (lib/lead-walk-hold.ts) — same rows, so the same figures, read once instead of ~10×.
+    const peeked = peekLeadCopy(copyKey, leadWalkHoldMs());
+    if (peeked) {
+      liveCopyCounters.fleetPeeks += 1;
+      allRows = peeked as unknown as LeadRow[];
+    } else {
+      allRows = await heldLeadWalk(leadWalkKey(walkUrl, reqHeaders), () => sharedLeadPage(walkUrl, reqHeaders));
+    }
   }
   const members = await membersPromise;
   const scoped = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
