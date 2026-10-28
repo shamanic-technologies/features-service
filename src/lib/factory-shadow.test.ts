@@ -133,6 +133,20 @@ describe("who may start a reactive line, and an unvalued Target", () => {
     expect(triggerCanHead(model, "lead_event", null)).toBe(true);
   });
 
+  it("every line through a pipe with no price yet names that pipe (a catalogue gap, not a search failure)", () => {
+    const model = buildCatalogueModel(inputs());
+    // A pipe that ran with no outcome, no seeded default, no benchmark (Form Booking, Lead Proposal in prod 2026-10-28).
+    for (const pipe of model.pipes.values()) if (pipe.fromStep === "conversation" && pipe.operatedBy === "platform") pipe.expectedCost = null;
+    const p = planCampaign(model, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
+    expect(p.shadow).toBeNull();
+    // Two lines from a positive reply to a meeting: AI Meeting Booking directly, or AI Instant Call then a booking.
+    expect(p.shadowUnavailableReason?.startsWith("pipe_unpriced:")).toBe(true);
+    expect(p.shadowUnavailableReason).toContain("ai-meeting-booking|conversation_to_meeting_booked");
+    expect(p.unpricedPipes.map((u) => u.pipeId)).toContain("ai-meeting-booking|conversation_to_meeting_booked");
+    expect(p.shadowUnavailableDetail).toContain("AI Meeting Booking (Positive reply to Meeting booked)");
+    expect(p.shadowUnavailableDetail).toContain("no price yet");
+  });
+
   it("a Target with no value (after Paid client) still gets the cheapest line per Target, ROI null", () => {
     const model = buildCatalogueModel(inputs());
     model.steps.set("conversation", { ...model.steps.get("conversation")!, valueUsd: null });
