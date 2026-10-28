@@ -35233,6 +35233,14 @@
                 "type": "string",
                 "nullable": true
               },
+              "rankedOn": {
+                "type": "string",
+                "enum": [
+                  "roi",
+                  "cost_per_target"
+                ],
+                "description": "`cost_per_target` when the Target has no value (a step after Paid client): the cheapest line, ROI null."
+              },
               "planDiffers": {
                 "type": "boolean",
                 "nullable": true,
@@ -35255,6 +35263,7 @@
               "running",
               "shadow",
               "shadowUnavailableReason",
+              "rankedOn",
               "planDiffers",
               "candidatesPriced",
               "candidatesSetAside"

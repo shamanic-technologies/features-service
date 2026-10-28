@@ -191,6 +191,8 @@ export interface ShadowPlan {
   running: (PlanLine & { reachesTarget: true }) | { funnelId: string; reachesTarget: false; unavailableReason: string };
   shadow: PlanLine | null;
   shadowUnavailableReason: string | null;
+  /** What the shadow line is the best on: `roi`, or `cost_per_target` when the Target has no value (a step after Paid client). */
+  rankedOn: "roi" | "cost_per_target";
   /** Did the shadow line differ from the running one (to the Target)? null when either side is missing. */
   planDiffers: boolean | null;
   /** Straight lines priced to pick from (after the brief's picks and the offer's steps). */
@@ -226,12 +228,14 @@ export function lineFigures(model: CatalogueModel, legs: readonly FunnelLeg[], t
   const targetValue = model.steps.get(target)?.valueUsd ?? null;
   // Paid client is worth the offer's lifetime revenue; any earlier step adds the catalogue's default leg rates to it.
   const basis: ExpectedBasis = target === "paid_client" ? ltrBasis : "default";
-  const e = expectedFunnelEconomics(path, legs, targetValue, basis, takeoverValueOf(model, chain[0]?.fromStep ?? null));
+  // A Target with no value (a step after Paid client: Client Satisfied, owner 2026-10-27, never a made-up share of a
+  // client's value) still has a cost per Target; its ROI stays null (`target_unvalued`) and lines rank on cost.
+  const e = expectedFunnelEconomics(path, legs, targetValue ?? 1, basis, targetValue === null ? 0 : takeoverValueOf(model, chain[0]?.fromStep ?? null));
   return {
     costPerTargetUsd: e.costUsd,
-    roi: e.roi,
+    roi: targetValue === null ? null : e.roi,
     basis: e.basis,
-    unavailableReason: targetValue === null ? "target_unvalued" : e.unavailableReason,
+    unavailableReason: targetValue === null && e.costUsd !== null ? "target_unvalued" : e.unavailableReason,
     targetValueUsd: targetValue,
     legs: e.legs,
   };
@@ -300,9 +304,21 @@ export function legOptions(
     .filter(pipeRunnable)
     .filter((p) => {
       if (!first || first.mode === "proactive") return true;
-      return first.triggerId ? p.triggerId === first.triggerId || p.mode === "proactive" : p.mode === "reactive";
+      if (!first.triggerId) return p.mode === "reactive";
+      return p.triggerId === first.triggerId || (p.mode === "proactive" && triggerCanHead(model, first.triggerId, p.fromStep));
     })
     .sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * PURE: may this trigger head a line whose first pipe is a proactive one leaving `fromStep`? The catalogue's trigger-headed
+ * rule (`triggerHeadRefusal`): an `any_of` trigger (Lead event) stands at every step; any other must name the step the pipe
+ * leaves from (a step-less trigger, Follow-up Due or Email Pushed Via API, heads no proactive pipe).
+ */
+export function triggerCanHead(model: CatalogueModel, triggerId: string, fromStep: string | null): boolean {
+  if (model.anyStepTriggers?.has(triggerId)) return true;
+  const step = model.triggerSteps.get(triggerId) ?? null;
+  return step !== null && step === fromStep;
 }
 
 /** PURE: the best line first: priced before unpriced, then highest ROI, then cheapest per Target, then id. */
@@ -311,6 +327,14 @@ const byBestLine = (a: PlanLine, b: PlanLine): number => {
   const pb = b.figures.roi !== null && b.figures.costPerTargetUsd !== null;
   if (pa !== pb) return pa ? -1 : 1;
   if (pa && pb && a.figures.roi !== b.figures.roi) return b.figures.roi! - a.figures.roi!;
+  const ca = a.figures.costPerTargetUsd ?? Infinity;
+  const cb = b.figures.costPerTargetUsd ?? Infinity;
+  if (ca !== cb) return ca - cb;
+  return a.funnelId < b.funnelId ? -1 : a.funnelId > b.funnelId ? 1 : 0;
+};
+
+/** PURE: the cheapest line per Target first (an unvalued Target), then id. */
+const byCheapestLine = (a: PlanLine, b: PlanLine): number => {
   const ca = a.figures.costPerTargetUsd ?? Infinity;
   const cb = b.figures.costPerTargetUsd ?? Infinity;
   if (ca !== cb) return ca - cb;
@@ -329,7 +353,9 @@ export function frameOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "s
   const firstPipe = running.legs[0]?.pipe ?? null;
   const triggerId = campaign.triggerId ?? head ?? (firstPipe?.mode === "reactive" ? firstPipe.triggerId : null);
   const mode: "proactive" | "reactive" = campaign.mode ?? (head || firstPipe?.mode === "reactive" ? "reactive" : "proactive");
-  const startStep = mode === "proactive" ? null : (runningSteps[0]?.fromStep ?? model.triggerSteps.get(triggerId ?? "") ?? null);
+  // Where the running funnel starts: Start (null) for every proactive campaign and for a reactive one whose trigger is met
+  // at Start (Email Pushed Via API, a WhatsApp number given), else the trigger's step.
+  const startStep = mode === "proactive" ? null : (runningSteps[0]?.fromStep ?? null);
   return { running, runningSteps, target, head, triggerId, mode, startStep };
 }
 
@@ -382,9 +408,11 @@ export function planCampaign(
     };
     walk(0, []);
   }
-  lines.sort(byBestLine);
+  // A valued Target: the best ROI. An unvalued one (after Paid client): the cheapest per Target.
+  const rankedOn: ShadowPlan["rankedOn"] = model.steps.get(target)?.valueUsd == null ? "cost_per_target" : "roi";
+  lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
   const best = lines[0] ?? null;
-  const shadow = best && best.figures.roi !== null ? best : null;
+  const shadow = best && (rankedOn === "roi" ? best.figures.roi !== null : best.figures.costPerTargetUsd !== null) ? best : null;
   const shadowUnavailableReason = shadow ? null : lines.length === 0 ? "no_runnable_line_to_target" : "no_priced_line_to_target";
   return {
     target,
@@ -395,6 +423,7 @@ export function planCampaign(
     running: runningLine,
     shadow,
     shadowUnavailableReason,
+    rankedOn,
     planDiffers: shadow && runningLine.reachesTarget ? shadow.funnelId !== runningLine.funnelId : null,
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
