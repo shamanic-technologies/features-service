@@ -76978,6 +76978,153 @@
         }
       }
     },
+    "/internal/factory-shadow/prefill-briefs": {
+      "post": {
+        "summary": "Prefill the brief of every funnel campaign whose brief is empty with what it runs today (internal, api-key; dry run unless apply)",
+        "description": "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every funnel campaign of every org, any status, whose brief is empty and was never prefilled gets one line per pipe of its running funnel that runs a named strategy, written from the strategy's description, through campaign-service's own PATCH as `system-features-service`. A stated brief is never overwritten; a campaign is prefilled once (a brief cleared afterwards stays empty). Body `{apply: true}` writes; anything else is a dry run. The 3-hour pass prefills new live campaigns the same way before judging them.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apply": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One row per campaign with its outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "apply": {
+                      "type": "boolean"
+                    },
+                    "campaigns": {
+                      "type": "integer"
+                    },
+                    "written": {
+                      "type": "integer"
+                    },
+                    "wouldWrite": {
+                      "type": "integer"
+                    },
+                    "briefStated": {
+                      "type": "integer"
+                    },
+                    "prefilledBefore": {
+                      "type": "integer"
+                    },
+                    "plainDefaults": {
+                      "type": "integer"
+                    },
+                    "unreadable": {
+                      "type": "integer"
+                    },
+                    "writeFailed": {
+                      "type": "integer"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "brandId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "written",
+                              "would_write",
+                              "brief_stated",
+                              "prefilled_before",
+                              "plain_defaults",
+                              "unreadable",
+                              "write_failed"
+                            ]
+                          },
+                          "brief": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "brandId",
+                          "salesFunnelName",
+                          "status",
+                          "outcome",
+                          "brief",
+                          "failure"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "apply",
+                    "campaigns",
+                    "written",
+                    "wouldWrite",
+                    "briefStated",
+                    "prefilledBefore",
+                    "plainDefaults",
+                    "unreadable",
+                    "writeFailed",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "campaign-service unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/factory-shadow/sweep": {
       "post": {
         "summary": "Run a GTM Factory shadow pass now (internal, api-key; 202, single flight)",

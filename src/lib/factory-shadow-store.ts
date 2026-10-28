@@ -4,7 +4,7 @@
  */
 import { desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { factoryBriefJudgments, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
+import { factoryBriefJudgments, factoryBriefPrefills, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
 import type { BriefJudgment, OrgDayCounts, ShadowStatus } from "./factory-shadow.js";
 
 /** Every stored verdict of these campaigns, keyed `<campaignId>|<basePipeId>`. */
@@ -92,4 +92,14 @@ export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & {
     planFailed: r.planFailed,
     sweptAt: r.sweptAt.toISOString(),
   }));
+}
+
+/** The campaigns this service already prefilled a brief on (never prefilled twice). */
+export async function readPrefilledCampaignIds(): Promise<Set<string>> {
+  const rows = await db.select({ id: factoryBriefPrefills.campaignId }).from(factoryBriefPrefills);
+  return new Set(rows.map((r) => r.id));
+}
+
+export async function recordPrefill(row: { campaignId: string; orgId: string; brief: string }): Promise<void> {
+  await db.insert(factoryBriefPrefills).values(row).onConflictDoNothing();
 }

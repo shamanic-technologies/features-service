@@ -37,6 +37,7 @@ import {
   monitoringVerdict,
   orgDayCountsOf,
   pipesToJudge,
+  prefillBriefOf,
   planCampaign,
   playNameOf,
   playOptionsOf,
@@ -50,7 +51,7 @@ import {
   type ShadowRowSummary,
   type ShadowStatus,
 } from "../lib/factory-shadow.js";
-import { readDays, readJudgments, readPlan, readPlansSince, writeDay, writeJudgment, writePlan } from "../lib/factory-shadow-store.js";
+import { readDays, readJudgments, readPlan, readPlansSince, readPrefilledCampaignIds, recordPrefill, writeDay, writeJudgment, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 
 const router = Router();
@@ -60,11 +61,18 @@ const JEV_CONCURRENCY = 3;
 const CAMPAIGN_CONCURRENCY = 2;
 const PASS_CELL = "factory-shadow:last-pass";
 const EVAL_CELL = "factory-shadow:eval";
+/** Written when the brief backfill is APPLIED: from then on every pass prefills new live campaigns. */
+const PREFILL_CELL = "factory-shadow:prefill-backfill";
 
 // ── Reads ──────────────────────────────────────────────────────────────────────────────────────────
 
 /** Every LIVE funnel campaign of every org: campaign-service's units name their funnel campaign, read per (org, brand). */
 async function readLiveFunnelCampaigns(): Promise<ShadowCampaign[]> {
+  return (await readFunnelCampaigns()).filter((x) => x.status === "ongoing").map((x) => x.campaign);
+}
+
+/** Every funnel campaign of every org, any status. */
+async function readFunnelCampaigns(): Promise<Array<{ campaign: ShadowCampaign; status: string }>> {
   const url = process.env.CAMPAIGN_SERVICE_URL;
   const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
@@ -79,7 +87,7 @@ async function readLiveFunnelCampaigns(): Promise<ShadowCampaign[]> {
     pairs.set(`${c.orgId}|${brandId}`, { orgId: c.orgId, brandId });
   }
   const rows = await mapWithConcurrency([...pairs.values()], 4, (p) => fetchSalesFunnelCampaigns(p.brandId, null, { orgId: p.orgId }).then((rs) => rs.map((r) => ({ r, orgId: p.orgId }))));
-  return rows.flat().filter(({ r }) => r.status === "ongoing").map(({ r, orgId }) => shadowCampaignOf(r, orgId));
+  return rows.flat().map(({ r, orgId }) => ({ campaign: shadowCampaignOf(r, orgId), status: r.status }));
 }
 
 /** "Running" = the funnel the campaign RUNS: campaign-service's `runningSalesFunnelId` (a campaign following its plan
@@ -122,6 +130,65 @@ function passMemos() {
       return steps.get(key)!;
     },
   };
+}
+
+// ── The brief prefill (owner 2026-10-28, FACTORY-P1-BRIEF-PREFILL) ─────────────────────────────────
+
+/** The identity a prefilled brief is attributed to at campaign-service (`briefUpdatedByUserId`). */
+export const PREFILL_USER_ID = "system-features-service";
+
+/** campaign-service owns the brief: written through its own PATCH, as a system identity, never over a stated brief. */
+async function patchBrief(c: ShadowCampaign, brief: string): Promise<void> {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const res = await fetchWithRetry(`${url}/sales-funnel-campaigns/${encodeURIComponent(c.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "x-org-id": c.orgId, "x-user-id": PREFILL_USER_ID },
+    body: JSON.stringify({ brief }),
+  });
+  if (!res.ok) throw new Error(`campaign-service PATCH /sales-funnel-campaigns/${c.id} failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+}
+
+export interface PrefillRow {
+  campaignId: string;
+  orgId: string;
+  brandId: string;
+  salesFunnelName: string;
+  status: string;
+  /** `written` / `would_write` (dry run); `brief_stated` (never overwritten); `prefilled_before` (once per campaign, a
+   *  cleared brief stays cleared); `plain_defaults` (no pipe runs a named strategy: an empty brief already picks them);
+   *  `unreadable` (its funnel or offer could not be read). */
+  outcome: "written" | "would_write" | "brief_stated" | "prefilled_before" | "plain_defaults" | "unreadable" | "write_failed";
+  brief: string | null;
+  failure: string | null;
+}
+
+/** Prefill the brief of every campaign given whose brief is empty and was never prefilled. `apply: false` = dry run. */
+async function prefillBriefs(campaigns: ReadonlyArray<{ campaign: ShadowCampaign; status: string }>, apply: boolean, memos: ReturnType<typeof passMemos>): Promise<PrefillRow[]> {
+  const done = await readPrefilledCampaignIds();
+  return mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, async ({ campaign: c, status }) => {
+    const row: PrefillRow = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, salesFunnelName: c.salesFunnelName, status, outcome: "plain_defaults", brief: null, failure: null };
+    if (briefHashOf(c.brief) !== null) return { ...row, outcome: "brief_stated", brief: c.brief };
+    if (done.has(c.id)) return { ...row, outcome: "prefilled_before" };
+    let brief: string | null;
+    try {
+      brief = prefillBriefOf((await memos.pricing(c)).model, c.salesFunnelId);
+    } catch (error) {
+      return { ...row, outcome: "unreadable", failure: failureOf(error) };
+    }
+    if (brief === null) return row;
+    if (!apply) return { ...row, outcome: "would_write", brief };
+    try {
+      await patchBrief(c, brief);
+      await recordPrefill({ campaignId: c.id, orgId: c.orgId, brief });
+      c.brief = brief;
+      return { ...row, outcome: "written", brief };
+    } catch (error) {
+      console.error(`[features-service] factory brief prefill failed for campaign ${c.id}:`, error);
+      return { ...row, outcome: "write_failed", brief, failure: failureOf(error) };
+    }
+  });
 }
 
 // ── Jev ────────────────────────────────────────────────────────────────────────────────────────────
@@ -268,8 +335,13 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     const started = Date.now();
     const now = new Date();
     const campaigns = await readLiveFunnelCampaigns();
-    const stored = await readJudgments(campaigns.map((c) => c.id));
     const memos = passMemos();
+    // A campaign born after the prefill gets its brief here, before it is judged (FACTORY-P1-BRIEF-PREFILL); only once the
+    // backfill was APPLIED (dry run first, owner 2026-10-28): before that, a pass writes nothing.
+    const backfilled = (await loadFleetCell(PREFILL_CELL)) !== null;
+    const prefilled = !backfilled ? [] : (await prefillBriefs(campaigns.map((campaign) => ({ campaign, status: "ongoing" })), true, memos)).filter((r) => r.outcome === "written");
+    if (prefilled.length > 0) console.log(`[features-service] factory brief prefill: ${prefilled.length} campaign(s) given the brief of what they run today`);
+    const stored = await readJudgments(campaigns.map((c) => c.id));
     const bodies = await mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, (c) => shadowOfCampaign(c, memos, stored, now));
     for (const b of bodies) await writePlan({ campaignId: b.campaignId, orgId: b.orgId, brandId: b.brandId, offerId: b.offerId, status: b.status, failure: b.failure, body: b, computedAt: now });
     const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers }));
@@ -446,6 +518,30 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
 router.post("/internal/factory-shadow/sweep", apiKeyOnly, (_req, res) => {
   void runFactoryShadowPass().catch((err) => console.error("[features-service] factory shadow pass (kicked) failed:", err));
   res.status(202).json({ started: true });
+});
+
+router.post("/internal/factory-shadow/prefill-briefs", apiKeyOnly, async (req, res) => {
+  const apply = req.body?.apply === true;
+  try {
+    const rows = await prefillBriefs(await readFunnelCampaigns(), apply, passMemos());
+    if (apply) await storeFleetCell(PREFILL_CELL, JSON.stringify({ appliedAt: new Date().toISOString(), written: rows.filter((r) => r.outcome === "written").length }), Date.now());
+    const count = (o: PrefillRow["outcome"]) => rows.filter((r) => r.outcome === o).length;
+    res.json({
+      apply,
+      campaigns: rows.length,
+      written: count("written"),
+      wouldWrite: count("would_write"),
+      briefStated: count("brief_stated"),
+      prefilledBefore: count("prefilled_before"),
+      plainDefaults: count("plain_defaults"),
+      unreadable: count("unreadable"),
+      writeFailed: count("write_failed"),
+      rows,
+    });
+  } catch (error) {
+    console.error("[features-service] factory brief prefill failed:", error);
+    res.status(502).json({ error: "prefill_failed", detail: failureOf(error) });
+  }
 });
 
 router.post("/internal/factory-shadow/eval", apiKeyOnly, (_req, res) => {
