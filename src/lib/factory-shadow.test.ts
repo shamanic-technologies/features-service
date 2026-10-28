@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { buildCatalogueModel, type CatalogueInputs, type PipeMeasurement, type PlayInput } from "./agent-catalogue.js";
+import { buildCatalogueModel, funnelById, pathById, type CatalogueInputs, type PipeMeasurement, type PlayInput } from "./agent-catalogue.js";
 import { buildChannelCatalogue } from "./channel-catalogue.js";
 import { SEED_FEATURES } from "../seed/features.js";
 import { servedLegKeyOf } from "./funnel-legs.js";
@@ -70,11 +70,15 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
     const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
     expect(p).toMatchObject({ target: "conversation", targetSource: "campaign", mode: "proactive", startStep: null, rankedOn: "roi", planDiffers: true });
     // Running: 100 leads at $0.50 + one positive reply at $40 = $90; value of a positive reply $150 (5% x $3,000).
-    expect(p.running).toMatchObject({ reachesTarget: true, funnelId: "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach" });
+    // The running funnel names itself whole (what campaign-service runs); the comparison is on the line to the Target.
+    expect(p.running).toMatchObject({ reachesTarget: true, funnelId: PROACTIVE_RUNNING, lineId: "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach" });
     if (!p.running.reachesTarget) throw new Error("unreachable");
     expect(p.running.figures).toMatchObject({ costPerTargetUsd: 90, roi: 1.67, targetValueUsd: 150 });
     // Shadow: Apollo Cold Filters finds the 100 leads at $0.20: $60, 2.5x.
-    expect(p.shadow?.funnelId).toBe("start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach");
+    expect(p.shadow?.lineId).toBe("start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach");
+    // The plan names a CATALOGUE funnel campaign-service can run (past the Target to Paid client).
+    expect(funnelById(model, p.shadow!.funnelId)?.id).toBe(p.shadow!.funnelId);
+    expect(p.shadow!.funnelId.startsWith(`${p.shadow!.lineId}+`)).toBe(true);
     expect(p.shadow?.figures).toMatchObject({ costPerTargetUsd: 60, roi: 2.5 });
     expect(p.shadow?.line).toBe("Start → [Apollo Cold Filters] → Lead → [Sales Cold Email Outreach] → Positive reply");
   });
@@ -87,7 +91,9 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
 
   it("sets aside a line through a step the offer does not have", () => {
     const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), { stated: true, steps: ["conversation"] }, "fleet");
-    expect(p.candidatesSetAside).toBe(0);
+    // Only funnels walking Lead found, Positive reply and Paid client remain (the whole funnel must fit the offer).
+    expect(p.shadow).not.toBeNull();
+    expect(pathById(model, funnelById(model, p.shadow!.funnelId)!.pathId)!.steps.every((s) => ["lead_found", "conversation", "paid_client"].includes(s))).toBe(true);
     const none = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "meeting_booked", mode: null, triggerId: null }, new Map(), { stated: true, steps: ["conversation"] }, "fleet");
     expect(none.candidatesSetAside).toBeGreaterThan(0);
   });
@@ -115,6 +121,19 @@ describe("the shadow plan (reactive: from the trigger's step to the Target)", ()
     expect(p.shadow?.line.startsWith("Positive reply → ")).toBe(true);
     expect(p.shadow?.line.endsWith("→ Meeting booked")).toBe(true);
     expect(p.planDiffers).toBe(false);
+  });
+
+  it("never proposes a trigger-headed line the catalogue does not serve (campaign-service read unknown_sales_funnel)", () => {
+    const LEGS = ["conversation_to_meeting_booked", "meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"];
+    const undeclared = buildCatalogueModel(inputs());
+    const none = planCampaign(undeclared, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: "reactive", triggerId: "lead_event" }, new Map(), NO_STEPS, "fleet");
+    // No pipe answers Lead event and no Lead event head is declared: nothing to propose, never an invented head.
+    expect(none.shadow).toBeNull();
+    expect(none.shadowUnavailableReason).toBe("no_runnable_line_to_target");
+    const declared = buildCatalogueModel(inputs({ triggerHeadedPaths: [{ triggerId: "lead_event", legKeys: LEGS }] }));
+    const p = planCampaign(declared, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: "reactive", triggerId: "lead_event" }, new Map(), NO_STEPS, "fleet");
+    expect(p.shadow?.funnelId.startsWith("trigger:lead_event+conversation_to_meeting_booked@")).toBe(true);
+    expect(funnelById(declared, p.shadow!.funnelId)?.id).toBe(p.shadow!.funnelId);
   });
 
   it("campaign-service's own statement of the head wins over the running funnel's", () => {
