@@ -34846,7 +34846,11 @@
                     "properties": {
                       "funnelId": {
                         "type": "string",
-                        "description": "The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."
+                        "description": "The CATALOGUE sales funnel carrying the line (what campaign-service runs; `GET /internal/catalogue/sales-funnels/{id}` resolves it): the whole funnel, past the Target when the Target is before Paid client."
+                      },
+                      "lineId": {
+                        "type": "string",
+                        "description": "The line up to the Target (catalogue spelling; `trigger:<id>+` when a declared trigger-headed funnel carries it): what `planDiffers` compares."
                       },
                       "line": {
                         "type": "string",
@@ -35019,6 +35023,7 @@
                     },
                     "required": [
                       "funnelId",
+                      "lineId",
                       "line",
                       "legs",
                       "figures",
@@ -35056,7 +35061,11 @@
                 "properties": {
                   "funnelId": {
                     "type": "string",
-                    "description": "The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."
+                    "description": "The CATALOGUE sales funnel carrying the line (what campaign-service runs; `GET /internal/catalogue/sales-funnels/{id}` resolves it): the whole funnel, past the Target when the Target is before Paid client."
+                  },
+                  "lineId": {
+                    "type": "string",
+                    "description": "The line up to the Target (catalogue spelling; `trigger:<id>+` when a declared trigger-headed funnel carries it): what `planDiffers` compares."
                   },
                   "line": {
                     "type": "string",
@@ -35223,6 +35232,7 @@
                 },
                 "required": [
                   "funnelId",
+                  "lineId",
                   "line",
                   "legs",
                   "figures"

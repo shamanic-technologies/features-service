@@ -9319,7 +9319,8 @@ const factoryTargetFigures = z.object({
   legs: z.array(factoryExpectedLeg),
 });
 const factoryPlanLine = z.object({
-  funnelId: z.string().describe("The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."),
+  funnelId: z.string().describe("The CATALOGUE sales funnel carrying the line (what campaign-service runs; `GET /internal/catalogue/sales-funnels/{id}` resolves it): the whole funnel, past the Target when the Target is before Paid client."),
+  lineId: z.string().describe("The line up to the Target (catalogue spelling; `trigger:<id>+` when a declared trigger-headed funnel carries it): what `planDiffers` compares."),
   line: z.string().describe("Start → [Channel] → Step → ... → Target, in words."),
   legs: z.array(z.object({ legKey: z.string(), pipeId: z.string().nullable(), channelSlug: z.string().nullable(), channelName: z.string().nullable(), playId: z.string().nullable().describe("The play id when the leg runs a play with a strategy, else null."), strategyName: z.string().nullable() })),
   figures: factoryTargetFigures,

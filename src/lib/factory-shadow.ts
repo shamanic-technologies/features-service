@@ -25,6 +25,8 @@ import {
   funnelById,
   funnelIdOf,
   funnelMixed,
+  funnelRunnable,
+  funnelsOfPath,
   legStepsOf,
   pipeFeeds,
   pipeRunnable,
@@ -173,8 +175,11 @@ export interface TargetFigures {
 }
 
 export interface PlanLine {
-  /** The funnel id of the line up to the Target (`funnelIdOf`, a trigger head prefixed `trigger:<id>+`). */
+  /** The CATALOGUE sales funnel id carrying the line (what campaign-service runs, `funnelById` resolves it): the whole
+   *  funnel, past the Target when the Target is before Paid client. */
   funnelId: string;
+  /** The line up to the Target (`funnelIdOf`, a trigger head prefixed `trigger:<id>+`): what two plans are compared on. */
+  lineId: string;
   /** "Start → Lead found → Positive reply" in step labels, the pipe's channel between each two. */
   line: string;
   legs: Array<{ legKey: string; pipeId: string | null; channelSlug: string | null; channelName: string | null; playId: string | null; strategyName: string | null }>;
@@ -250,12 +255,13 @@ export function lineFigures(model: CatalogueModel, legs: readonly FunnelLeg[], t
   };
 }
 
-function lineOf(model: CatalogueModel, legs: readonly FunnelLeg[], target: string, ltrBasis: ExpectedBasis, headTriggerId: string | null): PlanLine {
+function lineOf(model: CatalogueModel, legs: readonly FunnelLeg[], target: string, ltrBasis: ExpectedBasis, headTriggerId: string | null, funnelId: string): PlanLine {
   const first = legs[0] ? legStepsOf(model, legs[0].legKey).fromStep : null;
   const parts: string[] = [first === null ? "Start" : stepLabel(model, first)];
   for (const l of legs) parts.push(`[${l.pipe?.channelName ?? "?"}]`, stepLabel(model, legStepsOf(model, l.legKey).toStep));
   return {
-    funnelId: `${headTriggerId ? `trigger:${headTriggerId}+` : ""}${funnelIdOf(legs)}`,
+    funnelId,
+    lineId: `${headTriggerId ? `trigger:${headTriggerId}+` : ""}${funnelIdOf(legs)}`,
     line: parts.join(" → "),
     legs: legs.map((l) => ({
       legKey: l.legKey,
@@ -328,6 +334,29 @@ export function triggerCanHead(model: CatalogueModel, triggerId: string, fromSte
   if (model.anyStepTriggers?.has(triggerId)) return true;
   const step = model.triggerSteps.get(triggerId) ?? null;
   return step !== null && step === fromStep;
+}
+
+/**
+ * PURE: the catalogue paths a campaign's funnel may walk, with the index of the leg reaching its Target. Proactive: a path
+ * from Start no trigger heads. Reactive: a path leaving the campaign's start step, either headed by its trigger (a
+ * DECLARED trigger-headed path: the catalogue serves only those) or plain (its funnels then filtered on a first pipe
+ * answering the trigger).
+ */
+export function candidatePaths(model: CatalogueModel, mode: "proactive" | "reactive", startStep: string | null, triggerId: string | null, target: string): Array<{ path: CataloguePath; cut: number }> {
+  const out: Array<{ path: CataloguePath; cut: number }> = [];
+  for (const path of model.paths.values()) {
+    const legs = path.legKeys.map((k) => legStepsOf(model, k));
+    if (legs.length === 0) continue;
+    if (mode === "proactive") {
+      if (path.triggerId || legs[0].fromStep !== null) continue;
+    } else {
+      if (legs[0].fromStep !== startStep) continue;
+      if (path.triggerId && path.triggerId !== triggerId) continue;
+    }
+    const cut = legs.findIndex((l) => l.toStep === target);
+    if (cut >= 0) out.push({ path, cut });
+  }
+  return out.sort((a, b) => (a.path.id < b.path.id ? -1 : 1));
 }
 
 /** PURE: the best line first: priced before unpriced, then highest ROI, then cheapest per Target, then id. */
@@ -421,36 +450,37 @@ export function planCampaign(
   const runningLine: ShadowPlan["running"] =
     end < 0
       ? { funnelId: running.id, reachesTarget: false, unavailableReason: "running_funnel_does_not_reach_target" }
-      : { ...lineOf(model, running.legs.slice(0, end + 1), target, ltrBasis, head), reachesTarget: true };
+      : { ...lineOf(model, running.legs.slice(0, end + 1), target, ltrBasis, head, running.id), reachesTarget: true };
 
-  // Every straight line from the start to the Target, one pipe per leg, brief picks applied.
-  const lines: PlanLine[] = [];
+  // Every catalogue funnel that can carry the campaign from its start to its Target, runnable today, brief picks applied,
+  // priced up to the Target (FACTORY-P1: the plan names a funnel campaign-service can run, never a line the catalogue
+  // does not serve: an undeclared trigger head read `unknown_sales_funnel` there).
+  const byLine = new Map<string, PlanLine>();
   let setAside = 0;
   let budget = MAX_LINES_PER_CAMPAIGN;
-  const reactiveHead = mode === "reactive" ? triggerId : null;
-  for (const chain of chainsToTarget(model, mode, startStep, target)) {
-    const steps = chain.map((k) => legStepsOf(model, k).toStep);
-    if (missingStepsOf(steps, offerSteps).length > 0) {
+  const allowedByPick = (p: CataloguePipe | null): boolean => {
+    if (!p || p.operatedBy !== "platform") return true;
+    const pick = picks.get(basePipeIdOf(p));
+    return pick === undefined || pick === p.id;
+  };
+  for (const { path, cut } of candidatePaths(model, mode, startStep, triggerId, target)) {
+    if (missingStepsOf(path.steps, offerSteps).length > 0) {
       setAside += 1;
       continue;
     }
-    const options = chain.map((k, i) => legOptions(model, k, picks, i === 0 ? { mode, triggerId } : null));
-    if (options.some((o) => o.length === 0)) continue;
-    const walk = (i: number, acc: FunnelLeg[]) => {
-      if (budget <= 0) return;
-      if (i === chain.length) {
-        if (mode === "proactive" && funnelMixed({ legs: acc })) return;
-        budget -= 1;
-        // A reactive line whose first pipe answers the trigger itself is a plain reactive funnel (no trigger head).
-        const headed = reactiveHead && acc[0]?.pipe?.triggerId !== reactiveHead ? reactiveHead : null;
-        lines.push(lineOf(model, acc, target, ltrBasis, headed));
-        return;
-      }
-      const before = acc[acc.length - 1]?.pipe;
-      for (const p of options[i]) if (!before || pipeFeeds(before, p)) walk(i + 1, [...acc, { legKey: chain[i], pipe: p }]);
-    };
-    walk(0, []);
+    for (const f of funnelsOfPath(model, path)) {
+      if (budget <= 0) break;
+      if (!funnelRunnable(f)) continue;
+      if (mode === "proactive" ? f.headTriggerId !== null : !f.headTriggerId && f.legs[0]?.pipe?.triggerId !== triggerId) continue;
+      if (!f.legs.every((l) => allowedByPick(l.pipe))) continue;
+      budget -= 1;
+      const line = lineOf(model, f.legs.slice(0, cut + 1), target, ltrBasis, f.headTriggerId, f.id);
+      // Funnels sharing the line to the Target differ only after it: one stands for them (the running one, else the first).
+      const kept = byLine.get(line.lineId);
+      if (!kept || (kept.funnelId !== running.id && (f.id === running.id || f.id < kept.funnelId))) byLine.set(line.lineId, line);
+    }
   }
+  const lines = [...byLine.values()];
   // A valued Target: the best ROI. An unvalued one (after Paid client): the cheapest per Target.
   const rankedOn: ShadowPlan["rankedOn"] = model.steps.get(target)?.valueUsd == null ? "cost_per_target" : "roi";
   lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
@@ -487,7 +517,7 @@ export function planCampaign(
     shadowUnavailableDetail,
     unpricedPipes: blocked,
     rankedOn,
-    planDiffers: shadow && runningLine.reachesTarget ? shadow.funnelId !== runningLine.funnelId : null,
+    planDiffers: shadow && runningLine.reachesTarget ? shadow.lineId !== runningLine.lineId : null,
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
   };
