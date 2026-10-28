@@ -82,12 +82,16 @@ async function readLiveFunnelCampaigns(): Promise<ShadowCampaign[]> {
   return rows.flat().filter(({ r }) => r.status === "ongoing").map(({ r, orgId }) => shadowCampaignOf(r, orgId));
 }
 
+/** "Running" = the funnel the campaign RUNS: campaign-service's `runningSalesFunnelId` (a campaign following its plan
+ *  runs the plan's funnel), else the funnel it was born on (older campaign-service). */
+export const runningFunnelIdOf = (r: Pick<SalesFunnelCampaignRow, "salesFunnelId" | "runningSalesFunnelId">): string => r.runningSalesFunnelId ?? r.salesFunnelId;
+
 const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampaign => ({
   id: r.id,
   orgId,
   brandId: r.brandId,
   offerId: r.offerId,
-  salesFunnelId: r.salesFunnelId,
+  salesFunnelId: runningFunnelIdOf(r),
   salesFunnelName: r.salesFunnelName,
   target: r.target ?? null,
   brief: r.brief ?? null,
