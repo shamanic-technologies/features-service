@@ -35231,7 +35231,46 @@
               },
               "shadowUnavailableReason": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "`no_runnable_line_to_target`; `pipe_unpriced:<pipe id>` = every line goes through that pipe, which has no price yet (a catalogue gap); `no_priced_line_to_target` otherwise."
+              },
+              "shadowUnavailableDetail": {
+                "type": "string",
+                "nullable": true,
+                "description": "The same in one plain sentence; null with a shadow line."
+              },
+              "unpricedPipes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pipeId": {
+                      "type": "string"
+                    },
+                    "channelName": {
+                      "type": "string"
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "toStep": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "integer",
+                      "description": "Lines to the Target it blocks."
+                    }
+                  },
+                  "required": [
+                    "pipeId",
+                    "channelName",
+                    "fromStep",
+                    "toStep",
+                    "lines"
+                  ]
+                },
+                "description": "Every pipe with no price yet blocking a line to the Target, most shared first; [] with a shadow line."
               },
               "rankedOn": {
                 "type": "string",
@@ -35263,6 +35302,8 @@
               "running",
               "shadow",
               "shadowUnavailableReason",
+              "shadowUnavailableDetail",
+              "unpricedPipes",
               "rankedOn",
               "planDiffers",
               "candidatesPriced",
