@@ -539,6 +539,8 @@ describe("expected cost of a pipe that produced nothing yet (FACTORY-P1)", () =>
 
   it("takes the fleet's mature price of the same outcome, never below what it already spent", () => {
     expect(expectedPipeCost(fresh(12), [sibling])).toEqual({ costPerOutcomeUsd: 40, source: "same_step_fleet", basis: "fleet" });
+    // The model passes `pipes.values()`, a one-shot iterator: the second rung must still see every pipe.
+    expect(expectedPipeCost(fresh(12), new Map([[sibling.id, sibling]]).values())).toEqual({ costPerOutcomeUsd: 40, source: "same_step_fleet", basis: "fleet" });
     expect(expectedPipeCost(fresh(55), [sibling])).toEqual({ costPerOutcomeUsd: 55, source: "same_step_fleet", basis: "fleet" });
   });
 
