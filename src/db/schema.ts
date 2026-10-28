@@ -940,3 +940,15 @@ export const factoryShadowDaily = pgTable(
   },
   (table) => [primaryKey({ columns: [table.day, table.orgId] })],
 );
+
+/**
+ * FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every brief this service PREFILLED on a funnel campaign (what it runs today,
+ * written through campaign-service's own PATCH as `system-features-service`). One row per campaign, written once: a brief
+ * someone later clears or edits is never prefilled again.
+ */
+export const factoryBriefPrefills = pgTable("factory_brief_prefills", {
+  campaignId: text("campaign_id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  brief: text("brief").notNull(),
+  writtenAt: timestamp("written_at", { withTimezone: true }).notNull().defaultNow(),
+});

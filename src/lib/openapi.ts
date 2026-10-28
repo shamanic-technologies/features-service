@@ -9436,6 +9436,41 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
+  path: "/internal/factory-shadow/prefill-briefs",
+  summary: "Prefill the brief of every funnel campaign whose brief is empty with what it runs today (internal, api-key; dry run unless apply)",
+  description:
+    "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every funnel campaign of every org, any status, whose brief is empty and was never prefilled gets " +
+    "one line per pipe of its running funnel that runs a named strategy, written from the strategy's description, through campaign-service's own PATCH " +
+    "as `system-features-service`. A stated brief is never overwritten; a campaign is prefilled once (a brief cleared afterwards stays empty). " +
+    "Body `{apply: true}` writes; anything else is a dry run. The 3-hour pass prefills new live campaigns the same way before judging them.",
+  tags: ["Internal"],
+  request: { body: { content: { "application/json": { schema: z.object({ apply: z.boolean().optional() }) } } } },
+  responses: {
+    200: {
+      description: "One row per campaign with its outcome.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            apply: z.boolean(),
+            campaigns: z.number().int(),
+            written: z.number().int(),
+            wouldWrite: z.number().int(),
+            briefStated: z.number().int(),
+            prefilledBefore: z.number().int(),
+            plainDefaults: z.number().int(),
+            unreadable: z.number().int(),
+            writeFailed: z.number().int(),
+            rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), outcome: z.enum(["written", "would_write", "brief_stated", "prefilled_before", "plain_defaults", "unreadable", "write_failed"]), brief: z.string().nullable(), failure: z.string().nullable() })),
+          }),
+        },
+      },
+    },
+    502: { description: "campaign-service unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "post",
   path: "/internal/factory-shadow/sweep",
   summary: "Run a GTM Factory shadow pass now (internal, api-key; 202, single flight)",
   tags: ["Internal"],
