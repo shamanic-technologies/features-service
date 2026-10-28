@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { crmRepliesBySlug, fetchCrmOnlyRepliers, fetchPositiveRepliers, setPersonRepliesOnSlugStats, type PositiveReplier } from "./crm-only-repliers.js";
+import { crmRepliesBySlug, fetchCrmOnlyRepliers, fetchPositiveRepliers, fetchScopePersons, positiveRepliersOf, setPersonRepliesOnSlugStats, type PositiveReplier } from "./crm-only-repliers.js";
 import {
   brandGrainDynasties,
   fetchAudienceGrainEvidence,
@@ -152,5 +152,12 @@ describe("positive replies on the workflow grains are counted per PERSON", () =>
   it("FAILS LOUD when the lead read fails — never a silent return to the sender's count", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
     await expect(fetchPositiveRepliers("brand-1", undefined, identity)).rejects.toThrow();
+  });
+  it("the repliers of a scope ARE positiveRepliersOf its persons (workflow-projection derives them once, BOX-CPU-1028)", async () => {
+    for (const scope of [undefined, ["C1"], ["C1", "C2"]]) {
+      const fetched = await fetchPositiveRepliers("brand-1", scope, identity);
+      const derived = positiveRepliersOf(await fetchScopePersons("brand-1", scope, identity));
+      expect(derived).toEqual(fetched);
+    }
   });
 });

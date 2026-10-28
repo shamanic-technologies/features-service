@@ -5,7 +5,7 @@ process.env.LEAD_SERVICE_API_KEY = "lead-key";
 process.env.LEAD_PAGE_SIZE = "2";
 
 const { fetchLeadsForRevenue } = await import("./leads-client.js");
-const { __leadWalkCounters, __resetLeadWalkHold, dropHeldLeadWalksForOrgs } = await import("./lead-walk-hold.js");
+const { __leadWalkCounters, __leadWalkDecodeCounters, __resetLeadWalkHold, dropHeldLeadWalksForOrgs, heldLeadWalk } = await import("./lead-walk-hold.js");
 const { withLiveLeadCopy } = await import("./lead-copy.js");
 
 const HEADERS = { orgId: "org-1", userId: "u1", runId: "r1" };
@@ -185,5 +185,46 @@ describe("held fleet lead walk (lib/lead-walk-hold.ts)", () => {
     await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
     expect(s.pages()).toBe(6);
     expect(__leadWalkCounters().heldScopes).toBe(1);
+  });
+  it("held reads share ONE decode (BOX-CPU-1028): concurrent reads and the reads right after the walk decode nothing again", async () => {
+    process.env.LEAD_WALK_HOLD_MS = "0";
+    serveLeads(ROWS);
+    const walked = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    vi.restoreAllMocks();
+
+    process.env.LEAD_WALK_HOLD_MS = "600000";
+    serveLeads(ROWS);
+    await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    const reads = await Promise.all([1, 2, 3, 4, 5].map(() => fetchLeadsForRevenue("brand-1", undefined, HEADERS)));
+    for (const r of reads) expect(r).toEqual(walked);
+    const d = __leadWalkDecodeCounters();
+    expect(d.reused + d.decodes).toBe(5);
+    // The walk's own rows are still alive (the test holds no strong ref, but no GC ran): nothing re-decoded.
+    expect(d.decodes).toBeLessThanOrEqual(1);
+  });
+
+  it("concurrent held reads of a body share one decode and get the same rows", async () => {
+    process.env.LEAD_WALK_HOLD_MS = "600000";
+    const rows = [{ a: 1 }, { a: 2 }];
+    await heldLeadWalk("k", async () => ({ rows: rows.map((r) => ({ ...r })), pages: 1 }));
+    const results = await Promise.all([1, 2, 3].map(() => heldLeadWalk("k", async () => { throw new Error("must not walk"); })));
+    for (const r of results) expect(r).toEqual(rows);
+    expect(results[0]).toBe(results[1]);
+    expect(results[1]).toBe(results[2]);
+  });
+
+  it("a decode is never reused across walks: a dropped or replaced walk decodes its own body", async () => {
+    process.env.LEAD_WALK_HOLD_MS = "600000";
+    const s = serveLeads(ROWS);
+    const first = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    dropHeldLeadWalksForOrgs(["org-1"]);
+    vi.restoreAllMocks();
+    const changed = ROWS.map((r, i) => (i === 0 ? { ...r, clicked: true } : r));
+    serveLeads(changed);
+    const second = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    const third = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
+    expect(s.pages()).toBe(3);
+    expect(second).not.toEqual(first);
+    expect(third).toEqual(second);
   });
 });
