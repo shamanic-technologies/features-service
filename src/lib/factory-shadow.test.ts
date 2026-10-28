@@ -20,6 +20,7 @@ import {
   playsSignatureOf,
   STALE_AFTER_MS,
   ShadowPlanError,
+  triggerCanHead,
 } from "./factory-shadow.js";
 
 // FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN: the brief judge's re-judge triggers and the shadow plan on the seeded catalogue.
@@ -67,7 +68,7 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
 
   it("prices the running funnel and the best-ROI line to the Target on one basis (each pipe's own cost x outcomes needed)", () => {
     const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
-    expect(p).toMatchObject({ target: "conversation", targetSource: "campaign", mode: "proactive", startStep: null, planDiffers: true });
+    expect(p).toMatchObject({ target: "conversation", targetSource: "campaign", mode: "proactive", startStep: null, rankedOn: "roi", planDiffers: true });
     // Running: 100 leads at $0.50 + one positive reply at $40 = $90; value of a positive reply $150 (5% x $3,000).
     expect(p.running).toMatchObject({ reachesTarget: true, funnelId: "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach" });
     if (!p.running.reachesTarget) throw new Error("unreachable");
@@ -120,6 +121,26 @@ describe("the shadow plan (reactive: from the trigger's step to the Target)", ()
     const p = planCampaign(model, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: "reactive", triggerId: "positive_reply_received" }, new Map(), NO_STEPS, "fleet");
     expect(p.triggerId).toBe("positive_reply_received");
     for (const chain of chainsToTarget(model, "reactive", "conversation", "meeting_booked")) expect(chain[0].startsWith("conversation_to_")).toBe(true);
+  });
+});
+
+describe("who may start a reactive line, and an unvalued Target", () => {
+  it("a trigger heads a proactive pipe only from its own step; Lead event from any step; a step-less trigger never", () => {
+    const model = buildCatalogueModel(inputs());
+    expect(triggerCanHead(model, "positive_reply_received", "conversation")).toBe(true);
+    expect(triggerCanHead(model, "positive_reply_received", null)).toBe(false);
+    expect(triggerCanHead(model, "follow_up_due", null)).toBe(false);
+    expect(triggerCanHead(model, "lead_event", null)).toBe(true);
+  });
+
+  it("a Target with no value (after Paid client) still gets the cheapest line per Target, ROI null", () => {
+    const model = buildCatalogueModel(inputs());
+    model.steps.set("conversation", { ...model.steps.get("conversation")!, valueUsd: null });
+    const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
+    expect(p.rankedOn).toBe("cost_per_target");
+    expect(p.shadow?.figures).toMatchObject({ costPerTargetUsd: 60, roi: null, unavailableReason: "target_unvalued" });
+    if (!p.running.reachesTarget) throw new Error("unreachable");
+    expect(p.running.figures).toMatchObject({ costPerTargetUsd: 90, roi: null });
   });
 });
 

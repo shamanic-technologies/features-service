@@ -9366,6 +9366,7 @@ const factoryShadowBody = registry.register(
         ]).describe("The funnel running today, priced to the Target on the same basis."),
         shadow: factoryPlanLine.nullable().describe("The best-ROI straight line to the Target (one pipe or play per leg, the brief's picks applied). Null with `shadowUnavailableReason`."),
         shadowUnavailableReason: z.string().nullable(),
+        rankedOn: z.enum(["roi", "cost_per_target"]).describe("`cost_per_target` when the Target has no value (a step after Paid client): the cheapest line, ROI null."),
         planDiffers: z.boolean().nullable().describe("The shadow line differs from the running one; null when either is missing."),
         candidatesPriced: z.number().int(),
         candidatesSetAside: z.number().int().describe("Chains left out because they walk a step the offer does not have."),
