@@ -34685,6 +34685,602 @@
           "recent",
           "topContainers"
         ]
+      },
+      "FactoryShadowPlan": {
+        "type": "object",
+        "properties": {
+          "campaignId": {
+            "type": "string"
+          },
+          "orgId": {
+            "type": "string"
+          },
+          "brandId": {
+            "type": "string"
+          },
+          "offerId": {
+            "type": "string"
+          },
+          "salesFunnelId": {
+            "type": "string"
+          },
+          "salesFunnelName": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string",
+            "nullable": true,
+            "description": "The brief the judge read (campaign-service's), null = none: every pipe on its default play."
+          },
+          "briefUpdatedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "judge_failed",
+              "plan_failed"
+            ],
+            "description": "`judge_failed` = Jev could not answer for a pipe (the plan is still served, that pipe unconstrained); `plan_failed` = no line to the Target could be priced (or the campaign could not be read)."
+          },
+          "failure": {
+            "type": "string",
+            "nullable": true
+          },
+          "picks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "basePipeId": {
+                  "type": "string"
+                },
+                "channelName": {
+                  "type": "string"
+                },
+                "inRunningFunnel": {
+                  "type": "boolean",
+                  "description": "A pipe of the campaign today; false = a pipe only a candidate line to the Target uses."
+                },
+                "runningPipeId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The pipe or play the campaign runs on it today (null when not in the running funnel)."
+                },
+                "runningPlayName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "pickedPipeId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The play Jev picked from the brief (the pipe id = its default play); null when the judge failed."
+                },
+                "pickedPlayName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "confidence": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Jev's confidence; null when no Jev call was made."
+                },
+                "source": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "jev",
+                    "empty_brief",
+                    "single_play",
+                    null
+                  ],
+                  "description": "`empty_brief` / `single_play` = the default play, no Jev call."
+                },
+                "failure": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "differs": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "The pick differs from what runs today (pipes of the running funnel only)."
+                }
+              },
+              "required": [
+                "basePipeId",
+                "channelName",
+                "inRunningFunnel",
+                "runningPipeId",
+                "runningPlayName",
+                "pickedPipeId",
+                "pickedPlayName",
+                "confidence",
+                "source",
+                "failure",
+                "differs"
+              ]
+            },
+            "description": "Every pipe with plays to choose from, the running funnel's first."
+          },
+          "pickDiffers": {
+            "type": "boolean"
+          },
+          "plan": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "The catalogue step the campaign targets."
+              },
+              "targetSource": {
+                "type": "string",
+                "enum": [
+                  "campaign",
+                  "funnel_last_step"
+                ],
+                "description": "`funnel_last_step` while campaign-service states no Target yet."
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "proactive",
+                  "reactive"
+                ]
+              },
+              "triggerId": {
+                "type": "string",
+                "nullable": true
+              },
+              "startStep": {
+                "type": "string",
+                "nullable": true,
+                "description": "Where every line starts: null = Start (proactive), else the trigger's step."
+              },
+              "running": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "funnelId": {
+                        "type": "string",
+                        "description": "The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."
+                      },
+                      "line": {
+                        "type": "string",
+                        "description": "Start → [Channel] → Step → ... → Target, in words."
+                      },
+                      "legs": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "legKey": {
+                              "type": "string"
+                            },
+                            "pipeId": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "channelSlug": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "channelName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "playId": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The play id when the leg runs a play with a strategy, else null."
+                            },
+                            "strategyName": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "legKey",
+                            "pipeId",
+                            "channelSlug",
+                            "channelName",
+                            "playId",
+                            "strategyName"
+                          ]
+                        }
+                      },
+                      "figures": {
+                        "type": "object",
+                        "properties": {
+                          "costPerTargetUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "What one Target costs on this line: Σ each pipe's own cost per outcome x outcomes needed per Target (the DECIDE rule: each pipe's own cost and yield)."
+                          },
+                          "roi": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "(Target value − what the people taken over were already worth) ÷ cost per Target."
+                          },
+                          "basis": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "stated",
+                              "fleet",
+                              "default",
+                              null
+                            ],
+                            "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                          },
+                          "unavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Why there is no figure (`target_unvalued`, `pipe_unpriced:<pipe>`, `leg_unrated:<leg>`, `customer_time_only`...); null with figures."
+                          },
+                          "targetValueUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "What reaching the Target is worth: the offer's lifetime revenue on Paid client, else it x the catalogue's leg rates to Paid client."
+                          },
+                          "legs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "legKey": {
+                                  "type": "string"
+                                },
+                                "ratePct": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The leg's yield (null on the entry leg: its rate prices nothing)."
+                                },
+                                "rateSource": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "rateBasis": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "measured",
+                                    "stated",
+                                    "fleet",
+                                    "default",
+                                    null
+                                  ],
+                                  "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                },
+                                "outcomesNeededPerPayingClient": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Outcomes of this leg needed per ONE Target (the catalogue's name: here the Target stands in for Paid client)."
+                                },
+                                "pipeId": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "costPerOutcomeUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The pipe's OWN cost per outcome (its best workflow's; 0 on a leg the client's team works)."
+                                },
+                                "costSource": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "costBasis": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "measured",
+                                    "stated",
+                                    "fleet",
+                                    "default",
+                                    null
+                                  ],
+                                  "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                }
+                              },
+                              "required": [
+                                "legKey",
+                                "ratePct",
+                                "rateSource",
+                                "rateBasis",
+                                "outcomesNeededPerPayingClient",
+                                "pipeId",
+                                "costPerOutcomeUsd",
+                                "costSource",
+                                "costBasis"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "costPerTargetUsd",
+                          "roi",
+                          "basis",
+                          "unavailableReason",
+                          "targetValueUsd",
+                          "legs"
+                        ]
+                      },
+                      "reachesTarget": {
+                        "type": "boolean",
+                        "enum": [
+                          true
+                        ]
+                      }
+                    },
+                    "required": [
+                      "funnelId",
+                      "line",
+                      "legs",
+                      "figures",
+                      "reachesTarget"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "funnelId": {
+                        "type": "string"
+                      },
+                      "reachesTarget": {
+                        "type": "boolean",
+                        "enum": [
+                          false
+                        ]
+                      },
+                      "unavailableReason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "funnelId",
+                      "reachesTarget",
+                      "unavailableReason"
+                    ]
+                  }
+                ],
+                "description": "The funnel running today, priced to the Target on the same basis."
+              },
+              "shadow": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "funnelId": {
+                    "type": "string",
+                    "description": "The line's funnel id up to the Target (catalogue spelling; `trigger:<id>+` heads a line a trigger starts with proactive pipes)."
+                  },
+                  "line": {
+                    "type": "string",
+                    "description": "Start → [Channel] → Step → ... → Target, in words."
+                  },
+                  "legs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "legKey": {
+                          "type": "string"
+                        },
+                        "pipeId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "channelSlug": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "channelName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "playId": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The play id when the leg runs a play with a strategy, else null."
+                        },
+                        "strategyName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "legKey",
+                        "pipeId",
+                        "channelSlug",
+                        "channelName",
+                        "playId",
+                        "strategyName"
+                      ]
+                    }
+                  },
+                  "figures": {
+                    "type": "object",
+                    "properties": {
+                      "costPerTargetUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What one Target costs on this line: Σ each pipe's own cost per outcome x outcomes needed per Target (the DECIDE rule: each pipe's own cost and yield)."
+                      },
+                      "roi": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "(Target value − what the people taken over were already worth) ÷ cost per Target."
+                      },
+                      "basis": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "measured",
+                          "stated",
+                          "fleet",
+                          "default",
+                          null
+                        ],
+                        "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                      },
+                      "unavailableReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Why there is no figure (`target_unvalued`, `pipe_unpriced:<pipe>`, `leg_unrated:<leg>`, `customer_time_only`...); null with figures."
+                      },
+                      "targetValueUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What reaching the Target is worth: the offer's lifetime revenue on Paid client, else it x the catalogue's leg rates to Paid client."
+                      },
+                      "legs": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "legKey": {
+                              "type": "string"
+                            },
+                            "ratePct": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The leg's yield (null on the entry leg: its rate prices nothing)."
+                            },
+                            "rateSource": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "rateBasis": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "measured",
+                                "stated",
+                                "fleet",
+                                "default",
+                                null
+                              ],
+                              "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                            },
+                            "outcomesNeededPerPayingClient": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Outcomes of this leg needed per ONE Target (the catalogue's name: here the Target stands in for Paid client)."
+                            },
+                            "pipeId": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "costPerOutcomeUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The pipe's OWN cost per outcome (its best workflow's; 0 on a leg the client's team works)."
+                            },
+                            "costSource": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "costBasis": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "measured",
+                                "stated",
+                                "fleet",
+                                "default",
+                                null
+                              ],
+                              "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                            }
+                          },
+                          "required": [
+                            "legKey",
+                            "ratePct",
+                            "rateSource",
+                            "rateBasis",
+                            "outcomesNeededPerPayingClient",
+                            "pipeId",
+                            "costPerOutcomeUsd",
+                            "costSource",
+                            "costBasis"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "costPerTargetUsd",
+                      "roi",
+                      "basis",
+                      "unavailableReason",
+                      "targetValueUsd",
+                      "legs"
+                    ]
+                  }
+                },
+                "required": [
+                  "funnelId",
+                  "line",
+                  "legs",
+                  "figures"
+                ],
+                "description": "The best-ROI straight line to the Target (one pipe or play per leg, the brief's picks applied). Null with `shadowUnavailableReason`."
+              },
+              "shadowUnavailableReason": {
+                "type": "string",
+                "nullable": true
+              },
+              "planDiffers": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The shadow line differs from the running one; null when either is missing."
+              },
+              "candidatesPriced": {
+                "type": "integer"
+              },
+              "candidatesSetAside": {
+                "type": "integer",
+                "description": "Chains left out because they walk a step the offer does not have."
+              }
+            },
+            "required": [
+              "target",
+              "targetSource",
+              "mode",
+              "triggerId",
+              "startStep",
+              "running",
+              "shadow",
+              "shadowUnavailableReason",
+              "planDiffers",
+              "candidatesPriced",
+              "candidatesSetAside"
+            ]
+          },
+          "computedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaignId",
+          "orgId",
+          "brandId",
+          "offerId",
+          "salesFunnelId",
+          "salesFunnelName",
+          "brief",
+          "briefUpdatedAt",
+          "status",
+          "failure",
+          "picks",
+          "pickDiffers",
+          "plan",
+          "computedAt"
+        ],
+        "description": "SHADOW ONLY: nothing here changes what the campaign runs."
       }
     },
     "parameters": {}
@@ -75984,6 +76580,572 @@
           },
           "500": {
             "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{id}/factory-shadow": {
+      "get": {
+        "summary": "GTM Factory shadow of one funnel campaign: Jev's play per pipe from the brief, and the best-ROI line to its Target beside the running funnel",
+        "description": "SHADOW ONLY (FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN): the last stored pass (every 3 hours), never computed on the read. Per pipe with plays, the play Jev picked from the campaign's brief (judged once, re-judged when the brief or the pipe's plays change; empty brief = the default play, no Jev call) beside the play running today. Then the best-ROI straight line of pipes from where the campaign starts (Start, or its trigger's step) to its Target, priced on each pipe's own cost per outcome and yield, beside the running funnel priced the same way: expected cost per Target and ROI on both. Org-scoped (x-org-id). 404 `factory_shadow_not_computed` before the first pass.",
+        "tags": [
+          "Sales funnel campaigns"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's shadow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactoryShadowPlan"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not computed yet (or not this org's / brand's)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/factory-shadow/monitoring": {
+      "get": {
+        "summary": "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
+        "description": "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` when, on the last pass, the judge or the plan failed for a campaign, or the last pass is older than 7 hours, or none ever ran. `campaigns` = the last pass, one row per campaign. `days` 1..90 (default 30). Staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verdict, series, last pass.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "object",
+                      "properties": {
+                        "red": {
+                          "type": "boolean"
+                        },
+                        "reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "never_computed",
+                              "last_pass_stale",
+                              "judge_failed",
+                              "plan_failed"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "red",
+                        "reasons"
+                      ]
+                    },
+                    "lastPass": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "sweptAt": {
+                          "type": "string"
+                        },
+                        "campaigns": {
+                          "type": "integer"
+                        },
+                        "judgeFailed": {
+                          "type": "integer"
+                        },
+                        "planFailed": {
+                          "type": "integer"
+                        },
+                        "durationMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "sweptAt",
+                        "campaigns",
+                        "judgeFailed",
+                        "planFailed",
+                        "durationMs"
+                      ]
+                    },
+                    "everyHours": {
+                      "type": "number"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaigns": {
+                            "type": "integer"
+                          },
+                          "planDiffers": {
+                            "type": "integer"
+                          },
+                          "pickDiffers": {
+                            "type": "integer"
+                          },
+                          "differs": {
+                            "type": "integer",
+                            "description": "Campaigns whose plan OR a pick differs from what runs."
+                          },
+                          "judgeFailed": {
+                            "type": "integer"
+                          },
+                          "planFailed": {
+                            "type": "integer"
+                          },
+                          "day": {
+                            "type": "string"
+                          },
+                          "orgs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "orgId": {
+                                  "type": "string"
+                                },
+                                "campaigns": {
+                                  "type": "integer"
+                                },
+                                "planDiffers": {
+                                  "type": "integer"
+                                },
+                                "pickDiffers": {
+                                  "type": "integer"
+                                },
+                                "differs": {
+                                  "type": "integer",
+                                  "description": "Campaigns whose plan OR a pick differs from what runs."
+                                },
+                                "judgeFailed": {
+                                  "type": "integer"
+                                },
+                                "planFailed": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "orgId",
+                                "campaigns",
+                                "planDiffers",
+                                "pickDiffers",
+                                "differs",
+                                "judgeFailed",
+                                "planFailed"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "campaigns",
+                          "planDiffers",
+                          "pickDiffers",
+                          "differs",
+                          "judgeFailed",
+                          "planFailed",
+                          "day",
+                          "orgs"
+                        ]
+                      }
+                    },
+                    "campaigns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "brandId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "planDiffers": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "pickDiffers": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "brandId",
+                          "salesFunnelName",
+                          "status",
+                          "failure",
+                          "planDiffers",
+                          "pickDiffers"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "lastPass",
+                    "everyHours",
+                    "series",
+                    "campaigns"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/factory-shadow/sweep": {
+      "post": {
+        "summary": "Run a GTM Factory shadow pass now (internal, api-key; 202, single flight)",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "202": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "started": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "started"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/factory-shadow/eval": {
+      "post": {
+        "summary": "Run the brief judge's proof in the background (internal, api-key; 202)",
+        "description": "On every live funnel campaign, a brief is written from the descriptions of the plays it runs today and Jev re-picks per pipe. Never stored as verdicts, never read by a plan.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "202": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "started": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "started"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "The brief judge's last proof: agreement rate and every disagreement (internal, api-key)",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The last eval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "campaigns": {
+                      "type": "integer"
+                    },
+                    "judged": {
+                      "type": "integer"
+                    },
+                    "agreed": {
+                      "type": "integer"
+                    },
+                    "agreementPct": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "emptyBriefPipes": {
+                      "type": "integer",
+                      "description": "Pipes with plays on campaigns running only default plays: the brief is empty, the rule picks the default, no Jev call."
+                    },
+                    "failed": {
+                      "type": "integer"
+                    },
+                    "disagreements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "basePipeId": {
+                            "type": "string"
+                          },
+                          "brief": {
+                            "type": "string"
+                          },
+                          "expectedPipeId": {
+                            "type": "string"
+                          },
+                          "pickedPipeId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "agrees": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "salesFunnelName",
+                          "basePipeId",
+                          "brief",
+                          "expectedPipeId",
+                          "pickedPipeId",
+                          "confidence",
+                          "agrees",
+                          "failure"
+                        ]
+                      }
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "basePipeId": {
+                            "type": "string"
+                          },
+                          "brief": {
+                            "type": "string"
+                          },
+                          "expectedPipeId": {
+                            "type": "string"
+                          },
+                          "pickedPipeId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "agrees": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "salesFunnelName",
+                          "basePipeId",
+                          "brief",
+                          "expectedPipeId",
+                          "pickedPipeId",
+                          "confidence",
+                          "agrees",
+                          "failure"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "campaigns",
+                    "judged",
+                    "agreed",
+                    "agreementPct",
+                    "emptyBriefPipes",
+                    "failed",
+                    "disagreements",
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Never run",
             "content": {
               "application/json": {
                 "schema": {

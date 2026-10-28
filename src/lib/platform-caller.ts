@@ -44,3 +44,9 @@ export const NICHE_GRADE_SUPPORT: PlatformSupport = {
   kind: "staff_experiment",
   reason: "features-service Research niche study: grades how specific a client's B2B niche is, staff research, produces no outcome",
 };
+
+/** GTM Factory brief judge (shadow): picks, per funnel campaign x pipe, the play the campaign's brief asks for. */
+export const BRIEF_JUDGMENT_SUPPORT: PlatformSupport = {
+  kind: "product_feature",
+  reason: "features-service GTM Factory brief judge (shadow): picks the play a campaign's brief asks for on each pipe, changes nothing that runs, produces no outcome",
+};

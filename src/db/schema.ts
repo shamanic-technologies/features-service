@@ -881,3 +881,62 @@ export const boxHealthSamples = pgTable(
 );
 
 export type BoxHealthSampleRow = typeof boxHealthSamples.$inferSelect;
+
+/**
+ * GTM FACTORY STEP 1 (FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN, `lib/factory-shadow.ts`). SHADOW ONLY: nothing reads these to
+ * decide what a campaign runs.
+ * - `factory_brief_judgments`: per funnel campaign x pipe, the play Jev picked from the campaign's brief (or the default play
+ *   with no Jev call: empty brief, one play), with the brief (hash) and the plays (signature) it chose among: re-judged
+ *   when either moves.
+ * - `factory_shadow_plans`: per funnel campaign, its last shadow plan (running funnel vs best-ROI line to its Target).
+ * - `factory_shadow_daily`: per UTC day x client org, the campaigns whose plan or pick differs from what runs, and the
+ *   ones whose judge or plan failed (dashboard v2 Monitoring). A pass rewrites TODAY's rows only.
+ */
+export const factoryBriefJudgments = pgTable(
+  "factory_brief_judgments",
+  {
+    campaignId: text("campaign_id").notNull(),
+    basePipeId: text("base_pipe_id").notNull(),
+    orgId: text("org_id").notNull(),
+    briefHash: text("brief_hash"),
+    briefUpdatedAt: timestamp("brief_updated_at", { withTimezone: true }),
+    playsSignature: text("plays_signature").notNull(),
+    chosenPipeId: text("chosen_pipe_id").notNull(),
+    defaultPipeId: text("default_pipe_id").notNull(),
+    confidence: doublePrecision("confidence"),
+    probabilities: jsonb("probabilities").$type<Record<string, number>>(),
+    model: text("model"),
+    /** `jev` | `empty_brief` | `single_play`. */
+    source: text("source").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.campaignId, table.basePipeId] })],
+);
+
+export const factoryShadowPlans = pgTable("factory_shadow_plans", {
+  campaignId: text("campaign_id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  brandId: text("brand_id").notNull(),
+  offerId: text("offer_id").notNull(),
+  /** `ok` | `judge_failed` | `plan_failed`. */
+  status: text("status").notNull(),
+  failure: text("failure"),
+  body: jsonb("body").notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const factoryShadowDaily = pgTable(
+  "factory_shadow_daily",
+  {
+    day: text("day").notNull(),
+    orgId: text("org_id").notNull(),
+    campaigns: integer("campaigns").notNull(),
+    planDiffers: integer("plan_differs").notNull(),
+    pickDiffers: integer("pick_differs").notNull(),
+    differs: integer("differs").notNull(),
+    judgeFailed: integer("judge_failed").notNull(),
+    planFailed: integer("plan_failed").notNull(),
+    sweptAt: timestamp("swept_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.day, table.orgId] })],
+);
