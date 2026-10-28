@@ -53,6 +53,9 @@ export interface LegPrice {
   /** How many eligible workflows are mature on the leg. */
   matureWorkflowCount: number;
   unmeasuredReason: OutcomePriceUnmeasuredReason | null;
+  /** What the leg's eligible workflows spent to date, all together (flash): the floor of an expected price for a leg that
+   *  produced nothing yet (FACTORY-P1). Absent on a price built before the field. */
+  spentUsd?: number;
 }
 
 /**
@@ -94,6 +97,7 @@ export function pickLegPrice(input: {
     figures: pick?.figures ?? null,
     matureWorkflowCount: mature.length,
     unmeasuredReason: pick ? null : input.campaignCount === 0 ? "no_campaigns_on_leg" : "no_workflow_with_outcomes",
+    spentUsd: eligible.reduce((sum, [, f]) => sum + (f.flash?.spentUsd ?? 0), 0),
   };
 }
 
