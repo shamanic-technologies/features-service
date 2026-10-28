@@ -88,7 +88,9 @@
  *     pipe cost per outcome  mature workflow (`workflow`, measured) > seeded default for (leg, channel) (`default`)
  *                            > market benchmark (`benchmark`, default) > the pipe's early flash figure (`flash`,
  *                            fleet) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
- *                            fleet). The customer's own team costs nothing. One rule for every pipe, no slug.
+ *                            fleet) > the fleet's mature price of the same OUTCOME from any step, the highest, never
+ *                            below what the pipe already spent producing none (`same_step_fleet`, fleet) > that own
+ *                            spend alone (`own_spend`, default; FACTORY-P1 2026-10-28). The customer's own team costs nothing. One rule for every pipe, no slug.
  *     leg rate               the path's rate (brand measured / stated > default, measured pipe)
  *                            > an entry leg's cold-email default (`DEFAULT_ENTRY_RATE_PCT`) > the seeded leg default.
  *     lifetime revenue       the offer's stated value (stated) or the fleet median (fleet).
@@ -211,6 +213,8 @@ export interface PipeMeasurement {
   costPerOutcomeUsd: number | null;
   conversionRatePct: number | null;
   workflowDynastySlug: string | null;
+  /** What its workflows spent on the leg to date (flash, all together); null/absent = not read. */
+  spentUsd?: number | null;
 }
 
 export interface CatalogueInputs {
@@ -363,7 +367,7 @@ export interface CataloguePipe {
 }
 
 /** Where an expected pipe cost comes from (see the header). */
-export type ExpectedCostSource = "workflow" | "default" | "benchmark" | "flash" | "same_leg_fleet";
+export type ExpectedCostSource = "workflow" | "default" | "benchmark" | "flash" | "same_leg_fleet" | "same_step_fleet" | "own_spend";
 
 export interface ExpectedPipeCost {
   costPerOutcomeUsd: number;
@@ -642,7 +646,20 @@ export function expectedPipeCost(p: CataloguePipe, all: Iterable<CataloguePipe>)
     const c = q.measurement?.basis === "mature" ? q.measurement.costPerOutcomeUsd : null;
     if (usable(c) && (sibling === null || c > sibling)) sibling = c;
   }
-  return sibling === null ? null : { costPerOutcomeUsd: sibling, source: "same_leg_fleet", basis: "fleet" };
+  if (sibling !== null) return { costPerOutcomeUsd: sibling, source: "same_leg_fleet", basis: "fleet" };
+  // A pipe that produced nothing yet (FACTORY-P1, owner fleet rule: a cost is never blank; an unproven candidate starts from
+  // the fleet's belief): the fleet's mature price of the SAME outcome from any step, the highest, never below what the pipe
+  // already spent producing none (the cascade floor, max(own spend, parent)); with no such price, its own spend alone (one
+  // outcome costs at least that). A pipe that never spent and has no prior stays unpriced.
+  const spent = usable(p.measurement?.spentUsd) ? p.measurement!.spentUsd! : 0;
+  let prior: number | null = null;
+  for (const q of all) {
+    if (q.id === p.id || q.operatedBy !== "platform" || q.toStep !== p.toStep) continue;
+    const c = q.measurement?.basis === "mature" ? q.measurement.costPerOutcomeUsd : null;
+    if (usable(c) && (prior === null || c > prior)) prior = c;
+  }
+  if (prior !== null) return { costPerOutcomeUsd: Math.max(prior, spent), source: "same_step_fleet", basis: "fleet" };
+  return spent > 0 ? { costPerOutcomeUsd: spent, source: "own_spend", basis: "default" } : null;
 }
 
 const BASIS_RANK: Record<ExpectedBasis, number> = { measured: 0, stated: 1, fleet: 2, default: 3 };
