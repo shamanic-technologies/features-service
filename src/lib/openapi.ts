@@ -7705,7 +7705,7 @@ const catalogueExpectedDetail = catalogueExpectedRow.extend({
       outcomesNeededPerPayingClient: z.number().nullable(),
       pipeId: z.string().nullable(),
       costPerOutcomeUsd: z.number().nullable().describe("0 on a leg the customer's own team works."),
-      costSource: z.enum(["workflow", "default", "benchmark", "flash", "same_leg_fleet", "customer_team"]).nullable(),
+      costSource: z.enum(["workflow", "default", "benchmark", "flash", "same_leg_fleet", "same_step_fleet", "own_spend", "customer_team"]).nullable(),
       costBasis: catalogueExpectedBasis.nullable().describe("Null on a customer-team leg (costs nothing) or when unpriced."),
     }),
   ),

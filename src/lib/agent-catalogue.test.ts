@@ -530,3 +530,21 @@ describe("a funnel id resolves whatever the size of its path (WARM-FUNNEL-NOT-FO
     for (const p of small.paths.values()) for (const f of funnelsOfPath(small, p)) expect(funnelById(small, f.id)?.id, f.id).toBe(f.id);
   });
 });
+
+describe("expected cost of a pipe that produced nothing yet (FACTORY-P1)", () => {
+  const pipe = (id: string, from: string, to: string, m: Partial<PipeMeasurement> | null) =>
+    ({ id, channelSlug: id.split("|")[0], computedLegKey: `${from}_to_${to}`, fromStep: from, toStep: to, operatedBy: "platform", measurement: m ? { basis: "flash", costPerOutcomeUsd: null, conversionRatePct: null, workflowDynastySlug: null, ...m } : null }) as unknown as Parameters<typeof expectedPipeCost>[0];
+  const fresh = (spentUsd: number) => pipe("zz-new|form_submitted_to_meeting_booked", "form_submitted", "meeting_booked", { spentUsd });
+  const sibling = pipe("zz-other|conversation_to_meeting_booked", "conversation", "meeting_booked", { basis: "mature", costPerOutcomeUsd: 40 });
+
+  it("takes the fleet's mature price of the same outcome, never below what it already spent", () => {
+    expect(expectedPipeCost(fresh(12), [sibling])).toEqual({ costPerOutcomeUsd: 40, source: "same_step_fleet", basis: "fleet" });
+    expect(expectedPipeCost(fresh(55), [sibling])).toEqual({ costPerOutcomeUsd: 55, source: "same_step_fleet", basis: "fleet" });
+  });
+
+  it("with no prior, its own spend alone; never run and no prior stays unpriced", () => {
+    expect(expectedPipeCost(fresh(12), [])).toEqual({ costPerOutcomeUsd: 12, source: "own_spend", basis: "default" });
+    expect(expectedPipeCost(fresh(0), [])).toBeNull();
+    expect(expectedPipeCost(pipe("zz-new|form_submitted_to_meeting_booked", "form_submitted", "meeting_booked", null), [])).toBeNull();
+  });
+});

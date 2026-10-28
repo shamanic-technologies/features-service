@@ -249,7 +249,7 @@ async function computeMeasurements(): Promise<MeasurementStore> {
   // `measurement_unreadable` after a restart). Only a pipe never measured reads unreadable.
   const previous = measurementStore?.value.byPipe ?? new Map<string, PipeMeasurement>();
   const previousPlays = measurementStore?.value.byPlay ?? new Map<string, PipeMeasurement>();
-  const measured = (price: LegPrice): PipeMeasurement => ({ basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug });
+  const measured = (price: LegPrice): PipeMeasurement => ({ basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug, spentUsd: price.spentUsd ?? null });
   await mapWithConcurrency(pipes, MEASUREMENT_CONCURRENCY, async (p) => {
     // A pipe cataloguing plays prices each on its best ALLOWED workflow; its default play is the pipe's own figure.
     const catalogued = plays.playsByPipe.get(p.id) ?? [];
