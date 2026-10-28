@@ -190,7 +190,16 @@ export interface ShadowPlan {
   startStep: string | null;
   running: (PlanLine & { reachesTarget: true }) | { funnelId: string; reachesTarget: false; unavailableReason: string };
   shadow: PlanLine | null;
+  /**
+   * Why there is no shadow line: `no_runnable_line_to_target`; `pipe_unpriced:<pipe id>` when every line to the Target goes
+   * through a pipe with no price yet (a catalogue gap: it ran, no outcome measured, no default or benchmark: nothing to
+   * decide on), the pipe every line shares; `no_priced_line_to_target` otherwise.
+   */
   shadowUnavailableReason: string | null;
+  /** The same in one plain sentence (the pipe by channel and steps); null with a shadow line. */
+  shadowUnavailableDetail: string | null;
+  /** Every pipe with no price yet that blocks a line to the Target, the most shared first; [] with a shadow line. */
+  unpricedPipes: Array<{ pipeId: string; channelName: string; fromStep: string | null; toStep: string; lines: number }>;
   /** What the shadow line is the best on: `roi`, or `cost_per_target` when the Target has no value (a step after Paid client). */
   rankedOn: "roi" | "cost_per_target";
   /** Did the shadow line differ from the running one (to the Target)? null when either side is missing. */
@@ -341,6 +350,40 @@ const byCheapestLine = (a: PlanLine, b: PlanLine): number => {
   return a.funnelId < b.funnelId ? -1 : a.funnelId > b.funnelId ? 1 : 0;
 };
 
+/** PURE: the pipes with no price yet that block the lines (`pipe_unpriced:<id>`), the most shared first. */
+function unpricedPipesOf(model: CatalogueModel, lines: readonly PlanLine[]): ShadowPlan["unpricedPipes"] {
+  const count = new Map<string, number>();
+  for (const l of lines) {
+    const ids = new Set(l.figures.legs.filter((g) => g.pipeId && g.costSource === null).map((g) => g.pipeId!));
+    for (const id of ids) count.set(id, (count.get(id) ?? 0) + 1);
+  }
+  return [...count.entries()]
+    .map(([pipeId, n]) => {
+      const p = model.pipes.get(pipeId) ?? model.plays.get(pipeId);
+      return { pipeId, channelName: p?.channelName ?? pipeId, fromStep: p?.fromStep ?? null, toStep: p?.toStep ?? "", lines: n };
+    })
+    .sort((a, b) => b.lines - a.lines || (a.pipeId < b.pipeId ? -1 : 1));
+}
+
+/** PURE: the fewest unpriced pipes such that every line goes through one of them (most shared first), or null when a line
+ *  is unpriced for another reason (a leg rate, a Target value). */
+function coveringPipes(lines: readonly PlanLine[], blocked: ShadowPlan["unpricedPipes"]): ShadowPlan["unpricedPipes"] | null {
+  // A line the client's own team works end to end costs us nothing and is no plan of ours: it blocks nothing.
+  const ours = lines.filter((l) => l.figures.unavailableReason !== "customer_time_only");
+  if (ours.length === 0 || blocked.length === 0) return null;
+  const pipesOf = ours.map((l) => new Set(l.figures.legs.filter((g) => g.pipeId && g.costSource === null).map((g) => g.pipeId!)));
+  if (pipesOf.some((set) => set.size === 0)) return null;
+  const out: ShadowPlan["unpricedPipes"] = [];
+  let left = pipesOf;
+  for (const b of blocked) {
+    if (left.length === 0) break;
+    if (!left.some((set) => set.has(b.pipeId))) continue;
+    out.push(b);
+    left = left.filter((set) => !set.has(b.pipeId));
+  }
+  return out;
+}
+
 /** PURE: where a campaign starts and what it targets, read off campaign-service's statement, else its running funnel. */
 export function frameOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId">) {
   const running = funnelById(model, campaign.salesFunnelId);
@@ -413,7 +456,25 @@ export function planCampaign(
   lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
   const best = lines[0] ?? null;
   const shadow = best && (rankedOn === "roi" ? best.figures.roi !== null : best.figures.costPerTargetUsd !== null) ? best : null;
-  const shadowUnavailableReason = shadow ? null : lines.length === 0 ? "no_runnable_line_to_target" : "no_priced_line_to_target";
+  const blocked = shadow ? [] : unpricedPipesOf(model, lines);
+  // Every line goes through at least one pipe with no price yet: a catalogue gap. Named by the fewest pipes covering every
+  // line (greedy, most shared first): one pipe when every line shares it.
+  const blockers = coveringPipes(lines, blocked);
+  const shadowUnavailableReason = shadow
+    ? null
+    : lines.length === 0
+      ? "no_runnable_line_to_target"
+      : blockers
+        ? `pipe_unpriced:${blockers.map((b) => b.pipeId).join(", ")}`
+        : "no_priced_line_to_target";
+  const step = (k: string | null) => (k === null ? "Start" : stepLabel(model, k));
+  const shadowUnavailableDetail = shadow
+    ? null
+    : lines.length === 0
+      ? `No pipe we run today reaches ${step(target)} from ${step(startStep)}.`
+      : blockers
+        ? `Every line to ${step(target)} goes through ${blockers.map((b) => `${b.channelName} (${step(b.fromStep)} to ${step(b.toStep)})`).join(" or ")}, which ${blockers.length === 1 ? "has" : "have"} no price yet: no outcome measured, no default cost.`
+        : `None of the ${lines.length} lines to ${step(target)} can be priced yet${blocked.length > 0 ? `: ${blocked.map((b) => b.channelName).join(", ")} have no price yet` : ""}.`;
   return {
     target,
     targetSource: campaign.target ? "campaign" : "funnel_last_step",
@@ -423,6 +484,8 @@ export function planCampaign(
     running: runningLine,
     shadow,
     shadowUnavailableReason,
+    shadowUnavailableDetail,
+    unpricedPipes: blocked,
     rankedOn,
     planDiffers: shadow && runningLine.reachesTarget ? shadow.funnelId !== runningLine.funnelId : null,
     candidatesPriced: lines.length,
