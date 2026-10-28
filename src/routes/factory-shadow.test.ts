@@ -152,6 +152,33 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
   });
 });
 
+describe("a campaign that FOLLOWS its plan (FACTORY-P1-FOLLOW-PLAN): running = the funnel it runs now", () => {
+  const BRIEF = "Only email addresses verified valid.";
+  const following = (id: string, runningSalesFunnelId?: string) => ({ ...campaign(BRIEF), id, target: null, ...(runningSalesFunnelId ? { followsPlan: true, runningSalesFunnelId } : {}) });
+
+  it("absent runningSalesFunnelId = the funnel it was born on (today's behaviour)", async () => {
+    mem.campaigns = [following("sfc-born")];
+    await runFactoryShadowPass();
+    const body = mem.plans.get("sfc-born").body;
+    expect(body.salesFunnelId).toBe(campaign(null).salesFunnelId);
+    expect(body.plan.running.funnelId).not.toBe(body.plan.shadow.funnelId);
+    expect(body.plan.planDiffers).toBe(true);
+  });
+
+  it("served runningSalesFunnelId equal to its plan's funnel reads planDiffers false", async () => {
+    mem.campaigns = [following("sfc-follow")];
+    await runFactoryShadowPass();
+    const planFunnelId = mem.plans.get("sfc-follow").body.plan.shadow.funnelId;
+    mem.campaigns = [following("sfc-follow", planFunnelId)];
+    await runFactoryShadowPass();
+    const body = mem.plans.get("sfc-follow").body;
+    expect(body.salesFunnelId).toBe(planFunnelId);
+    expect(body.plan.running.funnelId).toBe(planFunnelId);
+    expect(body.plan.planDiffers).toBe(false);
+    expect(body.pickDiffers).toBe(false);
+  });
+});
+
 describe("reads", () => {
   it("serves the stored plan to its own org only", async () => {
     mem.plans.set("sfc-x", { orgId: ORG["x-org-id"], brandId: "brand-1", status: "ok", body: { campaignId: "sfc-x", status: "ok" } });
