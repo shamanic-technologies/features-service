@@ -111,6 +111,10 @@ export function __leadWalkCounters(): WalkCounters & { heldScopes: number; heldB
 export function __resetLeadWalkHold(): void {
   held.clear();
   inFlight.clear();
+  decoded.clear();
+  decoding.clear();
+  decodeCounters.decodes = 0;
+  decodeCounters.reused = 0;
   heldBytes = 0;
   for (const c of [sinceBoot, windowCounters]) {
     c.walks = 0;
@@ -151,6 +155,71 @@ function store(key: string, entry: HeldWalk, holdMs: number, maxBytes: number): 
   }
 }
 
+/**
+ * ONE DECODE PER HELD WALK, NOT ONE PER READ (BOX-CPU-1028-FEATURES).
+ *
+ * WHY. Every held hit used to gunzip and `JSON.parse` the whole population again — a 5k-50k row array per
+ * read, 300-600 reads per 10 min (one brand is read ~12× per sweep cycle, several of them in the SAME compute:
+ * workflow-projection asks the brand-wide persons and the brand-wide repliers concurrently). A CPU profile of
+ * the refresher in prod 2026-10-28 put that decode, its parse and the garbage it left at the top of the
+ * process (~0.6-1.4 cores for the container), and N concurrent decodes of one big brand held N copies of it
+ * in a heap that already dies of OOM a few times a day.
+ *
+ * WHAT. Concurrent reads of one held walk share ONE decode (in flight), and the decoded array is remembered
+ * through a `WeakRef` tied to the exact held entry: a later read of the same walk reuses it while the GC has
+ * not reclaimed it, else decodes as before. The rows are the same rows the decode would return (they came
+ * from this very body, or are what the body was made of), and every caller only READS them (leads-client maps
+ * each row into a new person; nothing writes a row), so no figure can move. A WeakRef holds nothing alive:
+ * the heap bound is the one this module always had.
+ */
+interface Decoded {
+  entry: HeldWalk;
+  rows: WeakRef<unknown[]>;
+}
+const decoded = new Map<string, Decoded>();
+const decoding = new Map<string, { entry: HeldWalk; rows: Promise<unknown[]> }>();
+const decodeCounters = { decodes: 0, reused: 0 };
+
+function rememberDecoded(key: string, entry: HeldWalk, rows: unknown[]): void {
+  decoded.set(key, { entry, rows: new WeakRef(rows) });
+  // Forget references to walks no longer held (their arrays are already collectable).
+  for (const [k, d] of decoded) if (held.get(k) !== d.entry) decoded.delete(k);
+}
+
+function decodedRows(key: string, entry: HeldWalk): Promise<unknown[]> {
+  const known = decoded.get(key);
+  if (known && known.entry === entry) {
+    const rows = known.rows.deref();
+    if (rows) {
+      decodeCounters.reused += 1;
+      return Promise.resolve(rows);
+    }
+  }
+  const pending = decoding.get(key);
+  if (pending && pending.entry === entry) {
+    decodeCounters.reused += 1;
+    return pending.rows;
+  }
+  decodeCounters.decodes += 1;
+  const rows = decodeSlots.run(async () => JSON.parse((await gunzipAsync(entry.body)).toString("utf8")) as unknown[]);
+  const flight = { entry, rows };
+  decoding.set(key, flight);
+  void rows
+    .then((r) => {
+      if (held.get(key) === entry) rememberDecoded(key, entry, r);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (decoding.get(key) === flight) decoding.delete(key);
+    });
+  return rows;
+}
+
+/** Test / diagnostics seam: held reads that decoded the body vs reused a decode. */
+export function __leadWalkDecodeCounters(): { decodes: number; reused: number } {
+  return { ...decodeCounters };
+}
+
 /** Record a walk that went to lead-service (called by the walker itself, once per walk actually run). */
 export function countLeadWalk(pages: number): void {
   count("walks", 1);
@@ -169,7 +238,7 @@ export async function heldLeadWalk<Row>(key: string, walk: () => Promise<{ rows:
   if (entry && Date.now() - entry.heldAt < holdMs) {
     count("heldHits", 1);
     count("pagesSpared", entry.pages);
-    return decodeSlots.run(async () => JSON.parse((await gunzipAsync(entry.body)).toString("utf8")) as Row[]);
+    return decodedRows(key, entry) as Promise<Row[]>;
   }
   const pending = inFlight.get(key);
   if (pending) return (await pending) as Row[];
@@ -178,7 +247,11 @@ export async function heldLeadWalk<Row>(key: string, walk: () => Promise<{ rows:
     const heldAt = Date.now();
     const { rows, pages } = await walk();
     const body = await gzipAsync(Buffer.from(JSON.stringify(rows), "utf8"), { level: 1 });
-    store(key, { body, pages, heldAt }, holdMs, leadWalkHoldMaxBytes());
+    const entry: HeldWalk = { body, pages, heldAt };
+    store(key, entry, holdMs, leadWalkHoldMaxBytes());
+    // The rows this walk just built ARE what a decode of its held body returns: a read of the same key while
+    // they are still alive reuses them instead of decoding (see `decodedRows`).
+    rememberDecoded(key, entry, rows);
     return rows;
   })();
   inFlight.set(key, run);

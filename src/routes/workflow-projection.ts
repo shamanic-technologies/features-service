@@ -77,7 +77,7 @@ import {
   type WorkflowMetadata,
 } from "../lib/public-stats-clients.js";
 import { aggregateAcrossDynasties, readLegWorkflowRanking } from "./public.js";
-import { fetchPositiveRepliers, fetchScopePersons, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
+import { fetchPositiveRepliers, fetchScopePersons, positiveRepliersOf, setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { fetchLegFleetEvidence, fetchLegFleetMatureEvidence } from "../lib/leg-fleet-evidence.js";
 import {
@@ -2109,11 +2109,16 @@ export async function fetchWorkflowProjectionEvidence(input: {
     }
   }
   // The flash grains' repliers are read exactly as before (the same lead walk as the persons above,
-  // shared in-process), so the flash figures cannot move whatever the mature cut does.
+  // shared in-process), so the flash figures cannot move whatever the mature cut does. When the persons of
+  // a scope were just read, its repliers ARE `positiveRepliersOf` them — `fetchPositiveRepliers` is exactly
+  // that over the same `fetchScopePersons` — so they are taken from them instead of mapping, deduping and
+  // crediting the whole population a second time (BOX-CPU-1028-FEATURES: the refresher's top CPU line).
+  const repliersOf = (persons: EnginePerson[] | null, scope: string[] | undefined) =>
+    persons && !matureReadFailed ? Promise.resolve(positiveRepliersOf(persons)) : fetchPositiveRepliers(brandId, scope, identity);
   const [allBrandRepliers, campaignRepliers, offerRepliers] = await Promise.all([
-    fetchPositiveRepliers(brandId, undefined, identity),
-    campaignIds && campaignIds.length > 0 ? fetchPositiveRepliers(brandId, campaignIds, identity) : Promise.resolve(null),
-    readOffer ? fetchPositiveRepliers(brandId, offerCampaignIds!, identity) : Promise.resolve(null),
+    repliersOf(allBrandPersons, undefined),
+    campaignIds && campaignIds.length > 0 ? repliersOf(campaignPersons, campaignIds) : Promise.resolve(null),
+    readOffer ? repliersOf(offerPersons, offerCampaignIds!) : Promise.resolve(null),
   ]);
   // On a leg, the brand's repliers are those served under its campaigns ON THE LEG (the brand grain's
   // own population); the lead walk is the same, only the persons kept differ.
