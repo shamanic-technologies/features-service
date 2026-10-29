@@ -44,7 +44,7 @@ import { fetchConversionEmails } from "../lib/conversion-emails-client.js";
 import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { ContactedValueUnavailableError, contactedValueUnavailableBody, readOrUnavailable } from "../lib/contacted-value-unavailable.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
-import { fetchObservedStepFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
+import { fetchObservedStepFacts, type ObservedLeadFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
 import { withOutreachCausedSignalsOnly } from "../lib/outreach-caused-counts.js";
 import {
   DEFAULT_PRICED_CAUSES,
@@ -1529,7 +1529,7 @@ export async function computeFeatureRevenue(
   listedOrganizationKeys?: Promise<ReadonlySet<string> | null>,
   // THE PUBLIC SHOWCASE ONLY (owner 2026-10-29, SHOWCASE-OUR-WINS-1029; `lib/outreach-caused-counts.ts`):
   // the outcome COUNTS this body serves (`funnelSteps` rungs and the per-signal series totals) keep only
-  // the rungs our outreach caused, per the producer's stored verdict. The engine pass, the pipeline, the
+  // the rungs lead-service's stored verdict gives to our outreach (never this service's legacy rule). The engine pass, the pipeline, the
   // return and every cost stay byte-identical. Omitted → every conversion is counted, as every client
   // surface reads (owner 2026-09-25).
   countOutreachCausedOnly = false,
@@ -2117,13 +2117,18 @@ export async function computeFeatureRevenue(
   // The COUNTED persons: the same persons, minus every rung no outreach-caused outcome reached, on the
   // public showcase only. A second engine pass over them gives the counted leads the series totals are
   // built from, with the exact semantics of the first; nothing priced reads it.
-  const countPersons = countOutreachCausedOnly ? withOutreachCausedSignalsOnly(persons) : persons;
+  // The verdict is lead-service's alone: a statement-backed rung no statement priced is not counted, and
+  // the legacy qualifications are no evidence for it. Statements unreadable → those rungs read NULL
+  // (unmeasured), never a count judged by anything else.
+  const countVerdicts = observed?.byEmail ?? new Map<string, ObservedLeadFacts>();
+  const countPersons = countOutreachCausedOnly ? withOutreachCausedSignalsOnly(persons, countVerdicts) : persons;
+  const countEvidence: StepEvidence = countOutreachCausedOnly ? { ...stepEvidence, legacyQualifications: false } : stepEvidence;
   const countedSeries = countOutreachCausedOnly
     ? buildOutcomeSeries(computeRevenue(paths, countPersons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing).leads)
     : outcomeSeries;
   const countBasis: RatioBasis =
     countOutreachCausedOnly && ratioBasis.kind === "mature"
-      ? { ...ratioBasis, persons: withOutreachCausedSignalsOnly(ratioBasis.persons) }
+      ? { ...ratioBasis, persons: withOutreachCausedSignalsOnly(ratioBasis.persons, countVerdicts) }
       : ratioBasis;
   // WHICH signal the scope's leg is entered through — the byte-same terms `learningPhase` counted its
   // outcomes with. Absent ⟺ the scope names no priceable step, which is when there is no curve to draw.
@@ -2240,7 +2245,7 @@ export async function computeFeatureRevenue(
           stepsFunnel,
           countPersons,
           cost.committedCents,
-          stepEvidence,
+          countEvidence,
           customerStepMap(stepCosts),
           countBasis,
           cost.actualCents,
