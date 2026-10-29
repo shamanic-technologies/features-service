@@ -217,7 +217,11 @@ export interface ShadowPlan {
   planDiffers: boolean | null;
   /** Straight lines priced to pick from (after the brief's picks and the offer's steps). */
   candidatesPriced: number;
+  /** Chains left out: a step the offer lacks, or a line carrying fewer of the brief's named channels than another. */
   candidatesSetAside: number;
+  /** The channels the brief names (kept by the pipe judge on a brief that rules channels out); every plan line carries as
+   *  many of them as any line can. [] when the brief restricts no channel. */
+  briefNamedChannels?: string[];
 }
 
 /** Stops a pathological catalogue from spinning a sweep (straight lines priced per campaign). */
@@ -450,6 +454,8 @@ export function planCampaign(
   ltrBasis: ExpectedBasis,
   /** Pipes (base ids) the brief rules out (the pipe judge): a funnel through one never enters the plan. */
   excludedPipes: ReadonlySet<string> = new Set(),
+  /** Channels (slugs) the brief NAMES (`briefNamedChannels`): a named channel stays in the plan on its leg. */
+  namedChannels: ReadonlySet<string> = new Set(),
 ): ShadowPlan {
   const { running, runningSteps, target, head, triggerId, mode, startStep } = frameOf(model, campaign);
 
@@ -491,7 +497,14 @@ export function planCampaign(
       if (!kept || (kept.funnelId !== running.id && (f.id === running.id || f.id < kept.funnelId))) byLine.set(line.lineId, line);
     }
   }
-  const lines = [...byLine.values()];
+  // A channel the brief NAMES stays in the plan (owner 2026-10-29: "Use only these channels: Email Sending ... AI Meeting
+  // Booking" read Email Sending -> Your Team Reply Closing, dropping AI Meeting Booking through a leg the client's own team
+  // works, which no brief judge rules out): only the lines carrying the MOST named channels compete.
+  const coverage = (l: PlanLine) => new Set(l.legs.map((g) => g.channelSlug).filter((c): c is string => c !== null && namedChannels.has(c))).size;
+  const all = [...byLine.values()];
+  const most = all.reduce((m, l) => Math.max(m, coverage(l)), 0);
+  const lines = all.filter((l) => coverage(l) === most);
+  setAside += all.length - lines.length;
   // A valued Target: the best ROI. An unvalued one (after Paid client): the cheapest per Target.
   const rankedOn: ShadowPlan["rankedOn"] = model.steps.get(target)?.valueUsd == null ? "cost_per_target" : "roi";
   lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
@@ -538,6 +551,7 @@ export function planCampaign(
     planDiffers: shadow && runningLine.reachesTarget ? shadow.lineId !== runningLine.lineId : null,
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
+    briefNamedChannels: [...namedChannels].sort(),
   };
 }
 
@@ -603,6 +617,21 @@ export function pipeCandidatesOf(model: CatalogueModel, campaign: Pick<ShadowCam
     .map((id) => model.pipes.get(id))
     .filter((p): p is CataloguePipe => !!p && p.operatedBy === "platform" && pipeRunnable(p))
     .sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * PURE: the channels a brief NAMES, read off the pipe judge: when the brief rules at least one channel out, it lists the
+ * channels to use, so every channel it KEPT (Jev, p < 0.5) is named. A brief that rules nothing out names none (its
+ * kept pipes are every pipe: requiring them all would pick the line with the most channels).
+ */
+export function briefNamedChannels(model: CatalogueModel, verdicts: ReadonlyArray<{ pipeId: string; excluded: boolean | null; source: string | null }>): Set<string> {
+  if (!verdicts.some((v) => v.excluded === true)) return new Set();
+  const out = new Set<string>();
+  for (const v of verdicts) if (v.excluded === false && v.source === "jev") {
+    const slug = model.pipes.get(v.pipeId)?.channelSlug;
+    if (slug) out.add(slug);
+  }
+  return out;
 }
 
 /** PURE: the pipe as Jev reads it (channel, its one-line caption, the step it starts from and the one it reaches). */

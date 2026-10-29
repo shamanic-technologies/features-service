@@ -35370,7 +35370,14 @@
               },
               "candidatesSetAside": {
                 "type": "integer",
-                "description": "Chains left out because they walk a step the offer does not have."
+                "description": "Chains left out because they walk a step the offer does not have, or carry fewer of the brief's named channels than another line."
+              },
+              "briefNamedChannels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Channels (slugs) the brief names: on a brief that rules some channels out, every channel the pipe judge kept. Every plan line carries as many of them as any line can (a named channel stays on its leg). Absent on a plan stored before 2026-10-29."
               }
             },
             "required": [
