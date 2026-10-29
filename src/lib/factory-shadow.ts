@@ -597,8 +597,11 @@ export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
   return withoutDashes(`${p.channelName}${caption ? ` (${caption})` : ""}: moves people from ${from} to ${stepLabel(model, p.toStep)}.`);
 }
 
-/** PURE: a fingerprint of what Jev judged a pipe on: its words move it (a re-judge). */
-export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(pipeWords(model, p));
+/** The pipe judge's rule version: bumped when the question changes, so every stored verdict is asked again. */
+export const PIPE_JUDGE_RULE = "channel-named-v2";
+
+/** PURE: a fingerprint of what Jev judged a pipe on: its words or the question's rule move it (a re-judge). */
+export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(`${PIPE_JUDGE_RULE}|${pipeWords(model, p)}`);
 
 /** One stored keep / rule-out verdict on one pipe for one campaign (`factory_pipe_verdicts`). */
 export interface PipeVerdict {
@@ -618,16 +621,17 @@ export const pipeVerdictCurrent = (v: Pick<PipeVerdict, "briefHash" | "pipeSigna
   !!v && v.briefHash === briefHash && v.pipeSignature === signature;
 
 /** PURE: the Jev `noul` question for one pipe: yes = the brief rules it out. */
-export function pipeQuestion(words: string) {
+export function pipeQuestion(channelName: string, words: string) {
   return {
     type: "noul" as const,
     instructions:
-      `A client wrote a BRIEF for one sales campaign (in the state). Would running this pipe go against the brief? The pipe: ${words} ` +
-      "Answer yes when the brief names the channels or the kind of work the campaign uses and this pipe is not one of them, or when the brief rules it out. " +
-      "Answer no when the brief names this channel, or says nothing about which channels to use. Judge on the brief's words only.",
+      `A client wrote a BRIEF for one sales campaign (in the state). Does the brief rule out the channel "${channelName}"? About this channel: ${words} ` +
+      `Answer yes only when the brief lists the channels to use and "${channelName}" is not in that list, or when the brief says not to use it. ` +
+      `Answer no when the brief names "${channelName}" (even with a strategy after it: a strategy narrows who the channel reaches or how it works, it never rules the channel out), ` +
+      "or says nothing about which channels to use. Judge on the brief's words only.",
     criteria: {
-      true: "The brief rules this pipe out: it names other channels or another kind of work, or excludes this one.",
-      false: "The brief names this channel, allows it, or says nothing about channels.",
+      true: `The brief lists other channels and not "${channelName}", or says not to use it.`,
+      false: `The brief names "${channelName}", or does not restrict channels.`,
     },
   };
 }
