@@ -952,3 +952,24 @@ export const factoryBriefPrefills = pgTable("factory_brief_prefills", {
   brief: text("brief").notNull(),
   writtenAt: timestamp("written_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * FACTORY-P1 pipe judge (2026-10-29, GTM Factory v10: a channel is a tactic): per funnel campaign x pipe WE run on a leg its
+ * plan may walk, whether its brief rules the pipe out (Jev `noul`, p >= 0.5), with the brief (hash) and the pipe's words
+ * (signature) judged: re-judged when either moves. Shadow only.
+ */
+export const factoryPipeVerdicts = pgTable(
+  "factory_pipe_verdicts",
+  {
+    campaignId: text("campaign_id").notNull(),
+    pipeId: text("pipe_id").notNull(),
+    orgId: text("org_id").notNull(),
+    briefHash: text("brief_hash").notNull(),
+    pipeSignature: text("pipe_signature").notNull(),
+    excluded: boolean("excluded").notNull(),
+    probability: doublePrecision("probability").notNull(),
+    model: text("model").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.campaignId, table.pipeId] })],
+);

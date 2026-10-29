@@ -34807,6 +34807,66 @@
           "pickDiffers": {
             "type": "boolean"
           },
+          "pipeVerdicts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "pipeId": {
+                  "type": "string"
+                },
+                "channelName": {
+                  "type": "string"
+                },
+                "fromStep": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "toStep": {
+                  "type": "string"
+                },
+                "inRunningFunnel": {
+                  "type": "boolean"
+                },
+                "excluded": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "The brief rules this pipe out: no plan goes through it. Null when not judged (the judge failed)."
+                },
+                "probability": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Jev's p that the brief rules it out (>= 0.5 = excluded); null with no Jev call."
+                },
+                "source": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "jev",
+                    "empty_brief",
+                    null
+                  ],
+                  "description": "`empty_brief` = kept, no Jev call."
+                },
+                "failure": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "pipeId",
+                "channelName",
+                "fromStep",
+                "toStep",
+                "inRunningFunnel",
+                "excluded",
+                "probability",
+                "source",
+                "failure"
+              ]
+            },
+            "description": "The pipe judge (a channel is a tactic, GTM Factory v10): every pipe we run on a leg the plan may walk, kept or ruled out by the brief, judged once per brief and pipe. The client's own team's legs are never judged."
+          },
           "plan": {
             "type": "object",
             "nullable": true,
@@ -35337,6 +35397,7 @@
           "failure",
           "picks",
           "pickDiffers",
+          "pipeVerdicts",
           "plan",
           "computedAt"
         ],
@@ -77035,6 +77096,13 @@
                     "wouldWrite": {
                       "type": "integer"
                     },
+                    "rewritten": {
+                      "type": "integer",
+                      "description": "Briefs WE wrote and nobody edited since, rewritten to what we write now."
+                    },
+                    "wouldRewrite": {
+                      "type": "integer"
+                    },
                     "briefStated": {
                       "type": "integer"
                     },
@@ -77075,6 +77143,8 @@
                             "enum": [
                               "written",
                               "would_write",
+                              "rewritten",
+                              "would_rewrite",
                               "brief_stated",
                               "prefilled_before",
                               "plain_defaults",
@@ -77109,6 +77179,8 @@
                     "campaigns",
                     "written",
                     "wouldWrite",
+                    "rewritten",
+                    "wouldRewrite",
                     "briefStated",
                     "prefilledBefore",
                     "plainDefaults",

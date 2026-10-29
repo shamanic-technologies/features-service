@@ -16,7 +16,9 @@ const mem = vi.hoisted(() => ({
   model: null as any,
   campaigns: [] as any[],
   jevCalls: 0,
-  prefills: new Set<string>(),
+  prefills: new Map<string, string>(),
+  pipeVerdicts: new Map<string, any>(),
+  pipeCalls: 0,
   patches: [] as Array<{ url: string; headers: Record<string, string>; body: any }>,
   jevFails: false,
 }));
@@ -31,8 +33,10 @@ vi.mock("../lib/factory-shadow-store.js", () => ({
     mem.days = [...mem.days.filter((d) => d.day !== day), ...counts.map((c) => ({ day, ...c, sweptAt: at.toISOString() }))];
   }),
   readDays: vi.fn(async () => mem.days),
-  readPrefilledCampaignIds: vi.fn(async () => new Set(mem.prefills)),
-  recordPrefill: vi.fn(async (r: { campaignId: string }) => void mem.prefills.add(r.campaignId)),
+  readPrefills: vi.fn(async () => new Map(mem.prefills)),
+  recordPrefill: vi.fn(async (r: { campaignId: string; brief: string }) => void mem.prefills.set(r.campaignId, r.brief)),
+  readPipeVerdicts: vi.fn(async () => new Map(mem.pipeVerdicts)),
+  writePipeVerdict: vi.fn(async (v: any) => void mem.pipeVerdicts.set(`${v.campaignId}|${v.pipeId}`, v)),
 }));
 vi.mock("../lib/fleet-cell-store.js", () => ({
   loadFleetCell: vi.fn(async (k: string) => mem.cells.get(k) ?? null),
@@ -61,8 +65,15 @@ vi.stubGlobal(
       return new Response(JSON.stringify({ salesFunnelCampaign: {} }), { status: 200 });
     }
     if (url === "http://chat/internal/platform-judgments") {
-      mem.jevCalls += 1;
       const body = JSON.parse(String(init?.body));
+      if (!body.questions.play) {
+        // The pipe judge: a brief saying "No Apollo" rules the Apollo pipes out, nothing else.
+        mem.pipeCalls += 1;
+        if (mem.jevFails) return new Response("out of credits", { status: 502 });
+        const answers = Object.fromEntries(Object.entries(body.questions).map(([k, q]: [string, any]) => [k, { type: "noul", noul: body.state.brief.includes("No Apollo") && q.instructions.includes("Apollo") ? 0.95 : 0.05 }]));
+        return new Response(JSON.stringify({ model: "jev-test", answers }), { status: 200 });
+      }
+      mem.jevCalls += 1;
       expect(body.support.kind).toBe("product_feature");
       expect(body.state.brief).toBeTruthy();
       if (mem.jevFails) return new Response("out of credits", { status: 502 });
@@ -113,6 +124,7 @@ const ORG = { "x-api-key": "test-key", "x-org-id": "11111111-1111-4111-8111-1111
 
 beforeEach(() => {
   mem.jevCalls = 0;
+  mem.pipeCalls = 0;
   mem.jevFails = false;
 });
 
@@ -132,7 +144,11 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(mem.patches).toHaveLength(1);
     expect(mem.patches[0].url).toBe("http://campaign/sales-funnel-campaigns/sfc-1");
     expect(mem.patches[0].headers["x-user-id"]).toBe("system-features-service");
-    expect(mem.patches[0].body.brief).toBe("On Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    // The channel of every pipe it runs, and the play of each (the pipe judge keeps the campaign on its channels).
+    expect(mem.patches[0].body.brief).toBe("Use only these channels:\nUse Lead Sourcing (Start to Lead).\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    expect(mem.pipeCalls).toBeGreaterThan(0);
+    const verdicts = mem.plans.get("sfc-1").body.pipeVerdicts;
+    expect(verdicts.filter((v: any) => v.inRunningFunnel).every((v: any) => v.excluded === false)).toBe(true);
     // Jev re-picks the play running today.
     expect(mem.jevCalls).toBe(1);
     const body = mem.plans.get("sfc-1").body;
@@ -153,6 +169,32 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ apply: false, wouldWrite: 1, briefStated: 1, written: 0 });
     expect(mem.patches).toHaveLength(1);
+  });
+
+  it("our own unedited brief follows what we write now; an edited one is never touched", async () => {
+    mem.prefills.set("sfc-9", "On Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    mem.prefills.set("sfc-8", "Our old words.");
+    mem.campaigns = [
+      { ...campaign("On Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found."), id: "sfc-9" },
+      { ...campaign("Edited by the owner since."), id: "sfc-8" },
+    ];
+    const res = await request(app).post("/internal/factory-shadow/prefill-briefs").set({ "x-api-key": "test-key" }).send({ apply: true });
+    expect(res.body).toMatchObject({ rewritten: 1, briefStated: 1 });
+    const patched = mem.patches.filter((p) => p.url.endsWith("/sfc-9"));
+    expect(patched).toHaveLength(1);
+    expect(patched[0].body.brief.startsWith("Use only these channels:")).toBe(true);
+    expect(mem.patches.some((p) => p.url.endsWith("/sfc-8"))).toBe(false);
+  });
+
+  it("a pipe the brief rules out never enters the plan; verdicts are stored and reused", async () => {
+    mem.campaigns = [{ ...campaign("No Apollo, ever."), id: "sfc-7" }];
+    await runFactoryShadowPass();
+    const body = mem.plans.get("sfc-7").body;
+    expect(body.pipeVerdicts.find((v: any) => v.pipeId === "sourcing-apollo-cold-filters|start_to_lead_found")).toMatchObject({ excluded: true, source: "jev" });
+    expect(body.plan.shadow.legs.some((l: any) => (l.pipeId ?? "").startsWith("sourcing-apollo"))).toBe(false);
+    const calls = mem.pipeCalls;
+    await runFactoryShadowPass();
+    expect(mem.pipeCalls).toBe(calls);
   });
 
   it("a brief is judged by Jev once, then the stored verdict is reused", async () => {
