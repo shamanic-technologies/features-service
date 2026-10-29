@@ -30,6 +30,7 @@ import {
   SWEEP_EVERY_MS,
   ShadowPlanError,
   briefHashOf,
+  briefNamedChannels,
   briefQuestion,
   briefState,
   evalBriefOf,
@@ -411,7 +412,7 @@ async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof pass
   const pipeVerdicts = pipes.rows;
   let plan: ShadowPlan | null = null;
   try {
-    plan = planCampaign(model, c, picks, steps, ltrBasis, pipes.excluded);
+    plan = planCampaign(model, c, picks, steps, ltrBasis, pipes.excluded, briefNamedChannels(model, pipes.rows));
   } catch (error) {
     return { ...head, status: "plan_failed", failure: failureOf(error), picks: pickRows, pickDiffers, pipeVerdicts, plan: null };
   }

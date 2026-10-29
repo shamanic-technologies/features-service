@@ -9388,7 +9388,8 @@ const factoryShadowBody = registry.register(
         rankedOn: z.enum(["roi", "cost_per_target"]).describe("`cost_per_target` when the Target has no value (a step after Paid client): the cheapest line, ROI null."),
         planDiffers: z.boolean().nullable().describe("The shadow line differs from the running one; null when either is missing."),
         candidatesPriced: z.number().int(),
-        candidatesSetAside: z.number().int().describe("Chains left out because they walk a step the offer does not have."),
+        candidatesSetAside: z.number().int().describe("Chains left out because they walk a step the offer does not have, or carry fewer of the brief's named channels than another line."),
+        briefNamedChannels: z.array(z.string()).optional().describe("Channels (slugs) the brief names: on a brief that rules some channels out, every channel the pipe judge kept. Every plan line carries as many of them as any line can (a named channel stays on its leg). Absent on a plan stored before 2026-10-29."),
       })
       .nullable(),
     computedAt: z.string(),
