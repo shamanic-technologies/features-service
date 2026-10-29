@@ -3788,6 +3788,19 @@ async function computeShowcaseBrand(
       // client carrying no discount.
       "net",
       funnelKey,
+      undefined, // offerId: the brand grain
+      undefined, // customerStepCosts: read here
+      undefined, // causes: our wins priced (default)
+      undefined, // workflowScope: the whole brand
+      undefined, // datedSpend: the billed committed spend (default)
+      false, // brandLevelSpend
+      undefined, // perOfferPricing
+      undefined, // listedOrganizationKeys
+      // COUNT ONLY OUR WINS (owner 2026-10-29, SHOWCASE-OUR-WINS-1029): every person count this card
+      // prints (each rung, positive replies, meetings booked) keeps only the outcomes our outreach
+      // caused, per lead-service's stored verdict. Doc Dinners' CRM imported 149 meetings, 7 of them
+      // after our email to that person. The return beside them is untouched (the client's own figure).
+      true,
     );
     // The money half rides the SAME body: the funnel-narrowed read's own `costEconomics.roiMultiple`
     // is the return this client reads on their own dashboard, and each rung already carries what it
@@ -4045,6 +4058,13 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   };
   const returnPick = await confirmReturn(picks.highestReturn, returnWalkable);
   const recentPick = await confirmRecent(picks.recentlyStarted, recentWalkable);
+  // EVERY walk failed to read (prod 2026-10-29: lead-service restarting during the boot warm) is NOT
+  // "nobody qualifies": throw, so the prior showcase stays served and the next read retries, rather than
+  // caching an empty homepage row as a measured answer.
+  const walkedEntries = [...walkedFull.values()];
+  if (walkedEntries.length > 0 && walkedEntries.every((w) => w.entry.unmeasuredReason === "read_failed")) {
+    throw new Error(`showcase: all ${walkedEntries.length} walked candidate(s) failed to read; keeping the prior showcase`);
+  }
 
   const named = [...new Set([...recentPick.brandIds, ...returnPick.brandIds])];
   const brands = named

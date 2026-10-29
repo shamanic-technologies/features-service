@@ -45,6 +45,7 @@ import { fetchEventTimestamps } from "../lib/email-status-client.js";
 import { ContactedValueUnavailableError, contactedValueUnavailableBody, readOrUnavailable } from "../lib/contacted-value-unavailable.js";
 import { fetchSequencesByDay } from "../lib/sequences-client.js";
 import { fetchObservedStepFacts, type OutcomeCauseCounts } from "../lib/observed-steps.js";
+import { withOutreachCausedSignalsOnly } from "../lib/outreach-caused-counts.js";
 import {
   DEFAULT_PRICED_CAUSES,
   OUTCOME_CAUSES,
@@ -1526,6 +1527,12 @@ export async function computeFeatureRevenue(
   // a rung, listed at $0 when the engine left it out (`appendListedOrganizations`). Null → nothing appended
   // (unreadable cell, said loudly by the caller). Omitted → byte-identical.
   listedOrganizationKeys?: Promise<ReadonlySet<string> | null>,
+  // THE PUBLIC SHOWCASE ONLY (owner 2026-10-29, SHOWCASE-OUR-WINS-1029; `lib/outreach-caused-counts.ts`):
+  // the outcome COUNTS this body serves (`funnelSteps` rungs and the per-signal series totals) keep only
+  // the rungs our outreach caused, per the producer's stored verdict. The engine pass, the pipeline, the
+  // return and every cost stay byte-identical. Omitted → every conversion is counted, as every client
+  // surface reads (owner 2026-09-25).
+  countOutreachCausedOnly = false,
 ): Promise<RevenueBody> {
   // The single campaign id the campaign-SCOPED downstream reads still take: the requested campaign
   // for a single scope, `undefined` for a family (no producer accepts a campaign list). The reads
@@ -2107,6 +2114,17 @@ export async function computeFeatureRevenue(
   // takes its driver leg from the SAME object, so the curve's denominator and the series a consumer
   // charts beside it are the same people by construction.
   const outcomeSeries = buildOutcomeSeries(result.leads);
+  // The COUNTED persons: the same persons, minus every rung no outreach-caused outcome reached, on the
+  // public showcase only. A second engine pass over them gives the counted leads the series totals are
+  // built from, with the exact semantics of the first; nothing priced reads it.
+  const countPersons = countOutreachCausedOnly ? withOutreachCausedSignalsOnly(persons) : persons;
+  const countedSeries = countOutreachCausedOnly
+    ? buildOutcomeSeries(computeRevenue(paths, countPersons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing).leads)
+    : outcomeSeries;
+  const countBasis: RatioBasis =
+    countOutreachCausedOnly && ratioBasis.kind === "mature"
+      ? { ...ratioBasis, persons: withOutreachCausedSignalsOnly(ratioBasis.persons) }
+      : ratioBasis;
   // WHICH signal the scope's leg is entered through — the byte-same terms `learningPhase` counted its
   // outcomes with. Absent ⟺ the scope names no priceable step, which is when there is no curve to draw.
   const outcomeTerms = learning?.outcomeTerms ?? null;
@@ -2207,7 +2225,7 @@ export async function computeFeatureRevenue(
     attributedOutcomes: attributedOutcomesFor(stepEvidence),
     events: result.events,
     recipientsContacted: contactedSeries,
-    ...outcomeSeries,
+    ...countedSeries,
     sequences,
     spend: breakdown ? buildSpend(breakdown, result.leads, counts, parents, spendBasis) : null,
     // The VOLUME half — how much real outcome evidence every money figure above rests on. Built from
@@ -2220,11 +2238,11 @@ export async function computeFeatureRevenue(
     funnelSteps: stepsFunnel
       ? buildFunnelSteps(
           stepsFunnel,
-          persons,
+          countPersons,
           cost.committedCents,
           stepEvidence,
           customerStepMap(stepCosts),
-          ratioBasis,
+          countBasis,
           cost.actualCents,
         )
       : null,
