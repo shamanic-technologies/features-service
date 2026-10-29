@@ -9383,6 +9383,7 @@ const factoryShadowBody = registry.register(
         shadow: factoryPlanLine.nullable().describe("The best-ROI straight line to the Target (one pipe or play per leg, the brief's picks applied). Null with `shadowUnavailableReason`."),
         shadowUnavailableReason: z.string().nullable().describe("`no_runnable_line_to_target`; `pipe_unpriced:<pipe id>` = every line goes through that pipe, which has no price yet (a catalogue gap); `no_priced_line_to_target` otherwise."),
         shadowUnavailableDetail: z.string().nullable().describe("The same in one plain sentence; null with a shadow line."),
+        shadowPickedOn: z.enum(["ranked", "only_line"]).nullable().optional().describe("`ranked` = the best priced line; `only_line` = the ONE runnable line of ours reaching the Target, a pipe on it unpriced (in `unpricedPipes`): nothing to rank, it is the plan, figures null until that pipe spends. Null with no shadow line; absent on a plan stored before 2026-10-29."),
         unpricedPipes: z.array(z.object({ pipeId: z.string(), channelName: z.string(), fromStep: z.string().nullable(), toStep: z.string(), lines: z.number().int().describe("Lines to the Target it blocks.") })).describe("Every pipe with no price yet blocking a line to the Target, most shared first; [] with a shadow line."),
         rankedOn: z.enum(["roi", "cost_per_target"]).describe("`cost_per_target` when the Target has no value (a step after Paid client): the cheapest line, ROI null."),
         planDiffers: z.boolean().nullable().describe("The shadow line differs from the running one; null when either is missing."),
@@ -9400,7 +9401,33 @@ const factoryOrgDay = z.object({
   pickDiffers: z.number().int(),
   differs: z.number().int().describe("Campaigns whose plan OR a pick differs from what runs."),
   judgeFailed: z.number().int(),
-  planFailed: z.number().int(),
+  planFailed: z.number().int().describe("Campaigns whose plan is a PROBLEM (unreadable, or following a plan it does not have). Since 2026-10-29 a plan only waiting on a first price is `notYet`."),
+  notYet: z.number().int().describe("Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."),
+});
+const factoryChangeSide = z.object({
+  pipes: z.array(z.object({ legKey: z.string(), pipeId: z.string().nullable(), name: z.string().describe("The pipe's served catalogue name: its channel, `: <strategy>` on a play.") })).describe("ONLY the legs that differ between the two lines (common head and tail cut), in line order."),
+  text: z.string().describe("Those pipe names joined with ' → '."),
+  costPerTargetUsd: z.number().nullable().describe("The WHOLE line's expected cost per Target."),
+  roi: z.number().nullable().describe("The whole line's ROI on the Target."),
+  basis: z.enum(["measured", "expected"]).nullable().describe("`measured` when every input of the figure is measured, else `expected`."),
+  inputsBasis: factoryBasis,
+  unavailableReason: z.string().nullable(),
+});
+const factoryMonitoringCampaign = z.object({
+  campaignId: z.string(),
+  orgId: z.string(),
+  brandId: z.string(),
+  salesFunnelName: z.string(),
+  status: z.string(),
+  failure: z.string().nullable(),
+  followsPlan: z.boolean().describe("The campaign runs its latest plan: without one it cannot run."),
+  state: z.enum(["ok", "problem", "not_yet"]).describe("`problem` (red: something broken): the judge failed, the campaign could not be planned, or it follows its plan and has none. `not_yet` (normal colours): its line waits on a first price (a pipe that never spent) or a catalogue line, on a campaign that does not follow its plan; or its only line is unpriced."),
+  stateReason: z.string().nullable().describe("A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."),
+  stateDetail: z.string().nullable().describe("One plain sentence the page shows (\"Waiting for a first price: Threads posts has never run.\"); null when ok."),
+  planDiffers: z.boolean().nullable(),
+  pickDiffers: z.boolean(),
+  target: z.string().nullable(),
+  change: z.object({ running: factoryChangeSide, best: factoryChangeSide }).nullable().describe("What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."),
 });
 
 registry.registerPath({
@@ -9426,8 +9453,10 @@ registry.registerPath({
   path: "/internal/factory-shadow/monitoring",
   summary: "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
   description:
-    "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` when, on the last pass, the judge or the plan failed for a " +
-    "campaign, or the last pass is older than 7 hours, or none ever ran. `campaigns` = the last pass, one row per campaign. `days` 1..90 (default 30). Staff-gated at api-service.",
+    "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` ONLY for something broken (owner 2026-10-29): on the last pass a " +
+    "campaign is a `problem` (judge failed, plan unreadable, or it follows its plan and has none), or the last pass is older than 7 hours, or none ever ran; a plan waiting " +
+    "on a first price is `not_yet`, never red. `campaigns` = the last pass, one row per campaign; `problems` and `notYet` = the same rows split (the page leads with problems). " +
+    "`days` 1..90 (default 30). Staff-gated at api-service.",
   tags: ["Internal"],
   request: { query: z.object({ days: z.string().optional() }) },
   responses: {
@@ -9437,10 +9466,12 @@ registry.registerPath({
         "application/json": {
           schema: z.object({
             verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["never_computed", "last_pass_stale", "judge_failed", "plan_failed"])) }),
-            lastPass: z.object({ sweptAt: z.string(), campaigns: z.number().int(), judgeFailed: z.number().int(), planFailed: z.number().int(), durationMs: z.number() }).nullable(),
+            lastPass: z.object({ sweptAt: z.string(), campaigns: z.number().int(), judgeFailed: z.number().int(), planFailed: z.number().int(), notYet: z.number().int().optional(), durationMs: z.number() }).nullable(),
             everyHours: z.number(),
             series: z.array(factoryOrgDay.omit({ orgId: true }).extend({ day: z.string(), orgs: z.array(factoryOrgDay) })),
-            campaigns: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), failure: z.string().nullable(), planDiffers: z.boolean().nullable(), pickDiffers: z.boolean() })),
+            campaigns: z.array(factoryMonitoringCampaign),
+            problems: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: problem` (red)."),
+            notYet: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: not_yet` (normal colours)."),
           }),
         },
       },

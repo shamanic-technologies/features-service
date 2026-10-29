@@ -60,6 +60,8 @@ export interface ShadowCampaign {
   /** What it starts from, as campaign-service states it; null = not stated yet (read off the running funnel). */
   mode: "proactive" | "reactive" | null;
   triggerId: string | null;
+  /** The campaign RUNS its latest plan (campaign-service `followsPlan`, opt-in): no plan = it cannot run. Absent = false. */
+  followsPlan?: boolean;
 }
 
 // ── The brief judge ────────────────────────────────────────────────────────────────────────────────
@@ -207,6 +209,10 @@ export interface ShadowPlan {
   unpricedPipes: Array<{ pipeId: string; channelName: string; fromStep: string | null; toStep: string; lines: number }>;
   /** What the shadow line is the best on: `roi`, or `cost_per_target` when the Target has no value (a step after Paid client). */
   rankedOn: "roi" | "cost_per_target";
+  /** How the shadow line was chosen: `ranked` (the best priced line), `only_line` (ONE runnable line reaches the Target and
+   *  a pipe on it has no price yet: nothing to rank, it is the plan, its figures null until the pipe spends; its pipes in
+   *  `unpricedPipes`), null with no shadow line. */
+  shadowPickedOn?: "ranked" | "only_line" | null;
   /** Did the shadow line differ from the running one (to the Target)? null when either side is missing. */
   planDiffers: boolean | null;
   /** Straight lines priced to pick from (after the brief's picks and the offer's steps). */
@@ -490,8 +496,14 @@ export function planCampaign(
   const rankedOn: ShadowPlan["rankedOn"] = model.steps.get(target)?.valueUsd == null ? "cost_per_target" : "roi";
   lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
   const best = lines[0] ?? null;
-  const shadow = best && (rankedOn === "roi" ? best.figures.roi !== null : best.figures.costPerTargetUsd !== null) ? best : null;
-  const blocked = shadow ? [] : unpricedPipesOf(model, lines);
+  const ranked = best && (rankedOn === "roi" ? best.figures.roi !== null : best.figures.costPerTargetUsd !== null) ? best : null;
+  // ONE runnable line of ours and nothing priced: there is nothing to choose between, so it IS the plan (a campaign
+  // following its plan can run it), its figures null until its unpriced pipe spends (FACTORY-P2: Threads posts to Signup,
+  // 2026-10-29). A line the client's own team works end to end is no plan of ours (`coveringPipes`).
+  const ours = lines.filter((l) => l.figures.unavailableReason !== "customer_time_only");
+  const onlyLine = !ranked && ours.length === 1 && unpricedPipesOf(model, ours).length > 0 ? ours[0] : null;
+  const shadow = ranked ?? onlyLine;
+  const blocked = ranked ? [] : unpricedPipesOf(model, lines);
   // Every line goes through at least one pipe with no price yet: a catalogue gap. Named by the fewest pipes covering every
   // line (greedy, most shared first): one pipe when every line shares it.
   const blockers = coveringPipes(lines, blocked);
@@ -522,6 +534,7 @@ export function planCampaign(
     shadowUnavailableDetail,
     unpricedPipes: blocked,
     rankedOn,
+    shadowPickedOn: ranked ? "ranked" : onlyLine ? "only_line" : null,
     planDiffers: shadow && runningLine.reachesTarget ? shadow.lineId !== runningLine.lineId : null,
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
@@ -577,7 +590,9 @@ export function pipesToJudge(model: CatalogueModel, campaign: Pick<ShadowCampaig
 
 /**
  * PURE: the pipes the brief judge keeps or rules out for a campaign: every pipe WE run (platform, base pipe: its plays are
- * the play judge's) on any leg of a catalogue path the plan may walk. The client's own team's legs are not ours to rule out.
+ * the play judge's) on any leg of a catalogue path the plan may walk. The client's own team's legs are not ours to rule out,
+ * nor is a leg no workflow of ours performs (FACTORY-P2, 2026-10-29: an organic leg, the market acting on a post, is never
+ * a channel a brief chooses; a pipe that cannot run never enters a plan anyway).
  */
 export function pipeCandidatesOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId">): CataloguePipe[] {
   const f = frameOf(model, campaign);
@@ -586,7 +601,7 @@ export function pipeCandidatesOf(model: CatalogueModel, campaign: Pick<ShadowCam
     for (const k of path.legKeys) for (const p of pipesOnLeg(model, k)) if (p.operatedBy === "platform") ids.add(p.id);
   return [...ids]
     .map((id) => model.pipes.get(id))
-    .filter((p): p is CataloguePipe => !!p && p.operatedBy === "platform")
+    .filter((p): p is CataloguePipe => !!p && p.operatedBy === "platform" && pipeRunnable(p))
     .sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
@@ -696,6 +711,8 @@ export interface ShadowRowSummary {
   status: ShadowStatus;
   planDiffers: boolean | null;
   pickDiffers: boolean;
+  /** `shadowStateOf`: a plan failure that is only "not yet" never counts as failed. Absent = read off `status`. */
+  state?: ShadowState;
 }
 
 export interface OrgDayCounts {
@@ -706,23 +723,122 @@ export interface OrgDayCounts {
   /** Campaigns where the plan OR a pick differs from what runs. */
   differs: number;
   judgeFailed: number;
+  /** Campaigns whose plan is a PROBLEM (unreadable, or following a plan it does not have); a not-yet one is `notYet`. */
   planFailed: number;
+  /** Campaigns waiting on a first price or a catalogue line (nothing broken). */
+  notYet: number;
 }
 
 /** PURE: one sweep's rows counted per org (sorted by org). */
 export function orgDayCountsOf(rows: readonly ShadowRowSummary[]): OrgDayCounts[] {
   const by = new Map<string, OrgDayCounts>();
   for (const r of rows) {
-    const c = by.get(r.orgId) ?? { orgId: r.orgId, campaigns: 0, planDiffers: 0, pickDiffers: 0, differs: 0, judgeFailed: 0, planFailed: 0 };
+    const c = by.get(r.orgId) ?? { orgId: r.orgId, campaigns: 0, planDiffers: 0, pickDiffers: 0, differs: 0, judgeFailed: 0, planFailed: 0, notYet: 0 };
     c.campaigns += 1;
     if (r.planDiffers === true) c.planDiffers += 1;
     if (r.pickDiffers) c.pickDiffers += 1;
     if (r.planDiffers === true || r.pickDiffers) c.differs += 1;
     if (r.status === "judge_failed") c.judgeFailed += 1;
-    if (r.status === "plan_failed") c.planFailed += 1;
+    if (r.state === "not_yet") c.notYet += 1;
+    else if (r.status === "plan_failed") c.planFailed += 1;
     by.set(r.orgId, c);
   }
   return [...by.values()].sort((a, b) => (a.orgId < b.orgId ? -1 : 1));
+}
+
+// ── Monitoring: problems apart from not-yet (owner 2026-10-29: red ONLY for something actually broken) ──
+
+/**
+ * `ok`: a plan, priced. `problem` (red): the judge failed, the campaign could not be read or planned (its funnel unknown,
+ * its offer gone), or it FOLLOWS its plan and has none (it cannot run). `not_yet` (normal colours): a campaign that does
+ * not follow its plan and whose line waits on a first price (a pipe that never spent) or on a catalogue line to its
+ * Target; also a plan that is its only line, unpriced. Nothing is broken there, the page shows it after the problems.
+ */
+export type ShadowState = "ok" | "problem" | "not_yet";
+
+/** Why a plan is missing without anything being broken (`shadowUnavailableReason` prefixes). */
+const NOT_YET_REASONS = ["pipe_unpriced:", "no_priced_line_to_target", "no_runnable_line_to_target"];
+
+export interface StoredShadowRow {
+  status: ShadowStatus;
+  failure: string | null;
+  followsPlan?: boolean;
+  plan: (Pick<ShadowPlan, "shadow" | "shadowUnavailableReason" | "shadowUnavailableDetail" | "unpricedPipes"> & Partial<Pick<ShadowPlan, "shadowPickedOn">>) | null;
+}
+
+/** PURE: one stored row's state, with its reason (a code) and one plain sentence the page shows. */
+export function shadowStateOf(row: StoredShadowRow): { state: ShadowState; stateReason: string | null; stateDetail: string | null } {
+  const waiting = (pipes: ShadowPlan["unpricedPipes"]): string =>
+    `Waiting for a first price: ${[...new Set(pipes.map((p) => p.channelName))].join(", ")} ${pipes.length === 1 ? "has" : "have"} never run.`;
+  const plan = row.plan;
+  if (row.status === "judge_failed") return { state: "problem", stateReason: "judge_failed", stateDetail: `The brief judge failed: ${row.failure ?? "no detail"}.` };
+  if (row.status === "ok" && plan?.shadowPickedOn === "only_line" && plan.unpricedPipes.length > 0) return { state: "not_yet", stateReason: "only_line_unpriced", stateDetail: waiting(plan.unpricedPipes) };
+  if (row.status === "ok") return { state: "ok", stateReason: null, stateDetail: null };
+  const reason = plan?.shadowUnavailableReason ?? null;
+  if (!plan || plan.shadow !== null || reason === null || !NOT_YET_REASONS.some((r) => reason.startsWith(r))) {
+    return { state: "problem", stateReason: row.failure ?? "plan_failed", stateDetail: `The plan could not be computed: ${row.failure ?? "no detail"}.` };
+  }
+  if (row.followsPlan === true) {
+    return { state: "problem", stateReason: `follows_plan_without_plan:${reason}`, stateDetail: `This campaign runs its plan and has none, so it cannot run: ${plan.shadowUnavailableDetail ?? reason}` };
+  }
+  if (reason.startsWith("pipe_unpriced:") && plan.unpricedPipes.length > 0) return { state: "not_yet", stateReason: reason, stateDetail: waiting(plan.unpricedPipes) };
+  return { state: "not_yet", stateReason: reason, stateDetail: plan.shadowUnavailableDetail ?? reason };
+}
+
+/** One side of a plan change: the pipes of the legs that differ, and the line's figures to the Target. */
+export interface PlanChangeSide {
+  /** Only the legs that differ, in line order: each pipe by its served catalogue name (channel, `: strategy` on a play). */
+  pipes: Array<{ legKey: string; pipeId: string | null; name: string }>;
+  /** The same names joined with " → ". */
+  text: string;
+  /** The whole line to the Target (not only the legs that differ). */
+  costPerTargetUsd: number | null;
+  roi: number | null;
+  /** `measured` when every input of the figure is measured, else `expected` (a stated, fleet or default input). */
+  basis: "measured" | "expected" | null;
+  /** The weakest input the figure rests on (measured < stated < fleet < default). */
+  inputsBasis: ExpectedBasis | null;
+  unavailableReason: string | null;
+}
+
+export interface PlanChange {
+  running: PlanChangeSide;
+  best: PlanChangeSide;
+}
+
+const pipeNameOf = (l: PlanLine["legs"][number]): string =>
+  l.channelName === null ? "no pipe" : l.strategyName ? `${l.channelName}: ${l.strategyName}` : l.channelName;
+
+/**
+ * PURE: what would change on a campaign whose plan differs from what runs (owner 2026-10-29: "another line to its Target"
+ * told him nothing): the running pipes vs the best-now pipes, ONLY on the legs that differ (the common head and tail cut),
+ * and both lines' figures to the Target. Null when the plan does not differ (or a side is missing).
+ */
+export function planChangeOf(plan: Pick<ShadowPlan, "running" | "shadow" | "planDiffers"> | null | undefined): PlanChange | null {
+  if (!plan || plan.planDiffers !== true || !plan.shadow || !plan.running.reachesTarget) return null;
+  const a = plan.running.legs;
+  const b = plan.shadow.legs;
+  const same = (x: PlanLine["legs"][number], y: PlanLine["legs"][number]) => x.legKey === y.legKey && x.pipeId === y.pipeId;
+  let head = 0;
+  while (head < a.length && head < b.length && same(a[head], b[head])) head += 1;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && same(a[a.length - 1 - tail], b[b.length - 1 - tail])) tail += 1;
+  // Lines that differ only by their trigger head keep every leg: the change is then the whole line.
+  const cut = (legs: PlanLine["legs"]) => (head + tail >= Math.max(a.length, b.length) ? legs : legs.slice(head, legs.length - tail));
+  const side = (line: PlanLine): PlanChangeSide => {
+    const legs = cut(line.legs).map((l) => ({ legKey: l.legKey, pipeId: l.pipeId, name: pipeNameOf(l) }));
+    const inputsBasis = line.figures.basis;
+    return {
+      pipes: legs,
+      text: legs.map((l) => l.name).join(" → "),
+      costPerTargetUsd: line.figures.costPerTargetUsd,
+      roi: line.figures.roi,
+      basis: inputsBasis === null ? null : inputsBasis === "measured" ? "measured" : "expected",
+      inputsBasis,
+      unavailableReason: line.figures.unavailableReason,
+    };
+  };
+  return { running: side(plan.running), best: side(plan.shadow) };
 }
 
 /** How often the sweep runs, and how old its last pass may be before Monitoring reads red. */

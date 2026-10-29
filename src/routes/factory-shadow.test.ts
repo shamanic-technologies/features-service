@@ -225,7 +225,49 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(res.status).toBe(200);
     expect(res.body.verdict).toEqual({ red: true, reasons: ["judge_failed"] });
     expect(res.body.series.at(-1)).toMatchObject({ campaigns: 1, judgeFailed: 1, orgs: [expect.objectContaining({ orgId: "org-1", judgeFailed: 1 })] });
-    expect(res.body.campaigns[0]).toMatchObject({ campaignId: "sfc-1", status: "judge_failed" });
+    expect(res.body.campaigns[0]).toMatchObject({ campaignId: "sfc-1", status: "judge_failed", state: "problem", stateReason: "judge_failed" });
+    expect(res.body.problems.map((c: any) => c.campaignId)).toEqual(["sfc-1"]);
+    expect(res.body.notYet).toEqual([]);
+  });
+
+  it("a differing plan serves what would change, by pipe name, with both lines' $ per Target and ROI (owner 2026-10-29)", async () => {
+    mem.campaigns = [campaign(null)];
+    await runFactoryShadowPass();
+    const res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
+    const row = res.body.campaigns[0];
+    expect(row).toMatchObject({ planDiffers: true, state: "ok", target: "conversation", followsPlan: false });
+    // Lead Sourcing ($0.50 a lead) vs Apollo Cold Filters ($0.20): only the sourcing leg differs.
+    expect(row.change.running).toMatchObject({ text: "Lead Sourcing", costPerTargetUsd: 90, basis: "expected" });
+    expect(row.change.best).toMatchObject({ text: "Apollo Cold Filters", costPerTargetUsd: 60, basis: "expected" });
+    expect(res.body.verdict.red).toBe(false);
+  });
+
+  it("a campaign whose line waits on a first price is NOT YET (not red); the same campaign following its plan is a problem", async () => {
+    for (const p of mem.model.pipes.values()) if (p.operatedBy === "platform") p.expectedCost = null;
+    try {
+      mem.campaigns = [campaign(null)];
+      await runFactoryShadowPass();
+      let res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
+      expect(res.body.campaigns[0]).toMatchObject({ status: "plan_failed", state: "not_yet" });
+      expect(res.body.campaigns[0].stateDetail).toMatch(/^Waiting for a first price: .* never run\.$/);
+      expect(res.body.verdict.red).toBe(false);
+      expect(res.body.notYet).toHaveLength(1);
+      expect(res.body.series.at(-1)).toMatchObject({ planFailed: 0, notYet: 1 });
+      mem.campaigns = [{ ...campaign(null), followsPlan: true }];
+      await runFactoryShadowPass();
+      res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
+      expect(res.body.campaigns[0]).toMatchObject({ state: "problem", followsPlan: true });
+      expect(res.body.verdict).toEqual({ red: true, reasons: ["plan_failed"] });
+    } finally {
+      mem.model = buildCatalogueModel({
+        channels,
+        publishedPipeIds: new Set(channels.flatMap((c) => c.stepTransitions.map((t) => `${c.slug}|${servedLegKeyOf(c.slug, t.legKey)}`))),
+        declaredSteps: [],
+        measurements: new Map([[COLD, mature(40, 1)], ["lead-sourcing|start_to_lead_found", mature(0.5, 100)], ["sourcing-apollo-cold-filters|start_to_lead_found", mature(0.2, 100)]]),
+        lifetimeRevenueUsd: 3000,
+        plays: new Map([[COLD, { default: play("everyone", "Everyone", "Email every lead found.", 40), others: [play("valid-only", "Valid only", "Email only addresses verified valid.", 30)] }]]),
+      });
+    }
   });
 });
 

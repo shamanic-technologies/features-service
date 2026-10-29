@@ -936,6 +936,8 @@ export const factoryShadowDaily = pgTable(
     differs: integer("differs").notNull(),
     judgeFailed: integer("judge_failed").notNull(),
     planFailed: integer("plan_failed").notNull(),
+    /** FACTORY-P2 (owner 2026-10-29): campaigns waiting on a first price or a catalogue line, never counted as failed. */
+    notYet: integer("not_yet").notNull().default(0),
     sweptAt: timestamp("swept_at", { withTimezone: true }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.day, table.orgId] })],

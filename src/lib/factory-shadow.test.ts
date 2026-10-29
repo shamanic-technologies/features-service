@@ -14,7 +14,10 @@ import {
   judgingNeed,
   monitoringVerdict,
   orgDayCountsOf,
+  pipeCandidatesOf,
   pipesToJudge,
+  planChangeOf,
+  shadowStateOf,
   planCampaign,
   playOptionsOf,
   playsSignatureOf,
@@ -261,8 +264,14 @@ describe("Monitoring", () => {
         { orgId: "a", status: "plan_failed", planDiffers: null, pickDiffers: false },
       ]),
     ).toEqual([
-      { orgId: "a", campaigns: 3, planDiffers: 1, pickDiffers: 2, differs: 2, judgeFailed: 1, planFailed: 1 },
-      { orgId: "b", campaigns: 1, planDiffers: 1, pickDiffers: 0, differs: 1, judgeFailed: 0, planFailed: 0 },
+      { orgId: "a", campaigns: 3, planDiffers: 1, pickDiffers: 2, differs: 2, judgeFailed: 1, planFailed: 1, notYet: 0 },
+      { orgId: "b", campaigns: 1, planDiffers: 1, pickDiffers: 0, differs: 1, judgeFailed: 0, planFailed: 0, notYet: 0 },
+    ]);
+  });
+
+  it("a plan only waiting on a first price is NOT YET, never counted as failed (owner 2026-10-29: red only when broken)", () => {
+    expect(orgDayCountsOf([{ orgId: "a", status: "plan_failed", planDiffers: null, pickDiffers: false, state: "not_yet" }])).toEqual([
+      { orgId: "a", campaigns: 1, planDiffers: 0, pickDiffers: 0, differs: 0, judgeFailed: 0, planFailed: 0, notYet: 1 },
     ]);
   });
 
@@ -273,5 +282,89 @@ describe("Monitoring", () => {
     expect(monitoringVerdict({ sweptAt: now.toISOString(), judgeFailed: 0, planFailed: 2 }, now).reasons).toEqual(["plan_failed"]);
     expect(monitoringVerdict({ sweptAt: new Date(now.getTime() - STALE_AFTER_MS - 1).toISOString(), judgeFailed: 0, planFailed: 0 }, now).reasons).toEqual(["last_pass_stale"]);
     expect(monitoringVerdict({ sweptAt: null, judgeFailed: 0, planFailed: 0 }, now).reasons).toEqual(["never_computed"]);
+  });
+});
+
+describe("Monitoring: problems apart from not-yet (owner 2026-10-29)", () => {
+  const unpriced = [{ pipeId: "threads-post|start_to_post_published", channelName: "Threads posts", fromStep: null, toStep: "post_published", lines: 1 }];
+  const waiting = { shadow: null, shadowUnavailableReason: "pipe_unpriced:threads-post|start_to_post_published", shadowUnavailableDetail: "Every line ...", unpricedPipes: unpriced };
+
+  it("a line waiting on a pipe that never spent is not yet, with the pipe by name", () => {
+    expect(shadowStateOf({ status: "plan_failed", failure: waiting.shadowUnavailableReason, followsPlan: false, plan: waiting })).toEqual({
+      state: "not_yet",
+      stateReason: "pipe_unpriced:threads-post|start_to_post_published",
+      stateDetail: "Waiting for a first price: Threads posts has never run.",
+    });
+    expect(shadowStateOf({ status: "plan_failed", failure: "no_priced_line_to_target", plan: { ...waiting, shadowUnavailableReason: "no_priced_line_to_target", unpricedPipes: [] } }).state).toBe("not_yet");
+  });
+
+  it("the same on a campaign that FOLLOWS its plan is a problem: it cannot run", () => {
+    const s = shadowStateOf({ status: "plan_failed", failure: "x", followsPlan: true, plan: { ...waiting, shadowUnavailableReason: "no_runnable_line_to_target", shadowUnavailableDetail: "No pipe we run today reaches Signup from Start." } });
+    expect(s.state).toBe("problem");
+    expect(s.stateReason).toBe("follows_plan_without_plan:no_runnable_line_to_target");
+  });
+
+  it("a judge failure, an unreadable campaign are problems; a priced plan is ok; an only line unpriced is not yet", () => {
+    expect(shadowStateOf({ status: "judge_failed", failure: "chat 502", plan: null }).state).toBe("problem");
+    expect(shadowStateOf({ status: "plan_failed", failure: "running_funnel_unknown", plan: null }).state).toBe("problem");
+    expect(shadowStateOf({ status: "ok", failure: null, plan: { ...waiting, shadow: {} as never, shadowUnavailableReason: null, unpricedPipes: [] } }).state).toBe("ok");
+    expect(shadowStateOf({ status: "ok", failure: null, plan: { ...waiting, shadow: {} as never, shadowUnavailableReason: null, shadowPickedOn: "only_line" } }).state).toBe("not_yet");
+  });
+});
+
+describe("what would change: only the legs that differ, by name, with both lines' figures", () => {
+  const leg = (legKey: string, pipeId: string | null, channelName: string | null, strategyName: string | null = null) => ({ legKey, pipeId, channelSlug: null, channelName, playId: null, strategyName });
+  const figures = (cost: number | null, roi: number | null, basis: "measured" | "default" | null) => ({ costPerTargetUsd: cost, roi, basis, unavailableReason: null, targetValueUsd: 100, legs: [] });
+  const head = leg("start_to_lead_found", "lead-sourcing|start_to_lead_found", "Lead Sourcing", "Valid only");
+  const plan = {
+    planDiffers: true,
+    running: {
+      reachesTarget: true as const,
+      funnelId: "r",
+      lineId: "r",
+      line: "",
+      legs: [head, leg("conversation_to_meeting_booked", "your-team-meeting-booking|x", "Your Team Meeting Booking"), leg("meeting_booked_to_meeting_attended", "your-team-meeting-attendance|x", "Your Team Meeting Attendance"), leg("meeting_attended_to_paid_client", "your-team-closing-calls|x", "Your Team Closing Calls")],
+      figures: figures(120, 2.5, "measured"),
+    },
+    shadow: { funnelId: "s", lineId: "s", line: "", legs: [head, leg("conversation_to_paid_client", "your-team-reply-closing|x", "Your Team Reply Closing")], figures: figures(80, 3.75, "default") },
+  };
+
+  it("cuts the common head and tail, names each pipe, and serves both lines' $ per Target and ROI with their basis", () => {
+    const c = planChangeOf(plan)!;
+    expect(c.running.text).toBe("Your Team Meeting Booking → Your Team Meeting Attendance → Your Team Closing Calls");
+    expect(c.best.text).toBe("Your Team Reply Closing");
+    expect(c.running).toMatchObject({ costPerTargetUsd: 120, roi: 2.5, basis: "measured", inputsBasis: "measured" });
+    expect(c.best).toMatchObject({ costPerTargetUsd: 80, roi: 3.75, basis: "expected", inputsBasis: "default" });
+  });
+
+  it("a play is named with its strategy; no change when the plan does not differ", () => {
+    const p2 = { ...plan, shadow: { ...plan.shadow, legs: [leg("start_to_lead_found", "lead-sourcing|start_to_lead_found~x", "Lead Sourcing", "Catch-all"), ...plan.running.legs.slice(1)] } };
+    expect(planChangeOf(p2)!.best.text).toBe("Lead Sourcing: Catch-all");
+    expect(planChangeOf(p2)!.running.text).toBe("Lead Sourcing: Valid only");
+    expect(planChangeOf({ ...plan, planDiffers: false })).toBeNull();
+  });
+});
+
+describe("the only runnable line is the plan even before its pipe has a price (FACTORY-P2)", () => {
+  it("one line, an unpriced pipe on it: it is the shadow line, picked on `only_line`, its pipe listed", () => {
+    const model = buildCatalogueModel(inputs());
+    for (const pipe of model.pipes.values()) if (pipe.fromStep === "conversation" && pipe.operatedBy === "platform") pipe.expectedCost = null;
+    const p = planCampaign(model, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet", new Set(["ai-instant-call|conversation_to_booking_call"]));
+    // Left: AI Meeting Booking (unpriced) and the client's own team (no plan of ours).
+    expect(p.candidatesPriced).toBe(2);
+    expect(p.shadow!.legs[0].pipeId).toBe("ai-meeting-booking|conversation_to_meeting_booked");
+    expect(p.shadow).not.toBeNull();
+    expect(p.shadowPickedOn).toBe("only_line");
+    expect(p.shadowUnavailableReason).toBeNull();
+    expect(p.unpricedPipes.map((u) => u.pipeId)).toContain("ai-meeting-booking|conversation_to_meeting_booked");
+  });
+
+  it("the pipe judge never asks about a pipe that cannot run (no workflow of ours)", () => {
+    const model = buildCatalogueModel(inputs());
+    const ids = pipeCandidatesOf(model, { salesFunnelId: PROACTIVE_RUNNING, target: "paid_client", mode: null, triggerId: null }).map((p) => p.id);
+    for (const id of ids) expect(model.pipes.get(id)!.published && model.pipes.get(id)!.operatedBy === "platform").toBe(true);
+    const notRunnable = [...model.pipes.values()].filter((p) => p.operatedBy === "platform" && !p.managed && !p.hasWorkflow).map((p) => p.id);
+    expect(notRunnable.length).toBeGreaterThan(0);
+    for (const id of notRunnable) expect(ids).not.toContain(id);
   });
 });
