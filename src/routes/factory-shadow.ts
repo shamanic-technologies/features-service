@@ -237,11 +237,11 @@ async function askJev(state: Record<string, unknown>, options: readonly PlayOpti
 const PIPES_PER_CALL = 12;
 
 /** Jev on several pipes at once: p (the brief rules it out) per pipe id. Throws on any unreadable answer. */
-async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string; words: string }>): Promise<{ byPipe: Map<string, number>; model: string }> {
+async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string; channelName: string; words: string }>): Promise<{ byPipe: Map<string, number>; model: string }> {
   const base = process.env.CHAT_SERVICE_URL;
   const apiKey = process.env.CHAT_SERVICE_API_KEY;
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
-  const questions = Object.fromEntries(items.map((it, i) => [`p${i}`, pipeQuestion(it.words)]));
+  const questions = Object.fromEntries(items.map((it, i) => [`p${i}`, pipeQuestion(it.channelName, it.words)]));
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
     { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state: { brief }, questions, support: BRIEF_JUDGMENT_SUPPORT }) },
@@ -282,7 +282,7 @@ async function judgePipes(c: ShadowCampaign, model: CatalogueModel, stored: Read
   const briefHash = briefHashOf(c.brief);
   const rows = new Map<string, PipeVerdictRow>();
   const failures: string[] = [];
-  const toAsk: Array<{ pipeId: string; words: string; signature: string }> = [];
+  const toAsk: Array<{ pipeId: string; channelName: string; words: string; signature: string }> = [];
   for (const p of candidates) {
     const row: PipeVerdictRow = { pipeId: p.id, channelName: p.channelName, fromStep: p.fromStep, toStep: p.toStep, inRunningFunnel: running.has(p.id), excluded: null, probability: null, source: null, failure: null };
     rows.set(p.id, row);
@@ -293,7 +293,7 @@ async function judgePipes(c: ShadowCampaign, model: CatalogueModel, stored: Read
     const signature = pipeSignatureOf(model, p);
     const kept = stored.get(`${c.id}|${p.id}`);
     if (pipeVerdictCurrent(kept, briefHash, signature)) Object.assign(row, { excluded: kept!.excluded, probability: kept!.probability, source: "jev" });
-    else toAsk.push({ pipeId: p.id, words: pipeWords(model, p), signature });
+    else toAsk.push({ pipeId: p.id, channelName: p.channelName, words: pipeWords(model, p), signature });
   }
   const batches: Array<typeof toAsk> = [];
   for (let i = 0; i < toAsk.length; i += PIPES_PER_CALL) batches.push(toAsk.slice(i, i + PIPES_PER_CALL));
