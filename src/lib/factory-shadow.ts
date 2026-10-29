@@ -62,6 +62,29 @@ export interface ShadowCampaign {
   triggerId: string | null;
   /** The campaign RUNS its latest plan (campaign-service `followsPlan`, opt-in): no plan = it cannot run. Absent = false. */
   followsPlan?: boolean;
+  /** The funnel the campaign was BORN on (campaign-service `salesFunnelId`): what the client chose; `salesFunnelId` above
+   *  is the one it runs now (its plan's when it follows it). Absent = the same. */
+  bornSalesFunnelId?: string;
+}
+
+/**
+ * PURE: the offer's steps as the plan reads them: the stated steps plus every step of the funnels the campaign was born on
+ * and runs now (campaign-service accepted them for this offer: the offer has those steps). FACTORY-P2 (owner 2026-10-29):
+ * API Email Meetings runs AI Meeting Booking on an offer whose statement (2026-10-24) names no meeting step, so every line
+ * through the channel its brief names was set aside and the plan dropped it. Unstated stays unstated.
+ */
+export function offerStepsOfCampaign(model: CatalogueModel, offer: OfferStepStatement, funnelIds: ReadonlyArray<string | null | undefined>): OfferStepStatement {
+  if (!offer.stated || offer.steps === null) return offer;
+  const steps = new Set(offer.steps);
+  for (const id of funnelIds) {
+    const f = id ? funnelById(model, id) : null;
+    for (const l of f?.legs ?? []) {
+      const s = legStepsOf(model, l.legKey);
+      if (s.fromStep) steps.add(s.fromStep);
+      steps.add(s.toStep);
+    }
+  }
+  return { stated: true, steps: [...steps] };
 }
 
 // ── The brief judge ────────────────────────────────────────────────────────────────────────────────
