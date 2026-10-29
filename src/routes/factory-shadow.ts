@@ -32,6 +32,7 @@ import {
   briefHashOf,
   briefNamedChannels,
   briefQuestion,
+  offerStepsOfCampaign,
   briefState,
   evalBriefOf,
   judgingNeed,
@@ -116,6 +117,7 @@ const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampa
   mode: r.mode ?? null,
   triggerId: r.triggerId ?? null,
   followsPlan: r.followsPlan === true,
+  bornSalesFunnelId: r.salesFunnelId,
 });
 
 /** Per-pass memos: one brand-service read per brand, one offer-steps read per offer, one model per lifetime revenue. */
@@ -186,7 +188,9 @@ async function prefillBriefs(campaigns: ReadonlyArray<{ campaign: ShadowCampaign
     if (briefHashOf(c.brief) === null && ours !== undefined) return { ...row, outcome: "prefilled_before" };
     let brief: string | null;
     try {
-      brief = prefillBriefOf((await memos.pricing(c)).model, c.salesFunnelId);
+      // What the client CHOSE (the born funnel), never the plan it now runs: a brief composed from the plan's own funnel
+      // locks the plan in (API Email Meetings: the plan dropped AI Meeting Booking, the rewritten brief then dropped it too).
+      brief = prefillBriefOf((await memos.pricing(c)).model, c.bornSalesFunnelId ?? c.salesFunnelId);
     } catch (error) {
       return { ...row, outcome: "unreadable", failure: failureOf(error) };
     }
@@ -412,7 +416,7 @@ async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof pass
   const pipeVerdicts = pipes.rows;
   let plan: ShadowPlan | null = null;
   try {
-    plan = planCampaign(model, c, picks, steps, ltrBasis, pipes.excluded, briefNamedChannels(model, pipes.rows));
+    plan = planCampaign(model, c, picks, offerStepsOfCampaign(model, steps, [c.bornSalesFunnelId, c.salesFunnelId]), ltrBasis, pipes.excluded, briefNamedChannels(model, pipes.rows));
   } catch (error) {
     return { ...head, status: "plan_failed", failure: failureOf(error), picks: pickRows, pickDiffers, pipeVerdicts, plan: null };
   }

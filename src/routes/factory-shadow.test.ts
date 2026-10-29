@@ -186,6 +186,16 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(mem.patches.some((p) => p.url.endsWith("/sfc-8"))).toBe(false);
   });
 
+  it("our brief is composed from the funnel the campaign was BORN on, never the plan it now runs (no lock-in)", async () => {
+    mem.prefills.set("sfc-10", "Use only these channels:\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    mem.campaigns = [{ ...campaign("Use only these channels:\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found."), id: "sfc-10", followsPlan: true, runningSalesFunnelId: "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client" }];
+    const res = await request(app).post("/internal/factory-shadow/prefill-briefs").set({ "x-api-key": "test-key" }).send({ apply: true });
+    expect(res.body).toMatchObject({ rewritten: 1 });
+    const patched = mem.patches.filter((p) => p.url.endsWith("/sfc-10"));
+    expect(patched[0].body.brief).toContain("Use Lead Sourcing (Start to Lead).");
+    expect(patched[0].body.brief).not.toContain("Apollo");
+  });
+
   it("a pipe the brief rules out never enters the plan; verdicts are stored and reused", async () => {
     mem.campaigns = [{ ...campaign("No Apollo, ever."), id: "sfc-7" }];
     await runFactoryShadowPass();
