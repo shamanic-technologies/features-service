@@ -83,6 +83,12 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
     expect(p.shadow?.line).toBe("Start → [Apollo Cold Filters] → Lead → [Sales Cold Email Outreach] → Positive reply");
   });
 
+  it("a proactive plan starts on a proactive pipe, never on a pipe waiting for a trigger", () => {
+    const model = buildCatalogueModel(inputs());
+    const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "paid_client", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
+    expect(funnelById(model, p.shadow!.funnelId)!.legs[0].pipe!.mode).toBe("proactive");
+  });
+
   it("the Target defaults to the running funnel's last step when campaign-service states none yet", () => {
     const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: null, mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
     expect(p.target).toBe("paid_client");
