@@ -442,6 +442,8 @@ export function planCampaign(
   picks: ReadonlyMap<string, string>,
   offerSteps: OfferStepStatement,
   ltrBasis: ExpectedBasis,
+  /** Pipes (base ids) the brief rules out (the pipe judge): a funnel through one never enters the plan. */
+  excludedPipes: ReadonlySet<string> = new Set(),
 ): ShadowPlan {
   const { running, runningSteps, target, head, triggerId, mode, startStep } = frameOf(model, campaign);
 
@@ -475,7 +477,7 @@ export function planCampaign(
       // Cold WhatsApp on "WhatsApp number given" read as the start of every proactive plan). Reactive: a declared head of
       // the campaign's trigger, or a first pipe answering it.
       if (mode === "proactive" ? f.headTriggerId !== null || f.legs[0]?.pipe?.mode !== "proactive" : !f.headTriggerId && f.legs[0]?.pipe?.triggerId !== triggerId) continue;
-      if (!f.legs.every((l) => allowedByPick(l.pipe))) continue;
+      if (!f.legs.every((l) => allowedByPick(l.pipe) && !(l.pipe && excludedPipes.has(basePipeIdOf(l.pipe))))) continue;
       budget -= 1;
       const line = lineOf(model, f.legs.slice(0, cut + 1), target, ltrBasis, f.headTriggerId, f.id);
       // Funnels sharing the line to the Target differ only after it: one stands for them (the running one, else the first).
@@ -571,6 +573,65 @@ export function pipesToJudge(model: CatalogueModel, campaign: Pick<ShadowCampaig
     .sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
+// ── The pipe judge: which channels the brief allows (owner relay 2026-10-29, GTM Factory v10: a channel is a tactic) ──
+
+/**
+ * PURE: the pipes the brief judge keeps or rules out for a campaign: every pipe WE run (platform, base pipe: its plays are
+ * the play judge's) on any leg of a catalogue path the plan may walk. The client's own team's legs are not ours to rule out.
+ */
+export function pipeCandidatesOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId">): CataloguePipe[] {
+  const f = frameOf(model, campaign);
+  const ids = new Set<string>(runningPipesOf(model, campaign.salesFunnelId).keys());
+  for (const { path } of candidatePaths(model, f.mode, f.startStep, f.triggerId, f.target))
+    for (const k of path.legKeys) for (const p of pipesOnLeg(model, k)) if (p.operatedBy === "platform") ids.add(p.id);
+  return [...ids]
+    .map((id) => model.pipes.get(id))
+    .filter((p): p is CataloguePipe => !!p && p.operatedBy === "platform")
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/** PURE: the pipe as Jev reads it (channel, its one-line caption, the step it starts from and the one it reaches). */
+export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
+  const caption = model.channels.find((c) => c.slug === p.channelSlug)?.shortDescription ?? "";
+  const from = p.fromStep === null ? "Start" : stepLabel(model, p.fromStep);
+  return withoutDashes(`${p.channelName}${caption ? ` (${caption})` : ""}: moves people from ${from} to ${stepLabel(model, p.toStep)}.`);
+}
+
+/** PURE: a fingerprint of what Jev judged a pipe on: its words move it (a re-judge). */
+export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(pipeWords(model, p));
+
+/** One stored keep / rule-out verdict on one pipe for one campaign (`factory_pipe_verdicts`). */
+export interface PipeVerdict {
+  campaignId: string;
+  pipeId: string;
+  briefHash: string;
+  pipeSignature: string;
+  /** The brief rules the pipe out (Jev p >= 0.5). */
+  excluded: boolean;
+  probability: number;
+  model: string;
+  judgedAt: string;
+}
+
+/** PURE: does a stored verdict still answer for this brief and this pipe? */
+export const pipeVerdictCurrent = (v: Pick<PipeVerdict, "briefHash" | "pipeSignature"> | null | undefined, briefHash: string, signature: string): boolean =>
+  !!v && v.briefHash === briefHash && v.pipeSignature === signature;
+
+/** PURE: the Jev `noul` question for one pipe: yes = the brief rules it out. */
+export function pipeQuestion(words: string) {
+  return {
+    type: "noul" as const,
+    instructions:
+      `A client wrote a BRIEF for one sales campaign (in the state). Would running this pipe go against the brief? The pipe: ${words} ` +
+      "Answer yes when the brief names the channels or the kind of work the campaign uses and this pipe is not one of them, or when the brief rules it out. " +
+      "Answer no when the brief names this channel, or says nothing about which channels to use. Judge on the brief's words only.",
+    criteria: {
+      true: "The brief rules this pipe out: it names other channels or another kind of work, or excludes this one.",
+      false: "The brief names this channel, allows it, or says nothing about channels.",
+    },
+  };
+}
+
 // ── The eval: a brief written from the plays a campaign runs today ─────────────────────────────────
 
 /**
@@ -608,8 +669,18 @@ export const withoutDashes = (text: string): string => text.replace(/\s*[\u2014\
  * owner edits it. Null when every pipe runs its plain default (nothing to say: an empty brief already picks the defaults).
  */
 export function prefillBriefOf(model: CatalogueModel, salesFunnelId: string): string | null {
-  const lines = [...runningPipesOf(model, salesFunnelId).values()].map((p) => playSentenceOf(model, p)).filter((l): l is string => l !== null);
-  return lines.length === 0 ? null : lines.join("\n");
+  const lines = [...runningPipesOf(model, salesFunnelId).values()].map((p) => channelSentenceOf(model, p));
+  return lines.length === 0 ? null : ["Use only these channels:", ...lines].join("\n");
+}
+
+/**
+ * PURE: one pipe of the running funnel in one line of the prefilled brief: the CHANNEL it uses (so the pipe judge keeps the
+ * campaign on its channels, owner relay 2026-10-29) and, when it runs a named strategy, that play (the play judge re-picks it).
+ */
+export function channelSentenceOf(model: CatalogueModel, running: CataloguePipe): string {
+  const from = running.fromStep === null ? "Start" : stepLabel(model, running.fromStep);
+  const head = `Use ${running.channelName} (${from} to ${stepLabel(model, running.toStep)})`;
+  return withoutDashes(running.play ? `${head}: ${running.play.strategyName}. ${running.play.strategyDescription}` : `${head}.`);
 }
 
 // ── Monitoring: per org, per day ───────────────────────────────────────────────────────────────────
