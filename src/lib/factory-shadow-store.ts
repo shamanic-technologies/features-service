@@ -90,6 +90,7 @@ export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & {
     differs: r.differs,
     judgeFailed: r.judgeFailed,
     planFailed: r.planFailed,
+    notYet: r.notYet,
     sweptAt: r.sweptAt.toISOString(),
   }));
 }

@@ -48,7 +48,9 @@ import {
   playNameOf,
   playOptionsOf,
   playsSignatureOf,
+  planChangeOf,
   runningPipesOf,
+  shadowStateOf,
   type BriefJudgment,
   type PipePick,
   type PlayOption,
@@ -112,6 +114,7 @@ const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampa
   briefUpdatedAt: r.briefUpdatedAt ?? null,
   mode: r.mode ?? null,
   triggerId: r.triggerId ?? null,
+  followsPlan: r.followsPlan === true,
 });
 
 /** Per-pass memos: one brand-service read per brand, one offer-steps read per offer, one model per lifetime revenue. */
@@ -328,6 +331,8 @@ export interface ShadowBody {
   salesFunnelName: string;
   brief: string | null;
   briefUpdatedAt: string | null;
+  /** The campaign runs its latest plan (campaign-service): without one it cannot run (a problem, red on Monitoring). */
+  followsPlan?: boolean;
   status: ShadowStatus;
   failure: string | null;
   picks: PipePick[];
@@ -340,7 +345,7 @@ export interface ShadowBody {
 
 /** Judge every pipe the campaign needs (stored verdicts reused), then plan. Never throws: a failure is the row's status. */
 async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof passMemos>, stored: ReadonlyMap<string, BriefJudgment>, storedPipes: ReadonlyMap<string, PipeVerdict>, now: Date): Promise<ShadowBody> {
-  const head = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId, salesFunnelId: c.salesFunnelId, salesFunnelName: c.salesFunnelName, brief: c.brief, briefUpdatedAt: c.briefUpdatedAt, computedAt: now.toISOString() };
+  const head = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId, salesFunnelId: c.salesFunnelId, salesFunnelName: c.salesFunnelName, brief: c.brief, briefUpdatedAt: c.briefUpdatedAt, followsPlan: c.followsPlan === true, computedAt: now.toISOString() };
   let model: CatalogueModel;
   let ltrBasis: ExpectedBasis;
   let steps: OfferSteps;
@@ -423,7 +428,9 @@ interface PassRecord {
   sweptAt: string;
   campaigns: number;
   judgeFailed: number;
+  /** Plans that are a PROBLEM (`shadowStateOf`); a plan only waiting on a first price is `notYet`. */
   planFailed: number;
+  notYet?: number;
   durationMs: number;
 }
 
@@ -445,17 +452,18 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     const storedPipes = await readPipeVerdicts(campaigns.map((c) => c.id));
     const bodies = await mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, (c) => shadowOfCampaign(c, memos, stored, storedPipes, now));
     for (const b of bodies) await writePlan({ campaignId: b.campaignId, orgId: b.orgId, brandId: b.brandId, offerId: b.offerId, status: b.status, failure: b.failure, body: b, computedAt: now });
-    const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers }));
+    const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers, state: shadowStateOf(b).state }));
     await writeDay(now.toISOString().slice(0, 10), orgDayCountsOf(summaries), now);
     const record: PassRecord = {
       sweptAt: now.toISOString(),
       campaigns: bodies.length,
       judgeFailed: bodies.filter((b) => b.status === "judge_failed").length,
-      planFailed: bodies.filter((b) => b.status === "plan_failed").length,
+      planFailed: summaries.filter((r) => r.status === "plan_failed" && r.state === "problem").length,
+      notYet: summaries.filter((r) => r.state === "not_yet").length,
       durationMs: Date.now() - started,
     };
     await storeFleetCell(PASS_CELL, JSON.stringify(record), now.getTime());
-    console.log(`[features-service] factory shadow pass: ${record.campaigns} campaigns, ${record.judgeFailed} judge failed, ${record.planFailed} plan failed, ${record.durationMs} ms`);
+    console.log(`[features-service] factory shadow pass: ${record.campaigns} campaigns, ${record.judgeFailed} judge failed, ${record.planFailed} plan failed, ${record.notYet} not yet, ${record.durationMs} ms`);
     return record;
   })().finally(() => {
     passInFlight = null;
@@ -593,6 +601,7 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
       pickDiffers: orgs.reduce((s, o) => s + o.pickDiffers, 0),
       judgeFailed: orgs.reduce((s, o) => s + o.judgeFailed, 0),
       planFailed: orgs.reduce((s, o) => s + o.planFailed, 0),
+      notYet: orgs.reduce((s, o) => s + o.notYet, 0),
       orgs: orgs.map(({ day: _d, sweptAt: _s, ...o }) => o),
     }));
     const latestPlans = pass ? (await readPlansSince(new Date(pass.sweptAt))).map((p) => {
@@ -604,12 +613,22 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
         salesFunnelName: b.salesFunnelName,
         status: p.status,
         failure: p.failure,
+        followsPlan: b.followsPlan === true,
+        ...shadowStateOf({ status: p.status as ShadowStatus, failure: p.failure, followsPlan: b.followsPlan, plan: b.plan }),
         planDiffers: b.plan?.planDiffers ?? null,
         pickDiffers: b.pickDiffers,
+        target: b.plan?.target ?? null,
+        change: planChangeOf(b.plan),
       };
     }) : [];
-    const verdict = monitoringVerdict({ sweptAt: pass?.sweptAt ?? null, judgeFailed: pass?.judgeFailed ?? 0, planFailed: pass?.planFailed ?? 0 }, now);
-    res.json({ verdict, lastPass: pass, everyHours: SWEEP_EVERY_MS / 3_600_000, series, campaigns: latestPlans });
+    // Red ONLY for something broken (owner 2026-10-29): the verdict counts the last pass's PROBLEMS, never a not-yet row.
+    const problems = latestPlans.filter((c) => c.state === "problem");
+    const notYet = latestPlans.filter((c) => c.state === "not_yet");
+    const verdict = monitoringVerdict(
+      { sweptAt: pass?.sweptAt ?? null, judgeFailed: problems.filter((c) => c.status === "judge_failed").length, planFailed: problems.filter((c) => c.status !== "judge_failed").length },
+      now,
+    );
+    res.json({ verdict, lastPass: pass, everyHours: SWEEP_EVERY_MS / 3_600_000, series, campaigns: latestPlans, problems, notYet });
   } catch (error) {
     console.error("[features-service] factory shadow monitoring read failed:", error);
     res.status(500).json({ error: "factory_shadow_unreadable" });

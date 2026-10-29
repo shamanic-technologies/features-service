@@ -35309,6 +35309,16 @@
                 "nullable": true,
                 "description": "The same in one plain sentence; null with a shadow line."
               },
+              "shadowPickedOn": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "ranked",
+                  "only_line",
+                  null
+                ],
+                "description": "`ranked` = the best priced line; `only_line` = the ONE runnable line of ours reaching the Target, a pipe on it unpriced (in `unpricedPipes`): nothing to rank, it is the plan, figures null until that pipe spends. Null with no shadow line; absent on a plan stored before 2026-10-29."
+              },
               "unpricedPipes": {
                 "type": "array",
                 "items": {
@@ -76804,7 +76814,7 @@
     "/internal/factory-shadow/monitoring": {
       "get": {
         "summary": "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
-        "description": "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` when, on the last pass, the judge or the plan failed for a campaign, or the last pass is older than 7 hours, or none ever ran. `campaigns` = the last pass, one row per campaign. `days` 1..90 (default 30). Staff-gated at api-service.",
+        "description": "Feeds dashboard v2 Monitoring. One row per UTC day x org (a pass rewrites TODAY's rows). `verdict.red` ONLY for something broken (owner 2026-10-29): on the last pass a campaign is a `problem` (judge failed, plan unreadable, or it follows its plan and has none), or the last pass is older than 7 hours, or none ever ran; a plan waiting on a first price is `not_yet`, never red. `campaigns` = the last pass, one row per campaign; `problems` and `notYet` = the same rows split (the page leads with problems). `days` 1..90 (default 30). Staff-gated at api-service.",
         "tags": [
           "Internal"
         ],
@@ -76866,6 +76876,9 @@
                         "planFailed": {
                           "type": "integer"
                         },
+                        "notYet": {
+                          "type": "integer"
+                        },
                         "durationMs": {
                           "type": "number"
                         }
@@ -76903,7 +76916,12 @@
                             "type": "integer"
                           },
                           "planFailed": {
-                            "type": "integer"
+                            "type": "integer",
+                            "description": "Campaigns whose plan is a PROBLEM (unreadable, or following a plan it does not have). Since 2026-10-29 a plan only waiting on a first price is `notYet`."
+                          },
+                          "notYet": {
+                            "type": "integer",
+                            "description": "Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."
                           },
                           "day": {
                             "type": "string"
@@ -76933,7 +76951,12 @@
                                   "type": "integer"
                                 },
                                 "planFailed": {
-                                  "type": "integer"
+                                  "type": "integer",
+                                  "description": "Campaigns whose plan is a PROBLEM (unreadable, or following a plan it does not have). Since 2026-10-29 a plan only waiting on a first price is `notYet`."
+                                },
+                                "notYet": {
+                                  "type": "integer",
+                                  "description": "Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."
                                 }
                               },
                               "required": [
@@ -76943,7 +76966,8 @@
                                 "pickDiffers",
                                 "differs",
                                 "judgeFailed",
-                                "planFailed"
+                                "planFailed",
+                                "notYet"
                               ]
                             }
                           }
@@ -76955,6 +76979,7 @@
                           "differs",
                           "judgeFailed",
                           "planFailed",
+                          "notYet",
                           "day",
                           "orgs"
                         ]
@@ -76984,12 +77009,208 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "followsPlan": {
+                            "type": "boolean",
+                            "description": "The campaign runs its latest plan: without one it cannot run."
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "problem",
+                              "not_yet"
+                            ],
+                            "description": "`problem` (red: something broken): the judge failed, the campaign could not be planned, or it follows its plan and has none. `not_yet` (normal colours): its line waits on a first price (a pipe that never spent) or a catalogue line, on a campaign that does not follow its plan; or its only line is unpriced."
+                          },
+                          "stateReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                          },
+                          "stateDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "One plain sentence the page shows (\"Waiting for a first price: Threads posts has never run.\"); null when ok."
+                          },
                           "planDiffers": {
                             "type": "boolean",
                             "nullable": true
                           },
                           "pickDiffers": {
                             "type": "boolean"
+                          },
+                          "target": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "change": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "running": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              },
+                              "best": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "running",
+                              "best"
+                            ],
+                            "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
                           }
                         },
                         "required": [
@@ -76999,10 +77220,510 @@
                           "salesFunnelName",
                           "status",
                           "failure",
+                          "followsPlan",
+                          "state",
+                          "stateReason",
+                          "stateDetail",
                           "planDiffers",
-                          "pickDiffers"
+                          "pickDiffers",
+                          "target",
+                          "change"
                         ]
                       }
+                    },
+                    "problems": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "brandId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "followsPlan": {
+                            "type": "boolean",
+                            "description": "The campaign runs its latest plan: without one it cannot run."
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "problem",
+                              "not_yet"
+                            ],
+                            "description": "`problem` (red: something broken): the judge failed, the campaign could not be planned, or it follows its plan and has none. `not_yet` (normal colours): its line waits on a first price (a pipe that never spent) or a catalogue line, on a campaign that does not follow its plan; or its only line is unpriced."
+                          },
+                          "stateReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                          },
+                          "stateDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "One plain sentence the page shows (\"Waiting for a first price: Threads posts has never run.\"); null when ok."
+                          },
+                          "planDiffers": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "pickDiffers": {
+                            "type": "boolean"
+                          },
+                          "target": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "change": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "running": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              },
+                              "best": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "running",
+                              "best"
+                            ],
+                            "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "brandId",
+                          "salesFunnelName",
+                          "status",
+                          "failure",
+                          "followsPlan",
+                          "state",
+                          "stateReason",
+                          "stateDetail",
+                          "planDiffers",
+                          "pickDiffers",
+                          "target",
+                          "change"
+                        ]
+                      },
+                      "description": "The last pass's campaigns in `state: problem` (red)."
+                    },
+                    "notYet": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "brandId": {
+                            "type": "string"
+                          },
+                          "salesFunnelName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "failure": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "followsPlan": {
+                            "type": "boolean",
+                            "description": "The campaign runs its latest plan: without one it cannot run."
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "problem",
+                              "not_yet"
+                            ],
+                            "description": "`problem` (red: something broken): the judge failed, the campaign could not be planned, or it follows its plan and has none. `not_yet` (normal colours): its line waits on a first price (a pipe that never spent) or a catalogue line, on a campaign that does not follow its plan; or its only line is unpriced."
+                          },
+                          "stateReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                          },
+                          "stateDetail": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "One plain sentence the page shows (\"Waiting for a first price: Threads posts has never run.\"); null when ok."
+                          },
+                          "planDiffers": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "pickDiffers": {
+                            "type": "boolean"
+                          },
+                          "target": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "change": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "running": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              },
+                              "best": {
+                                "type": "object",
+                                "properties": {
+                                  "pipes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "legKey": {
+                                          "type": "string"
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string",
+                                          "description": "The pipe's served catalogue name: its channel, `: <strategy>` on a play."
+                                        }
+                                      },
+                                      "required": [
+                                        "legKey",
+                                        "pipeId",
+                                        "name"
+                                      ]
+                                    },
+                                    "description": "ONLY the legs that differ between the two lines (common head and tail cut), in line order."
+                                  },
+                                  "text": {
+                                    "type": "string",
+                                    "description": "Those pipe names joined with ' → '."
+                                  },
+                                  "costPerTargetUsd": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The WHOLE line's expected cost per Target."
+                                  },
+                                  "roi": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The whole line's ROI on the Target."
+                                  },
+                                  "basis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "expected",
+                                      null
+                                    ],
+                                    "description": "`measured` when every input of the figure is measured, else `expected`."
+                                  },
+                                  "inputsBasis": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "measured",
+                                      "stated",
+                                      "fleet",
+                                      "default",
+                                      null
+                                    ],
+                                    "description": "The weakest input the figure rests on: measured < stated < fleet < default."
+                                  },
+                                  "unavailableReason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "pipes",
+                                  "text",
+                                  "costPerTargetUsd",
+                                  "roi",
+                                  "basis",
+                                  "inputsBasis",
+                                  "unavailableReason"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "running",
+                              "best"
+                            ],
+                            "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "brandId",
+                          "salesFunnelName",
+                          "status",
+                          "failure",
+                          "followsPlan",
+                          "state",
+                          "stateReason",
+                          "stateDetail",
+                          "planDiffers",
+                          "pickDiffers",
+                          "target",
+                          "change"
+                        ]
+                      },
+                      "description": "The last pass's campaigns in `state: not_yet` (normal colours)."
                     }
                   },
                   "required": [
@@ -77010,7 +77731,9 @@
                     "lastPass",
                     "everyHours",
                     "series",
-                    "campaigns"
+                    "campaigns",
+                    "problems",
+                    "notYet"
                   ]
                 }
               }
