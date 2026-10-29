@@ -471,7 +471,10 @@ export function planCampaign(
     for (const f of funnelsOfPath(model, path)) {
       if (budget <= 0) break;
       if (!funnelRunnable(f)) continue;
-      if (mode === "proactive" ? f.headTriggerId !== null : !f.headTriggerId && f.legs[0]?.pipe?.triggerId !== triggerId) continue;
+      // Proactive: no trigger head and a first pipe that works on its own (a reactive pipe from Start waits on its trigger:
+      // Cold WhatsApp on "WhatsApp number given" read as the start of every proactive plan). Reactive: a declared head of
+      // the campaign's trigger, or a first pipe answering it.
+      if (mode === "proactive" ? f.headTriggerId !== null || f.legs[0]?.pipe?.mode !== "proactive" : !f.headTriggerId && f.legs[0]?.pipe?.triggerId !== triggerId) continue;
       if (!f.legs.every((l) => allowedByPick(l.pipe))) continue;
       budget -= 1;
       const line = lineOf(model, f.legs.slice(0, cut + 1), target, ltrBasis, f.headTriggerId, f.id);
