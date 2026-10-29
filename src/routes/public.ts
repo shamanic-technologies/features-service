@@ -3809,7 +3809,8 @@ async function computeShowcaseBrand(
     if (heroCounts === null && body.funnelSteps) {
       heroCounts = {
         positiveReplies: body.recipientsRepliesPositive.total,
-        meetingsBooked: body.meetingsBooked.total,
+        // lead-service's statements unreadable (`counts` null) → no verdict to count meetings on: null.
+        meetingsBooked: body.outcomeCauses.counts === null ? null : body.meetingsBooked.total,
         committedSpentCents: body.funnelSteps.committedSpentCents,
       };
     }
