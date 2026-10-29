@@ -18,6 +18,7 @@ import {
   pipesToJudge,
   planChangeOf,
   shadowStateOf,
+  briefNamedChannels,
   planCampaign,
   playOptionsOf,
   playsSignatureOf,
@@ -366,5 +367,30 @@ describe("the only runnable line is the plan even before its pipe has a price (F
     const notRunnable = [...model.pipes.values()].filter((p) => p.operatedBy === "platform" && !p.managed && !p.hasWorkflow).map((p) => p.id);
     expect(notRunnable.length).toBeGreaterThan(0);
     for (const id of notRunnable) expect(ids).not.toContain(id);
+  });
+});
+
+describe("a channel the brief NAMES stays in the plan on its leg (owner 2026-10-29, API Email Meetings)", () => {
+  const model = buildCatalogueModel(inputs());
+  const frame = { salesFunnelId: REACTIVE_RUNNING, target: "paid_client", mode: null, triggerId: null } as const;
+  const slugs = (p: ReturnType<typeof planCampaign>) => p.shadow!.legs.map((l) => l.channelSlug);
+
+  it("without a named channel the best line skips an expensive AI Meeting Booking; named, it stays", () => {
+    // AI Meeting Booking made dear: another line to Paid client wins on ROI unless the brief names it.
+    const amb = model.pipes.get("ai-meeting-booking|conversation_to_meeting_booked")!;
+    amb.expectedCost = { costPerOutcomeUsd: 5000, source: "workflow", basis: "measured" };
+    const free = planCampaign(model, frame, new Map(), NO_STEPS, "fleet");
+    expect(slugs(free)).not.toContain("ai-meeting-booking");
+    const named = planCampaign(model, frame, new Map(), NO_STEPS, "fleet", new Set(), new Set(["ai-meeting-booking"]));
+    expect(slugs(named)).toContain("ai-meeting-booking");
+    expect(named.briefNamedChannels).toEqual(["ai-meeting-booking"]);
+  });
+
+  it("a brief names channels only when it rules some out: the kept ones (Jev) are the named ones", () => {
+    const v = (pipeId: string, excluded: boolean | null, source: string | null = "jev") => ({ pipeId, excluded, source });
+    expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", false)])).toEqual(new Set());
+    expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", false), v("lead-sourcing|start_to_lead_found", true), v("sourcing-apollo-cold-filters|start_to_lead_found", null, null)])).toEqual(
+      new Set(["sales-cold-email-outreach", "ai-meeting-booking"]),
+    );
   });
 });
