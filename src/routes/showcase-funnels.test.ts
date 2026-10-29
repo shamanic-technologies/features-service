@@ -195,6 +195,11 @@ interface BrandFixture {
   leads: Array<Record<string, unknown>>;
   /** lead ids a HUMAN stated reached each rung. */
   stated?: Partial<Record<"meeting_booked" | "meeting_attended" | "sale", string[]>>;
+  /**
+   * lead-service's stored "did our outreach cause it?" verdict per stated lead id. Absent = `true`
+   * (our win), so a stated rung counts on the public card unless a case says otherwise.
+   */
+  causes?: Record<string, boolean | null>;
   /** lead ids the conversion tracker attributes a form submission to. */
   formSubmissions?: string[];
   /** campaign-service lists NO campaign for this brand. */
@@ -354,7 +359,10 @@ function mockFetch(fixture: Fixture): void {
           occurredAt: "2026-01-03T00:00:00.000Z",
           valueCents: null,
           source: "manual",
-          causedByOutreach: null,
+          causedByOutreach: (() => {
+            const causes = fixture.brands[brandId]?.causes ?? {};
+            return leadId in causes ? causes[leadId] : true;
+          })(),
         })),
       });
     }
@@ -1046,6 +1054,39 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
     expect(reconciled).toBeGreaterThan(0);
     // Nothing on the per-outcome body names a funnel.
     expect(JSON.stringify(outcomes)).not.toMatch(/funnel/i);
+  });
+
+  // SHOWCASE-OUR-WINS-1029 (owner 2026-10-29): the public card counts only what OUR outreach caused, per
+  // lead-service's stored verdict. Doc Dinners' CRM imported 149 meetings; 7 came after our email.
+  it("counts only outreach-caused outcomes: a CRM meeting not ours (false) or undecided (null) is left out of every count", async () => {
+    mockFetch({
+      ...BASE,
+      brands: {
+        ...BASE.brands,
+        [DOC]: {
+          ...BASE.brands[DOC],
+          stated: { meeting_booked: ["l1", "l2", "l3"], meeting_attended: ["l1", "l2"], sale: [] },
+          // l1 booked after our email; l2 booked before it; l3 we never emailed (no verdict).
+          causes: { l1: true, l2: false, l3: null },
+        },
+      },
+    });
+    const funnels = await get();
+    const doc = funnels.brands.find((b) => b.brand.id === DOC)!;
+    const rung = (key: string) => doc.funnels[0].steps.find((st) => st.key === key)?.peopleReached;
+    expect(rung("conversation_to_meeting_booked")).toBe(1);
+    expect(rung("meeting_booked_to_meeting_attended")).toBe(1);
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    const twin = (res.body as OutcomesBody).brands.find((b) => b.brand.id === DOC)!;
+    expect(twin.outcomes.find((o) => o.key === "meeting_booked")?.peopleReached).toBe(1);
+    expect(twin.outcomes.find((o) => o.key === "meeting_attended")?.peopleReached).toBe(1);
+  });
+
+  it("every walked client failing to read is a failure, never a cached empty row (lead-service down, 2026-10-29)", async () => {
+    const down = Object.fromEntries(Object.entries(BASE.brands).map(([id, b]) => [id, { ...b, campaignsFail: true }]));
+    mockFetch({ ...BASE, brands: down, memberships: Object.keys(BASE.brands) });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    expect(res.status).toBe(500);
   });
 
   it("a client with nothing to walk keeps its NAMED reason, and a leg-less one says so in leg words", async () => {
