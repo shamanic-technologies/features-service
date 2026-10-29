@@ -19,6 +19,7 @@ import {
   planChangeOf,
   shadowStateOf,
   briefNamedChannels,
+  offerStepsOfCampaign,
   planCampaign,
   playOptionsOf,
   playsSignatureOf,
@@ -392,5 +393,25 @@ describe("a channel the brief NAMES stays in the plan on its leg (owner 2026-10-
     expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", false), v("lead-sourcing|start_to_lead_found", true), v("sourcing-apollo-cold-filters|start_to_lead_found", null, null)])).toEqual(
       new Set(["sales-cold-email-outreach", "ai-meeting-booking"]),
     );
+  });
+});
+
+describe("the offer has the steps its campaign was born on and runs (owner 2026-10-29, API Email Meetings)", () => {
+  const model = buildCatalogueModel(inputs());
+  it("a stated offer gains the steps of the campaign's own funnels; an unstated one stays unstated", () => {
+    const stated = { stated: true, steps: ["conversation", "paid_client"] };
+    const out = offerStepsOfCampaign(model, stated, [REACTIVE_RUNNING, null]);
+    expect(new Set(out.steps)).toEqual(new Set(["conversation", "paid_client", "meeting_booked", "meeting_attended"]));
+    expect(offerStepsOfCampaign(model, NO_STEPS, [REACTIVE_RUNNING])).toBe(NO_STEPS);
+  });
+
+  it("so the line through the channel the brief names is no longer set aside", () => {
+    const frame = { salesFunnelId: REACTIVE_RUNNING, target: "paid_client", mode: null, triggerId: null } as const;
+    const offer = { stated: true, steps: ["conversation", "paid_client"] };
+    const named = new Set(["ai-meeting-booking"]);
+    const before = planCampaign(model, frame, new Map(), offer, "fleet", new Set(), named);
+    expect((before.shadow?.legs ?? []).map((l) => l.channelSlug)).not.toContain("ai-meeting-booking");
+    const after = planCampaign(model, frame, new Map(), offerStepsOfCampaign(model, offer, [REACTIVE_RUNNING]), "fleet", new Set(), named);
+    expect(after.shadow!.legs.map((l) => l.channelSlug)).toContain("ai-meeting-booking");
   });
 });
