@@ -4,8 +4,8 @@
  */
 import { desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { factoryBriefJudgments, factoryBriefPrefills, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
-import type { BriefJudgment, OrgDayCounts, ShadowStatus } from "./factory-shadow.js";
+import { factoryBriefJudgments, factoryBriefPrefills, factoryPipeVerdicts, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
+import type { BriefJudgment, OrgDayCounts, PipeVerdict, ShadowStatus } from "./factory-shadow.js";
 
 /** Every stored verdict of these campaigns, keyed `<campaignId>|<basePipeId>`. */
 export async function readJudgments(campaignIds: readonly string[]): Promise<Map<string, BriefJudgment>> {
@@ -94,12 +94,30 @@ export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & {
   }));
 }
 
-/** The campaigns this service already prefilled a brief on (never prefilled twice). */
-export async function readPrefilledCampaignIds(): Promise<Set<string>> {
-  const rows = await db.select({ id: factoryBriefPrefills.campaignId }).from(factoryBriefPrefills);
-  return new Set(rows.map((r) => r.id));
+/** The brief this service last prefilled on each campaign (a campaign whose brief still equals it was never edited). */
+export async function readPrefills(): Promise<Map<string, string>> {
+  const rows = await db.select({ id: factoryBriefPrefills.campaignId, brief: factoryBriefPrefills.brief }).from(factoryBriefPrefills);
+  return new Map(rows.map((r) => [r.id, r.brief]));
 }
 
+/** Record (or, on a rewrite of our own unedited brief, replace) the brief prefilled on a campaign. */
 export async function recordPrefill(row: { campaignId: string; orgId: string; brief: string }): Promise<void> {
-  await db.insert(factoryBriefPrefills).values(row).onConflictDoNothing();
+  await db
+    .insert(factoryBriefPrefills)
+    .values(row)
+    .onConflictDoUpdate({ target: factoryBriefPrefills.campaignId, set: { brief: row.brief, writtenAt: new Date() } });
+}
+
+/** Every stored pipe verdict of these campaigns, keyed `<campaignId>|<pipeId>`. */
+export async function readPipeVerdicts(campaignIds: readonly string[]): Promise<Map<string, PipeVerdict>> {
+  const out = new Map<string, PipeVerdict>();
+  if (campaignIds.length === 0) return out;
+  const rows = await db.select().from(factoryPipeVerdicts).where(inArray(factoryPipeVerdicts.campaignId, [...campaignIds]));
+  for (const r of rows) out.set(`${r.campaignId}|${r.pipeId}`, { campaignId: r.campaignId, pipeId: r.pipeId, briefHash: r.briefHash, pipeSignature: r.pipeSignature, excluded: r.excluded, probability: r.probability, model: r.model, judgedAt: r.judgedAt.toISOString() });
+  return out;
+}
+
+export async function writePipeVerdict(v: PipeVerdict & { orgId: string }): Promise<void> {
+  const values = { ...v, judgedAt: new Date(v.judgedAt) };
+  await db.insert(factoryPipeVerdicts).values(values).onConflictDoUpdate({ target: [factoryPipeVerdicts.campaignId, factoryPipeVerdicts.pipeId], set: values });
 }

@@ -37,6 +37,12 @@ import {
   monitoringVerdict,
   orgDayCountsOf,
   pipesToJudge,
+  pipeCandidatesOf,
+  pipeQuestion,
+  pipeSignatureOf,
+  pipeVerdictCurrent,
+  pipeWords,
+  type PipeVerdict,
   prefillBriefOf,
   planCampaign,
   playNameOf,
@@ -51,7 +57,7 @@ import {
   type ShadowRowSummary,
   type ShadowStatus,
 } from "../lib/factory-shadow.js";
-import { readDays, readJudgments, readPlan, readPlansSince, readPrefilledCampaignIds, recordPrefill, writeDay, writeJudgment, writePlan } from "../lib/factory-shadow-store.js";
+import { readDays, readJudgments, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 
 const router = Router();
@@ -159,18 +165,21 @@ export interface PrefillRow {
   /** `written` / `would_write` (dry run); `brief_stated` (never overwritten); `prefilled_before` (once per campaign, a
    *  cleared brief stays cleared); `plain_defaults` (no pipe runs a named strategy: an empty brief already picks them);
    *  `unreadable` (its funnel or offer could not be read). */
-  outcome: "written" | "would_write" | "brief_stated" | "prefilled_before" | "plain_defaults" | "unreadable" | "write_failed";
+  outcome: "written" | "would_write" | "rewritten" | "would_rewrite" | "brief_stated" | "prefilled_before" | "plain_defaults" | "unreadable" | "write_failed";
   brief: string | null;
   failure: string | null;
 }
 
 /** Prefill the brief of every campaign given whose brief is empty and was never prefilled. `apply: false` = dry run. */
 async function prefillBriefs(campaigns: ReadonlyArray<{ campaign: ShadowCampaign; status: string }>, apply: boolean, memos: ReturnType<typeof passMemos>): Promise<PrefillRow[]> {
-  const done = await readPrefilledCampaignIds();
+  const done = await readPrefills();
   return mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, async ({ campaign: c, status }) => {
     const row: PrefillRow = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, salesFunnelName: c.salesFunnelName, status, outcome: "plain_defaults", brief: null, failure: null };
-    if (briefHashOf(c.brief) !== null) return { ...row, outcome: "brief_stated", brief: c.brief };
-    if (done.has(c.id)) return { ...row, outcome: "prefilled_before" };
+    const ours = done.get(c.id);
+    // A brief someone stated is never touched; one WE wrote and nobody edited since follows what we write now.
+    const ourUnedited = ours !== undefined && briefHashOf(c.brief) !== null && c.brief!.trim() === ours.trim();
+    if (briefHashOf(c.brief) !== null && !ourUnedited) return { ...row, outcome: "brief_stated", brief: c.brief };
+    if (briefHashOf(c.brief) === null && ours !== undefined) return { ...row, outcome: "prefilled_before" };
     let brief: string | null;
     try {
       brief = prefillBriefOf((await memos.pricing(c)).model, c.salesFunnelId);
@@ -178,12 +187,13 @@ async function prefillBriefs(campaigns: ReadonlyArray<{ campaign: ShadowCampaign
       return { ...row, outcome: "unreadable", failure: failureOf(error) };
     }
     if (brief === null) return row;
-    if (!apply) return { ...row, outcome: "would_write", brief };
+    if (ourUnedited && brief.trim() === c.brief!.trim()) return { ...row, outcome: "prefilled_before", brief };
+    if (!apply) return { ...row, outcome: ourUnedited ? "would_rewrite" : "would_write", brief };
     try {
       await patchBrief(c, brief);
       await recordPrefill({ campaignId: c.id, orgId: c.orgId, brief });
       c.brief = brief;
-      return { ...row, outcome: "written", brief };
+      return { ...row, outcome: ourUnedited ? "rewritten" : "written", brief };
     } catch (error) {
       console.error(`[features-service] factory brief prefill failed for campaign ${c.id}:`, error);
       return { ...row, outcome: "write_failed", brief, failure: failureOf(error) };
@@ -223,6 +233,90 @@ async function askJev(state: Record<string, unknown>, options: readonly PlayOpti
   return { chosenPipeId: chosen.id, confidence: a.confidence, probabilities, model: body.model };
 }
 
+/** Pipes asked about in ONE Jev call (one `noul` question each, the brief read once). */
+const PIPES_PER_CALL = 12;
+
+/** Jev on several pipes at once: p (the brief rules it out) per pipe id. Throws on any unreadable answer. */
+async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string; words: string }>): Promise<{ byPipe: Map<string, number>; model: string }> {
+  const base = process.env.CHAT_SERVICE_URL;
+  const apiKey = process.env.CHAT_SERVICE_API_KEY;
+  if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
+  const questions = Object.fromEntries(items.map((it, i) => [`p${i}`, pipeQuestion(it.words)]));
+  const res = await fetchWithRetry(
+    `${base}/internal/platform-judgments`,
+    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state: { brief }, questions, support: BRIEF_JUDGMENT_SUPPORT }) },
+    { timeoutMs: JEV_TIMEOUT_MS },
+  );
+  if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; noul?: unknown }> };
+  if (typeof body.model !== "string" || body.model === "") throw new Error("chat-service answered without naming the model release");
+  const byPipe = new Map<string, number>();
+  items.forEach((it, i) => {
+    const a = body.answers?.[`p${i}`];
+    if (a?.type !== "noul" || typeof a.noul !== "number" || !Number.isFinite(a.noul)) throw new Error(`chat-service answered pipe ${it.pipeId} without a readable probability`);
+    byPipe.set(it.pipeId, a.noul);
+  });
+  return { byPipe, model: body.model };
+}
+
+export interface PipeVerdictRow {
+  pipeId: string;
+  channelName: string;
+  fromStep: string | null;
+  toStep: string;
+  inRunningFunnel: boolean;
+  /** The brief rules it out: no plan goes through it. Null when not judged (empty brief: every pipe kept; judge failed). */
+  excluded: boolean | null;
+  probability: number | null;
+  source: "jev" | "empty_brief" | null;
+  failure: string | null;
+}
+
+/**
+ * The pipe judge of one campaign: stored verdicts reused (same brief, same pipe words), the rest asked of Jev in batches.
+ * Empty brief = every pipe kept, no call. A failed batch leaves its pipes unjudged (kept) and is the campaign's failure.
+ */
+async function judgePipes(c: ShadowCampaign, model: CatalogueModel, stored: ReadonlyMap<string, PipeVerdict>, now: Date): Promise<{ rows: PipeVerdictRow[]; excluded: Set<string>; failures: string[] }> {
+  const running = runningPipesOf(model, c.salesFunnelId);
+  const candidates = pipeCandidatesOf(model, c);
+  const briefHash = briefHashOf(c.brief);
+  const rows = new Map<string, PipeVerdictRow>();
+  const failures: string[] = [];
+  const toAsk: Array<{ pipeId: string; words: string; signature: string }> = [];
+  for (const p of candidates) {
+    const row: PipeVerdictRow = { pipeId: p.id, channelName: p.channelName, fromStep: p.fromStep, toStep: p.toStep, inRunningFunnel: running.has(p.id), excluded: null, probability: null, source: null, failure: null };
+    rows.set(p.id, row);
+    if (briefHash === null) {
+      Object.assign(row, { excluded: false, source: "empty_brief" });
+      continue;
+    }
+    const signature = pipeSignatureOf(model, p);
+    const kept = stored.get(`${c.id}|${p.id}`);
+    if (pipeVerdictCurrent(kept, briefHash, signature)) Object.assign(row, { excluded: kept!.excluded, probability: kept!.probability, source: "jev" });
+    else toAsk.push({ pipeId: p.id, words: pipeWords(model, p), signature });
+  }
+  const batches: Array<typeof toAsk> = [];
+  for (let i = 0; i < toAsk.length; i += PIPES_PER_CALL) batches.push(toAsk.slice(i, i + PIPES_PER_CALL));
+  await mapWithConcurrency(batches, JEV_CONCURRENCY, async (batch) => {
+    try {
+      const { byPipe, model: release } = await askPipeJudge(c.brief!, batch);
+      for (const it of batch) {
+        const probability = byPipe.get(it.pipeId)!;
+        const verdict: PipeVerdict = { campaignId: c.id, pipeId: it.pipeId, briefHash: briefHash!, pipeSignature: it.signature, excluded: probability >= 0.5, probability, model: release, judgedAt: now.toISOString() };
+        await writePipeVerdict({ ...verdict, orgId: c.orgId });
+        Object.assign(rows.get(it.pipeId)!, { excluded: verdict.excluded, probability, source: "jev" });
+      }
+    } catch (error) {
+      const failure = failureOf(error);
+      failures.push(`pipes ${batch.map((b) => b.pipeId).join(", ")}: ${failure}`);
+      for (const it of batch) rows.get(it.pipeId)!.failure = failure;
+      console.error(`[features-service] factory shadow: pipe judge failed for campaign ${c.id}:`, error);
+    }
+  });
+  const list = [...rows.values()].sort((a, b) => Number(b.inRunningFunnel) - Number(a.inRunningFunnel) || (a.pipeId < b.pipeId ? -1 : 1));
+  return { rows: list, excluded: new Set(list.filter((r) => r.excluded === true).map((r) => r.pipeId)), failures };
+}
+
 // ── One campaign ───────────────────────────────────────────────────────────────────────────────────
 
 export interface ShadowBody {
@@ -238,12 +332,14 @@ export interface ShadowBody {
   failure: string | null;
   picks: PipePick[];
   pickDiffers: boolean;
+  /** Every pipe we run on a leg the plan may walk, kept or ruled out by the brief (the pipe judge). */
+  pipeVerdicts: PipeVerdictRow[];
   plan: ShadowPlan | null;
   computedAt: string;
 }
 
 /** Judge every pipe the campaign needs (stored verdicts reused), then plan. Never throws: a failure is the row's status. */
-async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof passMemos>, stored: ReadonlyMap<string, BriefJudgment>, now: Date): Promise<ShadowBody> {
+async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof passMemos>, stored: ReadonlyMap<string, BriefJudgment>, storedPipes: ReadonlyMap<string, PipeVerdict>, now: Date): Promise<ShadowBody> {
   const head = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId, salesFunnelId: c.salesFunnelId, salesFunnelName: c.salesFunnelName, brief: c.brief, briefUpdatedAt: c.briefUpdatedAt, computedAt: now.toISOString() };
   let model: CatalogueModel;
   let ltrBasis: ExpectedBasis;
@@ -254,7 +350,7 @@ async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof pass
     steps = await memos.offerSteps(c);
     toJudge = pipesToJudge(model, c);
   } catch (error) {
-    return { ...head, status: "plan_failed", failure: failureOf(error), picks: [], pickDiffers: false, plan: null };
+    return { ...head, status: "plan_failed", failure: failureOf(error), picks: [], pickDiffers: false, pipeVerdicts: [], plan: null };
   }
   const running = runningPipesOf(model, c.salesFunnelId);
   const briefHash = briefHashOf(c.brief);
@@ -304,15 +400,19 @@ async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof pass
   });
   pickRows.sort((a, b) => Number(b.inRunningFunnel) - Number(a.inRunningFunnel) || (a.basePipeId < b.basePipeId ? -1 : 1));
   const pickDiffers = pickRows.some((p) => p.differs === true);
+  // Which pipes the brief allows at all (a channel is a tactic, GTM Factory v10): a ruled-out pipe never enters the plan.
+  const pipes = await judgePipes(c, model, storedPipes, now);
+  failures.push(...pipes.failures);
+  const pipeVerdicts = pipes.rows;
   let plan: ShadowPlan | null = null;
   try {
-    plan = planCampaign(model, c, picks, steps, ltrBasis);
+    plan = planCampaign(model, c, picks, steps, ltrBasis, pipes.excluded);
   } catch (error) {
-    return { ...head, status: "plan_failed", failure: failureOf(error), picks: pickRows, pickDiffers, plan: null };
+    return { ...head, status: "plan_failed", failure: failureOf(error), picks: pickRows, pickDiffers, pipeVerdicts, plan: null };
   }
-  if (failures.length > 0) return { ...head, status: "judge_failed", failure: failures.join("; "), picks: pickRows, pickDiffers, plan };
-  if (plan.shadow === null) return { ...head, status: "plan_failed", failure: plan.shadowUnavailableReason, picks: pickRows, pickDiffers, plan };
-  return { ...head, status: "ok", failure: null, picks: pickRows, pickDiffers, plan };
+  if (failures.length > 0) return { ...head, status: "judge_failed", failure: failures.join("; "), picks: pickRows, pickDiffers, pipeVerdicts, plan };
+  if (plan.shadow === null) return { ...head, status: "plan_failed", failure: plan.shadowUnavailableReason, picks: pickRows, pickDiffers, pipeVerdicts, plan };
+  return { ...head, status: "ok", failure: null, picks: pickRows, pickDiffers, pipeVerdicts, plan };
 }
 
 const failureOf = (error: unknown): string => (error instanceof ShadowPlanError ? error.reason : (error as Error)?.message ?? String(error)).slice(0, 500);
@@ -339,10 +439,11 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     // A campaign born after the prefill gets its brief here, before it is judged (FACTORY-P1-BRIEF-PREFILL); only once the
     // backfill was APPLIED (dry run first, owner 2026-10-28): before that, a pass writes nothing.
     const backfilled = (await loadFleetCell(PREFILL_CELL)) !== null;
-    const prefilled = !backfilled ? [] : (await prefillBriefs(campaigns.map((campaign) => ({ campaign, status: "ongoing" })), true, memos)).filter((r) => r.outcome === "written");
+    const prefilled = !backfilled ? [] : (await prefillBriefs(campaigns.map((campaign) => ({ campaign, status: "ongoing" })), true, memos)).filter((r) => r.outcome === "written" || r.outcome === "rewritten");
     if (prefilled.length > 0) console.log(`[features-service] factory brief prefill: ${prefilled.length} campaign(s) given the brief of what they run today`);
     const stored = await readJudgments(campaigns.map((c) => c.id));
-    const bodies = await mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, (c) => shadowOfCampaign(c, memos, stored, now));
+    const storedPipes = await readPipeVerdicts(campaigns.map((c) => c.id));
+    const bodies = await mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, (c) => shadowOfCampaign(c, memos, stored, storedPipes, now));
     for (const b of bodies) await writePlan({ campaignId: b.campaignId, orgId: b.orgId, brandId: b.brandId, offerId: b.offerId, status: b.status, failure: b.failure, body: b, computedAt: now });
     const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers }));
     await writeDay(now.toISOString().slice(0, 10), orgDayCountsOf(summaries), now);
@@ -531,6 +632,8 @@ router.post("/internal/factory-shadow/prefill-briefs", apiKeyOnly, async (req, r
       campaigns: rows.length,
       written: count("written"),
       wouldWrite: count("would_write"),
+      rewritten: count("rewritten"),
+      wouldRewrite: count("would_rewrite"),
       briefStated: count("brief_stated"),
       prefilledBefore: count("prefilled_before"),
       plainDefaults: count("plain_defaults"),

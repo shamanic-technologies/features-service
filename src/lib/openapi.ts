@@ -9354,6 +9354,21 @@ const factoryShadowBody = registry.register(
       }),
     ).describe("Every pipe with plays to choose from, the running funnel's first."),
     pickDiffers: z.boolean(),
+    pipeVerdicts: z
+      .array(
+        z.object({
+          pipeId: z.string(),
+          channelName: z.string(),
+          fromStep: z.string().nullable(),
+          toStep: z.string(),
+          inRunningFunnel: z.boolean(),
+          excluded: z.boolean().nullable().describe("The brief rules this pipe out: no plan goes through it. Null when not judged (the judge failed)."),
+          probability: z.number().nullable().describe("Jev's p that the brief rules it out (>= 0.5 = excluded); null with no Jev call."),
+          source: z.enum(["jev", "empty_brief"]).nullable().describe("`empty_brief` = kept, no Jev call."),
+          failure: z.string().nullable(),
+        }),
+      )
+      .describe("The pipe judge (a channel is a tactic, GTM Factory v10): every pipe we run on a leg the plan may walk, kept or ruled out by the brief, judged once per brief and pipe. The client's own team's legs are never judged."),
     plan: z
       .object({
         target: z.string().describe("The catalogue step the campaign targets."),
@@ -9456,12 +9471,14 @@ registry.registerPath({
             campaigns: z.number().int(),
             written: z.number().int(),
             wouldWrite: z.number().int(),
+            rewritten: z.number().int().describe("Briefs WE wrote and nobody edited since, rewritten to what we write now."),
+            wouldRewrite: z.number().int(),
             briefStated: z.number().int(),
             prefilledBefore: z.number().int(),
             plainDefaults: z.number().int(),
             unreadable: z.number().int(),
             writeFailed: z.number().int(),
-            rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), outcome: z.enum(["written", "would_write", "brief_stated", "prefilled_before", "plain_defaults", "unreadable", "write_failed"]), brief: z.string().nullable(), failure: z.string().nullable() })),
+            rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), outcome: z.enum(["written", "would_write", "rewritten", "would_rewrite", "brief_stated", "prefilled_before", "plain_defaults", "unreadable", "write_failed"]), brief: z.string().nullable(), failure: z.string().nullable() })),
           }),
         },
       },
