@@ -64,6 +64,9 @@ const STEP_TO_SIGNAL: Record<LeadStepOutcome, string> = {
  */
 const PRICED_STEPS: readonly LeadStepOutcome[] = ["meeting_booked", "meeting_attended", "sale"];
 
+/** The engine signals of the statement-backed rungs (booked, attended, sale): lead-service states them AND their cause. */
+export const STATED_RUNG_SIGNALS: readonly string[] = PRICED_STEPS.map((step) => STEP_TO_SIGNAL[step]);
+
 /** Every step a `never` can be stated at, most advanced last — the order the stated VALUE is read in. */
 const ALL_STEPS: readonly LeadStepOutcome[] = [
   "signup",
