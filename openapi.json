@@ -34686,6 +34686,213 @@
           "topContainers"
         ]
       },
+      "BoxChecksView": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "red",
+              "green"
+            ],
+            "description": "Red when at least one check is broken. A not_yet check never makes it red; no check at all = green."
+          },
+          "brokenCount": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Every broken check's reason in plain words, or 'Every check is OK.'"
+          },
+          "windowDays": {
+            "type": "integer"
+          },
+          "recentHours": {
+            "type": "integer",
+            "description": "48."
+          },
+          "staleCadenceMultiplier": {
+            "type": "integer",
+            "description": "3."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "check": {
+                  "type": "string",
+                  "description": "The check name the box sent (e.g. `deploy-pipeline`)."
+                },
+                "label": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Human title from the latest run; null when the box sent none (or never ran)."
+                },
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "broken",
+                    "ok",
+                    "not_yet"
+                  ],
+                  "description": "Rendered as-is. `broken` (red) = the latest run said ok:false, OR no run for more than staleAfterMinutes (3 x its cadence: a silent check is blind). `ok` = latest run ok and fresh. `not_yet` = a name passed in `expect` that never reported: a normal not-yet, NEVER red."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Plain words: why it is broken (the run's own reason and/or the silence), or what the last OK run found."
+                },
+                "stale": {
+                  "type": "boolean",
+                  "description": "True when no run arrived for more than staleAfterMinutes."
+                },
+                "lastRunAt": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "ISO instant of the latest run; null when not_yet."
+                },
+                "lastRunOk": {
+                  "type": "boolean",
+                  "nullable": true
+                },
+                "minutesSinceLastRun": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "cadenceMinutes": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "The cadence the latest run declared."
+                },
+                "staleAfterMinutes": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "3 x cadenceMinutes."
+                },
+                "brokenSince": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Oldest run of the current uninterrupted ok:false streak (within the window read); null when the last run was ok."
+                },
+                "unit": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Unit of the value series, from the latest run."
+                },
+                "latestValue": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "latestDetails": {
+                  "type": "object",
+                  "nullable": true,
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "The latest run's free details object (failing services, HTTP status...)."
+                },
+                "daily": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "day": {
+                        "type": "string",
+                        "description": "UTC day (YYYY-MM-DD)."
+                      },
+                      "runs": {
+                        "type": "integer"
+                      },
+                      "failedRuns": {
+                        "type": "integer",
+                        "description": "Runs that said ok:false that day."
+                      },
+                      "valueMin": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "valueMax": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "valueMean": {
+                        "type": "number",
+                        "nullable": true
+                      },
+                      "valueLast": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "day",
+                      "runs",
+                      "failedRuns",
+                      "valueMin",
+                      "valueMax",
+                      "valueMean",
+                      "valueLast"
+                    ]
+                  },
+                  "description": "One point per UTC day of the window THAT HAS RUNS, oldest first. A day without runs is ABSENT (a gap, never a zero). Value fields null when no run that day carried a value."
+                },
+                "recent": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "ranAt": {
+                        "type": "string"
+                      },
+                      "ok": {
+                        "type": "boolean"
+                      },
+                      "value": {
+                        "type": "number",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "ranAt",
+                      "ok",
+                      "value"
+                    ]
+                  },
+                  "description": "Every run of the last 48 hours, oldest first."
+                }
+              },
+              "required": [
+                "check",
+                "label",
+                "verdict",
+                "reason",
+                "stale",
+                "lastRunAt",
+                "lastRunOk",
+                "minutesSinceLastRun",
+                "cadenceMinutes",
+                "staleAfterMinutes",
+                "brokenSince",
+                "unit",
+                "latestValue",
+                "latestDetails",
+                "daily",
+                "recent"
+              ]
+            },
+            "description": "Every check ever seen (plus each never-seen `expect` name as not_yet), broken first, then by name."
+          }
+        },
+        "required": [
+          "status",
+          "brokenCount",
+          "reason",
+          "windowDays",
+          "recentHours",
+          "staleCadenceMultiplier",
+          "checks"
+        ]
+      },
       "FactoryShadowPlan": {
         "type": "object",
         "properties": {
@@ -76688,6 +76895,309 @@
           },
           "400": {
             "description": "Invalid days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/box-checks/runs": {
+      "post": {
+        "summary": "Store watchdog runs of the production box, any check name (internal, api-key)",
+        "description": "ONE generic ingest for every watchdog script on the box (deploy pipeline, service health, workflow queue, Jev chain, own-org balance, any future check): the check name is data, never a new route. Posted from inside this container on localhost with FEATURES_SERVICE_API_KEY. Up to 500 runs per batch (body limit 2 MB). A run's identity is (check, ranAt): re-sending it REPLACES it. Runs older than 90 days are pruned on every write. No alerting: red on the Monitoring hub is the alert. api-key only (x-api-key); never exposed through the gateway.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "runs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "check": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                          "description": "The check's name, chosen by the caller: lowercase letters, digits and dashes, 1 to 63 chars (e.g. `deploy-pipeline`, `service-health`, `workflow-queue`, `jev-chain`, `own-org-balance`). A new name is a new check: no server change needed."
+                        },
+                        "ranAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the run happened (ISO 8601). With `check`, the run's identity: re-sending the same instant replaces it."
+                        },
+                        "ok": {
+                          "type": "boolean",
+                          "description": "The run's verdict: false = something is BROKEN right now (the check turns red on the hub)."
+                        },
+                        "reason": {
+                          "type": "string",
+                          "maxLength": 2000,
+                          "description": "Plain words for a human: WHY it is broken (required when ok = false), or what it found when ok."
+                        },
+                        "cadenceMinutes": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10080,
+                          "description": "How often the check runs, in minutes (5, 15, 60, 360...). The check reads broken when no run arrives for more than 3 x this."
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "description": "Human title of the check (e.g. `Deploy pipeline`). Latest wins."
+                        },
+                        "value": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The check's main measured value for the chart (e.g. services unhealthy, jobs overdue, balance USD). Null/absent = none."
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40,
+                          "description": "Unit of `value` (e.g. `services`, `jobs`, `minutes`, `usd`). Latest wins."
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          },
+                          "description": "Free JSON object with the run's specifics (failing services, HTTP status, body excerpt...). Max 20000 chars serialized."
+                        }
+                      },
+                      "required": [
+                        "check",
+                        "ranAt",
+                        "ok",
+                        "cadenceMinutes"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "description": "1 to 500 runs, any mix of checks."
+                  }
+                },
+                "required": [
+                  "runs"
+                ]
+              },
+              "example": {
+                "runs": [
+                  {
+                    "check": "service-health",
+                    "label": "Service health",
+                    "ranAt": "2026-10-30T09:05:00Z",
+                    "ok": false,
+                    "reason": "2 services failed their health check twice in a row: lead-service (502), billing-service (timeout).",
+                    "cadenceMinutes": 5,
+                    "value": 2,
+                    "unit": "services",
+                    "details": {
+                      "failing": [
+                        {
+                          "service": "lead-service",
+                          "status": 502
+                        },
+                        {
+                          "service": "billing-service",
+                          "status": "timeout"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stored": {
+                      "type": "integer"
+                    },
+                    "pruned": {
+                      "type": "integer",
+                      "description": "Rows older than 90 days deleted by this write."
+                    },
+                    "checks": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Distinct check names of the batch."
+                    },
+                    "receivedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "stored",
+                    "pruned",
+                    "checks",
+                    "receivedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body (bad check name, ok:false without reason, duplicate (check, ranAt)...)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unwritable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/box-checks": {
+      "get": {
+        "summary": "Box watchdog checks: per check verdict (broken / ok / not yet), plain reason, last run, daily + 48 h series (internal, api-key)",
+        "description": "Feeds the staff Monitoring hub, one chart per check. A check is broken when its latest run said ok:false or when it stopped reporting (no run for more than 3 x its declared cadence). `expect` lists check names the reader knows about: one never seen is served as not_yet (never red); a never-seen name not in `expect` is absent. `days` (default 30, max 90) bounds the daily series. api-key only; staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Window in days, 1 to 90 (default 30)."
+            },
+            "required": false,
+            "description": "Window in days, 1 to 90 (default 30).",
+            "name": "days",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated check names the reader expects (e.g. `deploy-pipeline,service-health`)."
+            },
+            "required": false,
+            "description": "Comma-separated check names the reader expects (e.g. `deploy-pipeline,service-health`).",
+            "name": "expect",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every check's verdict and series.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoxChecksView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid days or expect",
             "content": {
               "application/json": {
                 "schema": {

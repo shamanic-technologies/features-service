@@ -5,6 +5,7 @@ import { featureResponseSchema } from "./schemas.js";
 import { CHANNEL_TYPES } from "./channel-types.js";
 import { SecurityAdvisoryReportSchema } from "./security-advisories.js";
 import { BoxHealthBatchSchema } from "./box-health.js";
+import { BoxCheckBatchSchema, MAX_WINDOW_DAYS as BOX_CHECKS_MAX_DAYS, STALE_CADENCE_MULTIPLIER } from "./box-checks.js";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
@@ -9291,6 +9292,139 @@ registry.registerPath({
   responses: {
     200: { description: "The verdict and the series.", content: { "application/json": { schema: boxHealthView } } },
     400: { description: "Invalid days", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── Box watchdog checks (BOX-WATCHDOGS-1030; routes/box-checks.ts) ─────────────
+
+const boxCheckView = z.object({
+  check: z.string().describe("The check name the box sent (e.g. `deploy-pipeline`)."),
+  label: z.string().nullable().describe("Human title from the latest run; null when the box sent none (or never ran)."),
+  verdict: z
+    .enum(["broken", "ok", "not_yet"])
+    .describe(
+      `Rendered as-is. \`broken\` (red) = the latest run said ok:false, OR no run for more than staleAfterMinutes ` +
+        `(${STALE_CADENCE_MULTIPLIER} x its cadence: a silent check is blind). \`ok\` = latest run ok and fresh. \`not_yet\` = a name ` +
+        "passed in `expect` that never reported: a normal not-yet, NEVER red.",
+    ),
+  reason: z.string().describe("Plain words: why it is broken (the run's own reason and/or the silence), or what the last OK run found."),
+  stale: z.boolean().describe("True when no run arrived for more than staleAfterMinutes."),
+  lastRunAt: z.string().nullable().describe("ISO instant of the latest run; null when not_yet."),
+  lastRunOk: z.boolean().nullable(),
+  minutesSinceLastRun: z.number().nullable(),
+  cadenceMinutes: z.number().int().nullable().describe("The cadence the latest run declared."),
+  staleAfterMinutes: z.number().int().nullable().describe(`${STALE_CADENCE_MULTIPLIER} x cadenceMinutes.`),
+  brokenSince: z.string().nullable().describe("Oldest run of the current uninterrupted ok:false streak (within the window read); null when the last run was ok."),
+  unit: z.string().nullable().describe("Unit of the value series, from the latest run."),
+  latestValue: z.number().nullable(),
+  latestDetails: z.record(z.string(), z.unknown()).nullable().describe("The latest run's free details object (failing services, HTTP status...)."),
+  daily: z
+    .array(
+      z.object({
+        day: z.string().describe("UTC day (YYYY-MM-DD)."),
+        runs: z.number().int(),
+        failedRuns: z.number().int().describe("Runs that said ok:false that day."),
+        valueMin: z.number().nullable(),
+        valueMax: z.number().nullable(),
+        valueMean: z.number().nullable(),
+        valueLast: z.number().nullable(),
+      }),
+    )
+    .describe("One point per UTC day of the window THAT HAS RUNS, oldest first. A day without runs is ABSENT (a gap, never a zero). Value fields null when no run that day carried a value."),
+  recent: z
+    .array(z.object({ ranAt: z.string(), ok: z.boolean(), value: z.number().nullable() }))
+    .describe("Every run of the last 48 hours, oldest first."),
+});
+
+const boxChecksView = registry.register(
+  "BoxChecksView",
+  z.object({
+    status: z.enum(["red", "green"]).describe("Red when at least one check is broken. A not_yet check never makes it red; no check at all = green."),
+    brokenCount: z.number().int(),
+    reason: z.string().describe("Every broken check's reason in plain words, or 'Every check is OK.'"),
+    windowDays: z.number().int(),
+    recentHours: z.number().int().describe("48."),
+    staleCadenceMultiplier: z.number().int().describe(`${STALE_CADENCE_MULTIPLIER}.`),
+    checks: z.array(boxCheckView).describe("Every check ever seen (plus each never-seen `expect` name as not_yet), broken first, then by name."),
+  }),
+);
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/box-checks/runs",
+  summary: "Store watchdog runs of the production box, any check name (internal, api-key)",
+  description:
+    "ONE generic ingest for every watchdog script on the box (deploy pipeline, service health, workflow queue, Jev chain, own-org " +
+    "balance, any future check): the check name is data, never a new route. Posted from inside this container on localhost with " +
+    "FEATURES_SERVICE_API_KEY. Up to 500 runs per batch (body limit 2 MB). A run's identity is (check, ranAt): re-sending it " +
+    "REPLACES it. Runs older than 90 days are pruned on every write. No alerting: red on the Monitoring hub is the alert. " +
+    "api-key only (x-api-key); never exposed through the gateway.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: BoxCheckBatchSchema,
+          example: {
+            runs: [
+              {
+                check: "service-health",
+                label: "Service health",
+                ranAt: "2026-10-30T09:05:00Z",
+                ok: false,
+                reason: "2 services failed their health check twice in a row: lead-service (502), billing-service (timeout).",
+                cadenceMinutes: 5,
+                value: 2,
+                unit: "services",
+                details: { failing: [{ service: "lead-service", status: 502 }, { service: "billing-service", status: "timeout" }] },
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Stored.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            stored: z.number().int(),
+            pruned: z.number().int().describe("Rows older than 90 days deleted by this write."),
+            checks: z.array(z.string()).describe("Distinct check names of the batch."),
+            receivedAt: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid body (bad check name, ok:false without reason, duplicate (check, ranAt)...)", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unwritable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/box-checks",
+  summary: "Box watchdog checks: per check verdict (broken / ok / not yet), plain reason, last run, daily + 48 h series (internal, api-key)",
+  description:
+    "Feeds the staff Monitoring hub, one chart per check. A check is broken when its latest run said ok:false or when it stopped " +
+    `reporting (no run for more than ${STALE_CADENCE_MULTIPLIER} x its declared cadence). \`expect\` lists check names the reader ` +
+    "knows about: one never seen is served as not_yet (never red); a never-seen name not in `expect` is absent. " +
+    `\`days\` (default 30, max ${BOX_CHECKS_MAX_DAYS}) bounds the daily series. api-key only; staff-gated at api-service.`,
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      days: z.string().optional().describe(`Window in days, 1 to ${BOX_CHECKS_MAX_DAYS} (default 30).`),
+      expect: z.string().optional().describe("Comma-separated check names the reader expects (e.g. `deploy-pipeline,service-health`)."),
+    }),
+  },
+  responses: {
+    200: { description: "Every check's verdict and series.", content: { "application/json": { schema: boxChecksView } } },
+    400: { description: "Invalid days or expect", content: { "application/json": { schema: errorResponse } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
   },
