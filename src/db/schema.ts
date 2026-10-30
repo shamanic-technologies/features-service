@@ -883,6 +883,30 @@ export const boxHealthSamples = pgTable(
 export type BoxHealthSampleRow = typeof boxHealthSamples.$inferSelect;
 
 /**
+ * BOX CHECKS (`box_check_runs`, BOX-WATCHDOGS-1030; `lib/box-checks.ts`): ONE generic registry of the production box's
+ * watchdog runs, one row per (check name, run instant), the check name chosen by the caller (never a table per check):
+ * re-sending the same (check, ran_at) REPLACES the row. Rows older than 90 days are pruned on ingest.
+ */
+export const boxCheckRuns = pgTable(
+  "box_check_runs",
+  {
+    check: text("check_name").notNull(),
+    ranAt: timestamp("ran_at", { withTimezone: true }).notNull(),
+    ok: boolean("ok").notNull(),
+    reason: text("reason"),
+    cadenceMinutes: integer("cadence_minutes").notNull(),
+    label: text("label"),
+    value: doublePrecision("value"),
+    unit: text("unit"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.check, table.ranAt] }), index("idx_box_check_runs_ran_at").on(table.ranAt)],
+);
+
+export type BoxCheckRunRow = typeof boxCheckRuns.$inferSelect;
+
+/**
  * GTM FACTORY STEP 1 (FACTORY-P1-BRIEF-JUDGE-SHADOW-PLAN, `lib/factory-shadow.ts`). SHADOW ONLY: nothing reads these to
  * decide what a campaign runs.
  * - `factory_brief_judgments`: per funnel campaign x pipe, the play Jev picked from the campaign's brief (or the default play
