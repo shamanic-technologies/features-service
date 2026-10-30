@@ -40,6 +40,7 @@ import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
+import boxChecksRoutes from "./routes/box-checks.js";
 import factoryShadowRoutes, { startFactoryShadowLoop } from "./routes/factory-shadow.js";
 import { startOutreachFactsCopy } from "./lib/outreach-facts-copy.js";
 import { startGenerationSequencesCopy } from "./lib/generation-sequences-copy.js";
@@ -87,6 +88,8 @@ app.use(cors({
 }));
 // Box health ingest carries its own larger JSON limit (a backfill chunk is ~1 MB), so it is mounted before the 100 kB default.
 app.use(boxHealthRoutes);
+// Box watchdog runs carry their own 2 MB JSON limit (a batch of runs with details), mounted before the 100 kB default too.
+app.use(boxChecksRoutes);
 app.use(express.json());
 // Every view compute is asked of the refresher process (lib/view-refresher.ts), which needs the request.
 app.use(captureRequestReplay);
