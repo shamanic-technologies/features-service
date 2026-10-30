@@ -573,7 +573,7 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       salesFunnelId = unit.salesFunnelId;
     }
     const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId);
-    if (!picked) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${pipe.featureSlug}|${pipe.legKey} is being built: keep the workflow's own template and LLM`);
+    if (!picked) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${pipe.featureSlug}|${pipe.legKey} is being built: write nothing and retry in a few minutes (no default writer)`);
     const { payload: p, template: t, llm: l, alias } = picked;
     const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
     res.json({
