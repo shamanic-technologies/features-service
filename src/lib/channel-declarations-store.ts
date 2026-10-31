@@ -91,6 +91,16 @@ export async function listTriggerTypes(): Promise<TriggerTypeRecord[]> {
   return rows.filter((r) => r.retiredAt == null).map(triggerOf);
 }
 
+/**
+ * The RETIRED trigger types (P5.1 follow-up, owner 2026-10-31): a campaign that ran on one (stopped since) still names
+ * its trigger and its path on every read that DESCRIBES the funnels campaigns run (`funnelCopiesFor`). Never offered
+ * to a new campaign: the catalogue's lists read `listTriggerCatalogue` only.
+ */
+export async function listRetiredTriggerTypes(): Promise<TriggerTypeRecord[]> {
+  const rows = await db.select().from(channelTriggerTypes).orderBy(asc(channelTriggerTypes.displayOrder));
+  return rows.filter((r) => r.retiredAt != null && canonicalTriggerId(r.id) === r.id).map(triggerOf);
+}
+
 export async function listDeclaredChannels(): Promise<DeclaredChannel[]> {
   return (await db.select().from(declaredChannels).orderBy(asc(declaredChannels.displayOrder))).map(channelOf);
 }

@@ -28,6 +28,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   const seeded = SEED_FEATURES.filter((f) => f.status === "active");
   return {
     listTriggerTypes: async () => mem.triggers,
+    listRetiredTriggerTypes: async () => [],
     listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, [], (g: any) => g),
     registerStepDeclarations: async () => ({ steps: [], rates: [] }),
     listDeclaredChannels: async () => mem.channels,

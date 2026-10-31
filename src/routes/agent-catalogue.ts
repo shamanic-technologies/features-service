@@ -79,6 +79,7 @@ import {
   listDeclaredSalesPaths,
   listDeclaredSteps,
   listTriggerCatalogue,
+  listRetiredTriggerTypes,
   listTriggerTypes,
   loadChannelCatalogue,
   registerStepDeclarations,
@@ -2498,15 +2499,20 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   /** A funnel campaign's path: its funnel's (one channel per leg). */
   pathOf: (id: string) => FunnelPathView | null;
 }> {
-  const [all, pub, declaredSteps, names, triggers, assignments, playCatalogue] = await Promise.all([
+  const [all, pub, declaredSteps, names, live, retired, assignments, playCatalogue] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
     allNamesByKey(),
     listTriggerCatalogue(),
+    listRetiredTriggerTypes(),
     listLegAssignments(),
     loadPlayCatalogue(),
   ]);
+  // A campaign that ran on a trigger retired since still names it and its path (P5.1 follow-up): this read DESCRIBES
+  // the funnels campaigns run, so a retired trigger is known here (never offered: the catalogue lists read live ones).
+  const liveIds = new Set(live.map((t) => t.id));
+  const triggers = [...live, ...retired.filter((t) => !liveIds.has(t.id))];
   const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
   // The PLAYS too (structure only, no measurement): a funnel through a non-default play (`<pipe>~<strategy>`) is its
   // own funnel, so a model without them knows no such id and a running campaign on it read as "not in the catalogue".
