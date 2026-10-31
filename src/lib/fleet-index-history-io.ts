@@ -349,7 +349,7 @@ export async function readPairDatedSpend(featureSlug: string, orgId: string, bra
   const apiKey = process.env.RUNS_SERVICE_API_KEY;
   if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const featureSlugs = runsSpendSlugsParam(featureSlug, "fed");
-  const read = async (path: string, params: URLSearchParams, headers: Record<string, string>): Promise<Array<Record<string, unknown>>> => {
+  const once = async (path: string, params: URLSearchParams, headers: Record<string, string>, attempts: number): Promise<Array<Record<string, unknown>>> => {
     for (let attempt = 1; ; attempt++) {
       const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers }, { timeoutMs: 300_000 });
       if (res.ok) {
@@ -358,16 +358,33 @@ export async function readPairDatedSpend(featureSlug: string, orgId: string, bra
         return body.buckets;
       }
       const failure = `${res.status}: ${(await res.text()).slice(0, 200)}`;
-      if (res.status < 500 || attempt >= RUNS_ATTEMPTS) throw new Error(`runs-service ${path} (org ${orgId}, brand ${brandId}) failed (${failure})`);
-      console.warn(`[fleet-index-backfill] ${path} (org ${orgId}, brand ${brandId}) failed (${failure}), attempt ${attempt}/${RUNS_ATTEMPTS}; retrying`);
+      if (res.status < 500 || attempt >= attempts) throw new RunsReadError(`runs-service ${path} (org ${orgId}, brand ${brandId}) failed (${failure})`, res.status);
+      console.warn(`[fleet-index-backfill] ${path} (org ${orgId}, brand ${brandId}) failed (${failure}), attempt ${attempt}/${attempts}; retrying`);
       await new Promise((w) => setTimeout(w, RUNS_RETRY_WAIT_MS * attempt));
     }
   };
+  // The whole history in one read; a big org whose read hits runs-service's statement timeout is read month by month
+  // (run-start windows, disjoint: each run lands in one day), like the other dated history reads.
+  const read = async (path: string, params: URLSearchParams, headers: Record<string, string>): Promise<Array<Record<string, unknown>>> => {
+    try {
+      return await once(path, params, headers, WHOLE_READ_ATTEMPTS);
+    } catch (err) {
+      if (!(err instanceof RunsReadError) || (err.status !== null && err.status < 500)) throw err;
+      console.warn(`[fleet-index-backfill] ${path} (org ${orgId}, brand ${brandId}): whole-history read failed, reading month by month`);
+      const out: Array<Record<string, unknown>> = [];
+      for (const [after, before] of monthWindows(HISTORY_FIRST_MONTH, new Date())) {
+        const p = new URLSearchParams(params);
+        p.set("startedAfter", after);
+        p.set("startedBefore", before);
+        out.push(...(await once(path, p, headers, RUNS_ATTEMPTS)));
+      }
+      return out;
+    }
+  };
   const common = { interval: "day", tz: "UTC", groupBy: "campaignId", brandId, featureSlugs };
-  const [vendor, billed] = await Promise.all([
-    read("/internal/stats/costs/timeseries/vendor", new URLSearchParams({ ...common, orgId }), { "x-api-key": apiKey }),
-    read("/v1/stats/costs/timeseries", new URLSearchParams(common), { "x-api-key": apiKey, "x-org-id": orgId }),
-  ]);
+  // One heavy aggregation at a time (a run walks every pair beside live traffic).
+  const vendor = await read("/internal/stats/costs/timeseries/vendor", new URLSearchParams({ ...common, orgId }), { "x-api-key": apiKey });
+  const billed = await read("/v1/stats/costs/timeseries", new URLSearchParams(common), { "x-api-key": apiKey, "x-org-id": orgId });
   const out = new Map<string, import("./client-index-history.js").PairSpendDay>();
   const at = (b: Record<string, unknown>) => {
     if (typeof b.period !== "string") throw new Error("runs-service timeseries bucket missing period");
