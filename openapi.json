@@ -20928,6 +20928,10 @@
                   "type": "string",
                   "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
                 },
+                "runningSalesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."
+                },
                 "name": {
                   "type": "string",
                   "description": "The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."
@@ -21042,13 +21046,18 @@
                               "runByUs": {
                                 "type": "boolean",
                                 "description": "We run it; false = the customer's own team (a `Your Team` channel)."
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "description": "The pipe working the leg (a play's base pipe): its served name and mark are the public catalogue's pipe of this id."
                               }
                             },
                             "required": [
                               "kind",
                               "slug",
                               "name",
-                              "runByUs"
+                              "runByUs",
+                              "pipeId"
                             ]
                           }
                         ]
@@ -21096,12 +21105,16 @@
                                 },
                                 "runByUs": {
                                   "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
                                 "slug",
                                 "name",
-                                "runByUs"
+                                "runByUs",
+                                "pipeId"
                               ]
                             },
                             "description": "The leg's channel, as a list of exactly one."
@@ -21124,7 +21137,7 @@
                     "items",
                     "legs"
                   ],
-                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                  "description": "The PATH the campaign RUNS NOW as structured data: its `runningSalesFunnelId`'s (P5.1, owner 2026-10-31: a campaign following its plan runs its plan's funnel, never the one it was born on). Null with `copyUnavailableReason`, or when the running funnel is not in the catalogue (logged)."
                 },
                 "shortDescription": {
                   "type": "string",
@@ -21504,6 +21517,7 @@
                 "brandId",
                 "offerId",
                 "salesFunnelId",
+                "runningSalesFunnelId",
                 "name",
                 "face",
                 "status",
@@ -21577,6 +21591,10 @@
                 "salesFunnelId": {
                   "type": "string",
                   "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
+                },
+                "runningSalesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."
                 },
                 "name": {
                   "type": "string",
@@ -21707,13 +21725,18 @@
                               "runByUs": {
                                 "type": "boolean",
                                 "description": "We run it; false = the customer's own team (a `Your Team` channel)."
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "description": "The pipe working the leg (a play's base pipe): its served name and mark are the public catalogue's pipe of this id."
                               }
                             },
                             "required": [
                               "kind",
                               "slug",
                               "name",
-                              "runByUs"
+                              "runByUs",
+                              "pipeId"
                             ]
                           }
                         ]
@@ -21761,12 +21784,16 @@
                                 },
                                 "runByUs": {
                                   "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
                                 "slug",
                                 "name",
-                                "runByUs"
+                                "runByUs",
+                                "pipeId"
                               ]
                             },
                             "description": "The leg's channel, as a list of exactly one."
@@ -21789,7 +21816,7 @@
                     "items",
                     "legs"
                   ],
-                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                  "description": "The PATH the campaign RUNS NOW as structured data: its `runningSalesFunnelId`'s (P5.1, owner 2026-10-31: a campaign following its plan runs its plan's funnel, never the one it was born on). Null with `copyUnavailableReason`, or when the running funnel is not in the catalogue (logged)."
                 },
                 "copyUnavailableReason": {
                   "type": "string",
@@ -21837,6 +21864,7 @@
                 "brandId",
                 "offerId",
                 "salesFunnelId",
+                "runningSalesFunnelId",
                 "name",
                 "face",
                 "status",

@@ -38,6 +38,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
+import { runningFunnelIdOf } from "../lib/running-funnel.js";
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
 import { computeTakeoverReturn } from "../lib/value-added-io.js";
 import { expectedReturnForFunnelCampaign } from "../lib/expected-return.js";
@@ -74,6 +75,9 @@ export function funnelCampaignCopyRow(
     brandId: r.brandId,
     offerId: r.offerId,
     salesFunnelId: r.salesFunnelId,
+    // The funnel it RUNS now (P5.1, owner 2026-10-31): a campaign following its plan runs its plan's funnel; `path` below is
+    // this one's, so the dashboard shows the path it runs, never the one it was born on.
+    runningSalesFunnelId: runningFunnelIdOf(r),
     name: r.salesFunnelName,
     face: faceOf(r.salesFunnelName).svgPath,
     status: r.status,
@@ -86,8 +90,8 @@ export function funnelCampaignCopyRow(
     // One short sentence of what we do in this campaign (owner 2026-10-14), shown under the name in place of the path.
     shortDescription: copy?.shortDescription ?? null,
     shortDescriptionUnavailableReason: copy ? (copy.shortDescriptionUnavailableReason ?? null) : ("sales_funnel_not_in_catalogue" as const),
-    // The path the dashboard draws in place of the sentence (owner 2026-10-11), structured: never parsed from an id.
-    // One channel per leg (owner 2026-10-11): the funnel's own path.
+    // The path the dashboard draws (owner 2026-10-11), structured: never parsed from an id. One channel per leg, the
+    // RUNNING funnel's (P5.1, owner 2026-10-31): `path` is passed in for `runningSalesFunnelId`.
     path: copy ? path : null,
     copyUnavailableReason: copy ? null : ("sales_funnel_not_in_catalogue" as const),
     units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
@@ -106,7 +110,13 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
-    const { copies, pipeSteps, pathOf } = await funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]);
+    const { copies, pipeSteps, pathOf } = await funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, runningFunnelIdOf(r)]))]);
+    // The path a campaign RUNS (P5.1): its running funnel's; one the catalogue does not know is logged and served null.
+    const runningPathOf = (r: (typeof rows)[number]) => {
+      const path = pathOf(runningFunnelIdOf(r));
+      if (!path) console.error(`[features-service] sales funnel campaign ${r.id}: running funnel ${runningFunnelIdOf(r)} is not in the catalogue (path null)`);
+      return path;
+    };
 
     // `?fields=copy` (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): the rows' copy alone, live, no money read, so a
     // campaign created seconds ago has its path and Type at once. A campaign that young may have no money cell
@@ -116,7 +126,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         brandId,
         offerId: offerFilter,
         fields: "copy",
-        salesFunnelCampaigns: rows.map((r) => funnelCampaignCopyRow(r, copies.get(r.salesFunnelId) ?? null, pathOf(r.salesFunnelId))),
+        salesFunnelCampaigns: rows.map((r) => funnelCampaignCopyRow(r, copies.get(r.salesFunnelId) ?? null, runningPathOf(r))),
       });
       const fresh = rows.filter((r) => Date.now() - Date.parse(r.createdAt) < FRESH_CAMPAIGN_MS);
       for (const offerId of new Set(fresh.map((r) => r.offerId))) {
@@ -208,7 +218,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       );
 
       return {
-        ...funnelCampaignCopyRow(r, copy, pathOf(r.salesFunnelId)),
+        ...funnelCampaignCopyRow(r, copy, runningPathOf(r)),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
         roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,

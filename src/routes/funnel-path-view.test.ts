@@ -38,7 +38,8 @@ describe("funnelPathView", () => {
     expect(v.legs.map((l) => [l.fromStep, l.toStep, l.runByUs, l.channelSlug])).toEqual([
       ["start", "lead_found", true, "lead-sourcing"], ["lead_found", "conversation", true, "sales-cold-email-outreach"], ["conversation", "meeting_booked", false, "your-team-meeting-booking"], ["meeting_booked", "meeting_attended", false, "your-team-meeting-attendance"], ["meeting_attended", "paid_client", false, "your-team-closing-calls"],
     ]);
-    expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false }]);
+    // Each channel names the PIPE working the leg (P5.1): the dashboard draws its served name and mark off the public catalogue.
+    expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false, pipeId: "your-team-meeting-attendance|meeting_booked_to_meeting_attended" }]);
   });
 
   it("a single-source funnel reads its one source on the sourcing leg", () => {
