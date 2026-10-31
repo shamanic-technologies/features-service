@@ -71,6 +71,9 @@ describe("GET /public/indexes", () => {
     expect(bySlug.size).toBe(8);
     expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 4.35, unit: "usd", valuePer: "per website visit", status: "signal", day: "2026-10-18" });
     expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_recorded_yet", day: null });
+    // A visitor reads the REAL VENDOR COST series (PUBLIC-VENDOR-COST-1031), never the billed one.
+    expect(store.readLatestFleetIndexPoints).toHaveBeenCalledWith("vendor");
+    expect(res.body.costBasis).toBe("vendor");
   });
 });
 
@@ -82,6 +85,8 @@ describe("GET /public/indexes/:slug", () => {
     expect(res.body.index).toMatchObject({ slug: "cold-email-click-rate", value: 2.1, unit: "percent", day: "2026-10-19" });
     expect(res.body.points.map((p: { day: string }) => p.day)).toEqual(["2026-10-18", "2026-10-19"]);
     expect(res.body.points[0]).toMatchObject({ value: 2.08, basis: "recorded", status: "signal" });
+    expect(store.readFleetIndexSeries).toHaveBeenCalledWith("cold-email-click-rate", "vendor");
+    expect(res.body.costBasis).toBe("vendor");
   });
 
   it("labels a recomputed day apart from a recorded one (INDEX-HISTORY-BACKFILL-1019)", async () => {

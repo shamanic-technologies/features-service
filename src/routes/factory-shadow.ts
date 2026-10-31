@@ -105,9 +105,9 @@ async function readFunnelCampaigns(): Promise<Array<{ campaign: ShadowCampaign; 
   return rows.flat().map(({ r, orgId }) => ({ campaign: shadowCampaignOf(r, orgId), status: r.status }));
 }
 
-/** "Running" = the funnel the campaign RUNS: campaign-service's `runningSalesFunnelId` (a campaign following its plan
- *  runs the plan's funnel), else the funnel it was born on (older campaign-service). */
-export const runningFunnelIdOf = (r: Pick<SalesFunnelCampaignRow, "salesFunnelId" | "runningSalesFunnelId">): string => r.runningSalesFunnelId ?? r.salesFunnelId;
+import { runningFunnelIdOf } from "../lib/running-funnel.js";
+/** "Running" = the funnel the campaign RUNS (lib/running-funnel.ts, shared with the Campaigns rows). */
+export { runningFunnelIdOf };
 
 const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampaign => ({
   id: r.id,

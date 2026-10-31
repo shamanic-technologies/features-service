@@ -3020,6 +3020,7 @@ const salesFunnelCampaignRowSchema = z.object({
   brandId: z.string(),
   offerId: z.string(),
   salesFunnelId: z.string().describe("The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."),
+  runningSalesFunnelId: z.string().describe("The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."),
   name: z.string().describe("The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."),
   face: z.string().describe("Path of the name's face SVG on this service (`GET /public/catalogue/faces/{name}.svg`)."),
   status: z.string().describe("campaign-service's status (`ongoing` | `stopped`), relayed."),
@@ -3032,10 +3033,10 @@ const salesFunnelCampaignRowSchema = z.object({
     items: z.array(z.union([
       z.object({ kind: z.literal("trigger"), slug: z.string().describe("The trigger's unique slug (`positive_reply_received`)."), name: z.string().describe("The trigger's unique name (\"Positive Reply\").") }).describe("A REACTIVE funnel's first item (owner 2026-10-11): its trigger, in place of its trigger step."),
       z.object({ kind: z.literal("step"), key: z.string(), label: z.string().describe("The step's customer label (\"Positive reply\").") }),
-      z.object({ kind: z.literal("channel"), slug: z.string(), name: z.string().describe("The channel's display name (\"Sales Cold Email Outreach\")."), runByUs: z.boolean().describe("We run it; false = the customer's own team (a `Your Team` channel).") }),
+      z.object({ kind: z.literal("channel"), slug: z.string(), name: z.string().describe("The channel's display name (\"Sales Cold Email Outreach\")."), runByUs: z.boolean().describe("We run it; false = the customer's own team (a `Your Team` channel)."), pipeId: z.string().describe("The pipe working the leg (a play's base pipe): its served name and mark are the public catalogue's pipe of this id.") }),
     ])).describe("The path in reading order (owner 2026-10-11): a proactive funnel starts at Start (`key: \"start\"`), a reactive one with its TRIGGER (`kind: \"trigger\"`); then per leg the channel(s) working it, then the leg's next step, to Paid client. EVERY two steps have at least one channel between them. The sourcing leg (Start -> Lead found) lists the sources THIS campaign runs (several). Render the items joined by arrows; never parse an id."),
-    legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().describe("`start` on the first leg of a proactive funnel."), toStep: z.string(), runByUs: z.boolean().describe("At least one channel of the leg is ours."), channelSlug: z.string().nullable().describe("The leg's one channel (owner 2026-10-11: one channel per leg, the sourcing leg included)."), channelName: z.string().nullable(), channels: z.array(z.object({ slug: z.string(), name: z.string(), runByUs: z.boolean() })).describe("The leg's channel, as a list of exactly one.") })).describe("The same path, one entry per leg, in order."),
-  }).nullable().describe("The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."),
+    legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().describe("`start` on the first leg of a proactive funnel."), toStep: z.string(), runByUs: z.boolean().describe("At least one channel of the leg is ours."), channelSlug: z.string().nullable().describe("The leg's one channel (owner 2026-10-11: one channel per leg, the sourcing leg included)."), channelName: z.string().nullable(), channels: z.array(z.object({ slug: z.string(), name: z.string(), runByUs: z.boolean(), pipeId: z.string() })).describe("The leg's channel, as a list of exactly one.") })).describe("The same path, one entry per leg, in order."),
+  }).nullable().describe("The PATH the campaign RUNS NOW as structured data: its `runningSalesFunnelId`'s (P5.1, owner 2026-10-31: a campaign following its plan runs its plan's funnel, never the one it was born on). Null with `copyUnavailableReason`, or when the running funnel is not in the catalogue (logged)."),
   shortDescription: z.string().nullable().describe("ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" At most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."),
   shortDescriptionUnavailableReason: z.enum(["sales_funnel_not_in_catalogue", "no_step_run_by_us"]).nullable().describe("Why `shortDescription` is null: `sales_funnel_not_in_catalogue` (the funnel id is not in this service's catalogue, as `copyUnavailableReason`), `no_step_run_by_us` (the client's own team works every step of the funnel: nothing of ours to describe). Null when it is served."),
   copyUnavailableReason: z.enum(["sales_funnel_not_in_catalogue"]).nullable().describe("Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."),
@@ -3078,6 +3079,7 @@ const salesFunnelCampaignCopyRowSchema = salesFunnelCampaignRowSchema.pick({
   brandId: true,
   offerId: true,
   salesFunnelId: true,
+  runningSalesFunnelId: true,
   name: true,
   face: true,
   status: true,
@@ -3638,6 +3640,18 @@ const outcomeCostSeriesResponseRef = registry.register(
             learning: z.boolean(),
           }),
           expected: outcomeCostExpectedSchema,
+          value: z
+            .object({
+              valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, on the SAME expected sales path as expected.costPerOutcomeUsd: the offer's lifetime revenue / the step's outcomes needed per paying client (Paid client = the lifetime revenue). Null with unavailableReason."),
+              unavailableReason: z.string().nullable().describe("step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
+            })
+            .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
+          roi: z
+            .object({
+              measured: z.number().nullable().describe("value.valuePerOutcomeUsd / sinceInception.costPerOutcomeUsd, 2 decimals. Null when the step is not valued or has 0 outcomes."),
+              expected: z.number().nullable().describe("value.valuePerOutcomeUsd / expected.costPerOutcomeUsd, 2 decimals. Null when either is null. Readers show measured, else this one marked expected."),
+            })
+            .describe("Return of one outcome of this step."),
           months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
         }),
       )
@@ -6044,6 +6058,9 @@ registry.registerPath({
 const fleetIndexStatusSchema = z.enum(["robust", "signal", "noise"]).describe("How far to trust the value, from the outcomes behind it (a chained index: its weakest link). `noise`: fewer than `statusRule.signalMinOutcomes` outcomes, or no mature workflow. `signal`: fewer than `statusRule.robustMinOutcomes`. `robust`: at least `statusRule.robustMinOutcomes`.");
 const fleetIndexStatusRuleSchema = z.object({ signalMinOutcomes: z.number().int(), robustMinOutcomes: z.number().int() });
 
+const fleetIndexCostBasisSchema = z.literal("vendor").describe("Every money value is real vendor cost, before any markup, whole history (PUBLIC-VENDOR-COST-1031).");
+const fleetIndexCostBasisTextSchema = z.string().describe("The cost basis in one plain sentence, for a label.");
+
 const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
@@ -6057,14 +6074,14 @@ const fleetIndexSummarySchema = registry.register(
     valuePer: z.string().describe("What one unit of the value is, in words (`per website visit`, `of people emailed`)."),
     method: z.string().describe("How the value is computed, one plain sentence."),
     day: z.string().nullable().describe("UTC day of the latest recorded point; null before the first recording."),
-    value: z.number().nullable().describe("The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
+    value: z.number().nullable().describe("The latest recorded value, unrounded. Every MONEY value (`usd`, and the `multiple` of the ROI index) is REAL VENDOR COST: what the vendors charged us to produce it, before any markup (PUBLIC-VENDOR-COST-1031). Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
     status: fleetIndexStatusSchema,
     outcomes: z.number().int().describe("Outcomes behind the value (website visits, positive replies, or meetings booked). On the two client-median indexes (`cold-email-cost-per-engaged-lead`, `cold-email-roi`): the CLIENTS behind the median, and `status` counts them."),
     contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
     workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
     workflowDynastyName: z.string().nullable(),
-    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either)."),
-    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."),
+    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too. The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
     recordedAt: z.string().nullable(),
   }),
 );
@@ -6074,12 +6091,12 @@ registry.registerPath({
   path: "/public/indexes",
   summary: "Every public fleet index, latest value (public, no auth)",
   description:
-    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
+    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). EVERY MONEY VALUE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history; who is picked (the best proven workflow) is the same as on what clients were charged, only its money is read at vendor cost; rates are unchanged. Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
   tags: ["Public"],
   responses: {
     200: {
       description: "Every index",
-      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
+      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, costBasis: fleetIndexCostBasisSchema, costBasisText: fleetIndexCostBasisTextSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
     },
     500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
   },
@@ -6090,7 +6107,7 @@ registry.registerPath({
   path: "/public/indexes/{slug}",
   summary: "One public fleet index and every recorded day (public, no auth)",
   description:
-    "The index summary (latest day) + one point per UTC day, oldest first. `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
+    "The index summary (latest day) + one point per UTC day, oldest first, every money value at REAL VENDOR COST (before any markup, the whole series recomputed on that basis from its first day). `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
   tags: ["Public"],
   request: { params: z.object({ slug: z.string() }) },
   responses: {
@@ -6100,6 +6117,8 @@ registry.registerPath({
         "application/json": {
           schema: z.object({
             statusRule: fleetIndexStatusRuleSchema,
+            costBasis: fleetIndexCostBasisSchema,
+            costBasisText: fleetIndexCostBasisTextSchema,
             basisRule: z
               .object({ recorded: z.string(), recomputed: z.string() })
               .describe("What each `points[].basis` means, one plain sentence each, for a label beside the curve."),

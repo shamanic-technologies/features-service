@@ -4,9 +4,12 @@ import {
   contactedOutcomeDays,
   expectedStepCosts,
   monthsBetween,
+  roiOf,
+  stepValues,
   OUTCOME_COST_STEPS,
   type OutcomeCostStep,
   type StepExpectedCost,
+  type StepValue,
 } from "./outcome-cost-series.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import type { SalesPath } from "./offer-sales-paths.js";
@@ -33,6 +36,7 @@ const person = (over: Partial<EnginePerson> & { leadId: string }): EnginePerson 
   }) as EnginePerson;
 
 const noExpected: StepExpectedCost = { costPerOutcomeUsd: null, basis: null, combinationKey: null, unavailableReason: "step_not_on_expected_path" };
+const noValue: StepValue = { valuePerOutcomeUsd: null, unavailableReason: "step_not_on_expected_path" };
 
 describe("contactedOutcomeDays (OUTCOME-COST-SERIES-1027, owner choice A)", () => {
   it("counts only people WE contacted, once per step, never another factory's win nor one before the offer started", () => {
@@ -75,6 +79,7 @@ describe("buildOutcomeCostSeries", () => {
     outcomeDays: days,
     learningBarOf: (s) => (s === "conversation" ? 1 : 10),
     expectedOf: (s) => (s === "meeting_booked" ? { costPerOutcomeUsd: 420, basis: "default", combinationKey: "k", unavailableReason: null } : noExpected),
+    valueOf: (s) => (s === "meeting_booked" || s === "conversation" ? { valuePerOutcomeUsd: 840, unavailableReason: null } : noValue),
     today: "2026-10-27",
   });
   const reply = series.find((s) => s.stepKey === "conversation")!;
@@ -109,12 +114,49 @@ describe("buildOutcomeCostSeries", () => {
   });
 
   it("an offer with nothing yet serves empty months, never a guessed point", () => {
-    const empty = buildOutcomeCostSeries({ spendByDay: new Map(), outcomeDays: new Map(), learningBarOf: () => 10, expectedOf: () => noExpected, today: "2026-10-27" });
+    const empty = buildOutcomeCostSeries({ spendByDay: new Map(), outcomeDays: new Map(), learningBarOf: () => 10, expectedOf: () => noExpected, valueOf: () => noValue, today: "2026-10-27" });
     expect(empty.every((s) => s.months.length === 0 && s.sinceInception.costPerOutcomeUsd === null && s.sinceInception.spendUsd === 0)).toBe(true);
+  });
+
+  it("ROI = value ÷ cost: measured over the since-inception cost, expected over the expected cost, never a guess", () => {
+    // conversation: $840 worth ÷ $60 measured; no expected cost.
+    expect(reply.value).toEqual({ valuePerOutcomeUsd: 840, unavailableReason: null });
+    expect(reply.roi).toEqual({ measured: 14, expected: null });
+    // meeting_booked: nothing measured yet, $840 ÷ $420 expected.
+    expect(meeting.roi).toEqual({ measured: null, expected: 2 });
+    // A step nobody values carries no ROI.
+    expect(series.find((s) => s.stepKey === "signup")!.roi).toEqual({ measured: null, expected: null });
   });
 
   it("monthsBetween crosses years", () => {
     expect(monthsBetween("2025-11", "2026-02")).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
+  });
+});
+
+describe("stepValues: one outcome is worth the lifetime revenue ÷ the outcomes one paying client needs", () => {
+  const leg = (toStep: string, outcomesNeededPerPayingClient: number | null) =>
+    ({ legKey: `x_to_${toStep}`, toStep: { key: toStep }, workedBy: "platform", outcomesNeededPerPayingClient }) as unknown as SalesPath["legs"][number];
+  const path = { combinationKey: "p", lifetimeRevenueUsd: 3000, legs: [leg("conversation", 20), leg("meeting_booked", 8), leg("paid_client", 1)] } as unknown as SalesPath;
+
+  it("values every step on the path, the paying client at the whole lifetime revenue", () => {
+    const m = stepValues(path, null);
+    expect(m.get("conversation")!.valuePerOutcomeUsd).toBe(150);
+    expect(m.get("meeting_booked")!.valuePerOutcomeUsd).toBe(375);
+    expect(m.get("paid_client")!.valuePerOutcomeUsd).toBe(3000);
+    expect(m.get("signup")).toEqual({ valuePerOutcomeUsd: null, unavailableReason: "step_not_on_expected_path" });
+  });
+
+  it("no lifetime revenue, a 0% leg or no path each name their reason", () => {
+    expect(stepValues({ ...path, lifetimeRevenueUsd: null } as SalesPath, null).get("conversation")!.unavailableReason).toBe("no_lifetime_revenue");
+    expect(stepValues({ ...path, legs: [leg("conversation", null)] } as SalesPath, null).get("conversation")!.unavailableReason).toBe("zero_conversion_rate");
+    expect(stepValues(null, "expected_model_computing").get("paid_client")!.unavailableReason).toBe("expected_model_computing");
+  });
+
+  it("roiOf never divides by a missing or zero cost", () => {
+    expect(roiOf(100, 40)).toBe(2.5);
+    expect(roiOf(100, 0)).toBeNull();
+    expect(roiOf(null, 40)).toBeNull();
+    expect(roiOf(100, null)).toBeNull();
   });
 });
 
