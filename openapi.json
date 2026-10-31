@@ -36087,6 +36087,9 @@
               "model": {
                 "type": "object",
                 "properties": {
+                  "rule": {
+                    "type": "number"
+                  },
                   "halfLifeDays": {
                     "type": "number"
                   },
@@ -78928,6 +78931,9 @@
                               "model": {
                                 "type": "object",
                                 "properties": {
+                                  "rule": {
+                                    "type": "number"
+                                  },
                                   "halfLifeDays": {
                                     "type": "number"
                                   },
@@ -79394,6 +79400,9 @@
                               "model": {
                                 "type": "object",
                                 "properties": {
+                                  "rule": {
+                                    "type": "number"
+                                  },
                                   "halfLifeDays": {
                                     "type": "number"
                                   },
@@ -79861,6 +79870,9 @@
                               "model": {
                                 "type": "object",
                                 "properties": {
+                                  "rule": {
+                                    "type": "number"
+                                  },
                                   "halfLifeDays": {
                                     "type": "number"
                                   },
@@ -80376,6 +80388,9 @@
                             "model": {
                               "type": "object",
                               "properties": {
+                                "rule": {
+                                  "type": "number"
+                                },
                                 "halfLifeDays": {
                                   "type": "number"
                                 },

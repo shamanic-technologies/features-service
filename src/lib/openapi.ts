@@ -9576,7 +9576,7 @@ const engineShadow = z.object({
   expectedAgreementPct: z.number().nullable(),
   clientEvidence: z.enum(["ledger", "ledger_unreconciled", "ledger_unreadable"]).describe("`ledger_unreconciled` = read while runs-service's ledger had a stale or missing day (stated, never red)."),
   limits: z.array(z.string()).describe("What the model reads loosely: `uplift_reads_lifetime_mix` (v10: last week's), `beliefs_count_outcomes_to_date`."),
-  model: z.object({ halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional().describe("The knobs this pick ran with."),
+  model: z.object({ rule: z.number().optional(), halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional().describe("The knobs this pick ran with."),
 });
 const engineReplay = z.object({
   computedAt: z.string(),
@@ -9607,7 +9607,7 @@ const engineReplay = z.object({
   caveats: z.array(z.string()),
   ledgerReconciled: z.boolean().optional().describe("False = the ledger was read while runs-service had not reconciled it (`ledgerDaysMissing` stale days): stated, never red."),
   ledgerDaysMissing: z.number().int().optional(),
-  model: z.object({ halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional(),
+  model: z.object({ rule: z.number().optional(), halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional(),
   failure: z.string().nullable().describe("Set when the replay failed (red)."),
 });
 
