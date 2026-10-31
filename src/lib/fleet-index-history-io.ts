@@ -182,6 +182,73 @@ export async function readDatedSlugSpend(
   return out.flat();
 }
 
+/** One leg's dated spend on the three bases the PUBLIC vendor history reads (PUBLIC-VENDOR-COST-1031). */
+export interface DatedSlugSpendBases {
+  /** Billed, comped rows included (the incurred basis), from the SAME vendor read: the population check. */
+  gross: DatedSlugSpend[];
+  vendor: DatedSlugSpend[];
+  unpriced: DatedSlugSpend[];
+}
+
+/**
+ * Spend per workflow version and run-start UTC day on each leg's campaigns at real VENDOR cost, its unpriced twin and its
+ * billed figure, read off runs-service's vendor timeseries grouped per version (one read per org x campaign chunk). The
+ * same row set as `readDatedSlugSpend`; FAIL-LOUD.
+ */
+export async function readDatedSlugSpendBases(
+  featureSlug: string,
+  legs: ReadonlyArray<{ legKey: string; campaigns: ReadonlyArray<{ campaignId: string; orgId: string }> }>,
+  spendSlugs: "own" | "fed" = "own",
+): Promise<DatedSlugSpendBases> {
+  const baseUrl = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  const featureSlugs = runsSpendSlugsParam(featureSlug, effectiveSpendSlugs(featureSlug, spendSlugs));
+  const reads = legs.flatMap((leg) => {
+    const byOrg = new Map<string, string[]>();
+    for (const c of leg.campaigns) byOrg.set(c.orgId, [...(byOrg.get(c.orgId) ?? []), c.campaignId]);
+    return [...byOrg].flatMap(([orgId, ids]) => chunk([...new Set(ids)].sort(), RUNS_CAMPAIGN_IDS_PER_REQUEST).map((c) => ({ legKey: leg.legKey, orgId, ids: c })));
+  });
+  const rows = await mapWithConcurrency(reads, 1, async (r) => {
+    const params = new URLSearchParams({ interval: "day", tz: "UTC", groupBy: "workflowSlug", orgId: r.orgId, featureSlugs, campaignIds: r.ids.join(",") });
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetchWithRetry(`${baseUrl}/internal/stats/costs/timeseries/vendor?${params}`, { headers: { "x-api-key": apiKey } }, { timeoutMs: 300_000 });
+      if (res.ok) {
+        const body = (await res.json()) as { buckets?: Array<Record<string, unknown>> };
+        if (!Array.isArray(body.buckets)) throw new Error("runs-service vendor timeseries returned no buckets array");
+        return body.buckets.map((b) => ({ ...r, b }));
+      }
+      const failure = `${res.status}: ${(await res.text()).slice(0, 200)}`;
+      if (res.status < 500 || attempt >= RUNS_ATTEMPTS) throw new Error(`runs-service vendor timeseries (org ${r.orgId}) failed (${failure})`);
+      console.warn(`[fleet-index-backfill] vendor timeseries (org ${r.orgId}) failed (${failure}), attempt ${attempt}/${RUNS_ATTEMPTS}; retrying`);
+      await new Promise((w) => setTimeout(w, RUNS_RETRY_WAIT_MS * attempt));
+    }
+  });
+  const out: DatedSlugSpendBases = { gross: [], vendor: [], unpriced: [] };
+  for (const { legKey, b } of rows.flat()) {
+    const slug = b.workflowSlug;
+    if (typeof slug !== "string" || !slug) continue;
+    if (typeof b.period !== "string") throw new Error("runs-service vendor timeseries bucket missing period");
+    const at = { legKey, workflowSlug: slug, day: b.period.slice(0, 10), runCount: Number(b.runCount ?? 0) };
+    out.gross.push({ ...at, spentCents: Number(selectCostCentsString(b, "totalCostInUsdCents", "gross", "incurred")) });
+    out.vendor.push({ ...at, spentCents: Number(selectCostCentsString(b, "totalCostInUsdCents", "vendor")) });
+    out.unpriced.push({ ...at, spentCents: Number(selectCostCentsString(b, "totalCostInUsdCents", "vendorUnpriced")) });
+  }
+  return out;
+}
+
+/** The meeting pipe's per (campaign, version, day) spend on the three bases (`readMeetingHistoryInputs`' row set). */
+export async function readMeetingSpendBases(
+  campaigns: ReadonlyArray<{ campaignId: string; orgId: string }>,
+): Promise<{ gross: MeetingHistoryInputs["spend"]; vendor: MeetingHistoryInputs["spend"]; unpriced: MeetingHistoryInputs["spend"] }> {
+  const bases = await readDatedSlugSpendBases(
+    MEETING_BOOKING_FEATURE_SLUG,
+    campaigns.map((c) => ({ legKey: c.campaignId, campaigns: [{ campaignId: c.campaignId, orgId: c.orgId }] })),
+  );
+  const of = (xs: DatedSlugSpend[]) => xs.map((d) => ({ campaignId: d.legKey, workflowSlug: d.workflowSlug, day: d.day, spentCents: d.spentCents }));
+  return { gross: of(bases.gross), vendor: of(bases.vendor), unpriced: of(bases.unpriced) };
+}
+
 /** Every leg-assignment change of the legs, re-keyed on the computation leg key. */
 export async function readAssignmentChanges(featureSlug: string, legKeys: readonly string[]): Promise<AssignmentChange[]> {
   const stored = new Map(legKeys.map((k) => [servedLegKeyOf(featureSlug, k), k]));

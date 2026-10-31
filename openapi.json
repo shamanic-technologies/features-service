@@ -20928,6 +20928,10 @@
                   "type": "string",
                   "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
                 },
+                "runningSalesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."
+                },
                 "name": {
                   "type": "string",
                   "description": "The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."
@@ -21042,13 +21046,18 @@
                               "runByUs": {
                                 "type": "boolean",
                                 "description": "We run it; false = the customer's own team (a `Your Team` channel)."
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "description": "The pipe working the leg (a play's base pipe): its served name and mark are the public catalogue's pipe of this id."
                               }
                             },
                             "required": [
                               "kind",
                               "slug",
                               "name",
-                              "runByUs"
+                              "runByUs",
+                              "pipeId"
                             ]
                           }
                         ]
@@ -21096,12 +21105,16 @@
                                 },
                                 "runByUs": {
                                   "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
                                 "slug",
                                 "name",
-                                "runByUs"
+                                "runByUs",
+                                "pipeId"
                               ]
                             },
                             "description": "The leg's channel, as a list of exactly one."
@@ -21124,7 +21137,7 @@
                     "items",
                     "legs"
                   ],
-                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                  "description": "The PATH the campaign RUNS NOW as structured data: its `runningSalesFunnelId`'s (P5.1, owner 2026-10-31: a campaign following its plan runs its plan's funnel, never the one it was born on). Null with `copyUnavailableReason`, or when the running funnel is not in the catalogue (logged)."
                 },
                 "shortDescription": {
                   "type": "string",
@@ -21504,6 +21517,7 @@
                 "brandId",
                 "offerId",
                 "salesFunnelId",
+                "runningSalesFunnelId",
                 "name",
                 "face",
                 "status",
@@ -21577,6 +21591,10 @@
                 "salesFunnelId": {
                   "type": "string",
                   "description": "The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."
+                },
+                "runningSalesFunnelId": {
+                  "type": "string",
+                  "description": "The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."
                 },
                 "name": {
                   "type": "string",
@@ -21707,13 +21725,18 @@
                               "runByUs": {
                                 "type": "boolean",
                                 "description": "We run it; false = the customer's own team (a `Your Team` channel)."
+                              },
+                              "pipeId": {
+                                "type": "string",
+                                "description": "The pipe working the leg (a play's base pipe): its served name and mark are the public catalogue's pipe of this id."
                               }
                             },
                             "required": [
                               "kind",
                               "slug",
                               "name",
-                              "runByUs"
+                              "runByUs",
+                              "pipeId"
                             ]
                           }
                         ]
@@ -21761,12 +21784,16 @@
                                 },
                                 "runByUs": {
                                   "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
                                 "slug",
                                 "name",
-                                "runByUs"
+                                "runByUs",
+                                "pipeId"
                               ]
                             },
                             "description": "The leg's channel, as a list of exactly one."
@@ -21789,7 +21816,7 @@
                     "items",
                     "legs"
                   ],
-                  "description": "The funnel's PATH as structured data (owner 2026-10-11: the Campaigns table shows it under the name). Null only with `copyUnavailableReason`."
+                  "description": "The PATH the campaign RUNS NOW as structured data: its `runningSalesFunnelId`'s (P5.1, owner 2026-10-31: a campaign following its plan runs its plan's funnel, never the one it was born on). Null with `copyUnavailableReason`, or when the running funnel is not in the catalogue (logged)."
                 },
                 "copyUnavailableReason": {
                   "type": "string",
@@ -21837,6 +21864,7 @@
                 "brandId",
                 "offerId",
                 "salesFunnelId",
+                "runningSalesFunnelId",
                 "name",
                 "face",
                 "status",
@@ -24478,6 +24506,46 @@
                     "unavailableReason"
                   ]
                 },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "valuePerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What one outcome of this step is worth to the client, on the SAME expected sales path as expected.costPerOutcomeUsd: the offer's lifetime revenue / the step's outcomes needed per paying client (Paid client = the lifetime revenue). Null with unavailableReason."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."
+                    }
+                  },
+                  "required": [
+                    "valuePerOutcomeUsd",
+                    "unavailableReason"
+                  ],
+                  "description": "P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."
+                },
+                "roi": {
+                  "type": "object",
+                  "properties": {
+                    "measured": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "value.valuePerOutcomeUsd / sinceInception.costPerOutcomeUsd, 2 decimals. Null when the step is not valued or has 0 outcomes."
+                    },
+                    "expected": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "value.valuePerOutcomeUsd / expected.costPerOutcomeUsd, 2 decimals. Null when either is null. Readers show measured, else this one marked expected."
+                    }
+                  },
+                  "required": [
+                    "measured",
+                    "expected"
+                  ],
+                  "description": "Return of one outcome of this step."
+                },
                 "months": {
                   "type": "array",
                   "items": {
@@ -24535,6 +24603,8 @@
                 "learningOutcomesRequired",
                 "sinceInception",
                 "expected",
+                "value",
+                "roi",
                 "months"
               ]
             },
@@ -31000,7 +31070,7 @@
           "value": {
             "type": "number",
             "nullable": true,
-            "description": "The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."
+            "description": "The latest recorded value, unrounded. Every MONEY value (`usd`, and the `multiple` of the ROI index) is REAL VENDOR COST: what the vendors charged us to produce it, before any markup (PUBLIC-VENDOR-COST-1031). Null = could not be stated (`unavailableReason`), never a 0 for unknown."
           },
           "status": {
             "type": "string",
@@ -31032,7 +31102,7 @@
           "unavailableReason": {
             "type": "string",
             "nullable": true,
-            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either)."
+            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."
           },
           "valueKind": {
             "type": "string",
@@ -31040,7 +31110,7 @@
               "measured",
               "expected"
             ],
-            "description": "`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."
+            "description": "`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too. The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."
           },
           "recordedAt": {
             "type": "string",
@@ -50861,7 +50931,7 @@
     "/public/indexes": {
       "get": {
         "summary": "Every public fleet index, latest value (public, no auth)",
-        "description": "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
+        "description": "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). EVERY MONEY VALUE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history; who is picked (the best proven workflow) is the same as on what clients were charged, only its money is read at vendor cost; rates are unchanged. Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
         "tags": [
           "Public"
         ],
@@ -50888,6 +50958,17 @@
                         "robustMinOutcomes"
                       ]
                     },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "vendor"
+                      ],
+                      "description": "Every money value is real vendor cost, before any markup, whole history (PUBLIC-VENDOR-COST-1031)."
+                    },
+                    "costBasisText": {
+                      "type": "string",
+                      "description": "The cost basis in one plain sentence, for a label."
+                    },
                     "indexes": {
                       "type": "array",
                       "items": {
@@ -50897,6 +50978,8 @@
                   },
                   "required": [
                     "statusRule",
+                    "costBasis",
+                    "costBasisText",
                     "indexes"
                   ]
                 }
@@ -50927,7 +51010,7 @@
     "/public/indexes/{slug}": {
       "get": {
         "summary": "One public fleet index and every recorded day (public, no auth)",
-        "description": "The index summary (latest day) + one point per UTC day, oldest first. `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
+        "description": "The index summary (latest day) + one point per UTC day, oldest first, every money value at REAL VENDOR COST (before any markup, the whole series recomputed on that basis from its first day). `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
         "tags": [
           "Public"
         ],
@@ -50963,6 +51046,17 @@
                         "signalMinOutcomes",
                         "robustMinOutcomes"
                       ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "vendor"
+                      ],
+                      "description": "Every money value is real vendor cost, before any markup, whole history (PUBLIC-VENDOR-COST-1031)."
+                    },
+                    "costBasisText": {
+                      "type": "string",
+                      "description": "The cost basis in one plain sentence, for a label."
                     },
                     "basisRule": {
                       "type": "object",
@@ -51075,6 +51169,8 @@
                   },
                   "required": [
                     "statusRule",
+                    "costBasis",
+                    "costBasisText",
                     "basisRule",
                     "index",
                     "points"

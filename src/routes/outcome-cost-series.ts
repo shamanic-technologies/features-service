@@ -26,9 +26,11 @@ import {
   buildOutcomeCostSeries,
   contactedOutcomeDays,
   expectedStepCosts,
+  stepValues,
   type OutcomeCostStep,
   type OutcomeCostStepSeries,
   type StepExpectedCost,
+  type StepValue,
 } from "../lib/outcome-cost-series.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
@@ -48,18 +50,24 @@ export interface OutcomeCostSeriesBody {
   steps: OutcomeCostStepSeries[];
 }
 
-/** The expected cost per step, off the offer's expected model's path. Soft: unreadable = every step null + reason. */
-async function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<Map<string, StepExpectedCost>> {
+interface ExpectedPerStep {
+  costs: Map<string, StepExpectedCost>;
+  values: Map<string, StepValue>;
+}
+
+/** The expected cost AND value per step, off the offer's expected model's path. Soft: unreadable = every step null + reason. */
+async function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<ExpectedPerStep> {
+  const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason) });
   try {
     const m = await offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS);
-    if (m === null) return expectedStepCosts(null, null, "expected_model_unavailable");
+    if (m === null) return none("expected_model_unavailable");
     const e = expectedForOffer(m);
     const path = e.combinationKey ? (m.body.paths.find((p) => p.combinationKey === e.combinationKey) ?? null) : null;
-    return expectedStepCosts(path, e.basis, e.unavailableReason);
+    return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason) };
   } catch (err) {
-    if (err instanceof ExpectedModelComputing) return expectedStepCosts(null, null, "expected_model_computing");
+    if (err instanceof ExpectedModelComputing) return none("expected_model_computing");
     console.error(`[features-service] outcome cost series: expected model unreadable (offer ${offerId}): ${(err as Error).message}`);
-    return expectedStepCosts(null, null, "expected_model_unavailable");
+    return none("expected_model_unavailable");
   }
 }
 
@@ -101,7 +109,8 @@ export async function computeOutcomeCostSeries(
     spendByDay,
     outcomeDays,
     learningBarOf: (step: OutcomeCostStep) => barByStep.get(step) ?? legMaturity(null).outcomesRequired,
-    expectedOf: (step: OutcomeCostStep) => expected.get(step)!,
+    expectedOf: (step: OutcomeCostStep) => expected.costs.get(step)!,
+    valueOf: (step: OutcomeCostStep) => expected.values.get(step)!,
     today,
   });
   return { offerId, brandId, pricing, costBasis: "charged", firstSpendDay, steps };

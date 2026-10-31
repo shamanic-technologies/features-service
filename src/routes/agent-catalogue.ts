@@ -2424,7 +2424,7 @@ export interface FunnelPathView {
   items: Array<
     | { kind: "trigger"; slug: string; name: string }
     | { kind: "step"; key: string; label: string }
-    | { kind: "channel"; slug: string; name: string; runByUs: boolean }
+    | { kind: "channel"; slug: string; name: string; runByUs: boolean; pipeId: string }
   >;
   legs: Array<{
     legKey: string;
@@ -2435,7 +2435,7 @@ export interface FunnelPathView {
     /** The leg's one channel. */
     channelSlug: string | null;
     channelName: string | null;
-    channels: Array<{ slug: string; name: string; runByUs: boolean }>;
+    channels: Array<{ slug: string; name: string; runByUs: boolean; pipeId: string }>;
   }>;
 }
 
@@ -2449,7 +2449,9 @@ export function funnelPathView(model: CatalogueModel, f: CatalogueFunnel): Funne
   const legs: FunnelPathView["legs"] = f.legs.map((l, i) => {
     const { fromStep, toStep } = legStepsOf(model, l.legKey);
     if (i === 0) items.push(trigger ? { kind: "trigger", ...trigger } : step(fromStep));
-    const channels = legPipes(l).map((p) => ({ slug: p.channelSlug, name: p.channelName, runByUs: p.operatedBy === "platform" }));
+    // `pipeId` = the PIPE working the leg (a play variant's base pipe: plays are staff-only), so the dashboard draws the
+    // pipe's served name and mark off the public catalogue (P5.1, owner 2026-10-31).
+    const channels = legPipes(l).map((p) => ({ slug: p.channelSlug, name: p.channelName, runByUs: p.operatedBy === "platform", pipeId: p.play?.basePipeId ?? p.id }));
     for (const c of channels) items.push({ kind: "channel", ...c });
     items.push(step(toStep));
     return {
