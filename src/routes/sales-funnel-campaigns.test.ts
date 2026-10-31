@@ -215,10 +215,27 @@ describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPA
 
     const full = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
     const keys = Object.keys(lean.body.salesFunnelCampaigns[0]);
-    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "copyUnavailableReason", "units"]);
+    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "runningSalesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "copyUnavailableReason", "units"]);
     full.body.salesFunnelCampaigns.forEach((row: Record<string, unknown>, i: number) => {
       expect(Object.fromEntries(keys.map((k) => [k, row[k]]))).toEqual(lean.body.salesFunnelCampaigns[i]);
     });
+  });
+
+  it("the path is the funnel the campaign RUNS now (runningSalesFunnelId), never the one it was born on (P5.1)", async () => {
+    const following = { ...FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]), followsPlan: true, runningSalesFunnelId: "f2" };
+    const older = FC("fc2", "f1", [unit("c2", "sourcing-apollo-cold-filters", "start_to_lead_found")]);
+    const lost = { ...FC("fc3", "f1", []), runningSalesFunnelId: "unknown" };
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: [following, older, lost] })));
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1&fields=copy").set(AUTH);
+    expect(res.status).toBe(200);
+    const [a, b, c] = res.body.salesFunnelCampaigns;
+    expect(a).toMatchObject({ salesFunnelId: "f1", runningSalesFunnelId: "f2" });
+    expect(a.path.items[1]).toMatchObject({ kind: "channel", slug: "of:f2" });
+    // An older campaign-service body (no runningSalesFunnelId) runs the funnel it was born on.
+    expect(b).toMatchObject({ salesFunnelId: "f1", runningSalesFunnelId: "f1" });
+    expect(b.path.items[1]).toMatchObject({ slug: "of:f1" });
+    // A running funnel the catalogue does not know: path null (logged), the born funnel's copy still served.
+    expect(c).toMatchObject({ runningSalesFunnelId: "unknown", path: null, typeLabel: "Daily" });
   });
 
   it("warms the money of a campaign created in the last 15 minutes, under the caller's identity; an older one warms nothing", async () => {
