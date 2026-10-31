@@ -139,12 +139,13 @@ export function pipeDailyEvidence(s: string, campaignIds: ReadonlySet<string>, b
     m.set(k, x);
   };
   for (const c of book.consumed) {
-    if (c.campaignId === null) {
+    // A run of no workflow (off campaign, or the reply judge under the campaign it answers) credits what it consumed.
+    if (c.workflowSlug === null) {
       if (c.consumerKey !== s || !c.sourceCampaignId || !c.sourceWorkflowSlug || !c.sourceRunStartDay || !campaignIds.has(c.sourceCampaignId)) continue;
       bump(credit, `${c.sourceCampaignId}|${c.sourceWorkflowSlug}|${c.sourceRunStartDay}`, c.consumedKey, c.count);
       continue;
     }
-    if (!c.workflowSlug || !c.runStartDay || !campaignIds.has(c.campaignId)) continue;
+    if (!c.campaignId || !c.workflowSlug || !c.runStartDay || !campaignIds.has(c.campaignId)) continue;
     if (c.sourceCampaignId !== null && campaignIds.has(c.sourceCampaignId)) continue;
     bump(inputs, `${c.campaignId}|${c.workflowSlug}|${c.runStartDay}`, c.consumedKey, c.count);
   }

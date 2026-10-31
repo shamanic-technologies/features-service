@@ -67,12 +67,15 @@ export interface PipeWorkflowCost {
   inputs: number;
 }
 
-/** USD of one occurrence of `s` spent off any campaign (its own stage, standard cost); 0 when none is declared. */
+/**
+ * USD of one occurrence of `s` made by a run of NO workflow (its own stage, standard cost): off any campaign, or inside one
+ * (since 2026-10-23 the reply judge runs under the campaign it answers, with no workflow); 0 when none is declared.
+ */
 export function offCampaignUnitCost(s: string, book: LedgerPipeBook): number {
   let cost = 0;
   let n = 0;
   for (const r of book.produced) {
-    if (r.outcomeKey !== s || r.campaignId !== null) continue;
+    if (r.outcomeKey !== s || (r.campaignId !== null && r.workflowSlug !== null)) continue;
     cost += r.costUsd;
     n += r.occurrences;
   }
@@ -101,10 +104,11 @@ export function pipeWorkflowCosts(s: string, campaignIds: ReadonlySet<string>, b
     if (!r.campaignId || !r.workflowSlug || !campaignIds.has(r.campaignId) || !inAud(r.audienceId)) continue;
     row(r.workflowSlug).costUsd += r.costUsd;
   }
-  // off-campaign occurrences of s, credited to the version that produced what they consumed, once per occurrence
+  // occurrences of s made by a run of no workflow (off campaign, or the reply judge under the campaign it answers since
+  // 2026-10-23: dropped before, ENGINE-PER-OUTCOME-SHADOW), credited to the version that produced what they consumed
   const byInput = new Map<string, Map<string, number>>();
   for (const c of book.consumed) {
-    if (c.consumerKey !== s || c.campaignId !== null || !c.sourceCampaignId || !c.sourceWorkflowSlug || !campaignIds.has(c.sourceCampaignId) || !inAud(c.sourceAudienceId)) continue;
+    if (c.consumerKey !== s || c.workflowSlug !== null || !c.sourceCampaignId || !c.sourceWorkflowSlug || !campaignIds.has(c.sourceCampaignId) || !inAud(c.sourceAudienceId)) continue;
     const m = byInput.get(c.sourceWorkflowSlug) ?? new Map<string, number>();
     m.set(c.consumedKey, (m.get(c.consumedKey) ?? 0) + c.count);
     byInput.set(c.sourceWorkflowSlug, m);
