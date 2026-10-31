@@ -294,7 +294,7 @@ async function vendorIndexPoints(billed: {
 }
 
 /** Every client brand's cold email engagement with its spend at real vendor cost (null, logged, when unreadable). */
-async function readVendorBrandEngagement(): Promise<BrandEngagement[] | null> {
+export async function readVendorBrandEngagement(): Promise<BrandEngagement[] | null> {
   try {
     const [ranked, engaged, vendor, unpriced] = await Promise.all([
       readPublicRanked(SCEO_FEATURE_SLUG, RANKED_OBJECTIVE, "brand", RANKED_LIMIT),
