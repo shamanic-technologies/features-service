@@ -35985,8 +35985,10 @@
                 "type": "string",
                 "enum": [
                   "ledger",
+                  "ledger_unreconciled",
                   "ledger_unreadable"
-                ]
+                ],
+                "description": "`ledger_unreconciled` = read while runs-service's ledger had a stale or missing day (stated, never red)."
               },
               "limits": {
                 "type": "array",
@@ -80043,6 +80045,13 @@
                               "items": {
                                 "type": "string"
                               }
+                            },
+                            "ledgerReconciled": {
+                              "type": "boolean",
+                              "description": "False = the ledger was read while runs-service had not reconciled it (`ledgerDaysMissing` stale days): stated, never red."
+                            },
+                            "ledgerDaysMissing": {
+                              "type": "integer"
                             },
                             "failure": {
                               "type": "string",
