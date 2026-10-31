@@ -21,6 +21,8 @@ export interface FeedGeneration extends PostGeneration {
   campaignId: string | null;
   workflowSlug: string | null;
   featureSlug: string | null;
+  /** A staff dry run (publishes nothing): never evidence. Absent on a producer that does not state it yet = false. */
+  dryRun: boolean;
 }
 
 const FEED_HELD_MS = 2 * 60_000;
@@ -50,6 +52,7 @@ export function generationOf(raw: unknown): FeedGeneration {
     campaignId: typeof g.campaignId === "string" && g.campaignId ? g.campaignId : null,
     workflowSlug: typeof g.workflowSlug === "string" && g.workflowSlug ? g.workflowSlug : null,
     featureSlug: typeof g.featureSlug === "string" && g.featureSlug ? g.featureSlug : null,
+    dryRun: g.dryRun === true,
   };
 }
 
@@ -89,7 +92,7 @@ export async function readPostGenerations(): Promise<FeedGeneration[]> {
 
 /**
  * PURE. The generations of ONE pipe: its feature, and a workflow whose dynasty (the longest assigned dynasty the slug is,
- * or is a version `<dynasty>-…` of) is assigned on this leg. A generation stating no workflow is on no pipe.
+ * or is a version `<dynasty>-…` of) is assigned on this leg. A generation stating no workflow, or a staff dry run (`dryRun: true`), is on no pipe.
  */
 export function generationsOfPipe(
   generations: readonly FeedGeneration[],
@@ -106,7 +109,8 @@ export function generationsOfPipe(
     }
     return best?.leg ?? null;
   };
-  return generations.filter((g) => g.featureSlug === featureSlug && g.workflowSlug !== null && legOf(g.workflowSlug) === legKey);
+  // A dry run's generation is no evidence: its run's spend and everything else stay out (THREADS-IDEAS-AB).
+  return generations.filter((g) => !g.dryRun && g.featureSlug === featureSlug && g.workflowSlug !== null && legOf(g.workflowSlug) === legKey);
 }
 
 async function runsGet(path: string): Promise<unknown> {
