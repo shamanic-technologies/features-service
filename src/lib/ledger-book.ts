@@ -38,14 +38,20 @@ export interface LedgerBookRead {
   book: LedgerPipeBook;
   /** Days of the read runs-service has not computed yet, or computed before a fact recorded later (stale). */
   daysMissing: number;
+  /** The same days, listed (sorted). */
+  missingDays?: string[];
 }
+
+/** The run-start day of a group, only when the read grouped by it (the daily book): absent otherwise, rows unchanged. */
+const dayDims = (d: Record<string, string | null> | undefined): { runStartDay?: string | null } =>
+  d && "runStartDay" in d ? { runStartDay: d.runStartDay ?? null } : {};
 
 /** PURE. The three wire bodies as one book + the fleet reconciliation. */
 export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBody: Wire, basis: BookBasis): LedgerBookRead {
   const produced = (producedBody.produced ?? []).map((g) => {
     const key = g.dimensions?.outcomeKey;
     if (!key) throw new Error("[features-service] ledger book: a produced group names no outcomeKey");
-    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis) };
+    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis), ...dayDims(g.dimensions) };
   });
   const consumed = [];
   for (const g of consumedBody.consumed ?? []) {
@@ -64,6 +70,8 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
       sourceWorkflowSlug: g.dimensions?.sourceWorkflowSlug ?? null,
       sourceAudienceId: g.dimensions?.sourceAudienceId ?? null,
       count,
+      ...dayDims(g.dimensions),
+      ...(g.dimensions && "sourceRunStartDay" in g.dimensions ? { sourceRunStartDay: g.dimensions.sourceRunStartDay ?? null } : {}),
     });
   }
   // runs-service's "produced none" holds the support marks too: only the rest is a pipe's loss
@@ -72,9 +80,11 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
     workflowSlug: s.dimensions?.workflowSlug ?? null,
     audienceId: s.dimensions?.audienceId ?? null,
     costUsd: Math.max(usd(s.producedNone, basis) - usd(s.support, basis), 0),
+    ...dayDims(s.dimensions),
   }));
   const daysMissing = Math.max(...[producedBody, consumedBody, scopeBody].map((b) => (b.daysMissing ?? []).length));
-  return { book: { produced, noOutput, consumed }, daysMissing };
+  const missingDays = [...new Set([producedBody, consumedBody, scopeBody].flatMap((b) => b.daysMissing ?? []))].sort();
+  return { book: { produced, noOutput, consumed }, daysMissing, missingDays };
 }
 
 /** The ledger's first month (runs-service states its own inception, 2026-02-02). */
@@ -118,17 +128,18 @@ export function concatWire(parts: readonly Wire[]): Wire {
   };
 }
 
-/** One grouping since inception, read month by month (runs-service's group cap holds per read, never per history). */
-async function read(groupBy: string, runStartUntil?: string): Promise<Wire> {
+/** One grouping since inception (or `sinceDay`), read month by month (runs-service's group cap holds per read, never per history). */
+async function read(groupBy: string, runStartUntil?: string, sinceDay: string = LEDGER_FIRST_DAY): Promise<Wire> {
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
-  const months = monthRanges(LEDGER_FIRST_DAY, today > yesterday ? today : yesterday);
+  const months = monthRanges(sinceDay < LEDGER_FIRST_DAY ? LEDGER_FIRST_DAY : sinceDay, today > yesterday ? today : yesterday);
   const parts: Wire[] = [];
   for (const [since, until] of months) parts.push(await readRange(groupBy, since, until, runStartUntil));
   return concatWire(parts);
 }
 
 const HELD_MS = 15 * 60_000;
+const DAILY_HELD_MS = 150 * 60_000;
 const held = new Map<string, { at: number; value: LedgerBookRead }>();
 const inFlight = new Map<string, Promise<LedgerBookRead>>();
 
@@ -147,6 +158,32 @@ export async function loadLedgerBook(basis: BookBasis, runStartUntil?: string): 
       read("outcomeKey,campaignId,workflowSlug,audienceId,sourceCampaignId,sourceWorkflowSlug,sourceAudienceId", runStartUntil),
       read("campaignId,workflowSlug,audienceId", runStartUntil),
     ]);
+    const value = parseLedgerBook(produced, consumed, scope, basis);
+    held.set(key, { at: Date.now(), value });
+    return value;
+  })().finally(() => inFlight.delete(key));
+  inFlight.set(key, p);
+  return p;
+}
+
+/**
+ * The DAILY book (ENGINE-PER-OUTCOME-SHADOW): the same three reads grouped also by the day each run STARTED (and, on the
+ * consumed section, the day the producing run started: the send a reply answers), without the audience. One read gives
+ * every decision day: the Engine's faded, censored beliefs and its replay read it, never one cut per checkpoint (five
+ * cuts made runs-service 500 under load, 2026-10-31). From `sinceDay` only (older evidence has faded), held 2.5 h (one
+ * read per 3-hourly pass: a month of it took ~70 s under load). Days runs-service has not stored with their run-start day
+ * yet are absent and listed in `missingDays`.
+ */
+export async function loadDailyLedgerBook(basis: BookBasis, sinceDay: string): Promise<LedgerBookRead> {
+  const key = `${basis}|daily|${sinceDay}`;
+  const h = held.get(key);
+  if (h && Date.now() - h.at < DAILY_HELD_MS) return h.value;
+  const running = inFlight.get(key);
+  if (running) return running;
+  const p = (async () => {
+    const produced = await read("outcomeKey,campaignId,workflowSlug,runStartDay", undefined, sinceDay);
+    const consumed = await read("outcomeKey,campaignId,workflowSlug,sourceCampaignId,sourceWorkflowSlug,runStartDay,sourceRunStartDay", undefined, sinceDay);
+    const scope = await read("campaignId,workflowSlug,runStartDay", undefined, sinceDay);
     const value = parseLedgerBook(produced, consumed, scope, basis);
     held.set(key, { at: Date.now(), value });
     return value;

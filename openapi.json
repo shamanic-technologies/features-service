@@ -35874,6 +35874,10 @@
                             "nullable": true,
                             "description": "The outcome's value on the offer's lifetime revenue less the value of the step it starts from."
                           },
+                          "uplift": {
+                            "type": "number",
+                            "description": "Its sub-picks at their best (best measured template x LLM combination's outcomes per dollar over the mix it ran, 1..3): multiplies its value in the pick."
+                          },
                           "fleetDecisions": {
                             "type": "number"
                           },
@@ -35892,7 +35896,7 @@
                           "rateMeanPct": {
                             "type": "number",
                             "nullable": true,
-                            "description": "The pooled belief's mean rate (%), censored delays."
+                            "description": "The pooled belief's mean rate (%): evidence per decision day, faded with a half-life, censored like for like."
                           },
                           "costPerDecisionMeanUsd": {
                             "type": "number",
@@ -35995,7 +35999,31 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."
+                "description": "What the model reads loosely: `uplift_reads_lifetime_mix` (v10: last week's), `beliefs_count_outcomes_to_date`."
+              },
+              "model": {
+                "type": "object",
+                "properties": {
+                  "halfLifeDays": {
+                    "type": "number"
+                  },
+                  "upliftCap": {
+                    "type": "number"
+                  },
+                  "upliftMinOutcomes": {
+                    "type": "number"
+                  },
+                  "draws": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "halfLifeDays",
+                  "upliftCap",
+                  "upliftMinOutcomes",
+                  "draws"
+                ],
+                "description": "The knobs this pick ran with."
               }
             },
             "required": [
@@ -78814,6 +78842,30 @@
                                 "type": "number",
                                 "nullable": true
                               },
+                              "model": {
+                                "type": "object",
+                                "properties": {
+                                  "halfLifeDays": {
+                                    "type": "number"
+                                  },
+                                  "upliftCap": {
+                                    "type": "number"
+                                  },
+                                  "upliftMinOutcomes": {
+                                    "type": "number"
+                                  },
+                                  "draws": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "halfLifeDays",
+                                  "upliftCap",
+                                  "upliftMinOutcomes",
+                                  "draws"
+                                ],
+                                "description": "The knobs this pick ran with."
+                              },
                               "places": {
                                 "type": "array",
                                 "items": {
@@ -79255,6 +79307,30 @@
                               "expectedAgreementPct": {
                                 "type": "number",
                                 "nullable": true
+                              },
+                              "model": {
+                                "type": "object",
+                                "properties": {
+                                  "halfLifeDays": {
+                                    "type": "number"
+                                  },
+                                  "upliftCap": {
+                                    "type": "number"
+                                  },
+                                  "upliftMinOutcomes": {
+                                    "type": "number"
+                                  },
+                                  "draws": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "halfLifeDays",
+                                  "upliftCap",
+                                  "upliftMinOutcomes",
+                                  "draws"
+                                ],
+                                "description": "The knobs this pick ran with."
                               },
                               "places": {
                                 "type": "array",
@@ -79699,6 +79775,30 @@
                                 "type": "number",
                                 "nullable": true
                               },
+                              "model": {
+                                "type": "object",
+                                "properties": {
+                                  "halfLifeDays": {
+                                    "type": "number"
+                                  },
+                                  "upliftCap": {
+                                    "type": "number"
+                                  },
+                                  "upliftMinOutcomes": {
+                                    "type": "number"
+                                  },
+                                  "draws": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "halfLifeDays",
+                                  "upliftCap",
+                                  "upliftMinOutcomes",
+                                  "draws"
+                                ],
+                                "description": "The knobs this pick ran with."
+                              },
                               "places": {
                                 "type": "array",
                                 "items": {
@@ -80036,12 +80136,28 @@
                             "windowDays": {
                               "type": "integer"
                             },
+                            "window": {
+                              "type": "object",
+                              "properties": {
+                                "sinceDay": {
+                                  "type": "string"
+                                },
+                                "untilDay": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "sinceDay",
+                                "untilDay"
+                              ],
+                              "description": "The window's decision days [sinceDay, untilDay): it ends where runs-service's stored decision days end (recent days not yet stored with their run-start day are left out)."
+                            },
                             "checkpoints": {
                               "type": "array",
                               "items": {
                                 "type": "string"
                               },
-                              "description": "Run-start cuts the beliefs were read as of; each period runs to the next, the last to today."
+                              "description": "Decision days of the window the Engine picked on, each on the evidence as of that day."
                             },
                             "families": {
                               "type": "array",
@@ -80065,6 +80181,10 @@
                                   "windowDecisions": {
                                     "type": "number"
                                   },
+                                  "checkpoints": {
+                                    "type": "integer",
+                                    "description": "Decision days the Engine picked on (one per day with decisions)."
+                                  },
                                   "bestValuePerDollar": {
                                     "type": "number",
                                     "nullable": true,
@@ -80077,7 +80197,7 @@
                                   "todayRegret": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best), graded candidates only."
+                                    "description": "Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best) over its GRADABLE picks only (value per dollar censored like for like)."
                                   },
                                   "todayValuePerDollar": {
                                     "type": "number",
@@ -80090,7 +80210,7 @@
                                   "engineRegret": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "The Engine: its Thompson pick shares at each checkpoint on the evidence as of then, graded the same way, weighted by each period's decisions."
+                                    "description": "The Engine: each decision day its Thompson shares on the evidence as of that day, graded the same way (gradable picks only: a draw on an ungradable workflow is exploration, in `engineUngradedPct`, never value lost), weighted by that day's decisions."
                                   },
                                   "engineValuePerDollar": {
                                     "type": "number",
@@ -80169,6 +80289,29 @@
                             },
                             "ledgerDaysMissing": {
                               "type": "integer"
+                            },
+                            "model": {
+                              "type": "object",
+                              "properties": {
+                                "halfLifeDays": {
+                                  "type": "number"
+                                },
+                                "upliftCap": {
+                                  "type": "number"
+                                },
+                                "upliftMinOutcomes": {
+                                  "type": "number"
+                                },
+                                "draws": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "halfLifeDays",
+                                "upliftCap",
+                                "upliftMinOutcomes",
+                                "draws"
+                              ]
                             },
                             "failure": {
                               "type": "string",

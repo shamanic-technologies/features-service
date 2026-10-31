@@ -21,64 +21,172 @@
  *   taken out) -> the client (its own runs on that workflow, the ledger at the brand's campaigns). Each level is pulled
  *   toward the one above with a strength fitted from the spread between its siblings (method of moments), combined with
  *   how sure the level above is (variances add): a candidate with little data keeps a wide belief and is explored.
- * - DELAYS ARE CENSORED: a decision older than its leg's maturity window counts in full; a younger one counts for
- *   `YOUNG_DUE_SHARE` of a trial (decisions spread evenly over the window, outcomes arriving evenly over it).
+ * - EVIDENCE IS READ PER DECISION DAY (the daily ledger book): each day FADES with a half-life (`HALF_LIFE_DAYS`) and is
+ *   CENSORED like for like: a decision counts for the share of its outcomes already due at its age (outcomes arriving
+ *   evenly over the leg's maturity window), a closed one in full.
+ * - A BRANCH IS RATED WITH ITS OWN SUB-PICKS AT THEIR BEST (`upliftOf`): its value is multiplied by its best measured
+ *   template x LLM combination's outcomes per dollar over the mix it ran (Research Performance rows), capped.
  * - CREDIT THROUGH TRACEABILITY is the ledger's (`lib/ledger-pipe-costs.ts`): an outcome produced off campaign is credited to
  *   the workflow that produced what it consumed (a reply credited to the send).
  *
- * Not modelled yet, said so on every served body (`limits`): the half-life fade of old evidence, the like-for-like day
- * reading, and the uplift of a branch by its own sub-picks at their best (v10 section 8). Nothing here changes what runs.
+ * Stated on every served body (`limits`): the uplift reads each workflow's lifetime mix (v10: the last week's), and a
+ * belief counts every outcome its decisions have today (the ledger cut is on the decision day). Nothing here changes what runs.
  */
 import { createHash } from "node:crypto";
+import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 
 // ── Evidence ───────────────────────────────────────────────────────────────────────────────────────
 
-/** What one workflow did on one pipe (a grain: the fleet, or one client). */
+/** What one workflow did on one pipe, already weighed (a grain: the fleet, or one client). */
 export interface Evidence {
-  /** Decisions taken (people the workflow worked on the leg: the ledger's inputs). */
+  /** Decisions taken (people the workflow worked on the leg), faded by age. */
+  decisions: number;
+  /** The same decisions censored: each counts for the share of its outcomes already due (like for like per day). */
+  trials: number;
+  outcomes: number;
+  spentUsd: number;
+}
+
+export const EMPTY_EVIDENCE: Evidence = { decisions: 0, trials: 0, outcomes: 0, spentUsd: 0 };
+
+/** Old evidence fades: a decision this many days old weighs half (v10 §8: a world that changes is read again). */
+export const HALF_LIFE_DAYS = 45;
+
+/** One decision day of one workflow on one pipe (the daily ledger book). */
+export interface DayCounts {
+  day: string;
   decisions: number;
   outcomes: number;
   spentUsd: number;
-  /** The same counts on decisions older than the leg's maturity window; null = not cut (every decision counts in full). */
-  matureDecisions: number | null;
-  matureOutcomes: number | null;
 }
 
-export const EMPTY_EVIDENCE: Evidence = { decisions: 0, outcomes: 0, spentUsd: 0, matureDecisions: 0, matureOutcomes: 0 };
+const DAY = 86_400_000;
+const daysBetween = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY;
 
-/** A decision younger than its leg's window counts for this share of a trial (uniform ages, uniform arrival). */
-export const YOUNG_DUE_SHARE = 0.5;
+/** PURE: the share of a decision's outcomes already due at `ageDays`, outcomes arriving evenly over the leg's window. */
+export const dueShare = (ageDays: number, maturityDays: number): number => (maturityDays <= 0 ? 1 : Math.max(0, Math.min(1, ageDays / maturityDays)));
 
-/** PURE: the trials a grain's decisions are worth once each young one counts for the share of outcomes already due. */
-export function censoredTrials(e: Evidence): number {
-  if (e.matureDecisions === null) return e.decisions;
-  const mature = Math.min(e.matureDecisions, e.decisions);
-  return mature + (e.decisions - mature) * YOUNG_DUE_SHARE;
+/**
+ * PURE: a workflow's evidence as it stood on `asOfDay` (decision days strictly before it), each day FADED by its age then
+ * (half-life) and CENSORED by its age when its outcomes were counted (`countedOnDay`: the ledger counts every outcome to
+ * date): an open decision counts for the share of outcomes already due, a closed one in full (v10 §8 worked example).
+ */
+export function weighEvidence(days: Iterable<DayCounts>, asOfDay: string, countedOnDay: string, maturityDays: number, halfLifeDays = HALF_LIFE_DAYS): Evidence {
+  const out: Evidence = { decisions: 0, trials: 0, outcomes: 0, spentUsd: 0 };
+  for (const d of days) {
+    if (d.day >= asOfDay) continue;
+    const w = Math.pow(0.5, daysBetween(d.day, asOfDay) / halfLifeDays);
+    out.decisions += w * d.decisions;
+    out.trials += w * d.decisions * dueShare(daysBetween(d.day, countedOnDay), maturityDays);
+    out.outcomes += w * d.outcomes;
+    out.spentUsd += w * d.spentUsd;
+  }
+  return out;
 }
+
+/** PURE: the trials a grain's decisions are worth (censored). */
+export const censoredTrials = (e: Evidence): number => e.trials;
 
 /** PURE: a grain less another one (the fleet without the client), never below zero. */
 export function minusEvidence(a: Evidence, b: Evidence | null): Evidence {
   if (!b) return a;
   const sub = (x: number, y: number) => Math.max(0, x - y);
-  return {
-    decisions: sub(a.decisions, b.decisions),
-    outcomes: sub(a.outcomes, b.outcomes),
-    spentUsd: sub(a.spentUsd, b.spentUsd),
-    matureDecisions: a.matureDecisions === null ? null : sub(a.matureDecisions, b.matureDecisions ?? 0),
-    matureOutcomes: a.matureOutcomes === null ? null : sub(a.matureOutcomes, b.matureOutcomes ?? 0),
-  };
+  return { decisions: sub(a.decisions, b.decisions), trials: sub(a.trials, b.trials), outcomes: sub(a.outcomes, b.outcomes), spentUsd: sub(a.spentUsd, b.spentUsd) };
 }
 
 export function sumEvidence(list: readonly Evidence[]): Evidence {
-  const out: Evidence = { decisions: 0, outcomes: 0, spentUsd: 0, matureDecisions: 0, matureOutcomes: 0 };
+  const out: Evidence = { decisions: 0, trials: 0, outcomes: 0, spentUsd: 0 };
   for (const e of list) {
     out.decisions += e.decisions;
+    out.trials += e.trials;
     out.outcomes += e.outcomes;
     out.spentUsd += e.spentUsd;
-    out.matureDecisions = out.matureDecisions === null || e.matureDecisions === null ? null : out.matureDecisions + e.matureDecisions;
-    out.matureOutcomes = out.matureOutcomes === null || e.matureOutcomes === null ? null : out.matureOutcomes + e.matureOutcomes;
   }
   return out;
+}
+
+/**
+ * PURE: per (campaign, workflow version, decision day), what one pipe's workflows did, from the DAILY ledger book: the
+ * `pipeWorkflowCosts` rule (cost = everything its runs produced in the pipe's campaigns + their no-output spend + its
+ * off-campaign outcomes x their own unit cost; decisions = the inputs its runs consumed from outside the pipe, the largest
+ * kind; outcomes = the pipe's outcome its runs produced + the off-campaign ones crediting what it produced), each on the
+ * day its deciding run started (an off-campaign reply on the day of the send it answers). `unitCost` = the off-campaign
+ * unit cost of the outcome over the whole book. Keyed `<campaignId>|<workflowSlug>|<day>`.
+ */
+export function pipeDailyEvidence(s: string, campaignIds: ReadonlySet<string>, book: LedgerPipeBook, unitCost: number): Map<string, { campaignId: string; workflowSlug: string; day: string } & Omit<DayCounts, "day">> {
+  const out = new Map<string, { campaignId: string; workflowSlug: string; day: string; decisions: number; outcomes: number; spentUsd: number }>();
+  const row = (c: string, w: string, d: string) => {
+    const k = `${c}|${w}|${d}`;
+    const e = out.get(k) ?? { campaignId: c, workflowSlug: w, day: d, decisions: 0, outcomes: 0, spentUsd: 0 };
+    out.set(k, e);
+    return e;
+  };
+  for (const r of book.produced) {
+    if (!r.campaignId || !r.workflowSlug || !r.runStartDay || !campaignIds.has(r.campaignId)) continue;
+    const e = row(r.campaignId, r.workflowSlug, r.runStartDay);
+    e.spentUsd += r.costUsd;
+    if (r.outcomeKey === s) e.outcomes += r.occurrences;
+  }
+  for (const r of book.noOutput) {
+    if (!r.campaignId || !r.workflowSlug || !r.runStartDay || !campaignIds.has(r.campaignId)) continue;
+    row(r.campaignId, r.workflowSlug, r.runStartDay).spentUsd += r.costUsd;
+  }
+  const credit = new Map<string, Map<string, number>>();
+  const inputs = new Map<string, Map<string, number>>();
+  const bump = (m: Map<string, Map<string, number>>, k: string, kind: string, n: number) => {
+    const x = m.get(k) ?? new Map<string, number>();
+    x.set(kind, (x.get(kind) ?? 0) + n);
+    m.set(k, x);
+  };
+  for (const c of book.consumed) {
+    if (c.campaignId === null) {
+      if (c.consumerKey !== s || !c.sourceCampaignId || !c.sourceWorkflowSlug || !c.sourceRunStartDay || !campaignIds.has(c.sourceCampaignId)) continue;
+      bump(credit, `${c.sourceCampaignId}|${c.sourceWorkflowSlug}|${c.sourceRunStartDay}`, c.consumedKey, c.count);
+      continue;
+    }
+    if (!c.workflowSlug || !c.runStartDay || !campaignIds.has(c.campaignId)) continue;
+    if (c.sourceCampaignId !== null && campaignIds.has(c.sourceCampaignId)) continue;
+    bump(inputs, `${c.campaignId}|${c.workflowSlug}|${c.runStartDay}`, c.consumedKey, c.count);
+  }
+  const split = (k: string) => {
+    const [c, w, d] = k.split("|");
+    return row(c!, w!, d!);
+  };
+  for (const [k, m] of inputs) split(k).decisions = Math.max(...m.values());
+  for (const [k, m] of credit) {
+    const n = Math.max(...m.values());
+    const e = split(k);
+    e.outcomes += n;
+    e.spentUsd += n * unitCost;
+  }
+  return out;
+}
+
+// ── Branch uplift ──────────────────────────────────────────────────────────────────────────────────
+
+/** A sub-pick combination's measured figures under one workflow (Research Performance rows: template x LLM). */
+export interface SubPickRow {
+  outcomes: number;
+  spentUsd: number;
+}
+
+/** A combination is "at its best" only on this many outcomes of its own (fewer is noise). */
+export const UPLIFT_MIN_OUTCOMES = 5;
+/** Never more than this: the best sub-pick's edge over the mix is a forecast, capped. */
+export const UPLIFT_CAP = 3;
+
+/**
+ * PURE: a workflow rated with its own sub-picks at their best (v10 §8): its best measured template x LLM combination's
+ * outcomes per dollar over the mix it actually ran (every combination it wrote with), between 1 and `UPLIFT_CAP`. 1 when
+ * no combination has `UPLIFT_MIN_OUTCOMES` outcomes or nothing was spent.
+ */
+export function upliftOf(rows: readonly SubPickRow[]): number {
+  const spent = rows.reduce((a, r) => a + r.spentUsd, 0);
+  const outcomes = rows.reduce((a, r) => a + r.outcomes, 0);
+  if (spent <= 0 || outcomes <= 0) return 1;
+  const mix = outcomes / spent;
+  const best = Math.max(0, ...rows.filter((r) => r.outcomes >= UPLIFT_MIN_OUTCOMES && r.spentUsd > 0).map((r) => r.outcomes / r.spentUsd));
+  return best <= 0 ? 1 : Math.max(1, Math.min(UPLIFT_CAP, best / mix));
 }
 
 // ── Candidates and beliefs ─────────────────────────────────────────────────────────────────────────
@@ -97,6 +205,8 @@ export interface EngineCandidate {
   dynastyName: string | null;
   /** Outcome value less the value of the step it starts from; null = not valued (the Target has no value). */
   valueAddedUsd: number | null;
+  /** Its sub-picks at their best over the mix it ran (`upliftOf`, >= 1): multiplies its value. */
+  uplift: number;
   /** The fleet's evidence on this workflow on this pipe (the client's included). */
   fleet: Evidence;
   /** The client's own evidence; null = not read (the ledger unreadable). */
@@ -301,7 +411,7 @@ export function thompson(beliefs: ReadonlyMap<string, Belief>, valueOf: (id: str
 }
 
 /** PURE: the value a candidate's score multiplies (its value added; 1 on an unvalued Target, which ranks on cost). */
-export const scoreValueOf = (c: Pick<EngineCandidate, "valueAddedUsd">, targetValued: boolean): number => (targetValued ? (c.valueAddedUsd ?? 0) : 1);
+export const scoreValueOf = (c: Pick<EngineCandidate, "valueAddedUsd"> & { uplift?: number }, targetValued: boolean): number => (targetValued ? (c.valueAddedUsd ?? 0) : 1) * (c.uplift ?? 1);
 
 // ── One place, served ──────────────────────────────────────────────────────────────────────────────
 
@@ -316,6 +426,7 @@ export interface EnginePickRef {
 export interface EngineCandidateRow extends EnginePickRef {
   fromStep: string | null;
   valueAddedUsd: number | null;
+  uplift: number;
   fleetDecisions: number;
   fleetOutcomes: number;
   clientDecisions: number | null;
@@ -373,10 +484,11 @@ export function enginePlaceOf(
       ...refOf(c.id)!,
       fromStep: c.fromStep,
       valueAddedUsd: c.valueAddedUsd,
-      fleetDecisions: c.fleet.decisions,
-      fleetOutcomes: c.fleet.outcomes,
-      clientDecisions: c.client?.decisions ?? null,
-      clientOutcomes: c.client?.outcomes ?? null,
+      uplift: round(c.uplift, 3),
+      fleetDecisions: round(c.fleet.decisions, 1),
+      fleetOutcomes: round(c.fleet.outcomes, 1),
+      clientDecisions: c.client ? round(c.client.decisions, 1) : null,
+      clientOutcomes: c.client ? round(c.client.outcomes, 1) : null,
       rateMeanPct: rate === null ? null : round(rate * 100, 4),
       costPerDecisionMeanUsd: b ? round(b.costMeanUsd, 4) : null,
       valuePerDollarMean: b && rate !== null ? round((rate * v) / b.costMeanUsd, 4) : null,
@@ -405,7 +517,9 @@ export function enginePlaceOf(
 }
 
 /** What the served body says the model does not do yet (v10 section 8), so nobody reads it as the whole rule. */
-export const ENGINE_LIMITS = ["no_half_life_fade", "no_like_for_like_day_reading", "no_branch_uplift"] as const;
+export const ENGINE_LIMITS = ["uplift_reads_lifetime_mix", "beliefs_count_outcomes_to_date"] as const;
+/** The model's knobs, served beside every pick. */
+export const ENGINE_MODEL = { halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
 
 export interface EngineShadow {
   computedAt: string;
@@ -421,6 +535,8 @@ export interface EngineShadow {
   /** Client evidence read on the ledger (else the client level is empty and the fleet decides). */
   clientEvidence: "ledger" | "ledger_unreconciled" | "ledger_unreadable";
   limits: readonly string[];
+  /** The knobs this pick ran with (`ENGINE_MODEL`). Absent on a body stored before 2026-10-31 tuning. */
+  model?: typeof ENGINE_MODEL;
 }
 
 /** PURE: a campaign's Engine summary from its places. */
@@ -436,6 +552,7 @@ export function engineShadowOf(places: EnginePlace[], computedAt: string, client
     expectedAgreementPct: comparable.length === 0 ? null : round(comparable.reduce((s, p) => s + (p.todayPickSharePct ?? 0), 0) / comparable.length, 1),
     clientEvidence,
     limits: ENGINE_LIMITS,
+    model: ENGINE_MODEL,
   };
 }
 
@@ -449,6 +566,7 @@ export const failedEngineShadow = (failure: string, computedAt: string): EngineS
   expectedAgreementPct: null,
   clientEvidence: "ledger_unreadable",
   limits: ENGINE_LIMITS,
+  model: ENGINE_MODEL,
 });
 
 /** One org's Engine counts for the day (summed into the fleet series). */
@@ -479,19 +597,20 @@ export function engineDayCountsOf(rows: ReadonlyArray<{ orgId: string; engine?: 
 
 // ── The replay ─────────────────────────────────────────────────────────────────────────────────────
 
-/** One candidate of a family in the replay: what it had as of each checkpoint, and what it did in the window. */
+/** One candidate of a family in the replay: its fleet decision days and what the model reads it with. */
 export interface ReplayCandidate {
   id: string;
   basePipeId: string;
   channelName: string;
   dynastySlug: string;
   valueAddedUsd: number | null;
+  uplift: number;
   expectedCostPerOutcomeUsd: number | null;
   defaultRatePct: number | null;
-  /** Fleet evidence as of each checkpoint (decisions started before it, every outcome they have now). */
-  asOf: Evidence[];
-  /** Decisions, outcomes and spend of the decisions taken in each checkpoint's following period (what ran). */
-  period: Array<{ decisions: number; outcomes: number; spentUsd: number }>;
+  /** The leg's maturity window (days): how fast its outcomes come due. */
+  maturityDays: number;
+  /** Fleet evidence per decision day (every outcome counted to `countedOnDay`). */
+  days: readonly DayCounts[];
 }
 
 /** A candidate's window is graded only on this many decisions at least. */
@@ -504,68 +623,100 @@ export interface ReplayFamily {
   /** Candidates with enough window decisions and spend to measure a value per dollar. */
   graded: number;
   windowDecisions: number;
-  /** The best measured value per dollar of the window (value added x outcomes / spend), and whose. */
+  /** Checkpoints (decision days of the window) the Engine picked on: one per day with decisions. */
+  checkpoints: number;
+  /** The best measured value per dollar of the window, and whose. Censored like for like: value x (outcomes / due trials)
+   *  / (spend per decision), so a workflow run late in the window is not read as worse for its open decisions. */
   bestValuePerDollar: number | null;
   bestCandidateId: string | null;
-  /** Today's rule, as it ran: the window's decisions as they were split, graded (1 - value per dollar / best). */
+  /** Today's rule as it ran (the window's decisions as they were split), graded on its GRADABLE picks only:
+   *  Σ share x (1 − value per dollar / best) ÷ the gradable share. */
   todayRegret: number | null;
   todayValuePerDollar: number | null;
-  /** Share of today's window decisions on candidates too thin to grade (%). */
+  /** Share of today's decisions on candidates the window cannot grade (%), never counted as value lost. */
   todayUngradedPct: number | null;
-  /** The Engine: at each checkpoint its Thompson pick shares on the evidence as of then, graded the same way, each period
-   *  weighted by the decisions taken in it. */
+  /** The Engine: each decision day its Thompson shares on the evidence as of that day, graded the same way (gradable
+   *  picks only), weighted by that day's decisions. */
   engineRegret: number | null;
   engineValuePerDollar: number | null;
-  /** Share of the Engine's picks on candidates the window cannot grade (exploration) (%). */
+  /** Share of the Engine's picks on candidates the window cannot grade (exploration), never counted as value lost (%). */
   engineUngradedPct: number | null;
   /** today − engine: positive = the Engine would have bought more value per dollar. */
   regretGain: number | null;
   reason: string | null;
 }
 
+/** PURE: the window's measured value per dollar of one candidate (censored like for like), or null when not gradable. */
+export function windowValuePerDollar(c: ReplayCandidate, sinceDay: string, countedOnDay: string, targetValued: boolean, untilDay: string = countedOnDay): number | null {
+  let decisions = 0;
+  let trials = 0;
+  let outcomes = 0;
+  let spent = 0;
+  for (const d of c.days) {
+    if (d.day < sinceDay || d.day >= untilDay) continue;
+    decisions += d.decisions;
+    trials += d.decisions * dueShare(daysBetween(d.day, countedOnDay), c.maturityDays);
+    outcomes += d.outcomes;
+    spent += d.spentUsd;
+  }
+  const v = targetValued ? (c.valueAddedUsd ?? 0) : 1;
+  if (decisions < REPLAY_MIN_DECISIONS || spent <= 0 || trials <= 0 || v <= 0) return null;
+  return (v * Math.min(1, outcomes / trials)) / (spent / decisions);
+}
+
+/** PURE: a split of picks graded against the best (gradable picks only; the rest reported apart). */
+function gradeSplit(split: ReadonlyMap<string, number>, vpd: ReadonlyMap<string, number>, best: number) {
+  let graded = 0;
+  let regret = 0;
+  let value = 0;
+  let all = 0;
+  for (const [id, w] of split) {
+    all += w;
+    const v = vpd.get(id);
+    if (v === undefined) continue;
+    graded += w;
+    regret += w * (1 - v / best);
+    value += w * v;
+  }
+  return { graded, all, regret: graded > 0 ? regret / graded : null, value: graded > 0 ? value / graded : null };
+}
+
 /**
- * PURE: replay one outcome's Engine over the window. Grading (the regret proxy, v10 section 8 with the measured window in
- * place of the hidden truth): a candidate's value per dollar = value added x its window outcomes / its window spend; the
- * regret of a split = Σ share x (1 - its value per dollar / the best's), over the graded candidates.
+ * PURE: replay one outcome's Engine over the window, ONE CHECKPOINT PER DECISION DAY: each day the Engine draws on the
+ * evidence as of that day (faded, censored), and that day's decisions are split by its pick shares. Grading (the regret
+ * proxy, v10 §8 with the measured window in place of the hidden truth) reads gradable picks only: a draw on a workflow
+ * the window cannot grade is exploration, reported apart, never counted as value lost.
  */
-export function replayFamily(outcome: string, outcomeName: string, candidates: readonly ReplayCandidate[], targetValued: boolean, seed: string, draws = 400): ReplayFamily {
-  const periods = candidates[0]?.period.length ?? 0;
-  const windowOf = (c: ReplayCandidate) => c.period.reduce((s, p) => ({ decisions: s.decisions + p.decisions, outcomes: s.outcomes + p.outcomes, spentUsd: s.spentUsd + p.spentUsd }), { decisions: 0, outcomes: 0, spentUsd: 0 });
+export function replayFamily(
+  outcome: string,
+  outcomeName: string,
+  candidates: readonly ReplayCandidate[],
+  targetValued: boolean,
+  window: { sinceDay: string; countedOnDay: string; untilDay?: string },
+  seed: string,
+  draws = 300,
+): ReplayFamily {
+  const until = window.untilDay ?? window.countedOnDay;
   const vpd = new Map<string, number>();
   for (const c of candidates) {
-    const w = windowOf(c);
-    const v = scoreValueOf(c, targetValued);
-    if (w.decisions >= REPLAY_MIN_DECISIONS && w.spentUsd > 0 && v > 0) vpd.set(c.id, (v * w.outcomes) / w.spentUsd);
+    const v = windowValuePerDollar(c, window.sinceDay, window.countedOnDay, targetValued, until);
+    if (v !== null) vpd.set(c.id, v);
   }
-  const windowDecisions = candidates.reduce((s, c) => s + windowOf(c).decisions, 0);
-  const base = { outcome, outcomeName, candidates: candidates.length, graded: vpd.size, windowDecisions };
+  const days = [...new Set(candidates.flatMap((c) => c.days.filter((d) => d.day >= window.sinceDay && d.day < until && d.decisions > 0).map((d) => d.day)))].sort();
+  const decisionsOn = (c: ReplayCandidate, day: string) => c.days.find((d) => d.day === day)?.decisions ?? 0;
+  const windowDecisions = days.reduce((a, day) => a + candidates.reduce((b, c) => b + decisionsOn(c, day), 0), 0);
+  const base = { outcome, outcomeName, candidates: candidates.length, graded: vpd.size, windowDecisions: round(windowDecisions, 1), checkpoints: days.length };
   const best = [...vpd].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0] ?? null;
   const none = { bestValuePerDollar: null, bestCandidateId: null, todayRegret: null, todayValuePerDollar: null, todayUngradedPct: null, engineRegret: null, engineValuePerDollar: null, engineUngradedPct: null, regretGain: null };
   if (!best || best[1] <= 0) return { ...base, ...none, reason: vpd.size === 0 ? "no_candidate_graded" : "no_value_measured" };
-  const grade = (split: ReadonlyMap<string, number>) => {
-    let graded = 0;
-    let regret = 0;
-    let value = 0;
-    let all = 0;
-    for (const [id, w] of split) {
-      all += w;
-      const v = vpd.get(id);
-      if (v === undefined) continue;
-      graded += w;
-      regret += w * (1 - v / best[1]);
-      value += w * v;
-    }
-    return graded > 0 ? { regret: regret / graded, value: value / graded, ungradedPct: all > 0 ? ((all - graded) / all) * 100 : 0, weight: all } : { regret: null, value: null, ungradedPct: all > 0 ? 100 : null, weight: all };
-  };
-  const today = grade(new Map(candidates.map((c) => [c.id, windowOf(c).decisions])));
+  const today = gradeSplit(new Map(candidates.map((c) => [c.id, days.reduce((a, day) => a + decisionsOn(c, day), 0)])), vpd, best[1]);
   let eReg = 0;
   let eVal = 0;
   let eW = 0;
   let eUng = 0;
   let eAll = 0;
-  for (let k = 0; k < periods; k++) {
-    const weight = candidates.reduce((s, c) => s + c.period[k]!.decisions, 0);
-    if (weight <= 0) continue;
+  for (const day of days) {
+    const weight = candidates.reduce((a, c) => a + decisionsOn(c, day), 0);
     const asOf: EngineCandidate[] = candidates.map((c) => ({
       id: c.id,
       basePipeId: c.basePipeId,
@@ -577,16 +728,17 @@ export function replayFamily(outcome: string, outcomeName: string, candidates: r
       dynastySlug: c.dynastySlug,
       dynastyName: null,
       valueAddedUsd: c.valueAddedUsd,
-      fleet: c.asOf[k]!,
+      uplift: c.uplift,
+      fleet: weighEvidence(c.days, day, window.countedOnDay, c.maturityDays),
       client: null,
       expectedCostPerOutcomeUsd: c.expectedCostPerOutcomeUsd,
       defaultRatePct: c.defaultRatePct,
     }));
-    const pooled = placeBeliefs(asOf);
-    const t = thompson(pooled.beliefs, (id) => scoreValueOf(candidates.find((c) => c.id === id)!, targetValued), `${seed}|${k}`, draws);
-    const g = grade(t.shares);
+    const byId = new Map(asOf.map((c) => [c.id, c]));
+    const t = thompson(placeBeliefs(asOf).beliefs, (id) => scoreValueOf(byId.get(id)!, targetValued), `${seed}|${day}`, draws);
+    const g = gradeSplit(t.shares, vpd, best[1]);
     eAll += weight;
-    eUng += weight * ((g.ungradedPct ?? 100) / 100);
+    eUng += weight * (g.all > 0 ? (g.all - g.graded) / g.all : 1);
     if (g.regret === null) continue;
     eReg += weight * g.regret;
     eVal += weight * g.value!;
@@ -599,7 +751,7 @@ export function replayFamily(outcome: string, outcomeName: string, candidates: r
     bestCandidateId: best[0],
     todayRegret: today.regret === null ? null : round(today.regret, 4),
     todayValuePerDollar: today.value === null ? null : round(today.value, 4),
-    todayUngradedPct: today.ungradedPct === null ? null : round(today.ungradedPct, 1),
+    todayUngradedPct: today.all > 0 ? round(((today.all - today.graded) / today.all) * 100, 1) : null,
     engineRegret: engineRegret === null ? null : round(engineRegret, 4),
     engineValuePerDollar: eW > 0 ? round(eVal / eW, 4) : null,
     engineUngradedPct: eAll > 0 ? round((eUng / eAll) * 100, 1) : null,
@@ -611,16 +763,19 @@ export function replayFamily(outcome: string, outcomeName: string, candidates: r
 export interface EngineReplay {
   computedAt: string;
   windowDays: number;
-  /** Run-start days the beliefs were read as of (each period runs to the next one, the last to today). */
+  /** The window's decision days [sinceDay, untilDay): it ends where runs-service's stored decision days end. */
+  window?: { sinceDay: string; untilDay: string };
+  /** Decision days the Engine picked on (each day of the window). */
   checkpoints: string[];
   families: ReplayFamily[];
-  /** Over every graded family, weighted by window decisions. */
+  /** Over every family with both regrets, weighted by window decisions. */
   totals: { todayRegret: number | null; engineRegret: number | null; regretGain: number | null; families: number };
-  /** Beliefs as of a checkpoint read the outcomes those decisions have NOW (the ledger cut is on run start). */
   caveats: readonly string[];
-  /** runs-service's ledger was reconciled for every book read (false = read anyway, `ledgerDaysMissing` days stale). */
+  /** runs-service's ledger was reconciled for the read (false = read anyway, `ledgerDaysMissing` days stale). */
   ledgerReconciled?: boolean;
   ledgerDaysMissing?: number;
+  /** The knobs the replay ran with. */
+  model?: typeof ENGINE_MODEL;
   failure: string | null;
 }
 
@@ -634,11 +789,7 @@ export function replayTotals(families: readonly ReplayFamily[]): EngineReplay["t
   return { todayRegret: round(today, 4), engineRegret: round(engine, 4), regretGain: round(today - engine, 4), families: graded.length };
 }
 
-export const REPLAY_CAVEATS = [
-  "beliefs_read_later_outcomes_of_earlier_decisions",
-  "window_outcomes_still_maturing",
-  "candidates_are_todays_selectable_workflows",
-] as const;
+export const REPLAY_CAVEATS = ["beliefs_count_outcomes_to_date", "candidates_are_todays_selectable_workflows", "uplift_reads_lifetime_mix"] as const;
 
 function round(v: number, digits = 2): number {
   const f = 10 ** digits;
