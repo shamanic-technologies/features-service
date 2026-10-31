@@ -58,3 +58,21 @@ describe("one regime for every pipe (LEDGER-HISTORY-1024)", () => {
     expect(pipeWorkflowCosts("conversation", new Set(["c1"]), aud).get("keel-v2")).toMatchObject({ costUsd: 40, outcomes: 3 });
   });
 });
+
+describe("a reply judged UNDER the campaign it answers, by a run of no workflow (since 2026-10-23)", () => {
+  it("is credited to the send it answers, at its own unit cost, like an off-campaign one (it was dropped)", () => {
+    const inCampaign: LedgerPipeBook = {
+      produced: [
+        { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "ballad-v4", occurrences: 100, costUsd: 10 },
+        { outcomeKey: "conversation", campaignId: "c1", workflowSlug: null, occurrences: 3, costUsd: 0.3 },
+      ],
+      noOutput: [],
+      consumed: [
+        { consumerKey: "conversation", consumedKey: "message_sent", campaignId: "c1", workflowSlug: null, sourceCampaignId: "c1", sourceWorkflowSlug: "ballad-v4", count: 3 },
+      ],
+    };
+    expect(offCampaignUnitCost("conversation", inCampaign)).toBeCloseTo(0.1, 10);
+    expect(pipeWorkflowCosts("conversation", new Set(["c1"]), inCampaign).get("ballad-v4")).toMatchObject({ outcomes: 3 });
+    expect(pipeWorkflowCosts("conversation", new Set(["c1"]), inCampaign).get("ballad-v4")!.costUsd).toBeCloseTo(10.3, 10);
+  });
+});
