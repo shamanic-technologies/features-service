@@ -23,6 +23,8 @@ export interface LedgerProducedRow {
   audienceId?: string | null;
   occurrences: number;
   costUsd: number;
+  /** UTC day the declaring run started (the daily book only, `loadDailyLedgerBook`). */
+  runStartDay?: string | null;
 }
 
 export interface LedgerNoOutputRow {
@@ -31,6 +33,7 @@ export interface LedgerNoOutputRow {
   audienceId?: string | null;
   /** Spend of runs that produced nothing, support marks taken out (support is apart by design). */
   costUsd: number;
+  runStartDay?: string | null;
 }
 
 export interface LedgerConsumedRow {
@@ -44,6 +47,9 @@ export interface LedgerConsumedRow {
   sourceWorkflowSlug: string | null;
   sourceAudienceId?: string | null;
   count: number;
+  /** UTC day the consuming run started, and the day the run that produced the consumed occurrence started (daily book only). */
+  runStartDay?: string | null;
+  sourceRunStartDay?: string | null;
 }
 
 export interface LedgerPipeBook {

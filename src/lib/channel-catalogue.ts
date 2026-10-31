@@ -467,3 +467,41 @@ export function salesFunnelCatalogue(): PublicSalesFunnel[] {
     };
   });
 }
+
+/**
+ * THE RETIRED CHANNELS, for DESCRIBING past campaigns only (P5.1 follow-up, owner 2026-10-31): a seeded channel whose slug
+ * was retired for a successor (`supersededBySlug`) or deprecated, so the stopped campaigns that ran on it keep their
+ * channel's name and icon. Never published as a channel (`buildChannelCatalogue` skips them), never offered.
+ */
+export interface RetiredChannel {
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  channelType: string;
+  operatedBy: string;
+  supersededBySlug: string | null;
+  stepTransitions: Array<{ legKey: string; from: { key: string } | null; to: { key: string } }>;
+}
+
+/** PURE: the retired channels among these feature rows (superseded or deprecated), built through the ONE builder. */
+export function retiredChannelsOf(
+  all: ReadonlyArray<CatalogueFeatureRow & { status?: string | null }>,
+  channelTypeOfSlug: (slug: string) => ChannelType = channelTypeOf,
+): RetiredChannel[] {
+  const rows = all.filter((r) => r.supersededBySlug != null || r.status === "deprecated");
+  // The marker cleared so the builder does not skip it: its legs read as a live one's.
+  // No card caption: a retired channel is never a card (its caption list is for offered channels, and a missing one throws).
+  const built = buildChannelCatalogue(rows.map((r) => ({ ...r, supersededBySlug: null })), () => "", channelTypeOfSlug);
+  const successor = new Map(rows.map((r) => [r.slug, r.supersededBySlug ?? null] as const));
+  return built.map((c) => ({
+    slug: c.slug,
+    name: c.name,
+    description: c.description,
+    icon: c.icon,
+    channelType: c.channelType,
+    operatedBy: c.operatedBy,
+    supersededBySlug: successor.get(c.slug) ?? null,
+    stepTransitions: c.stepTransitions.map((t) => ({ legKey: t.legKey, from: t.from ? { key: t.from.key } : null, to: { key: t.to.key } })),
+  }));
+}

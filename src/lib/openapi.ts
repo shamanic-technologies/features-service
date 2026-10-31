@@ -6437,6 +6437,20 @@ const channelCatalogueResponseSchema = registry.register(
         }),
       )
       .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service. A condition `delay` instance (\"outcome X reached, still not Y after N\": `params {afterStep, minutes|days, unlessStep}`) is a declared row computed by campaign-service's generic detector: a new one is declared, never coded."),
+    retiredChannels: z
+      .array(
+        z.object({
+          slug: z.string(),
+          name: z.string(),
+          description: z.string(),
+          icon: z.string().describe("Icon token (Phosphor name), like a channel's `icon`."),
+          channelType: z.string(),
+          operatedBy: z.string(),
+          supersededBySlug: z.string().nullable().describe("The slug selling the same offering now; null on a deprecated channel."),
+          stepTransitions: z.array(z.object({ legKey: z.string(), from: z.object({ key: z.string() }).nullable(), to: z.object({ key: z.string() }) })),
+        }),
+      )
+      .describe("THE RETIRED CHANNELS (P5.1, owner 2026-10-31): a seeded channel retired for a successor (`supersededBySlug`) or deprecated, served ONLY so the past campaigns that ran on it keep their channel's name and icon. Never a channel: not bookable, never offered, absent from `channels`."),
     triggerAliases: z
       .array(
         z.object({
@@ -9536,11 +9550,12 @@ const enginePlace = z.object({
       enginePickRef.extend({
         fromStep: z.string().nullable(),
         valueAddedUsd: z.number().nullable().describe("The outcome's value on the offer's lifetime revenue less the value of the step it starts from."),
+        uplift: z.number().optional().describe("Its sub-picks at their best (best measured template x LLM combination's outcomes per dollar over the mix it ran, 1..3): multiplies its value in the pick."),
         fleetDecisions: z.number(),
         fleetOutcomes: z.number(),
         clientDecisions: z.number().nullable().describe("The client's own decisions on this workflow (ledger at its campaigns); null = ledger unreadable."),
         clientOutcomes: z.number().nullable(),
-        rateMeanPct: z.number().nullable().describe("The pooled belief's mean rate (%), censored delays."),
+        rateMeanPct: z.number().nullable().describe("The pooled belief's mean rate (%): evidence per decision day, faded with a half-life, censored like for like."),
         costPerDecisionMeanUsd: z.number().nullable(),
         valuePerDollarMean: z.number().nullable(),
         pickSharePct: z.number().nullable().describe("Share of the Thompson draws it wins (%); null = cannot be priced."),
@@ -9560,12 +9575,14 @@ const engineShadow = z.object({
   agreed: z.number().int(),
   expectedAgreementPct: z.number().nullable(),
   clientEvidence: z.enum(["ledger", "ledger_unreconciled", "ledger_unreadable"]).describe("`ledger_unreconciled` = read while runs-service's ledger had a stale or missing day (stated, never red)."),
-  limits: z.array(z.string()).describe("What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."),
+  limits: z.array(z.string()).describe("What the model reads loosely: `uplift_reads_lifetime_mix` (v10: last week's), `beliefs_count_outcomes_to_date`."),
+  model: z.object({ halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional().describe("The knobs this pick ran with."),
 });
 const engineReplay = z.object({
   computedAt: z.string(),
   windowDays: z.number().int(),
-  checkpoints: z.array(z.string()).describe("Run-start cuts the beliefs were read as of; each period runs to the next, the last to today."),
+  window: z.object({ sinceDay: z.string(), untilDay: z.string() }).optional().describe("The window's decision days [sinceDay, untilDay): it ends where runs-service's stored decision days end (recent days not yet stored with their run-start day are left out)."),
+  checkpoints: z.array(z.string()).describe("Decision days of the window the Engine picked on, each on the evidence as of that day."),
   families: z.array(
     z.object({
       outcome: z.string().describe("The Engine's outcome: the family of every pipe of ours ending on it."),
@@ -9573,12 +9590,13 @@ const engineReplay = z.object({
       candidates: z.number().int(),
       graded: z.number().int().describe("Candidates with >= 20 window decisions and spend: their value per dollar is measured."),
       windowDecisions: z.number(),
+      checkpoints: z.number().int().optional().describe("Decision days the Engine picked on (one per day with decisions)."),
       bestValuePerDollar: z.number().nullable().describe("The window's best measured value per dollar (value added x outcomes / spend)."),
       bestCandidateId: z.string().nullable(),
-      todayRegret: z.number().nullable().describe("Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best), graded candidates only."),
+      todayRegret: z.number().nullable().describe("Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best) over its GRADABLE picks only (value per dollar censored like for like)."),
       todayValuePerDollar: z.number().nullable(),
       todayUngradedPct: z.number().nullable(),
-      engineRegret: z.number().nullable().describe("The Engine: its Thompson pick shares at each checkpoint on the evidence as of then, graded the same way, weighted by each period's decisions."),
+      engineRegret: z.number().nullable().describe("The Engine: each decision day its Thompson shares on the evidence as of that day, graded the same way (gradable picks only: a draw on an ungradable workflow is exploration, in `engineUngradedPct`, never value lost), weighted by that day's decisions."),
       engineValuePerDollar: z.number().nullable(),
       engineUngradedPct: z.number().nullable().describe("Share of the Engine's picks on candidates the window cannot grade (exploration)."),
       regretGain: z.number().nullable().describe("todayRegret − engineRegret: positive = the Engine would have bought more value per dollar."),
@@ -9589,6 +9607,7 @@ const engineReplay = z.object({
   caveats: z.array(z.string()),
   ledgerReconciled: z.boolean().optional().describe("False = the ledger was read while runs-service had not reconciled it (`ledgerDaysMissing` stale days): stated, never red."),
   ledgerDaysMissing: z.number().int().optional(),
+  model: z.object({ halfLifeDays: z.number(), upliftCap: z.number(), upliftMinOutcomes: z.number(), draws: z.number() }).optional(),
   failure: z.string().nullable().describe("Set when the replay failed (red)."),
 });
 

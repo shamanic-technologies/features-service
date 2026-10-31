@@ -64,7 +64,7 @@ import {
 import { readDays, readJudgments, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 import { computeEngineReplay, engineMemos, engineShadowOfCampaign, type EngineMemos } from "../lib/engine-shadow-io.js";
-import { engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
+import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
 
@@ -508,8 +508,10 @@ async function engineOfBody(c: ShadowCampaign, b: ShadowBody, memos: ReturnType<
 async function refreshEngineReplay(engines: EngineMemos, now: Date): Promise<void> {
   const held = await loadFleetCell(REPLAY_CELL);
   // A failed replay is retried on the next pass (never red for 20 h on one bad read).
-  const heldFailed = held ? (JSON.parse(held.text) as EngineReplay).failure !== null : false;
-  if (held && !heldFailed && now.getTime() - held.computedAt < REPLAY_EVERY_MS) return;
+  const heldReplay = held ? (JSON.parse(held.text) as EngineReplay) : null;
+  // A replay run on other knobs (or before them) is recomputed at once: the Monitoring numbers are the model's now.
+  const sameModel = JSON.stringify(heldReplay?.model ?? null) === JSON.stringify(ENGINE_MODEL);
+  if (held && heldReplay?.failure === null && sameModel && now.getTime() - held.computedAt < REPLAY_EVERY_MS) return;
   let replay: EngineReplay;
   try {
     const ltr = await offerLifetimeRevenue(null);

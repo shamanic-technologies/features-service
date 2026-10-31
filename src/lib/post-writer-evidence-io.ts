@@ -99,6 +99,7 @@ export function generationsOfPipe(
   assignments: ReadonlyArray<{ featureSlug: string; legKey: string; workflowDynastySlug: string }>,
   featureSlug: string,
   legKey: string,
+  opts: { includeDryRuns?: boolean } = {},
 ): FeedGeneration[] {
   const own = assignments.filter((a) => a.featureSlug === featureSlug);
   const legOf = (slug: string): string | null => {
@@ -110,7 +111,7 @@ export function generationsOfPipe(
     return best?.leg ?? null;
   };
   // A dry run's generation is no evidence: its run's spend and everything else stay out (THREADS-IDEAS-AB).
-  return generations.filter((g) => !g.dryRun && g.featureSlug === featureSlug && g.workflowSlug !== null && legOf(g.workflowSlug) === legKey);
+  return generations.filter((g) => (opts.includeDryRuns || !g.dryRun) && g.featureSlug === featureSlug && g.workflowSlug !== null && legOf(g.workflowSlug) === legKey);
 }
 
 async function runsGet(path: string): Promise<unknown> {
@@ -197,16 +198,31 @@ export function ledgerCredits(
 }
 
 /** Each writing run's whole subtree cost (billed USD), per (org, campaign) of its generations. */
-async function readRunSpend(gens: readonly FeedGeneration[]): Promise<Map<string, number>> {
+export interface RunSpend {
+  usd: number;
+  /** runs-service's support mark of the run (its own or its nearest marked ancestor's): staff work, never evidence. */
+  supportFunction: string | null;
+}
+
+/**
+ * PURE. The generations whose writing run is real work: a run runs-service states a support mark on (a staff
+ * experiment, `supportFunction` non-null) is dropped entirely, like a dry run (THREADS-IDEAS-AB).
+ */
+export function withoutSupportRuns<T extends { runId: string | null }>(gens: readonly T[], spend: ReadonlyMap<string, RunSpend>): T[] {
+  return gens.filter((g) => !g.runId || !spend.get(g.runId)?.supportFunction);
+}
+
+async function readRunSpend(gens: readonly FeedGeneration[]): Promise<Map<string, RunSpend>> {
   const scopes = [...new Map(gens.filter((g) => g.campaignId).map((g) => [`${g.orgId}|${g.campaignId}`, { orgId: g.orgId, campaignId: g.campaignId! }])).values()];
-  const out = new Map<string, number>();
+  const out = new Map<string, RunSpend>();
   await mapWithConcurrency(scopes, 2, async (s) => {
     const q = new URLSearchParams({ orgId: s.orgId, campaignId: s.campaignId, serviceName: "workflow", taskName: "execute-workflow" });
-    const body = (await runsGet(`/internal/runs/subtree-costs?${q}`)) as { runs?: Array<{ id: string; actualCostInUsdCents?: string }> };
+    const body = (await runsGet(`/internal/runs/subtree-costs?${q}`)) as { runs?: Array<{ id: string; actualCostInUsdCents?: string; supportFunction?: string | null }> };
     if (!Array.isArray(body.runs)) throw new Error("runs-service subtree-costs: no runs array");
     for (const r of body.runs) {
       if (typeof r.actualCostInUsdCents !== "string") throw new Error(`runs-service subtree-costs stated no actualCostInUsdCents for run ${r.id}`);
-      out.set(r.id, Number(r.actualCostInUsdCents) / 100);
+      // `supportFunction` is additive on runs-service (absent before it deploys = no mark).
+      out.set(r.id, { usd: Number(r.actualCostInUsdCents) / 100, supportFunction: typeof r.supportFunction === "string" && r.supportFunction ? r.supportFunction : null });
     }
   });
   return out;
@@ -240,11 +256,15 @@ async function readPostMetrics(campaignIds: readonly string[]): Promise<Map<stri
  */
 export async function readPostPipeEvidence(featureSlug: string, legKey: string): Promise<{ generations: FeedGeneration[]; creditOf: (runId: string) => RunCredit } | null> {
   const [feed, assignments] = await Promise.all([readPostGenerations(), listLegAssignments({ featureSlug })]);
-  const gens = generationsOfPipe(feed, assignments, featureSlug, legKey);
-  if (gens.length === 0) return null;
+  // A pipe holding any post generation is a post pipe, even when every one is a dry run or staff work (then it reads
+  // zero everywhere, a measured build, never the previous build's staff spend).
+  if (generationsOfPipe(feed, assignments, featureSlug, legKey, { includeDryRuns: true }).length === 0) return null;
+  const live = generationsOfPipe(feed, assignments, featureSlug, legKey);
+  const spend = live.length ? await readRunSpend(live) : new Map<string, RunSpend>();
+  const gens = withoutSupportRuns(live, spend);
+  if (gens.length === 0) return { generations: [], creditOf: () => ({ spentUsd: 0, published: false, views: 0, engagements: 0, visits: 0, signups: 0 }) };
   const runIds = [...new Set(gens.flatMap((g) => (g.runId ? [g.runId] : [])))];
-  const [spend, metrics, published] = await Promise.all([
-    readRunSpend(gens),
+  const [metrics, published] = await Promise.all([
     readPostMetrics(gens.flatMap((g) => (g.campaignId ? [g.campaignId] : []))),
     occurrencesOver(runIds, "runIds", { outcomeKey: "post_published", direction: "produced" }),
   ]);
@@ -265,7 +285,7 @@ export async function readPostPipeEvidence(featureSlug: string, legKey: string):
     creditOf: (runId) => {
       const l = ledger.get(runId) ?? { published: false, visits: 0, signups: 0 };
       const m = metrics.get(runId) ?? { views: 0, engagements: 0 };
-      return { spentUsd: spend.get(runId) ?? 0, published: l.published, views: m.views, engagements: m.engagements, visits: l.visits, signups: l.signups };
+      return { spentUsd: spend.get(runId)?.usd ?? 0, published: l.published, views: m.views, engagements: m.engagements, visits: l.visits, signups: l.signups };
     },
   };
 }
