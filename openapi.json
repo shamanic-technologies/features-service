@@ -35604,6 +35604,331 @@
               "candidatesSetAside"
             ]
           },
+          "engine": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "computedAt": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "failed"
+                ],
+                "description": "`failed` = could not be computed for this campaign (red on Monitoring)."
+              },
+              "failure": {
+                "type": "string",
+                "nullable": true
+              },
+              "places": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string",
+                      "description": "The outcome this candidate place calls (a catalogue step)."
+                    },
+                    "outcomeName": {
+                      "type": "string"
+                    },
+                    "consumer": {
+                      "type": "string",
+                      "description": "Who calls it: the next outcome of the line, or `campaign` at the Target."
+                    },
+                    "consumerName": {
+                      "type": "string"
+                    },
+                    "today": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "candidateId": {
+                          "type": "string",
+                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                        },
+                        "pipeId": {
+                          "type": "string",
+                          "description": "The pipe or play it runs under."
+                        },
+                        "channelName": {
+                          "type": "string"
+                        },
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "workflowDynastyName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "candidateId",
+                        "pipeId",
+                        "channelName",
+                        "workflowDynastySlug",
+                        "workflowDynastyName"
+                      ],
+                      "description": "Today's pick: the pipe the campaign runs on this leg and the workflow its leg ranking puts first (best-ROI order, within the play)."
+                    },
+                    "todayUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "`no_pipe_on_leg`, `client_team_leg`, `workflow_ranking_not_computed_yet`; null with a pick."
+                    },
+                    "engine": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "candidateId": {
+                          "type": "string",
+                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                        },
+                        "pipeId": {
+                          "type": "string",
+                          "description": "The pipe or play it runs under."
+                        },
+                        "channelName": {
+                          "type": "string"
+                        },
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "workflowDynastyName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "candidateId",
+                        "pipeId",
+                        "channelName",
+                        "workflowDynastySlug",
+                        "workflowDynastyName"
+                      ],
+                      "description": "The Engine's pick on this tick: ONE Thompson draw on value per dollar (rate x value added / cost per decision) over every candidate."
+                    },
+                    "engineModal": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "candidateId": {
+                          "type": "string",
+                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                        },
+                        "pipeId": {
+                          "type": "string",
+                          "description": "The pipe or play it runs under."
+                        },
+                        "channelName": {
+                          "type": "string"
+                        },
+                        "workflowDynastySlug": {
+                          "type": "string"
+                        },
+                        "workflowDynastyName": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "candidateId",
+                        "pipeId",
+                        "channelName",
+                        "workflowDynastySlug",
+                        "workflowDynastyName"
+                      ],
+                      "description": "The candidate most of the 1,000 draws pick."
+                    },
+                    "agrees": {
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "Today's pick IS the Engine's tick pick; null when either is missing."
+                    },
+                    "todayPickSharePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Share of the draws picking today's pick (%): the expected agreement."
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "no_candidate",
+                        "no_candidate_priced"
+                      ],
+                      "description": "`no_candidate*` = not yet (normal colours): nothing of ours runs on this outcome, or nothing is priced."
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "candidateId": {
+                            "type": "string",
+                            "description": "`<base pipe id>::<workflow dynasty slug>`."
+                          },
+                          "pipeId": {
+                            "type": "string",
+                            "description": "The pipe or play it runs under."
+                          },
+                          "channelName": {
+                            "type": "string"
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "workflowDynastyName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "valueAddedUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The outcome's value on the offer's lifetime revenue less the value of the step it starts from."
+                          },
+                          "fleetDecisions": {
+                            "type": "number"
+                          },
+                          "fleetOutcomes": {
+                            "type": "number"
+                          },
+                          "clientDecisions": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The client's own decisions on this workflow (ledger at its campaigns); null = ledger unreadable."
+                          },
+                          "clientOutcomes": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "rateMeanPct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The pooled belief's mean rate (%), censored delays."
+                          },
+                          "costPerDecisionMeanUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "valuePerDollarMean": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "pickSharePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Share of the Thompson draws it wins (%); null = cannot be priced."
+                          },
+                          "isToday": {
+                            "type": "boolean"
+                          },
+                          "isEnginePick": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "candidateId",
+                          "pipeId",
+                          "channelName",
+                          "workflowDynastySlug",
+                          "workflowDynastyName",
+                          "fromStep",
+                          "valueAddedUsd",
+                          "fleetDecisions",
+                          "fleetOutcomes",
+                          "clientDecisions",
+                          "clientOutcomes",
+                          "rateMeanPct",
+                          "costPerDecisionMeanUsd",
+                          "valuePerDollarMean",
+                          "pickSharePct",
+                          "isToday",
+                          "isEnginePick"
+                        ]
+                      },
+                      "description": "Every candidate of the outcome's Engine: every runnable workflow of every pipe we run ending on it, under the brief's pipe and play verdicts, starting from a step the campaign holds."
+                    },
+                    "strengths": {
+                      "type": "object",
+                      "properties": {
+                        "pipe": {
+                          "type": "number"
+                        },
+                        "workflow": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "pipe",
+                        "workflow"
+                      ],
+                      "description": "The pooling strengths fitted from the siblings' spread (pseudo-trials)."
+                    }
+                  },
+                  "required": [
+                    "outcome",
+                    "outcomeName",
+                    "consumer",
+                    "consumerName",
+                    "today",
+                    "todayUnavailableReason",
+                    "engine",
+                    "engineModal",
+                    "agrees",
+                    "todayPickSharePct",
+                    "state",
+                    "candidates",
+                    "strengths"
+                  ]
+                },
+                "description": "One per leg of the running line, up to the Target (a leg only the client's team works is no place of ours)."
+              },
+              "comparable": {
+                "type": "integer"
+              },
+              "agreed": {
+                "type": "integer"
+              },
+              "expectedAgreementPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "clientEvidence": {
+                "type": "string",
+                "enum": [
+                  "ledger",
+                  "ledger_unreadable"
+                ]
+              },
+              "limits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."
+              }
+            },
+            "required": [
+              "computedAt",
+              "status",
+              "failure",
+              "places",
+              "comparable",
+              "agreed",
+              "expectedAgreementPct",
+              "clientEvidence",
+              "limits"
+            ],
+            "description": "ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): one Engine per outcome, the pick by Thompson sampling on value per dollar, beside today's pick. Absent on a body stored before."
+          },
           "computedAt": {
             "type": "string"
           }
@@ -77923,6 +78248,19 @@
                             "type": "integer",
                             "description": "Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."
                           },
+                          "enginePlaces": {
+                            "type": "integer",
+                            "description": "Candidate places where today's pick and the Engine's both exist (0 before 2026-10-31)."
+                          },
+                          "engineAgreed": {
+                            "type": "integer"
+                          },
+                          "engineTodayShareSum": {
+                            "type": "number"
+                          },
+                          "engineFailed": {
+                            "type": "integer"
+                          },
                           "day": {
                             "type": "string"
                           },
@@ -77957,6 +78295,19 @@
                                 "notYet": {
                                   "type": "integer",
                                   "description": "Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."
+                                },
+                                "enginePlaces": {
+                                  "type": "integer",
+                                  "description": "Candidate places where today's pick and the Engine's both exist (0 before 2026-10-31)."
+                                },
+                                "engineAgreed": {
+                                  "type": "integer"
+                                },
+                                "engineTodayShareSum": {
+                                  "type": "number"
+                                },
+                                "engineFailed": {
+                                  "type": "integer"
                                 }
                               },
                               "required": [
@@ -78211,6 +78562,202 @@
                               "best"
                             ],
                             "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
+                          },
+                          "engine": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "failed"
+                                ],
+                                "description": "`failed` = could not be computed for this campaign (red on Monitoring)."
+                              },
+                              "failure": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "comparable": {
+                                "type": "integer"
+                              },
+                              "agreed": {
+                                "type": "integer"
+                              },
+                              "expectedAgreementPct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "places": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "outcome": {
+                                      "type": "string",
+                                      "description": "The outcome this candidate place calls (a catalogue step)."
+                                    },
+                                    "outcomeName": {
+                                      "type": "string"
+                                    },
+                                    "consumer": {
+                                      "type": "string",
+                                      "description": "Who calls it: the next outcome of the line, or `campaign` at the Target."
+                                    },
+                                    "consumerName": {
+                                      "type": "string"
+                                    },
+                                    "today": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "Today's pick: the pipe the campaign runs on this leg and the workflow its leg ranking puts first (best-ROI order, within the play)."
+                                    },
+                                    "todayUnavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "`no_pipe_on_leg`, `client_team_leg`, `workflow_ranking_not_computed_yet`; null with a pick."
+                                    },
+                                    "engine": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The Engine's pick on this tick: ONE Thompson draw on value per dollar (rate x value added / cost per decision) over every candidate."
+                                    },
+                                    "engineModal": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The candidate most of the 1,000 draws pick."
+                                    },
+                                    "agrees": {
+                                      "type": "boolean",
+                                      "nullable": true,
+                                      "description": "Today's pick IS the Engine's tick pick; null when either is missing."
+                                    },
+                                    "todayPickSharePct": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the draws picking today's pick (%): the expected agreement."
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ok",
+                                        "no_candidate",
+                                        "no_candidate_priced"
+                                      ],
+                                      "description": "`no_candidate*` = not yet (normal colours): nothing of ours runs on this outcome, or nothing is priced."
+                                    },
+                                    "candidates": {
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "required": [
+                                    "outcome",
+                                    "outcomeName",
+                                    "consumer",
+                                    "consumerName",
+                                    "today",
+                                    "todayUnavailableReason",
+                                    "engine",
+                                    "engineModal",
+                                    "agrees",
+                                    "todayPickSharePct",
+                                    "state",
+                                    "candidates"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "failure",
+                              "comparable",
+                              "agreed",
+                              "expectedAgreementPct",
+                              "places"
+                            ],
+                            "description": "Today's pick vs the Engine's pick per place (candidate rows on the campaign's own read)."
                           }
                         },
                         "required": [
@@ -78457,6 +79004,202 @@
                               "best"
                             ],
                             "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
+                          },
+                          "engine": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "failed"
+                                ],
+                                "description": "`failed` = could not be computed for this campaign (red on Monitoring)."
+                              },
+                              "failure": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "comparable": {
+                                "type": "integer"
+                              },
+                              "agreed": {
+                                "type": "integer"
+                              },
+                              "expectedAgreementPct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "places": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "outcome": {
+                                      "type": "string",
+                                      "description": "The outcome this candidate place calls (a catalogue step)."
+                                    },
+                                    "outcomeName": {
+                                      "type": "string"
+                                    },
+                                    "consumer": {
+                                      "type": "string",
+                                      "description": "Who calls it: the next outcome of the line, or `campaign` at the Target."
+                                    },
+                                    "consumerName": {
+                                      "type": "string"
+                                    },
+                                    "today": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "Today's pick: the pipe the campaign runs on this leg and the workflow its leg ranking puts first (best-ROI order, within the play)."
+                                    },
+                                    "todayUnavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "`no_pipe_on_leg`, `client_team_leg`, `workflow_ranking_not_computed_yet`; null with a pick."
+                                    },
+                                    "engine": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The Engine's pick on this tick: ONE Thompson draw on value per dollar (rate x value added / cost per decision) over every candidate."
+                                    },
+                                    "engineModal": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The candidate most of the 1,000 draws pick."
+                                    },
+                                    "agrees": {
+                                      "type": "boolean",
+                                      "nullable": true,
+                                      "description": "Today's pick IS the Engine's tick pick; null when either is missing."
+                                    },
+                                    "todayPickSharePct": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the draws picking today's pick (%): the expected agreement."
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ok",
+                                        "no_candidate",
+                                        "no_candidate_priced"
+                                      ],
+                                      "description": "`no_candidate*` = not yet (normal colours): nothing of ours runs on this outcome, or nothing is priced."
+                                    },
+                                    "candidates": {
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "required": [
+                                    "outcome",
+                                    "outcomeName",
+                                    "consumer",
+                                    "consumerName",
+                                    "today",
+                                    "todayUnavailableReason",
+                                    "engine",
+                                    "engineModal",
+                                    "agrees",
+                                    "todayPickSharePct",
+                                    "state",
+                                    "candidates"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "failure",
+                              "comparable",
+                              "agreed",
+                              "expectedAgreementPct",
+                              "places"
+                            ],
+                            "description": "Today's pick vs the Engine's pick per place (candidate rows on the campaign's own read)."
                           }
                         },
                         "required": [
@@ -78704,6 +79447,202 @@
                               "best"
                             ],
                             "description": "What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."
+                          },
+                          "engine": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "failed"
+                                ],
+                                "description": "`failed` = could not be computed for this campaign (red on Monitoring)."
+                              },
+                              "failure": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "comparable": {
+                                "type": "integer"
+                              },
+                              "agreed": {
+                                "type": "integer"
+                              },
+                              "expectedAgreementPct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "places": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "outcome": {
+                                      "type": "string",
+                                      "description": "The outcome this candidate place calls (a catalogue step)."
+                                    },
+                                    "outcomeName": {
+                                      "type": "string"
+                                    },
+                                    "consumer": {
+                                      "type": "string",
+                                      "description": "Who calls it: the next outcome of the line, or `campaign` at the Target."
+                                    },
+                                    "consumerName": {
+                                      "type": "string"
+                                    },
+                                    "today": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "Today's pick: the pipe the campaign runs on this leg and the workflow its leg ranking puts first (best-ROI order, within the play)."
+                                    },
+                                    "todayUnavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "`no_pipe_on_leg`, `client_team_leg`, `workflow_ranking_not_computed_yet`; null with a pick."
+                                    },
+                                    "engine": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The Engine's pick on this tick: ONE Thompson draw on value per dollar (rate x value added / cost per decision) over every candidate."
+                                    },
+                                    "engineModal": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "properties": {
+                                        "candidateId": {
+                                          "type": "string",
+                                          "description": "`<base pipe id>::<workflow dynasty slug>`."
+                                        },
+                                        "pipeId": {
+                                          "type": "string",
+                                          "description": "The pipe or play it runs under."
+                                        },
+                                        "channelName": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastySlug": {
+                                          "type": "string"
+                                        },
+                                        "workflowDynastyName": {
+                                          "type": "string",
+                                          "nullable": true
+                                        }
+                                      },
+                                      "required": [
+                                        "candidateId",
+                                        "pipeId",
+                                        "channelName",
+                                        "workflowDynastySlug",
+                                        "workflowDynastyName"
+                                      ],
+                                      "description": "The candidate most of the 1,000 draws pick."
+                                    },
+                                    "agrees": {
+                                      "type": "boolean",
+                                      "nullable": true,
+                                      "description": "Today's pick IS the Engine's tick pick; null when either is missing."
+                                    },
+                                    "todayPickSharePct": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the draws picking today's pick (%): the expected agreement."
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ok",
+                                        "no_candidate",
+                                        "no_candidate_priced"
+                                      ],
+                                      "description": "`no_candidate*` = not yet (normal colours): nothing of ours runs on this outcome, or nothing is priced."
+                                    },
+                                    "candidates": {
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "required": [
+                                    "outcome",
+                                    "outcomeName",
+                                    "consumer",
+                                    "consumerName",
+                                    "today",
+                                    "todayUnavailableReason",
+                                    "engine",
+                                    "engineModal",
+                                    "agrees",
+                                    "todayPickSharePct",
+                                    "state",
+                                    "candidates"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "failure",
+                              "comparable",
+                              "agreed",
+                              "expectedAgreementPct",
+                              "places"
+                            ],
+                            "description": "Today's pick vs the Engine's pick per place (candidate rows on the campaign's own read)."
                           }
                         },
                         "required": [
@@ -78724,6 +79663,307 @@
                         ]
                       },
                       "description": "The last pass's campaigns in `state: not_yet` (normal colours)."
+                    },
+                    "engine": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "object",
+                          "properties": {
+                            "red": {
+                              "type": "boolean"
+                            },
+                            "reasons": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "engine_failed",
+                                  "replay_failed"
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "red",
+                            "reasons"
+                          ],
+                          "description": "Red ONLY when broken: a campaign's Engine or the replay failed. The pass staleness is `verdict` above."
+                        },
+                        "last": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "day": {
+                              "type": "string"
+                            },
+                            "places": {
+                              "type": "integer"
+                            },
+                            "agreed": {
+                              "type": "integer"
+                            },
+                            "disagreed": {
+                              "type": "integer"
+                            },
+                            "agreementPct": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "expectedAgreementPct": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "failed": {
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "day",
+                            "places",
+                            "agreed",
+                            "disagreed",
+                            "agreementPct",
+                            "expectedAgreementPct",
+                            "failed"
+                          ]
+                        },
+                        "series": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "day": {
+                                "type": "string"
+                              },
+                              "places": {
+                                "type": "integer"
+                              },
+                              "agreed": {
+                                "type": "integer"
+                              },
+                              "disagreed": {
+                                "type": "integer"
+                              },
+                              "agreementPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Places where today's pick IS the Engine's tick pick (%)."
+                              },
+                              "expectedAgreementPct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Mean share of Thompson draws picking today's pick (%)."
+                              },
+                              "failed": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "day",
+                              "places",
+                              "agreed",
+                              "disagreed",
+                              "agreementPct",
+                              "expectedAgreementPct",
+                              "failed"
+                            ]
+                          }
+                        },
+                        "problems": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "campaignId": {
+                                "type": "string"
+                              },
+                              "orgId": {
+                                "type": "string"
+                              },
+                              "brandId": {
+                                "type": "string"
+                              },
+                              "salesFunnelName": {
+                                "type": "string"
+                              },
+                              "failure": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "campaignId",
+                              "orgId",
+                              "brandId",
+                              "salesFunnelName",
+                              "failure"
+                            ]
+                          }
+                        },
+                        "replay": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "computedAt": {
+                              "type": "string"
+                            },
+                            "windowDays": {
+                              "type": "integer"
+                            },
+                            "checkpoints": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              },
+                              "description": "Run-start cuts the beliefs were read as of; each period runs to the next, the last to today."
+                            },
+                            "families": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "outcome": {
+                                    "type": "string",
+                                    "description": "The Engine's outcome: the family of every pipe of ours ending on it."
+                                  },
+                                  "outcomeName": {
+                                    "type": "string"
+                                  },
+                                  "candidates": {
+                                    "type": "integer"
+                                  },
+                                  "graded": {
+                                    "type": "integer",
+                                    "description": "Candidates with >= 20 window decisions and spend: their value per dollar is measured."
+                                  },
+                                  "windowDecisions": {
+                                    "type": "number"
+                                  },
+                                  "bestValuePerDollar": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The window's best measured value per dollar (value added x outcomes / spend)."
+                                  },
+                                  "bestCandidateId": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "todayRegret": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best), graded candidates only."
+                                  },
+                                  "todayValuePerDollar": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "todayUngradedPct": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "engineRegret": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The Engine: its Thompson pick shares at each checkpoint on the evidence as of then, graded the same way, weighted by each period's decisions."
+                                  },
+                                  "engineValuePerDollar": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "engineUngradedPct": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Share of the Engine's picks on candidates the window cannot grade (exploration)."
+                                  },
+                                  "regretGain": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "todayRegret − engineRegret: positive = the Engine would have bought more value per dollar."
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "outcome",
+                                  "outcomeName",
+                                  "candidates",
+                                  "graded",
+                                  "windowDecisions",
+                                  "bestValuePerDollar",
+                                  "bestCandidateId",
+                                  "todayRegret",
+                                  "todayValuePerDollar",
+                                  "todayUngradedPct",
+                                  "engineRegret",
+                                  "engineValuePerDollar",
+                                  "engineUngradedPct",
+                                  "regretGain",
+                                  "reason"
+                                ]
+                              }
+                            },
+                            "totals": {
+                              "type": "object",
+                              "properties": {
+                                "todayRegret": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "engineRegret": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "regretGain": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "families": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "todayRegret",
+                                "engineRegret",
+                                "regretGain",
+                                "families"
+                              ],
+                              "description": "Over the graded families, weighted by window decisions."
+                            },
+                            "caveats": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "failure": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Set when the replay failed (red)."
+                            }
+                          },
+                          "required": [
+                            "computedAt",
+                            "windowDays",
+                            "checkpoints",
+                            "families",
+                            "totals",
+                            "caveats",
+                            "failure"
+                          ],
+                          "description": "The 30-day replay, recomputed once a day by the pass; null before the first."
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "last",
+                        "series",
+                        "problems",
+                        "replay"
+                      ],
+                      "description": "ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): today's pick vs the Engine's (Thompson on value per dollar), fleet daily agreement and the replay regret."
                     }
                   },
                   "required": [
@@ -78733,7 +79973,8 @@
                     "series",
                     "campaigns",
                     "problems",
-                    "notYet"
+                    "notYet",
+                    "engine"
                   ]
                 }
               }
