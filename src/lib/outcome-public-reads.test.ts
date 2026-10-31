@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { pricePair, type PairResult } from "./channel-funnel-economics.js";
 import { buildFunnelReturnOnSpend } from "./fleet-funnel-return.js";
-import { buildOutcomeReturnOnSpend, channelOutcomeEconomicsOf, showcaseOutcomesOf } from "./outcome-public-reads.js";
+import { buildOutcomeReturnOnSpend, channelOutcomeEconomicsOf, MIN_OUTCOMES_TO_RANK, showcaseOutcomesOf } from "./outcome-public-reads.js";
 import { legKeysOfFunnel } from "./funnel-legs.js";
 import type { PublicChannel } from "./channel-catalogue.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
@@ -99,6 +99,59 @@ describe("channelOutcomeEconomicsOf", () => {
     expect(out.outcomes.every((o) => o.costPerOutcomeUsd === null && o.unpricedReason === "entry_step_not_measured")).toBe(true);
     expect(out.returnPerDollar).toBeNull();
     expect(out.evidence).toBeNull();
+  });
+});
+
+describe("channelOutcomeEconomicsOf maturity (CHANNEL-ECON-MATURITY-1031)", () => {
+  const pairOn = (conversations: number, spent: number): PairResult =>
+    pricePair({
+      funnelKey: "sales_meetings_from_conversation",
+      unitCosts: { clickUsd: null, replyUsd: spent / conversations },
+      economics: ECON,
+      lifetimeRevenueUsd: 1000,
+      evidence: { totalSpentUsd: spent, conversationsProduced: conversations, websiteVisitsProduced: 0, brandCount: 1 },
+    });
+  const read = (slug: string, conversations: number, spent: number) =>
+    channelOutcomeEconomicsOf(channel(slug, [[null, "conversation"]]), [
+      { funnelKey: "sales_meetings_from_conversation", effectiveMinimumCommitmentDays: 30, result: pairOn(conversations, spent) },
+    ]);
+
+  it("a ONE-reply channel reads not mature on every figure; a 52-reply channel reads mature; figures unchanged", () => {
+    const one = read("email-sending", 1, 2.18);
+    const many = read("sales-cold-email-outreach", 52, 52 * 319);
+    const reply = (o: typeof one) => o.outcomes.find((r) => r.step.key === "conversation")!;
+
+    // The figure itself is still served, byte-same as the pair's.
+    expect(reply(one).costPerOutcomeUsd).toBeCloseTo(2.18);
+    expect(reply(many).costPerOutcomeUsd).toBeCloseTo(319);
+
+    expect(reply(one).maturity).toEqual({
+      isMature: false,
+      notMatureReason: "too_few_outcomes",
+      measuredOutcome: "positive_reply",
+      outcomesMeasured: 1,
+      outcomesRequired: MIN_OUTCOMES_TO_RANK,
+    });
+    expect(one.returnPerDollar).not.toBeNull();
+    expect(one.returnPerDollarMaturity.isMature).toBe(false);
+    expect(one.paths[0].costPerPaidClientMaturity.isMature).toBe(false);
+    expect(one.legs.every((l) => !l.maturity.isMature)).toBe(true);
+
+    expect(reply(many).maturity.isMature).toBe(true);
+    expect(reply(many).maturity.notMatureReason).toBeNull();
+    expect(reply(many).maturity.outcomesMeasured).toBe(52);
+    expect(many.returnPerDollarMaturity.isMature).toBe(true);
+    expect(many.paths[0].returnPerDollarMaturity.isMature).toBe(true);
+    // A null figure (attended rung) is never mature, whatever the evidence.
+    const attended = many.outcomes.find((r) => r.step.key === "meeting_attended")!;
+    expect(attended.maturity).toMatchObject({ isMature: false, notMatureReason: "no_figure" });
+  });
+
+  it("an unmeasured channel states no outcome count and is not mature", () => {
+    const out = channelOutcomeEconomicsOf(channel("ads", [[null, "meeting_booked"]]), [
+      { funnelKey: "sales_meetings_from_ads", effectiveMinimumCommitmentDays: 30, result: price("sales_meetings_from_ads") },
+    ]);
+    expect(out.returnPerDollarMaturity).toMatchObject({ isMature: false, notMatureReason: "no_figure", outcomesMeasured: null });
   });
 });
 
