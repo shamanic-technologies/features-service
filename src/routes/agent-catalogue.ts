@@ -20,6 +20,7 @@ import {
   pipeRunnable,
   FAMILY_GLYPHS,
   funnelById,
+  addTriggerHeadedPathsOf,
   funnelFirstStep,
   funnelTrigger,
   pathTrigger,
@@ -2519,6 +2520,8 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     plays: playInputsOf(playCatalogue, assignments, new Map()),
     retiredPlays: playCatalogue.retiredByPipe,
   });
+  // A campaign may run a trigger-headed funnel whose head was never stated (P5.1 follow-up): describe it all the same.
+  addTriggerHeadedPathsOf(model, ids);
   const found = new Map(ids.flatMap((id) => {
     const f = funnelById(model, id);
     return f ? [[id, f] as const] : [];

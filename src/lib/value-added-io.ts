@@ -70,8 +70,12 @@ export async function computeTakeoverReturn(args: {
   const engine = getFunnel("sales-cold-email-outreach");
   if (!engine) throw new Error("[features-service] the sales funnel engine is not registered");
   const ltr = economics?.lifetimeRevenueUsd ?? null;
+  // The outcome the takeover leg produces must carry a value of its own (P5.1 follow-up, owner 2026-10-31). Client
+  // Satisfied (after Paid client) has none: the engine reads those people at $0 now against $LTR at the takeover step,
+  // so "value added" went to -$30,000 and the ROI to -111111x. No value to add = no ROI, with its reason.
+  const outcomeValued = STEP_SIGNAL[takeoverLeg.toStep] !== undefined;
   const added =
-    economics && ltr !== null && priced
+    outcomeValued && economics && ltr !== null && priced
       ? valueAdded(
           persons,
           takeoverStep,
@@ -88,7 +92,7 @@ export async function computeTakeoverReturn(args: {
   return {
     headline: added
       ? { totalPipelineUsd: added.valueAddedUsd, unpricedReason: null }
-      : { totalPipelineUsd: null, unpricedReason: priced?.economics.unpricedReason ?? "no_priced_funnel" },
+      : { totalPipelineUsd: null, unpricedReason: outcomeValued ? (priced?.economics.unpricedReason ?? "no_priced_funnel") : "outcome_unvalued" },
     costEconomics: learningUntilMature(
       buildCostEconomics({
         committedCostInUsdCents: cost.committedCents,

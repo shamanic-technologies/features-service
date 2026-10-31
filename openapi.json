@@ -2663,9 +2663,10 @@
                   "lifetime_revenue_not_stated",
                   "no_funnel_wired",
                   "no_channel",
+                  "outcome_unvalued",
                   null
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
               },
               "lifetimeRevenueUsd": {
                 "type": "number",
@@ -4448,9 +4449,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -4871,9 +4873,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -5239,9 +5242,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     }
                   },
                   "required": [
@@ -9188,9 +9192,10 @@
                   "lifetime_revenue_not_stated",
                   "no_funnel_wired",
                   "no_channel",
+                  "outcome_unvalued",
                   null
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
               },
               "lifetimeRevenueUsd": {
                 "type": "number",
@@ -10898,9 +10903,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
@@ -18743,9 +18749,10 @@
                   "lifetime_revenue_not_stated",
                   "no_funnel_wired",
                   "no_channel",
+                  "outcome_unvalued",
                   null
                 ],
-                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
               },
               "lifetimeRevenueUsd": {
                 "type": "number",
@@ -20450,9 +20457,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
@@ -20720,9 +20728,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
@@ -21324,9 +21333,10 @@
                         "lifetime_revenue_not_stated",
                         "no_funnel_wired",
                         "no_channel",
+                        "outcome_unvalued",
                         null
                       ],
-                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
+                      "description": "WHY totalPipelineUsd is null, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."
                     },
                     "lifetimeRevenueUsd": {
                       "type": "number",
