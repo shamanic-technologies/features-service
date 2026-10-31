@@ -22,6 +22,7 @@ const built: CatalogTemplate = {
   versions: [version("blind-discovery-email-v6", false), version("blind-discovery-email-v7", true)],
   workflows: [],
   runs: [],
+  postFigures: null,
   ...figs,
 };
 const live = (over: Partial<TemplateDynasty>): TemplateDynasty => ({

@@ -180,6 +180,35 @@ describe("template dynasties on the Research pages", () => {
     expect(new Set(c.templates.map((t) => t.standaloneReason))).toEqual(new Set(["template_dynasties_unreadable"]));
   });
 
+  it("a post pipe (THREADS-IDEAS-AB): template pages stand in the writer ranking's order and carry postFigures; null elsewhere", () => {
+    const dyn = templateDynastyIndex([BLIND_FREE_OFFER, PAIN_QUESTION]);
+    const base = {
+      terms,
+      workflows: [],
+      templates: [],
+      templateDynasties: dyn,
+      models: [],
+      nameOf: () => null,
+      mainOf: () => ({ model: null, template: null }),
+      modelLabel: (id: string) => id,
+      dynastyOf: (s: string) => s,
+      workflowRuns: [],
+      generationRuns: [],
+      templateTexts: new Set<string>(),
+      runnableWorkflows: null,
+      writerOf: "workflow_definitions_unreadable" as const,
+    };
+    expect(pipeCatalog(base).templates.every((t) => t.postFigures === null)).toBe(true);
+    const pf = { posts: 20, views: 900, engagements: 31, visits: 3, signups: 0, spentUsd: 4, costPerSignupUsd: null };
+    const c = pipeCatalog({ ...base, postWriters: { templates: [{ key: "cold-reply-pain-question-blind", postFigures: null }, { key: "cold-reply-free-offer-blind", postFigures: pf }], models: [] } });
+    expect(c.templates.map((t) => [t.key, t.rank])).toEqual([
+      ["cold-reply-pain-question-blind", 1],
+      ["cold-reply-free-offer-blind", 2],
+    ]);
+    expect(c.templates[1]!.postFigures).toEqual(pf);
+    expect(c.templates[0]!.postFigures).toEqual({ posts: 0, views: 0, engagements: 0, visits: 0, signups: 0, spentUsd: 0, costPerSignupUsd: null });
+  });
+
   // TPL-DYNASTY-ROWS-1021-FS: ROI and status on every template row and version.
   it("a dynasty's status is content-generation-service's when served, else deprecated exactly when every version is", () => {
     expect(dynastyStatusOf("deprecated", [{ status: "active" }])).toEqual({ status: "deprecated", statusSource: "content_generation" });

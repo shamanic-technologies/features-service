@@ -6,6 +6,7 @@
  */
 import type { LegWorkflowFigures } from "../leg-workflow-figures.js";
 import { rankWriters } from "../leg-writer-ranking.js";
+import { ZERO_POST_FIGURES, type PostFigures } from "../post-writer-evidence.js";
 import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
@@ -186,6 +187,8 @@ export interface CatalogTemplate extends CatalogFigures {
   versions: CatalogTemplateVersion[];
   workflows: Array<{ key: string; label: string }>;
   runs: Array<{ when: string; model: CatalogRef | null; workflow: { key: string; label: string } | null; version: string | null; templateVersion: string | null; tokens: string | null }>;
+  /** What its posts led to (THREADS-IDEAS-AB, the writer ranking's figures); null on a pipe whose writer records no posts. */
+  postFigures: PostFigures | null;
 }
 
 /** A model page's LLM dynasty, as chat-service states it (LLM-DYNASTY-1022-FS). */
@@ -309,6 +312,13 @@ function catalogOrder(rows: readonly ResearchBucket[]): ResearchBucket[] {
   return [...rows].sort((a, b) => shown(a) - shown(b) || b.figures.outcomes - a.figures.outcomes || b.figures.contacted - a.figures.contacted || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
 }
 
+/** In place: the rows in the writer ranking's order (a key it does not list keeps its place after the listed ones). */
+function inRankingOrder(rows: ResearchBucket[], ranking: ReadonlyArray<{ key: string }>): void {
+  const at = new Map(ranking.map((r, i) => [r.key, i]));
+  const pos = new Map(rows.map((r, i) => [r, i]));
+  rows.sort((a, b) => (at.get(a.key) ?? ranking.length + pos.get(a)!) - (at.get(b.key) ?? ranking.length + pos.get(b)!));
+}
+
 /** The leg order of the pipe's templates or models (`rankWriters`), selectable ones first: every row ranked. */
 function writerOrder(rows: readonly ResearchBucket[], selectable: (key: string) => boolean): ResearchBucket[] {
   const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -397,6 +407,12 @@ export interface PipeCatalogInput {
   modelVersionFiguresByVersion?: ReadonlyMap<string, ReadonlyMap<string, VersionShare>>;
   /** Workflow VERSION slug → everything it cost and produced (generationBuckets `workflowVersionTotals`). */
   workflowVersionTotals?: ReadonlyMap<string, VersionShare>;
+  /**
+   * A pipe whose writer records POSTS (THREADS-IDEAS-AB): the leg writer ranking's rows in rank order, each with its post
+   * figures. The template and model pages then stand in that order (the order the pipe picks by, ranked on signups) and
+   * each template page carries its `postFigures`. Absent = a sequence pipe (`postFigures` null).
+   */
+  postWriters?: { templates: ReadonlyArray<{ key: string; postFigures: PostFigures | null }>; models: ReadonlyArray<{ key: string }> };
 }
 
 const roiText = (v: number) => `${v.toFixed(2)}x`;
@@ -538,6 +554,11 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   });
   const pageKeyOfServed = (m: ModelIdRow) => llmDyn.dynastyOfName(m.modelId)?.slug ?? modelKey(m.displayName);
   const mdRows = writerOrder(allModels, (key) => (typeof p.servedModels === "object" ? modelRowAliases(key, p.servedModels, pageKeyOfServed).aliases.length > 0 : true));
+  if (p.postWriters) {
+    inRankingOrder(tplRows, p.postWriters.templates);
+    inRankingOrder(mdRows, p.postWriters.models);
+  }
+  const postOf = new Map((p.postWriters?.templates ?? []).map((r) => [r.key, r.postFigures]));
   const writerRank = new Map([...tplRows, ...mdRows].map((r) => [r, (tplRows.includes(r) ? tplRows : mdRows).indexOf(r) + 1]));
   const wfKeys = new Set(wfRows.map((r) => r.key));
   const tplKeys = new Set(tplRows.map((r) => r.key));
@@ -699,6 +720,7 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
         templateVersion: x.promptType && dyn.versionOf(x.promptType),
         tokens: tokensText(x.tokensInput ?? null, x.tokensOutput ?? null),
       })),
+    postFigures: p.postWriters ? { ...(postOf.get(r.key) ?? ZERO_POST_FIGURES) } : null,
     };
   });
   const versionBarsOf = new Map<string, Array<ResearchBucket & { dynastyKey: string }>>();
