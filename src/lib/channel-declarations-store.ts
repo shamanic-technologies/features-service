@@ -21,7 +21,8 @@ import { canonicalTriggerId, withAnyOfMembers } from "./channel-triggers.js";
 import { registerTriggerConditions } from "./trigger-conditions.js";
 import { withOutcomeTriggers } from "./outcome-vocabulary.js";
 import { registerDeclaredLegRates } from "./default-leg-rates.js";
-import { buildChannelCatalogue, type PublicChannel } from "./channel-catalogue.js";
+import { buildChannelCatalogue, retiredChannelsOf, type PublicChannel, type RetiredChannel } from "./channel-catalogue.js";
+export type { RetiredChannel } from "./channel-catalogue.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
 import { channelTypeOf } from "./channel-types.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
@@ -152,6 +153,11 @@ export async function loadChannelCatalogue(opts: { publishedOnly: boolean }): Pr
     channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg, workflowChannelSlugs),
     declared,
   };
+}
+
+/** The retired channels as the database holds them (`retiredChannelsOf`, lib/channel-catalogue.ts). */
+export async function loadRetiredChannels(): Promise<RetiredChannel[]> {
+  return retiredChannelsOf(await db.query.features.findMany(), channelTypeOf);
 }
 
 /** Every slug and (lower-cased) name already taken by a feature (any status) or a declared channel. */

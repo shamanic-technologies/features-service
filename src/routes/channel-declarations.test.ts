@@ -29,6 +29,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
   return {
     listTriggerTypes: async () => mem.triggers,
     listRetiredTriggerTypes: async () => [],
+    loadRetiredChannels: async () => (await import("../lib/channel-catalogue.js")).retiredChannelsOf(SEED_FEATURES as any, channelTypeOf),
     listTriggerCatalogue: async () => (await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, [], (g: any) => g),
     registerStepDeclarations: async () => ({ steps: [], rates: [] }),
     listDeclaredChannels: async () => mem.channels,
@@ -340,6 +341,10 @@ describe("/public/channels serves the outcome and trigger catalogues (owner 2026
     const bad = await request(app).get("/public/channels").query({ includeInline: "1" });
     expect(bad.status).toBe(400);
     expect(bad.body.reason).toBe("include_inline_unrecognised");
+    // P5.1: a RETIRED channel is served apart, to DESCRIBE its past campaigns (name, icon, legs), never as a channel.
+    const retired = (res.body.retiredChannels as Array<{ slug: string }>).find((c) => c.slug === "pr-expert-quote-opportunities");
+    expect(retired).toMatchObject({ name: "PR Expert Quote Opportunities", icon: "tray", supersededBySlug: "pr-expert-quote-outreach" });
+    expect((res.body.channels as Array<{ slug: string }>).some((c) => c.slug === "pr-expert-quote-opportunities")).toBe(false);
   });
 
   it("/internal/declarations/trigger-types lists entry doors only; by id and includeInline=true still answer the inline ones", async () => {

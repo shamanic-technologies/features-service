@@ -31927,6 +31927,88 @@
             },
             "description": "THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service. A condition `delay` instance (\"outcome X reached, still not Y after N\": `params {afterStep, minutes|days, unlessStep}`) is a declared row computed by campaign-service's generic detector: a new one is declared, never coded."
           },
+          "retiredChannels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "icon": {
+                  "type": "string",
+                  "description": "Icon token (Phosphor name), like a channel's `icon`."
+                },
+                "channelType": {
+                  "type": "string"
+                },
+                "operatedBy": {
+                  "type": "string"
+                },
+                "supersededBySlug": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The slug selling the same offering now; null on a deprecated channel."
+                },
+                "stepTransitions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "legKey": {
+                        "type": "string"
+                      },
+                      "from": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key"
+                        ]
+                      },
+                      "to": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "legKey",
+                      "from",
+                      "to"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "slug",
+                "name",
+                "description",
+                "icon",
+                "channelType",
+                "operatedBy",
+                "supersededBySlug",
+                "stepTransitions"
+              ]
+            },
+            "description": "THE RETIRED CHANNELS (P5.1, owner 2026-10-31): a seeded channel retired for a successor (`supersededBySlug`) or deprecated, served ONLY so the past campaigns that ran on it keep their channel's name and icon. Never a channel: not bookable, never offered, absent from `channels`."
+          },
           "triggerAliases": {
             "type": "array",
             "items": {
@@ -32883,6 +32965,7 @@
           "outcomes",
           "steps",
           "triggers",
+          "retiredChannels",
           "triggerAliases",
           "legKeyCorrespondence",
           "emailDelivery",

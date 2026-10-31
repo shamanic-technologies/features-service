@@ -703,7 +703,7 @@ const SEED_FEATURE_DEFS: SeedFeatureDef[] = [
     slug: "pr-expert-quote-opportunities",
     name: "PR Expert Quote Opportunities",
     description: "Review a ranked queue of Featured.com journalist quote requests relevant to your brand, then generate, edit, and send expert quotes manually with AI assistance.",
-    icon: "inbox",
+    icon: "tray",
     implemented: true,
     displayOrder: 10,
     status: "active",
@@ -1085,7 +1085,8 @@ for (const origin of SOURCING_ORIGINS) {
     slug: origin.slug,
     name: origin.name,
     description: origin.description,
-    icon: origin.family === "signal" ? "radar" : origin.family === "own_contacts" ? "address-book" : "filter",
+    // Phosphor names only (the dashboard draws the served name; "radar"/"filter" are not Phosphor icons, P5.1).
+    icon: origin.family === "signal" ? "target" : origin.family === "own_contacts" ? "address-book" : "funnel",
     implemented: true,
     displayOrder: origin.displayOrder,
     status: origin.live ? "active" : "deprecated",
