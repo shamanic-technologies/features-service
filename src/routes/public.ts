@@ -1702,27 +1702,23 @@ export async function readFleetReturnOnSpend(featureSlug: string, minSpendUsd: n
  * The PUBLIC ROI median on real VENDOR cost (PUBLIC-VENDOR-COST-1031): the same snapshot, the same population (mature
  * brands past the spend floor, the floor read on what they were billed), each brand's pipeline divided by what its spend
  * really cost. A brand of that population whose vendor spend is unknown (unreadable, or billed spend with no vendor cost
- * past the tolerance) is never left out silently: the median is not stated, reason `vendor_cost_unknown`.
+ * past the tolerance) is left out of the median and COUNTED in `vendorCostUnknownBrands` (distribute.you, same day: the
+ * median runs over the clients whose vendor cost is known, stated, never the whole index nulled).
  */
 export async function readFleetVendorReturn(
   featureSlug: string,
   minSpendUsd: number,
-): Promise<{ measured: boolean; reason: string | null; brandCount: number; minSpendUsd: number; medianReturnPerDollar: number | null }> {
+): Promise<{ measured: boolean; reason: string | null; brandCount: number; minSpendUsd: number; medianReturnPerDollar: number | null; vendorCostUnknownBrands: number }> {
   const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
-  if (!snapshot) return fleetReturnPayloadOf(featureSlug, null, minSpendUsd);
+  if (!snapshot) return { ...fleetReturnPayloadOf(featureSlug, null, minSpendUsd), vendorCostUnknownBrands: 0 };
   const floored = snapshot.brands.filter((b) => b.isMature === true && b.committedSpendUsd >= minSpendUsd);
-  const unknown = floored.filter((b) => {
+  const known = floored.filter((b) => {
     const v = b.vendorSpend;
-    return !v || !vendorCoverage(v.matureUsd, v.unpricedMatureUsd, b.committedSpendUsd + v.unpricedMatureUsd).servable;
+    return Boolean(v) && vendorCoverage(v!.matureUsd, v!.unpricedMatureUsd, b.committedSpendUsd + v!.unpricedMatureUsd).servable;
   });
-  if (unknown.length > 0) {
-    return { measured: false, reason: VENDOR_COST_UNKNOWN, brandCount: floored.length, minSpendUsd, medianReturnPerDollar: null };
-  }
-  const onVendor = snapshot.brands
-    .filter((b) => floored.includes(b))
-    .map((b) => ({ ...b, committedSpendUsd: b.vendorSpend!.matureUsd, flashCommittedSpendUsd: b.vendorSpend!.flashUsd }));
+  const onVendor = known.map((b) => ({ ...b, committedSpendUsd: b.vendorSpend!.matureUsd, flashCommittedSpendUsd: b.vendorSpend!.flashUsd }));
   const r = fleetReturnPayloadOf(featureSlug, { ...snapshot, brands: onVendor }, 0);
-  return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar };
+  return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar, vendorCostUnknownBrands: floored.length - known.length };
 }
 
 function fleetReturnPayloadOf(featureSlug: string, snapshot: Awaited<ReturnType<typeof readFleetReturnSnapshotSoft>>, minSpendUsd: number): FleetReturnPayload {
@@ -4565,7 +4561,7 @@ function getFleetLegPopulation(featureSlug: string, legKey: string): Promise<{ c
   });
 }
 
-async function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
+export async function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
   return (await getFleetLegPopulation(featureSlug, legKey)).campaigns;
 }
 

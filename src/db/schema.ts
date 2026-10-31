@@ -967,6 +967,12 @@ export const factoryShadowDaily = pgTable(
     planFailed: integer("plan_failed").notNull(),
     /** FACTORY-P2 (owner 2026-10-29): campaigns waiting on a first price or a catalogue line, never counted as failed. */
     notYet: integer("not_yet").notNull().default(0),
+    /** ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31, migration 0058): candidate places where today's pick and the Engine's
+     *  Thompson pick both exist, those where they agree, Σ of the share of draws picking today's pick, campaigns failed. */
+    enginePlaces: integer("engine_places").notNull().default(0),
+    engineAgreed: integer("engine_agreed").notNull().default(0),
+    engineTodayShareSum: doublePrecision("engine_today_share_sum").notNull().default(0),
+    engineFailed: integer("engine_failed").notNull().default(0),
     sweptAt: timestamp("swept_at", { withTimezone: true }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.day, table.orgId] })],

@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 const { funnelPathView } = await import("./agent-catalogue.js");
-const { buildCatalogueModel, funnelById, funnelsOfPath } = await import("../lib/agent-catalogue.js");
+const { buildCatalogueModel, funnelById, funnelsOfPath, addTriggerHeadedPathsOf } = await import("../lib/agent-catalogue.js");
 const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
 const { SEED_FEATURES } = await import("../seed/features.js");
 const { servedLegKeyOf } = await import("../lib/funnel-legs.js");
@@ -38,7 +38,8 @@ describe("funnelPathView", () => {
     expect(v.legs.map((l) => [l.fromStep, l.toStep, l.runByUs, l.channelSlug])).toEqual([
       ["start", "lead_found", true, "lead-sourcing"], ["lead_found", "conversation", true, "sales-cold-email-outreach"], ["conversation", "meeting_booked", false, "your-team-meeting-booking"], ["meeting_booked", "meeting_attended", false, "your-team-meeting-attendance"], ["meeting_attended", "paid_client", false, "your-team-closing-calls"],
     ]);
-    expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false }]);
+    // Each channel names the PIPE working the leg (P5.1): the dashboard draws its served name and mark off the public catalogue.
+    expect(v.legs[3].channels).toEqual([{ slug: "your-team-meeting-attendance", name: "Your Team Meeting Attendance", runByUs: false, pipeId: "your-team-meeting-attendance|meeting_booked_to_meeting_attended" }]);
   });
 
   it("a single-source funnel reads its one source on the sourcing leg", () => {
@@ -73,5 +74,21 @@ describe("funnelPathView", () => {
       }
     }
     expect(funnels).toBeGreaterThan(20);
+  });
+
+  it("a trigger-headed funnel a campaign runs, never stated through the creates, still resolves its path (P5.1)", () => {
+    const fresh = buildCatalogueModel({
+      channels,
+      publishedPipeIds: new Set(channels.flatMap((c) => c.stepTransitions.map((t) => `${c.slug}|${servedLegKeyOf(c.slug, t.legKey)}`))),
+      declaredSteps: [],
+      measurements: new Map(),
+      lifetimeRevenueUsd: null,
+    });
+    // Prod: `trigger:lead_event+start_to_paid_client@ai-follow-up-email` (Lead Follow-up); the seed carries the signup leg.
+    const ID = "trigger:lead_event+signup_to_paid_client@ai-follow-up-email";
+    expect(funnelById(fresh, ID)).toBeNull();
+    expect(addTriggerHeadedPathsOf(fresh, [ID, ID, "start_to_lead_found@lead-sourcing", "trigger:nope+signup_to_paid_client@ai-follow-up-email"])).toEqual(["trigger:lead_event+signup_to_paid_client"]);
+    const v = funnelPathView(fresh, funnelById(fresh, ID)!);
+    expect(read(v)).toEqual(["⚡Lead event", "[AI Follow-up Email]", "Paid client"]);
   });
 });

@@ -63,6 +63,8 @@ import {
 } from "../lib/factory-shadow.js";
 import { readDays, readJudgments, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
+import { computeEngineReplay, engineMemos, engineShadowOfCampaign, type EngineMemos } from "../lib/engine-shadow-io.js";
+import { engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
 
@@ -70,6 +72,9 @@ const JEV_TIMEOUT_MS = 60_000;
 const JEV_CONCURRENCY = 3;
 const CAMPAIGN_CONCURRENCY = 2;
 const PASS_CELL = "factory-shadow:last-pass";
+/** The Engine replay (ENGINE-PER-OUTCOME-SHADOW): recomputed by the pass once it is older than `REPLAY_EVERY_MS`. */
+const REPLAY_CELL = "engine-shadow:replay";
+const REPLAY_EVERY_MS = 20 * 3_600_000;
 const EVAL_CELL = "factory-shadow:eval";
 /** Written when the brief backfill is APPLIED: from then on every pass prefills new live campaigns. */
 const PREFILL_CELL = "factory-shadow:prefill-backfill";
@@ -100,9 +105,9 @@ async function readFunnelCampaigns(): Promise<Array<{ campaign: ShadowCampaign; 
   return rows.flat().map(({ r, orgId }) => ({ campaign: shadowCampaignOf(r, orgId), status: r.status }));
 }
 
-/** "Running" = the funnel the campaign RUNS: campaign-service's `runningSalesFunnelId` (a campaign following its plan
- *  runs the plan's funnel), else the funnel it was born on (older campaign-service). */
-export const runningFunnelIdOf = (r: Pick<SalesFunnelCampaignRow, "salesFunnelId" | "runningSalesFunnelId">): string => r.runningSalesFunnelId ?? r.salesFunnelId;
+import { runningFunnelIdOf } from "../lib/running-funnel.js";
+/** "Running" = the funnel the campaign RUNS (lib/running-funnel.ts, shared with the Campaigns rows). */
+export { runningFunnelIdOf };
 
 const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampaign => ({
   id: r.id,
@@ -345,6 +350,9 @@ export interface ShadowBody {
   /** Every pipe we run on a leg the plan may walk, kept or ruled out by the brief (the pipe judge). */
   pipeVerdicts: PipeVerdictRow[];
   plan: ShadowPlan | null;
+  /** ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): per candidate place of the line it runs, today's pick beside the Engine's
+   *  Thompson pick on value per dollar (`lib/engine-shadow.ts`). Absent on a body stored before. */
+  engine?: EngineShadow | null;
   computedAt: string;
 }
 
@@ -456,9 +464,16 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     const stored = await readJudgments(campaigns.map((c) => c.id));
     const storedPipes = await readPipeVerdicts(campaigns.map((c) => c.id));
     const bodies = await mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, (c) => shadowOfCampaign(c, memos, stored, storedPipes, now));
+    // The Engine per outcome beside it (ENGINE-PER-OUTCOME-SHADOW), on the same model, brief picks and pipe verdicts.
+    const engines = engineMemos();
+    await mapWithConcurrency(bodies, CAMPAIGN_CONCURRENCY, async (b, i) => {
+      b.engine = await engineOfBody(campaigns[i]!, b, memos, engines, now);
+    });
     for (const b of bodies) await writePlan({ campaignId: b.campaignId, orgId: b.orgId, brandId: b.brandId, offerId: b.offerId, status: b.status, failure: b.failure, body: b, computedAt: now });
     const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers, state: shadowStateOf(b).state }));
-    await writeDay(now.toISOString().slice(0, 10), orgDayCountsOf(summaries), now);
+    const engineCounts = engineDayCountsOf(bodies);
+    await writeDay(now.toISOString().slice(0, 10), orgDayCountsOf(summaries).map((c) => ({ ...c, ...engineCounts.get(c.orgId) })), now);
+    await refreshEngineReplay(engines, now);
     const record: PassRecord = {
       sweptAt: now.toISOString(),
       campaigns: bodies.length,
@@ -474,6 +489,35 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     passInFlight = null;
   });
   return passInFlight;
+}
+
+/** One campaign's Engine shadow; a failure is stored on it (red on Monitoring), never fails the pass. */
+async function engineOfBody(c: ShadowCampaign, b: ShadowBody, memos: ReturnType<typeof passMemos>, engines: EngineMemos, now: Date): Promise<EngineShadow> {
+  try {
+    const { model } = await memos.pricing(c);
+    const picks = new Map(b.picks.filter((p) => p.pickedPipeId !== null).map((p) => [p.basePipeId, p.pickedPipeId!]));
+    const excluded = new Set(b.pipeVerdicts.filter((v) => v.excluded === true).map((v) => v.pipeId));
+    return await engineShadowOfCampaign(engines, model, c, picks, excluded, now);
+  } catch (error) {
+    console.error(`[features-service] engine shadow failed for campaign ${c.id}:`, error);
+    return failedEngineShadow(failureOf(error), now.toISOString());
+  }
+}
+
+/** The replay, once a day (it reads six ledger cuts): stored with its failure when it fails (red on Monitoring). */
+async function refreshEngineReplay(engines: EngineMemos, now: Date): Promise<void> {
+  const held = await loadFleetCell(REPLAY_CELL);
+  if (held && now.getTime() - held.computedAt < REPLAY_EVERY_MS) return;
+  let replay: EngineReplay;
+  try {
+    const ltr = await offerLifetimeRevenue(null);
+    replay = await computeEngineReplay(engines, await loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source), now);
+  } catch (error) {
+    console.error("[features-service] engine replay failed:", error);
+    replay = { computedAt: now.toISOString(), windowDays: 30, checkpoints: [], families: [], totals: { todayRegret: null, engineRegret: null, regretGain: null, families: 0 }, caveats: [], failure: failureOf(error) };
+  }
+  await storeFleetCell(REPLAY_CELL, JSON.stringify(replay), now.getTime());
+  console.log(`[features-service] engine replay: ${replay.families.length} outcome(s), regret today ${replay.totals.todayRegret} vs Engine ${replay.totals.engineRegret}${replay.failure ? `, FAILED ${replay.failure}` : ""}`);
 }
 
 /** 10 minutes after listen (the catalogue figures are warm by then), then every 3 hours. */
@@ -609,6 +653,7 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
       notYet: orgs.reduce((s, o) => s + o.notYet, 0),
       orgs: orgs.map(({ day: _d, sweptAt: _s, ...o }) => o),
     }));
+    const engineSeries = [...byDay.entries()].map(([day, orgs]) => engineDayOf(day, orgs));
     const latestPlans = pass ? (await readPlansSince(new Date(pass.sweptAt))).map((p) => {
       const b = p.body as ShadowBody;
       return {
@@ -624,6 +669,7 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
         pickDiffers: b.pickDiffers,
         target: b.plan?.target ?? null,
         change: planChangeOf(b.plan),
+        engine: engineSummaryOf(b.engine),
       };
     }) : [];
     // Red ONLY for something broken (owner 2026-10-29): the verdict counts the last pass's PROBLEMS, never a not-yet row.
@@ -633,12 +679,63 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
       { sweptAt: pass?.sweptAt ?? null, judgeFailed: problems.filter((c) => c.status === "judge_failed").length, planFailed: problems.filter((c) => c.status !== "judge_failed").length },
       now,
     );
-    res.json({ verdict, lastPass: pass, everyHours: SWEEP_EVERY_MS / 3_600_000, series, campaigns: latestPlans, problems, notYet });
+    const replayCell = await loadFleetCell(REPLAY_CELL);
+    const replay = replayCell ? (JSON.parse(replayCell.text) as EngineReplay) : null;
+    const engineProblems = latestPlans.filter((c) => c.engine?.status === "failed");
+    const engineReasons = [...(engineProblems.length > 0 ? ["engine_failed"] : []), ...(replay?.failure ? ["replay_failed"] : [])];
+    const lastEngineDay = engineSeries[engineSeries.length - 1] ?? null;
+    res.json({
+      verdict,
+      lastPass: pass,
+      everyHours: SWEEP_EVERY_MS / 3_600_000,
+      series,
+      campaigns: latestPlans,
+      problems,
+      notYet,
+      // ENGINE-PER-OUTCOME-SHADOW: red ONLY when broken (a campaign's Engine or the replay failed); a place with no priced
+      // candidate yet is a not-yet. The pass staleness is the plan's verdict above (one pass computes both).
+      engine: {
+        verdict: { red: engineReasons.length > 0, reasons: engineReasons },
+        last: lastEngineDay,
+        series: engineSeries,
+        problems: engineProblems.map((c) => ({ campaignId: c.campaignId, orgId: c.orgId, brandId: c.brandId, salesFunnelName: c.salesFunnelName, failure: c.engine!.failure })),
+        replay,
+      },
+    });
   } catch (error) {
     console.error("[features-service] factory shadow monitoring read failed:", error);
     res.status(500).json({ error: "factory_shadow_unreadable" });
   }
 });
+
+/** One day of the Engine series: places compared, agreements, the agreement rate and the expected one (%). */
+function engineDayOf(day: string, orgs: ReadonlyArray<Partial<{ enginePlaces: number; engineAgreed: number; engineTodayShareSum: number; engineFailed: number }>>) {
+  const places = orgs.reduce((s, o) => s + (o.enginePlaces ?? 0), 0);
+  const agreed = orgs.reduce((s, o) => s + (o.engineAgreed ?? 0), 0);
+  const share = orgs.reduce((s, o) => s + (o.engineTodayShareSum ?? 0), 0);
+  return {
+    day,
+    places,
+    agreed,
+    disagreed: places - agreed,
+    agreementPct: places > 0 ? Math.round((agreed / places) * 1000) / 10 : null,
+    expectedAgreementPct: places > 0 ? Math.round((share / places) * 1000) / 10 : null,
+    failed: orgs.reduce((s, o) => s + (o.engineFailed ?? 0), 0),
+  };
+}
+
+/** A campaign's Engine on the Monitoring list: per place, today's pick and the Engine's, without the candidate rows. */
+function engineSummaryOf(e: EngineShadow | null | undefined) {
+  if (!e) return null;
+  return {
+    status: e.status,
+    failure: e.failure,
+    comparable: e.comparable,
+    agreed: e.agreed,
+    expectedAgreementPct: e.expectedAgreementPct,
+    places: e.places.map(({ candidates, strengths: _s, ...p }) => ({ ...p, candidates: candidates.length })),
+  };
+}
 
 router.post("/internal/factory-shadow/sweep", apiKeyOnly, (_req, res) => {
   void runFactoryShadowPass().catch((err) => console.error("[features-service] factory shadow pass (kicked) failed:", err));
