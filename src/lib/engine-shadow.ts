@@ -419,7 +419,7 @@ export interface EngineShadow {
   /** Mean share of draws picking today's pick over the comparable places (%). */
   expectedAgreementPct: number | null;
   /** Client evidence read on the ledger (else the client level is empty and the fleet decides). */
-  clientEvidence: "ledger" | "ledger_unreadable";
+  clientEvidence: "ledger" | "ledger_unreconciled" | "ledger_unreadable";
   limits: readonly string[];
 }
 
@@ -618,6 +618,9 @@ export interface EngineReplay {
   totals: { todayRegret: number | null; engineRegret: number | null; regretGain: number | null; families: number };
   /** Beliefs as of a checkpoint read the outcomes those decisions have NOW (the ledger cut is on run start). */
   caveats: readonly string[];
+  /** runs-service's ledger was reconciled for every book read (false = read anyway, `ledgerDaysMissing` days stale). */
+  ledgerReconciled?: boolean;
+  ledgerDaysMissing?: number;
   failure: string | null;
 }
 

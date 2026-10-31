@@ -6,7 +6,7 @@
  */
 import { funnelById, legStepsOf, pipeRunnable, stepLabel, valueAddedTo, type CatalogueModel, type CataloguePipe } from "./agent-catalogue.js";
 import { basePipeIdOf, frameOf, type ShadowCampaign } from "./factory-shadow.js";
-import { ledgerRegime, pipeOutcomeKey, type LedgerBookRead } from "./ledger-book.js";
+import { ledgerRegime, loadLedgerBook, pipeOutcomeKey, runStartUntilOf, type LedgerBookRead } from "./ledger-book.js";
 import { pipeWorkflowCosts } from "./ledger-pipe-costs.js";
 import { legCutoffIso } from "./maturity.js";
 import { fetchPublicWorkflows } from "./public-stats-clients.js";
@@ -34,6 +34,9 @@ export function engineMemos() {
   const rankings = new Map<string, Promise<LegWorkflowRankingPayload | null>>();
   const dynasties = new Map<string, Promise<Map<string, string>>>();
   const books = new Map<string, Promise<LedgerBookRead | null>>();
+  /** Reads served while runs-service's ledger was NOT reconciled (a stale or missing day): the shadow still reads the
+   *  book, says so (`ledgerReconciled: false` + the days missing), never goes red for it (the Monitoring ledger card is). */
+  const unreconciled = { reads: 0, daysMissing: 0 };
   const outcomeKeys = new Map<string, Promise<string>>();
   const memo = <T>(m: Map<string, Promise<T>>, k: string, f: () => Promise<T>): Promise<T> => {
     if (!m.has(k)) m.set(k, f());
@@ -48,7 +51,16 @@ export function engineMemos() {
         }),
       ),
     dynastyOf: (featureSlug: string) => memo(dynasties, featureSlug, async () => new Map((await fetchPublicWorkflows(featureSlug, "all")).map((w) => [w.workflowSlug, w.workflowDynastySlug]))),
-    book: (cutIso: string | null) => memo(books, cutIso ?? "", () => ledgerRegime("gross", cutIso)),
+    book: (cutIso: string | null) =>
+      memo(books, cutIso ?? "", async () => {
+        const regime = await ledgerRegime("gross", cutIso);
+        if (regime) return regime;
+        const raw = await loadLedgerBook("gross", cutIso ? runStartUntilOf(cutIso) : undefined);
+        unreconciled.reads += 1;
+        unreconciled.daysMissing = Math.max(unreconciled.daysMissing, raw.daysMissing);
+        return raw;
+      }),
+    unreconciled,
     outcomeKey: (p: CataloguePipe) => memo(outcomeKeys, p.id, () => pipeOutcomeKey(p.channelSlug, p.computedLegKey)),
   };
 }
@@ -126,13 +138,15 @@ export async function engineShadowOfCampaign(
     // The steps this campaign holds before this outcome: a script may consume any of them.
     const held = new Set<string | null>([null, "lead_found", f.startStep, ...legs.slice(0, i).map((l) => legStepsOf(model, l.legKey).toStep)]);
     // Every pipe we run ending on the outcome, as the brief allows it (its play when it chose one).
+    // The pipe the campaign runs on this leg is always a candidate (its trigger and start are the campaign's own by
+    // construction: a reactive funnel's pipe answers a trigger the campaign does not restate).
+    const runningBase = leg.pipe && leg.pipe.operatedBy === "platform" ? basePipeIdOf(leg.pipe) : null;
     const bases = [...model.pipes.values()].filter(
       (p) =>
         p.toStep === outcome &&
         p.operatedBy === "platform" &&
         !excluded.has(p.id) &&
-        held.has(p.fromStep) &&
-        (p.triggerId === null || p.triggerId === f.triggerId),
+        (p.id === runningBase || (held.has(p.fromStep) && (p.triggerId === null || p.triggerId === f.triggerId))),
     );
     const candidates: EngineCandidate[] = [];
     await mapWithConcurrency(bases, 4, async (base) => {
@@ -189,7 +203,7 @@ export async function engineShadowOfCampaign(
       ),
     );
   }
-  return engineShadowOf(places, now.toISOString(), ledgerRead ? "ledger" : "ledger_unreadable");
+  return engineShadowOf(places, now.toISOString(), !ledgerRead ? "ledger_unreadable" : memos.unreconciled.reads > 0 ? "ledger_unreconciled" : "ledger");
 }
 
 // ── The replay ─────────────────────────────────────────────────────────────────────────────────────
@@ -241,5 +255,16 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
     if (candidates.length === 0) continue;
     families.push(replayFamily(outcome, stepLabel(model, outcome), candidates.sort((a, b) => (a.id < b.id ? -1 : 1)), valueOf(outcome) != null, `replay|${outcome}|${now.toISOString().slice(0, 10)}`));
   }
-  return { computedAt: now.toISOString(), windowDays: REPLAY_WINDOW_DAYS, checkpoints, families, totals: replayTotals(families), caveats: REPLAY_CAVEATS, failure: null };
+  const ledgerReconciled = memos.unreconciled.reads === 0;
+  return {
+    computedAt: now.toISOString(),
+    windowDays: REPLAY_WINDOW_DAYS,
+    checkpoints,
+    families,
+    totals: replayTotals(families),
+    caveats: ledgerReconciled ? REPLAY_CAVEATS : [...REPLAY_CAVEATS, "ledger_not_reconciled"],
+    ledgerReconciled,
+    ledgerDaysMissing: memos.unreconciled.daysMissing,
+    failure: null,
+  };
 }

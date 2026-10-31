@@ -9559,7 +9559,7 @@ const engineShadow = z.object({
   comparable: z.number().int(),
   agreed: z.number().int(),
   expectedAgreementPct: z.number().nullable(),
-  clientEvidence: z.enum(["ledger", "ledger_unreadable"]),
+  clientEvidence: z.enum(["ledger", "ledger_unreconciled", "ledger_unreadable"]).describe("`ledger_unreconciled` = read while runs-service's ledger had a stale or missing day (stated, never red)."),
   limits: z.array(z.string()).describe("What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."),
 });
 const engineReplay = z.object({
@@ -9587,6 +9587,8 @@ const engineReplay = z.object({
   ),
   totals: z.object({ todayRegret: z.number().nullable(), engineRegret: z.number().nullable(), regretGain: z.number().nullable(), families: z.number().int() }).describe("Over the graded families, weighted by window decisions."),
   caveats: z.array(z.string()),
+  ledgerReconciled: z.boolean().optional().describe("False = the ledger was read while runs-service had not reconciled it (`ledgerDaysMissing` stale days): stated, never red."),
+  ledgerDaysMissing: z.number().int().optional(),
   failure: z.string().nullable().describe("Set when the replay failed (red)."),
 });
 
