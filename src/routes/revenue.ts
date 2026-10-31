@@ -1267,7 +1267,7 @@ function buildLensBody(
  * we cannot tell young spend from mature spend, so the ratios read null with a named reason — never the
  * whole-history ratio the rule exists to stop, and never a 502 on a page whose other figures are right.
  */
-async function resolveMaturityPlan(
+export async function resolveMaturityPlan(
   brandId: string,
   featureScope: FeatureScope,
   campaignScope: CampaignFilter,
