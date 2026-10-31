@@ -106,9 +106,11 @@ describe("public vendor cost (PUBLIC-VENDOR-COST-1031)", () => {
     expect(vendorLegPrice(leg, { vendor: new Map([["rampart", spend(80, 15)]]), unpriced: new Map([["rampart", spend(9, 9)]]) })).toMatchObject({ costPerOutcomeUsd: null, vendorCostUnknown: true });
   });
 
-  it("the engaged-lead median is withheld when one engaged client's vendor cost is unknown", () => {
+  it("the engaged-lead median runs over the clients whose vendor cost is known, the others counted", () => {
     const b = (spendCents: number, unknown: boolean): BrandEngagement => ({ contacted: 100, positiveReplies: 2, screenedContacted: 0, humanClicks: 0, spendCents, vendorCostUnknown: unknown });
     expect(engagedLeadPoint([b(1000, false), b(3000, false)])).toMatchObject({ value: 10 });
-    expect(engagedLeadPoint([b(1000, false), b(3000, true)])).toMatchObject({ value: null, unavailableReason: "vendor_cost_unknown" });
+    const p = engagedLeadPoint([b(1000, false), b(3000, false), b(9000, true)]);
+    expect(p).toMatchObject({ value: 10, outcomes: 2 });
+    expect(p.inputs).toMatchObject({ clients: 2, clientsVendorCostUnknown: 1 });
   });
 });
