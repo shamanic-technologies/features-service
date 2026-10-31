@@ -507,7 +507,9 @@ async function engineOfBody(c: ShadowCampaign, b: ShadowBody, memos: ReturnType<
 /** The replay, once a day (it reads six ledger cuts): stored with its failure when it fails (red on Monitoring). */
 async function refreshEngineReplay(engines: EngineMemos, now: Date): Promise<void> {
   const held = await loadFleetCell(REPLAY_CELL);
-  if (held && now.getTime() - held.computedAt < REPLAY_EVERY_MS) return;
+  // A failed replay is retried on the next pass (never red for 20 h on one bad read).
+  const heldFailed = held ? (JSON.parse(held.text) as EngineReplay).failure !== null : false;
+  if (held && !heldFailed && now.getTime() - held.computedAt < REPLAY_EVERY_MS) return;
   let replay: EngineReplay;
   try {
     const ltr = await offerLifetimeRevenue(null);

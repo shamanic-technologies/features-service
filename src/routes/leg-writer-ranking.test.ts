@@ -60,6 +60,24 @@ function payload(): LegWriterRankingPayload {
 }
 
 describe("leg writer ranking route helpers (BEST-TPL-LLM-1022)", () => {
+  it("every row of a post pipe serves its postFigures; a sequence pipe serves null (THREADS-IDEAS-AB)", () => {
+    const empty = buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] });
+    const seq = servedRankings(payload(), empty, null);
+    expect([...seq.templates.rows, ...seq.llms.rows].every((r) => r.postFigures === null)).toBe(true);
+    const pf = { posts: 20, views: 900, engagements: 31, visits: 3, signups: 0, spentUsd: 4, costPerSignupUsd: null };
+    const zero = { posts: 0, views: 0, engagements: 0, visits: 0, signups: 0, spentUsd: 0, costPerSignupUsd: null };
+    const p = payload();
+    const post: LegWriterRankingPayload = {
+      ...p,
+      templates: { ...p.templates, candidates: p.templates.candidates.map((c) => ({ ...c, postFigures: c.key === "blind" ? pf : zero })) },
+      llms: { ...p.llms, candidates: p.llms.candidates.map((c) => ({ ...c, postFigures: zero })) },
+    };
+    const served = servedRankings(post, empty, null);
+    expect(served.templates.rows.find((r) => r.key === "blind")?.postFigures).toEqual(pf);
+    expect(served.templates.rows.find((r) => r.key === "offer")?.postFigures).toEqual(zero);
+    expect(served.llms.rows.every((r) => r.postFigures !== null)).toBe(true);
+  });
+
   it("lists every dynasty of the pipe (zero until it writes) and a standalone version that wrote, never pickable", () => {
     const p = payload();
     expect(p.templates.candidates.map((x) => [x.key, x.selectable, x.notSelectableReason])).toEqual([

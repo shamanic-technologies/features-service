@@ -23,7 +23,7 @@ import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
-import { isMatureCount, legMaturity } from "../lib/maturity.js";
+import { isMatureCount, legCutoffIso, legMaturity } from "../lib/maturity.js";
 import { pipeLegKeyOf, servedLegKeyOf } from "../lib/funnel-legs.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
 import { isScreenedVisitLeg } from "../lib/screened-visits.js";
@@ -47,6 +47,8 @@ import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { fetchCampaignSalesFunnelId } from "../lib/fleet-leg-campaigns.js";
 import { fetchFleetLegSlugEvidence } from "./public.js";
 import { playOfLegRead } from "./workflow-projection.js";
+import { postWriterBars, ZERO_POST_FIGURES, type PostFigures, type PostWriterBars } from "../lib/post-writer-evidence.js";
+import { readPostPipeEvidence } from "../lib/post-writer-evidence-io.js";
 
 const router = Router();
 
@@ -75,6 +77,8 @@ export interface TemplateRow extends WriterRankingRow {
   /** The template tactics it follows (TPL-TACTICS-ROWS-1022), read live; null with `tacticsUnavailableReason`. */
   tactics: TemplateTactics | null;
   tacticsUnavailableReason: TemplateTacticsReason | null;
+  /** What its posts led to (THREADS-IDEAS-AB); null on a pipe whose writer records no posts. */
+  postFigures: PostFigures | null;
 }
 
 /** One model of an LLM dynasty row: its share of the row's figures, read on the row's basis (the models add up to it). */
@@ -101,6 +105,8 @@ export interface LlmRow extends WriterRankingRow {
   provider: string | null;
   /** Per model, its share of the row (every version chat-service lists, newest first, zero until it writes). */
   models: LlmModelDetail[];
+  /** What its posts led to (THREADS-IDEAS-AB); null on a pipe whose writer records no posts. */
+  postFigures: PostFigures | null;
 }
 
 /** One pipe's evidence, before any strategy: what is stored and served. */
@@ -114,9 +120,9 @@ export interface LegWriterRankingPayload {
   maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null };
   /** `measured` = the pipe's people are filed under what wrote them; else why nothing is picked. */
   writerEvidence: "measured" | WriterEvidenceReason;
-  templates: { candidates: Array<WriterCandidate & { templateDynastySlug: string | null; head: string | null; status: "active" | "deprecated" | null }>; unavailableReason: string | null };
+  templates: { candidates: Array<WriterCandidate & { templateDynastySlug: string | null; head: string | null; status: "active" | "deprecated" | null; postFigures?: PostFigures | null }>; unavailableReason: string | null };
   llms: {
-    candidates: Array<WriterCandidate & { llmDynastySlug: string | null; headModelId: string | null; aliases: LlmRow["aliases"]; modelIds: string[]; provider: string | null; models: LlmModelDetail[] }>;
+    candidates: Array<WriterCandidate & { llmDynastySlug: string | null; headModelId: string | null; aliases: LlmRow["aliases"]; modelIds: string[]; provider: string | null; models: LlmModelDetail[]; postFigures?: PostFigures | null }>;
     unavailableReason: string | null;
     /** Set when chat-service's LLM dynasties could not be read this build: every model is its own row then (LLM-DYNASTY-1022-FS). */
     dynastiesUnavailableReason?: string | null;
@@ -311,7 +317,23 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
   let cutoffIso: string | null = null;
   let writerEvidence: LegWriterRankingPayload["writerEvidence"] = "measured";
   let internalLlm: ReturnType<typeof ledgerLlmBars> | null = null;
-  if (internal) {
+  // A writer that records POSTS (THREADS-IDEAS-AB): each post filed under what wrote it, ranked on signups. The feed
+  // unreadable never fails a pipe: it is read as the sequence path below (a measured build is kept over it).
+  const postRead = await readPostPipeEvidence(featureSlug, legKey).catch((error: Error) => {
+    console.error(`[features-service] leg writer ranking ${pipeId}: post writer evidence unreadable, read as a sequence pipe this build:`, error.message);
+    return null;
+  });
+  let posts: PostWriterBars | null = null;
+  if (postRead) {
+    cutoffIso = legCutoffIso(legKey);
+    const llmOf = (name: string) => {
+      const d = llmDyn.dynastyOfName(name);
+      if (d) return { key: d.slug, label: d.name };
+      const m = models.find((x) => x.modelId === name) ?? models.find((x) => x.aliases.includes(name)) ?? models.find((x) => x.formerAliases.includes(name));
+      return { key: modelKey(m?.displayName || name), label: m?.displayName || name };
+    };
+    posts = postWriterBars(postRead.generations, postRead.creditOf, llmOf, legKey, cutoffIso);
+  } else if (internal) {
     // An internal pipe: the people its campaigns acted on, filed under the LLM the follow-up ledger states per act.
     const fleet = await getInternalPipeFleet(featureSlug, legKey, internal);
     const ran = fleet.ranCampaigns ?? [];
@@ -342,8 +364,13 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     const names = new Map(models.map((m) => [m.modelId, { label: m.displayName, tier: m.capabilityTier === "cheap" ? "Flash" : "Pro" } as ModelName]));
     bars = generationBuckets({ legKey, cells, persons, split, models: names, templateDynasties: templateDynastyIndex(dynastiesRead), llmDynasties: llmDyn });
   }
-  const tplBars = bars?.tpl.rows ?? [];
-  const llmBars = internalLlm?.rows ?? bars?.llm.rows ?? [];
+  const tplBars = posts?.templates ?? bars?.tpl.rows ?? [];
+  const llmBars = posts?.llms ?? internalLlm?.rows ?? bars?.llm.rows ?? [];
+  // Every row of a post pipe carries its post figures (zero until it writes); null elsewhere.
+  const postOf = (list: readonly { key: string; postFigures: PostFigures }[] | undefined) => {
+    const by = new Map((list ?? []).map((b) => [b.key, b.postFigures]));
+    return <T extends { key: string }>(c: T): T & { postFigures: PostFigures | null } => ({ ...c, postFigures: posts ? (by.get(c.key) ?? { ...ZERO_POST_FIGURES }) : null });
+  };
   return {
     featureSlug,
     legKey,
@@ -353,9 +380,13 @@ export async function computeLegWriterRanking(featureSlug: string, rawLegKey: st
     rankBasis: "cost_per_outcome",
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso },
     writerEvidence,
-    templates: { candidates: templateCandidates(tplBars, dynasties), unavailableReason: templateUnavailable },
-    llms: { candidates: llmCandidates(llmBars, aliases, models, llmDyn, internalLlm ? null : (bars?.llmModels ?? [])), unavailableReason: llmUnavailable, dynastiesUnavailableReason: llmDyn.unavailableReason },
-    leftOut: { templates: bars?.tpl.leftOut ?? { contacted: 0, outcomes: 0 }, llms: internalLlm?.leftOut ?? bars?.llm.leftOut ?? { contacted: 0, outcomes: 0 } },
+    templates: { candidates: templateCandidates(tplBars, dynasties).map(postOf(posts?.templates)), unavailableReason: templateUnavailable },
+    llms: {
+      candidates: llmCandidates(llmBars, aliases, models, llmDyn, internalLlm || posts ? null : (bars?.llmModels ?? [])).map(postOf(posts?.llms)),
+      unavailableReason: llmUnavailable,
+      dynastiesUnavailableReason: llmDyn.unavailableReason,
+    },
+    leftOut: { templates: posts?.leftOut.templates ?? bars?.tpl.leftOut ?? { contacted: 0, outcomes: 0 }, llms: posts?.leftOut.llms ?? internalLlm?.leftOut ?? bars?.llm.leftOut ?? { contacted: 0, outcomes: 0 } },
   };
 }
 
@@ -466,11 +497,11 @@ export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue
   const tRows: TemplateRow[] = t.rows.map((r) => {
     const x = tplOf.get(r.key)!;
     const tactics = tacticsOf(r.key);
-    return { ...r, templateDynastySlug: x.templateDynastySlug, head: x.head, status: x.status, tactics: tactics === "not_judged_yet" ? null : tactics, tacticsUnavailableReason: tactics === "not_judged_yet" ? tactics : null };
+    return { ...r, templateDynastySlug: x.templateDynastySlug, head: x.head, status: x.status, tactics: tactics === "not_judged_yet" ? null : tactics, tacticsUnavailableReason: tactics === "not_judged_yet" ? tactics : null, postFigures: x.postFigures ?? null };
   });
   const lRows: LlmRow[] = l.rows.map((r) => {
     const x = llmOf.get(r.key)!;
-    return { ...r, llmDynastySlug: x.llmDynastySlug ?? null, headModelId: x.headModelId ?? null, aliases: x.aliases, modelIds: x.modelIds, provider: x.provider, models: x.models ?? [] };
+    return { ...r, llmDynastySlug: x.llmDynastySlug ?? null, headModelId: x.headModelId ?? null, aliases: x.aliases, modelIds: x.modelIds, provider: x.provider, models: x.models ?? [], postFigures: x.postFigures ?? null };
   });
   // `strategy_excludes_every_candidate`: a run could have written with one of them, the strategy ruled every such one
   // out (workflow-service refuses to write). `no_selectable_candidate`: nothing a run may write with, strategy or not.
