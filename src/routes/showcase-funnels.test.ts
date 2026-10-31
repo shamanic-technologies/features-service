@@ -224,6 +224,13 @@ interface Fixture {
    */
   netSpendCents?: number;
   /**
+   * The VENDOR cost of the same rows (what the vendors charged us, before our markup; PUBLIC-VENDOR-COST-1031): the
+   * showcase money half moves with THIS number. Defaults to the gross so the other cases read unchanged.
+   */
+  vendorSpendCents?: number;
+  /** Billed cents on rows with no known vendor cost. Default 0. */
+  unpricedSpendCents?: number;
+  /**
    * The stored fleet-snapshot rows the PICKS are ranked over. `null` = no snapshot exists at all,
    * which is a different silence from "a snapshot exists and nobody qualifies".
    */
@@ -321,6 +328,8 @@ function mockFetch(fixture: Fixture): void {
     if (path.includes("/stats/costs")) {
       const cents = String(fixture.spendCents ?? 10000);
       const netCents = String(fixture.netSpendCents ?? fixture.spendCents ?? 10000);
+      const vendorCents = String(fixture.vendorSpendCents ?? fixture.spendCents ?? 10000);
+      const unpricedCents = String(fixture.unpricedSpendCents ?? 0);
       return json({
         groups: [
           {
@@ -329,6 +338,14 @@ function mockFetch(fixture: Fixture): void {
             actualCostInUsdCents: cents,
             netTotalCostInUsdCents: netCents,
             netActualCostInUsdCents: netCents,
+            vendorTotalCostInUsdCents: vendorCents,
+            vendorActualCostInUsdCents: vendorCents,
+            vendorProvisionedCostInUsdCents: "0",
+            vendorRefundedCostInUsdCents: "0",
+            unpricedTotalCostInUsdCents: unpricedCents,
+            unpricedActualCostInUsdCents: unpricedCents,
+            unpricedProvisionedCostInUsdCents: "0",
+            unpricedRefundedCostInUsdCents: "0",
             runCount: 1,
             minStartedAt: null,
             maxStartedAt: null,
@@ -471,6 +488,7 @@ type Group = {
 };
 
 type Body = {
+  costBasis: "vendor";
   groups: { recentlyStarted: Group; highestReturn: Group };
   minSpendUsd: number;
   brands: Array<{
@@ -483,6 +501,7 @@ type Body = {
     }>;
     measured: boolean;
     unmeasuredReason: string | null;
+    vendorCost?: { unpricedSharePct: number; moneyUnavailableReason: "vendor_cost_unknown" | null };
   }>;
 };
 
@@ -813,38 +832,41 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(dear.steps.map((s) => s.peopleReached)).toEqual(cheap.steps.map((s) => s.peopleReached));
   });
 
-  it("prices a DISCOUNTED client on what they PAID, not on our list price", async () => {
-    // The money half is READ ON THE NET BASIS — what the client actually paid after their per-org
-    // usage discount — because the page claims each figure is the one the client reads on their own
-    // dashboard, and every dashboard surface in the fleet reads net. Same gross as BASE, net HALVED:
-    // a gross-basis implementation answers BASE's numbers here and this case is the only thing that
-    // catches it.
+  it("prices every money figure at REAL VENDOR COST, not on what the client paid (PUBLIC-VENDOR-COST-1031)", async () => {
     mockFetch(BASE);
-    const listPrice = brandOf(await get(), DOC).funnels[0];
+    const billed = brandOf(await get(), DOC).funnels[0];
+
+    __resetShowcaseFunnelsCache();
+    mockFetch({ ...BASE, spendCents: 10000, vendorSpendCents: 5000 });
+    const vendor = brandOf(await get(), DOC).funnels[0];
+
+    // The vendors charged us half: a dollar of real cost came back as twice as much, every rung cost half.
+    expect(vendor.returnPerDollar).toBeCloseTo(billed.returnPerDollar! * 2, 10);
+    expect(vendor.steps.map((s) => s.costPerReachUsd)).toEqual([12.5, 25, 50, 50, null]);
+    expect(vendor.steps.map((s) => s.peopleReached)).toEqual(billed.steps.map((s) => s.peopleReached));
+  });
+
+  it("a client's discount moves nothing public: the money is vendor cost", async () => {
+    mockFetch(BASE);
+    const implicit = await get();
 
     __resetShowcaseFunnelsCache();
     mockFetch({ ...BASE, spendCents: 10000, netSpendCents: 5000 });
-    const paid = brandOf(await get(), DOC).funnels[0];
+    const discounted = await get();
 
-    // They paid half, so their dollar came back as twice as much and every rung cost them half.
-    expect(paid.returnPerDollar).toBeCloseTo(listPrice.returnPerDollar! * 2, 10);
-    expect(paid.steps.map((s) => s.costPerReachUsd)).toEqual([12.5, 25, 50, 50, null]);
-    // Counts are a fact about people and never move with a discount.
-    expect(paid.steps.map((s) => s.peopleReached)).toEqual(listPrice.steps.map((s) => s.peopleReached));
+    expect(brandOf(discounted, DOC).funnels[0]).toEqual(brandOf(implicit, DOC).funnels[0]);
+    expect(discounted.costBasis).toBe("vendor");
   });
 
-  it("a client carrying NO discount is byte-identical — the regression check that nothing else moved", async () => {
-    // A brand with no discount has a frozen net EQUAL to its gross on every cost row, so the net basis
-    // must leave it exactly where it was. That is what makes this a value correction for the
-    // discounted clients rather than a change of statistic for everybody.
-    mockFetch(BASE);
-    const implicit = brandOf(await get(), DOC).funnels[0];
-
-    __resetShowcaseFunnelsCache();
-    mockFetch({ ...BASE, spendCents: 10000, netSpendCents: 10000 });
-    const explicit = brandOf(await get(), DOC).funnels[0];
-
-    expect(explicit).toEqual(implicit);
+  it("a client whose billed spend lacks a vendor cost past 1% shows no money, says why, and keeps its counts", async () => {
+    mockFetch({ ...BASE, unpricedSpendCents: 500 });
+    const res = await get();
+    const brand = brandOf(res, DOC);
+    expect(brand.vendorCost).toMatchObject({ moneyUnavailableReason: "vendor_cost_unknown" });
+    expect(brand.vendorCost!.unpricedSharePct).toBeGreaterThan(1);
+    expect(brand.funnels[0].returnPerDollar).toBeNull();
+    expect(brand.funnels[0].steps.map((s: { costPerReachUsd: number | null }) => s.costPerReachUsd)).toEqual([null, null, null, null, null]);
+    expect(brand.funnels[0].steps.map((s: { peopleReached: number | null }) => s.peopleReached)).toEqual([4, 2, 1, 1, 0]);
   });
 
   it("a client whose spend we cannot read has NO money figure, while its counts still answer", async () => {
@@ -1105,9 +1127,10 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
   it("serving the outcome twin leaves the funnel-keyed body's SHAPE untouched", async () => {
     mockFetch(READABLE_SHOCK);
     const body = await get();
-    expect(Object.keys(body).sort()).toEqual(["brands", "groups", "minSpendUsd"]);
+    expect(Object.keys(body).sort()).toEqual(["brands", "costBasis", "groups", "minSpendUsd"]);
     for (const b of body.brands) {
-      expect(Object.keys(b).sort()).toEqual(["brand", "funnels", "measured", "unmeasuredReason"]);
+      // `vendorCost` (PUBLIC-VENDOR-COST-1031) rides every walked brand.
+      expect(Object.keys(b).filter((k) => k !== "vendorCost").sort()).toEqual(["brand", "funnels", "measured", "unmeasuredReason"]);
       for (const f of b.funnels) {
         expect(Object.keys(f).sort()).toEqual(["funnelKey", "funnelName", "returnPerDollar", "steps"]);
         for (const s of f.steps) expect(Object.keys(s).sort()).toEqual(["costPerReachUsd", "key", "label", "peopleReached"]);

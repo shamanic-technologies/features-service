@@ -32,6 +32,8 @@
  * PURE: the recorder (`fleet-index-recorder.ts`) reads the inputs, this turns them into points.
  */
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
+import type { IndexRow, PooledPipe } from "./fleet-index-vendor.js";
+import { VENDOR_COST_UNKNOWN } from "./public-vendor-cost.js";
 
 export type FleetIndexStatus = "robust" | "signal" | "noise";
 /** `multiple`: dollars back per dollar spent (3.6 reads "3.6x"). */
@@ -179,10 +181,10 @@ export function weakestStatus(a: FleetIndexStatus, b: FleetIndexStatus): FleetIn
 
 /** The AI Meeting Booking pipe (Positive reply -> Meeting booked), on the brands that report meetings. */
 export interface MeetingPipeEvidence {
-  /** The pipe's leg workflow ranking rows. */
-  rows: readonly LegWorkflowRankingRow[];
+  /** The pipe's leg workflow ranking rows (on the vendor basis, `lib/fleet-index-vendor.ts`). */
+  rows: readonly IndexRow[];
   /** The whole pipe, every workflow pooled (`MeetingLegFleet.pooled`). */
-  pooled: { spentUsd: number; contacted: number; outcomes: number; spentByDynasty: Record<string, number> };
+  pooled: PooledPipe;
 }
 
 /** What the meeting pipe is read on today: the best workflow, or the pipe as a whole while no workflow owns a meeting. */
@@ -201,6 +203,8 @@ export interface MeetingPipePick {
   ratePct: number;
   /** `pipe_all_workflows` only: spend per workflow on the pipe. */
   spentByDynasty: Record<string, number> | null;
+  /** The pick's spend lacks a vendor cost past the tolerance: its money prices nothing (PUBLIC-VENDOR-COST-1031). */
+  vendorCostUnknown?: boolean;
 }
 
 /**
@@ -208,7 +212,7 @@ export interface MeetingPipePick {
  * cheapest runnable workflow with a meeting, else the whole pipe pooled. Null = no meeting on the pipe at all.
  */
 export function bestMeetingPipePick(e: MeetingPipeEvidence): MeetingPipePick | null {
-  const asPick = (r: LegWorkflowRankingRow, source: MeetingPipePick["source"]): MeetingPipePick => ({
+  const asPick = (r: IndexRow, source: MeetingPipePick["source"]): MeetingPipePick => ({
     source,
     workflowDynastySlug: r.workflowDynastySlug,
     workflowDynastyName: r.workflowDynastyName,
@@ -219,8 +223,9 @@ export function bestMeetingPipePick(e: MeetingPipeEvidence): MeetingPipePick | n
     costPerMeetingUsd: r.spentUsd / r.outcomes,
     ratePct: (r.outcomes / r.contacted) * 100,
     spentByDynasty: null,
+    ...(r.vendorCostUnknown !== undefined ? { vendorCostUnknown: r.vendorCostUnknown } : {}),
   });
-  const measured = (r: LegWorkflowRankingRow) => r.selectable && r.outcomes > 0 && r.contacted > 0;
+  const measured = (r: IndexRow) => r.selectable && r.outcomes > 0 && r.contacted > 0;
   const mature = bestMature([...e.rows]);
   if (mature && measured(mature)) return asPick(mature, "mature_workflow");
   const learning = e.rows.filter(measured).sort((a, b) => a.spentUsd / a.outcomes - b.spentUsd / b.outcomes || b.outcomes - a.outcomes || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
@@ -238,13 +243,14 @@ export function bestMeetingPipePick(e: MeetingPipeEvidence): MeetingPipePick | n
     costPerMeetingUsd: p.spentUsd / p.outcomes,
     ratePct: (p.outcomes / p.contacted) * 100,
     spentByDynasty: p.spentByDynasty,
+    ...(p.vendorCostUnknown !== undefined ? { vendorCostUnknown: p.vendorCostUnknown } : {}),
   };
 }
 
 export interface FleetIndexInputs {
   /** null = the ranking could not be read: no point is recorded for its indexes. */
-  websiteVisitRows: LegWorkflowRankingRow[] | null;
-  positiveReplyRows: LegWorkflowRankingRow[] | null;
+  websiteVisitRows: IndexRow[] | null;
+  positiveReplyRows: IndexRow[] | null;
   /** null = unreadable: no point is recorded for the meeting rate index. */
   meetingPipe: MeetingPipeEvidence | null;
   /**
@@ -270,6 +276,8 @@ export interface BrandEngagement {
   /** Persons whose click was judged human (never a provider-reported click: mostly link scanners). */
   humanClicks: number;
   spendCents: number;
+  /** The brand's spend lacks a vendor cost past the tolerance (PUBLIC-VENDOR-COST-1031): the median prices nothing. */
+  vendorCostUnknown?: boolean;
 }
 
 /** PURE. A brand's visits over its whole reach: human clicks at the rate measured on its judgeable sends; none judgeable = 0. */
@@ -315,7 +323,10 @@ export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndex
     .map((b) => ({ engaged: b.positiveReplies + brandVisits(b), spendCents: b.spendCents }))
     .filter((b) => b.engaged > 0 && b.spendCents > 0);
   const engagedLeads = Math.round(priced.reduce((t, b) => t + b.engaged, 0));
-  const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human_over_reach", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS };
+  const unknown = brands.filter((b) => b.vendorCostUnknown && b.positiveReplies + brandVisits(b) > 0).length;
+  const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human_over_reach", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS, ...(unknown > 0 ? { clientsVendorCostUnknown: unknown } : {}) };
+  // A client whose vendor cost is not known is not left out silently: the median is withheld.
+  if (unknown > 0) return clientPoint(def, null, priced.length, VENDOR_COST_UNKNOWN, inputs);
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
   return clientPoint(def, value, priced.length, null, inputs);
@@ -329,11 +340,11 @@ export function clientReturnPoint(r: ClientReturnInput): FleetIndexPoint {
 }
 
 /** The row a client's money goes to today: best mature workflow that can still run. */
-function bestMature(rows: LegWorkflowRankingRow[]): LegWorkflowRankingRow | null {
+function bestMature(rows: IndexRow[]): IndexRow | null {
   return rows.find((r) => r.moneyGoesHere && r.selectable && r.basis === "mature") ?? null;
 }
 
-function legPoint(def: FleetIndexDefinition, rows: LegWorkflowRankingRow[]): FleetIndexPoint {
+function legPoint(def: FleetIndexDefinition, rows: IndexRow[]): FleetIndexPoint {
   const best = bestMature(rows);
   if (!best) {
     return {
@@ -357,12 +368,12 @@ function legPoint(def: FleetIndexDefinition, rows: LegWorkflowRankingRow[]): Fle
     contacted: best.contacted,
     workflowDynastySlug: best.workflowDynastySlug,
     workflowDynastyName: best.workflowDynastyName,
-    unavailableReason: value == null ? "not_measured" : null,
-    inputs: { spentUsd: best.spentUsd, outcomes: best.outcomes, contacted: best.contacted },
+    unavailableReason: value == null ? (best.vendorCostUnknown ? VENDOR_COST_UNKNOWN : "not_measured") : null,
+    inputs: { spentUsd: best.spentUsd, outcomes: best.outcomes, contacted: best.contacted, ...(best.unpricedSharePct !== undefined ? { unpricedSharePct: best.unpricedSharePct } : {}) },
   };
 }
 
-function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRow[], pipe: MeetingPipeEvidence): FleetIndexPoint {
+function meetingPoint(def: FleetIndexDefinition, replyRows: IndexRow[], pipe: MeetingPipeEvidence): FleetIndexPoint {
   const cost = def.metric === "cost_per_outcome";
   const reply = legPoint(cost ? COST_PER_INTEREST : INTEREST_RATE, replyRows);
   const mb = bestMeetingPipePick(pipe);
@@ -389,6 +400,8 @@ function meetingPoint(def: FleetIndexDefinition, replyRows: LegWorkflowRankingRo
   if (reply.value == null || !mb) {
     return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: reply.value == null ? reply.unavailableReason : "no_meeting_on_pipe" };
   }
+  // The rate index reads no money; the cost index never prices a pick whose vendor cost is unknown.
+  if (cost && mb.vendorCostUnknown) return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: VENDOR_COST_UNKNOWN };
   const rate = mb.ratePct / 100;
   const value = cost ? reply.value / rate + mb.costPerMeetingUsd : reply.value * rate;
   return {
@@ -484,7 +497,22 @@ export function meetingCostIndexPoint(
     ...(lp ? { ledgerUnitCostUsd: lp.inputs.ledgerUnitCostUsd ?? null, coveragePct: lp.inputs.coveragePct ?? null, daysMissing: lp.inputs.daysMissing ?? null } : {}),
   };
   if (!expected || expected.priceUsd === null || !(expected.priceUsd > 0)) {
-    if (!chain || chain.value === null || !(chain.value > 0)) return lp;
+    if (!chain || chain.value === null || !(chain.value > 0)) {
+      // On the vendor basis an expected price withheld for an unknown vendor cost says so (PUBLIC-VENDOR-COST-1031).
+      const vendorUnknown = expected?.unmeasuredReason === VENDOR_COST_UNKNOWN || chain?.unavailableReason === VENDOR_COST_UNKNOWN;
+      if (!vendorUnknown) return lp;
+      return {
+        indexSlug: COST_PER_MEETING.slug,
+        value: null,
+        status: "noise",
+        outcomes: 0,
+        contacted: null,
+        workflowDynastySlug: chain?.workflowDynastySlug ?? null,
+        workflowDynastyName: chain?.workflowDynastyName ?? null,
+        unavailableReason: VENDOR_COST_UNKNOWN,
+        inputs: { ...(chain?.inputs ?? {}), valueKind: "expected", ...ledgerInputs },
+      };
+    }
     return {
       ...chain,
       inputs: {

@@ -7,6 +7,7 @@ import {
   emptyPersonHistory,
   planRecomputedWrites,
   recomputeIndexHistory,
+  recomputeVendorIndexHistory,
   type AssignmentChange,
   type DatedIndexPoint,
   type DatedSlugSpend,
@@ -209,5 +210,33 @@ describe("fleet index history (INDEX-HISTORY-BACKFILL-1019)", () => {
     expect(again.writes).toEqual([]);
     expect(again.unchanged).toBe(first.writes.length);
     expect(again.skippedRecorded).toBe(1);
+  });
+});
+
+describe("fleet index history at real vendor cost (PUBLIC-VENDOR-COST-1031)", () => {
+  it("each day keeps the billed pick, its money on the vendor twin of the same rows", () => {
+    const billed = recomputeIndexHistory(inputs(BASE_LEADS, BASE_SPEND));
+    // Vendor = a quarter of billed for a1, half for b1: the cheaper-on-vendor workflow never becomes the pick by itself.
+    const vendorSpend = BASE_SPEND.map((s) => ({ ...s, spentCents: s.workflowSlug === "a1" ? s.spentCents / 4 : s.spentCents / 2 }));
+    const vendor = recomputeVendorIndexHistory(inputs(BASE_LEADS, BASE_SPEND), { spend: vendorSpend, unpricedSpend: BASE_SPEND.map((s) => ({ ...s, spentCents: 0 })) });
+    const days = billed.filter((p) => p.point.indexSlug === COST && p.point.value !== null).map((p) => p.day);
+    expect(days.length).toBeGreaterThan(0);
+    for (const day of days) {
+      const b = on(billed, COST, day)!;
+      const v = on(vendor, COST, day)!;
+      expect(v.workflowDynastySlug).toBe(b.workflowDynastySlug);
+      expect(v.outcomes).toBe(b.outcomes);
+      expect(v.value!).toBeCloseTo(b.value! / (b.workflowDynastySlug === "alpha" ? 4 : 2), 10);
+      expect(on(vendor, RATE, day)!.value).toBe(on(billed, RATE, day)!.value);
+    }
+  });
+
+  it("a day whose pick lacks a vendor cost past the tolerance reads null + vendor_cost_unknown", () => {
+    // Late spend with no vendor cost: the series started priced, then its pick's money becomes unknown.
+    const unpricedSpend = BASE_SPEND.map((s) => ({ ...s, spentCents: s.day >= "2026-08-25" && s.day <= "2026-08-31" ? s.spentCents : 0 }));
+    const vendor = recomputeVendorIndexHistory(inputs(BASE_LEADS, BASE_SPEND), { spend: BASE_SPEND, unpricedSpend });
+    expect(vendor.find((p) => p.point.indexSlug === COST)?.point.value).not.toBeNull();
+    const last = vendor.filter((p) => p.point.indexSlug === COST).at(-1);
+    expect(last?.point).toMatchObject({ value: null, unavailableReason: "vendor_cost_unknown" });
   });
 });

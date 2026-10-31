@@ -56,7 +56,8 @@ import {
   type MeetingPriceArithmetic,
   type OutcomePrice,
 } from "../lib/outcome-prices.js";
-import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
+import { computeMeetingLegFleet, getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
+import { dynastyOfSlug } from "../lib/workflow-scope.js";
 import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
 import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "../lib/default-leg-rates.js";
@@ -115,7 +116,7 @@ import {
   StatedAmountConflictError,
 } from "../lib/stated-monthly-amounts-store.js";
 import { BrandOwnershipError, assertBrandHeld } from "../lib/brand-ownership.js";
-import { computeFeatureRevenue, buildCostEconomics, type DownstreamHeaders } from "./revenue.js";
+import { computeFeatureRevenue, buildCostEconomics, resolveMaturityPlan, type DownstreamHeaders } from "./revenue.js";
 import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
@@ -151,7 +152,10 @@ import {
   type ShowcaseFunnel,
   type ShowcaseFunnelsPayload,
   type ShowcaseGroup,
+  type ShowcaseVendorCost,
 } from "../lib/showcase-funnels.js";
+import { fetchMatureSpendCents, fetchRunsCostCents } from "../lib/runs-cost-client.js";
+import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib/public-vendor-cost.js";
 import {
   buildShowcaseCandidates,
   furthestRungReached,
@@ -1270,9 +1274,20 @@ async function computePairReturns(
   startedOn: string | null;
   legKeys: string[] | null;
   byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }>;
+  vendor: PairVendorSpend | null;
 }> {
   const channel = await computePairRevenue(featureSlug, funnel, orgId, brandId);
-  if (channel === null) return { channel: null, startedOn: null, legKeys: null, byFunnel: [] };
+  if (channel === null) return { channel: null, startedOn: null, legKeys: null, byFunnel: [], vendor: null };
+
+  // THE SAME SPEND AT REAL VENDOR COST (PUBLIC-VENDOR-COST-1031: the public ROI index divides the client's pipeline by
+  // what producing it really cost). SOFT: an unreadable vendor spend leaves the brand without one (`vendor: null`), and
+  // the public vendor median then says `vendor_cost_unknown` rather than a median over the others.
+  let vendor: PairVendorSpend | null = null;
+  try {
+    vendor = await pairVendorSpend(featureSlug, orgId, brandId);
+  } catch (err) {
+    console.error(`[features-service] fleet-return warm: vendor spend unreadable for brand ${brandId} (org ${orgId}):`, err);
+  }
 
   // THE LEGS this pair's campaigns on the channel are bought for — the population key of the
   // outcome-keyed realized return (wave C4). One campaign-service list read beside an engine pass that
@@ -1312,15 +1327,43 @@ async function computePairReturns(
   // declaration) and to no funnel — never to a funnel we guessed it sells.
   const declared = await fetchDeclaredFunnelsSoft(brandId, orgId);
   const keys = [...new Set(declared.map((d) => d.funnelKey))];
-  if (keys.length === 0) return { channel, startedOn, legKeys, byFunnel: [] };
-  if (keys.length === 1) return { channel, startedOn, legKeys, byFunnel: [{ funnelKey: keys[0], result: channel }] };
+  if (keys.length === 0) return { channel, startedOn, legKeys, byFunnel: [], vendor };
+  if (keys.length === 1) return { channel, startedOn, legKeys, byFunnel: [{ funnelKey: keys[0], result: channel }], vendor };
 
   const byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> = [];
   for (const funnelKey of keys) {
     const result = await computePairRevenue(featureSlug, funnel, orgId, brandId, funnelKey);
     if (result !== null) byFunnel.push({ funnelKey, result });
   }
-  return { channel, startedOn, legKeys, byFunnel };
+  return { channel, startedOn, legKeys, byFunnel, vendor };
+}
+
+/** One (org, brand)'s channel spend at real vendor cost and the billed spend no vendor cost prices, both halves (USD). */
+interface PairVendorSpend {
+  flashUsd: number;
+  matureUsd: number;
+  unpricedFlashUsd: number;
+  unpricedMatureUsd: number;
+}
+
+/**
+ * The engine's own two spend reads (`computeFeatureRevenue`: the committed scope, and the MATURE cohort cut on the same
+ * plan), on the vendor basis and its unpriced twin.
+ */
+async function pairVendorSpend(featureSlug: string, orgId: string, brandId: string): Promise<PairVendorSpend> {
+  const headers: DownstreamHeaders = { orgId, featureSlug };
+  const { plan } = await resolveMaturityPlan(brandId, featureSlug, undefined, headers);
+  const [vf, uf] = await Promise.all([
+    fetchRunsCostCents(brandId, undefined, featureSlug, headers, "vendor"),
+    fetchRunsCostCents(brandId, undefined, featureSlug, headers, "vendorUnpriced"),
+  ]);
+  const [vm, um] = plan.cutoffIso
+    ? await Promise.all([
+        fetchMatureSpendCents(brandId, undefined, featureSlug, headers, "vendor", plan).then((r) => r.total),
+        fetchMatureSpendCents(brandId, undefined, featureSlug, headers, "vendorUnpriced", plan).then((r) => r.total),
+      ])
+    : [vf, uf];
+  return { flashUsd: vf.committedCents / 100, matureUsd: vm.committedCents / 100, unpricedFlashUsd: uf.committedCents / 100, unpricedMatureUsd: um.committedCents / 100 };
 }
 
 /**
@@ -1387,6 +1430,8 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         hasFlashPipeline: boolean;
         verdicts: Array<boolean | null>;
         legVerdicts: Map<string, Array<boolean | null>> | null;
+        /** Σ the claiming orgs' vendor spend; null as soon as one org's could not be read. */
+        vendor: PairVendorSpend | null;
       }
     >();
     // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
@@ -1428,7 +1473,17 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
           hasFlashPipeline: false,
           verdicts: [],
           legVerdicts: null,
+          vendor: { flashUsd: 0, matureUsd: 0, unpricedFlashUsd: 0, unpricedMatureUsd: 0 },
         };
+      agg.vendor =
+        agg.vendor && c.vendor
+          ? {
+              flashUsd: agg.vendor.flashUsd + c.vendor.flashUsd,
+              matureUsd: agg.vendor.matureUsd + c.vendor.matureUsd,
+              unpricedFlashUsd: agg.vendor.unpricedFlashUsd + c.vendor.unpricedFlashUsd,
+              unpricedMatureUsd: agg.vendor.unpricedMatureUsd + c.vendor.unpricedMatureUsd,
+            }
+          : null;
       // The legs are the UNION over the orgs claiming the brand; one org's unreadable campaign list
       // does not erase what another org's read stated.
       if (c.legKeys !== null) {
@@ -1534,6 +1589,7 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       isMature: combineVerdicts(agg.verdicts) ?? null,
       flashCommittedSpendUsd: agg.flashSpend,
       flashExpectedPipelineUsd: agg.hasFlashPipeline ? agg.flashPipeline : null,
+      vendorSpend: agg.vendor,
       legMaturity: agg.legVerdicts
         ? Object.fromEntries([...agg.legVerdicts].map(([legKey, vs]) => [legKey, combineVerdicts(vs) ?? null] as const))
         : null,
@@ -1639,6 +1695,37 @@ export async function handleFleetReturnOnSpend(
 /** The `/public/stats/return-on-spend` body for an EXISTING feature (validation stays in the handler). */
 export async function readFleetReturnOnSpend(featureSlug: string, minSpendUsd: number): Promise<FleetReturnPayload> {
   const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
+  return fleetReturnPayloadOf(featureSlug, snapshot, minSpendUsd);
+}
+
+/**
+ * The PUBLIC ROI median on real VENDOR cost (PUBLIC-VENDOR-COST-1031): the same snapshot, the same population (mature
+ * brands past the spend floor, the floor read on what they were billed), each brand's pipeline divided by what its spend
+ * really cost. A brand of that population whose vendor spend is unknown (unreadable, or billed spend with no vendor cost
+ * past the tolerance) is never left out silently: the median is not stated, reason `vendor_cost_unknown`.
+ */
+export async function readFleetVendorReturn(
+  featureSlug: string,
+  minSpendUsd: number,
+): Promise<{ measured: boolean; reason: string | null; brandCount: number; minSpendUsd: number; medianReturnPerDollar: number | null }> {
+  const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
+  if (!snapshot) return fleetReturnPayloadOf(featureSlug, null, minSpendUsd);
+  const floored = snapshot.brands.filter((b) => b.isMature === true && b.committedSpendUsd >= minSpendUsd);
+  const unknown = floored.filter((b) => {
+    const v = b.vendorSpend;
+    return !v || !vendorCoverage(v.matureUsd, v.unpricedMatureUsd, b.committedSpendUsd + v.unpricedMatureUsd).servable;
+  });
+  if (unknown.length > 0) {
+    return { measured: false, reason: VENDOR_COST_UNKNOWN, brandCount: floored.length, minSpendUsd, medianReturnPerDollar: null };
+  }
+  const onVendor = snapshot.brands
+    .filter((b) => floored.includes(b))
+    .map((b) => ({ ...b, committedSpendUsd: b.vendorSpend!.matureUsd, flashCommittedSpendUsd: b.vendorSpend!.flashUsd }));
+  const r = fleetReturnPayloadOf(featureSlug, { ...snapshot, brands: onVendor }, 0);
+  return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar };
+}
+
+function fleetReturnPayloadOf(featureSlug: string, snapshot: Awaited<ReturnType<typeof readFleetReturnSnapshotSoft>>, minSpendUsd: number): FleetReturnPayload {
 
   // Kick the warm when there is nothing, or when what there is has aged out. Deliberately NOT awaited:
   // the whole point of the snapshot is that no caller ever pays for the compute.
@@ -2386,8 +2473,8 @@ export async function fetchFleetLegSlugEvidence(featureSlug: string, legKey: str
 }
 
 /** One leg's fleet maturity, computed IN THIS PROCESS (the refresher, or the server when it is off). */
-export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed"): Promise<FleetLegWorkflowMaturity> {
-  const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, slugs, "gross");
+export async function computeFleetLegWorkflowMaturity(featureSlug: string, legKey: string, slugs: SpendSlugs = "fed", pricing: PipeSpendPricing = "gross"): Promise<FleetLegWorkflowMaturity> {
+  const ev = await fetchFleetLegSlugEvidence(featureSlug, legKey, slugs, pricing);
   const { workflows, flash, mature, cutoffIso } = ev;
   const matureBy = mature ? legEvidenceByDynasty(featureSlug, legKey, workflows, mature.costGroups, mature.emailStats) : null;
   const dynastySlugs = [...new Set(workflows.map((w) => w.workflowDynastySlug))];
@@ -3779,14 +3866,10 @@ async function computeShowcaseBrand(
       undefined,
       brandPriced,
       true,
-      // NET, for the reason `computePairRevenue` states: the page names three clients and prints what
-      // THEY got back, so the basis has to be the money they actually paid. Every dashboard surface a
-      // client reads is `pricing=net`, so a GROSS figure here is one that appears on no screen the
-      // client owns — and the OpenAPI below promises this IS the figure on their dashboard. That
-      // promise is what makes the basis load-bearing rather than a preference. Zero extra IO (runs'
-      // frozen net twin off the same read), fail-loud if the twin is absent, byte-unchanged for a
-      // client carrying no discount.
-      "net",
+      // VENDOR (owner 2026-10-31, PUBLIC-VENDOR-COST-1031: « afficher le cost réel, si on enlève notre markup depuis
+      // le début »): a visitor reads what each outcome really cost to produce, before our markup, whole history; the
+      // client's own dashboard keeps what they paid. Supersedes the NET basis of 2026-10-19. The counts are untouched.
+      "vendor",
       funnelKey,
       undefined, // offerId: the brand grain
       undefined, // customerStepCosts: read here
@@ -3820,22 +3903,53 @@ async function computeShowcaseBrand(
   }
   if (soldFunnels.length > 1) {
     const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
-    const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "net");
+    const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "vendor");
     brandReturnPerDollar = servedReturnOf(whole.costEconomics.maturity).roiMultiple;
   }
+
+  // Billed spend with no known vendor cost must never make the card read cheap (`lib/public-vendor-cost.ts`): past the
+  // tolerance every money figure of the brand is null + `vendor_cost_unknown`; the counts stand.
+  const coverage = await brandVendorCoverage(brandId, featureSlugs, headers);
+  const vendorCost: ShowcaseVendorCost = {
+    unpricedSharePct: coverage.unpricedSharePct,
+    moneyUnavailableReason: coverage.servable ? null : VENDOR_COST_UNKNOWN,
+  };
+  if (!coverage.servable) {
+    console.warn(
+      `[features-service] showcase brand ${brandId}: ${coverage.unpricedSharePct.toFixed(2)}% of its billed spend has no vendor cost, its money figures are withheld`,
+    );
+  }
+  const shownFunnels = coverage.servable ? funnels : funnels.map(withoutMoney);
 
   return {
     entry: {
       brand,
-      funnels,
+      funnels: shownFunnels,
       measured: funnels.length > 0,
       // The chain resolves for every funnel the campaigns state, so an empty list here means the engine
       // could not walk one — the same "we could not read this" a per-rung null says, one level up.
       unmeasuredReason: funnels.length > 0 ? null : "read_failed",
+      vendorCost,
     },
-    brandReturnPerDollar,
-    heroCounts,
+    brandReturnPerDollar: coverage.servable ? brandReturnPerDollar : null,
+    heroCounts: heroCounts && !coverage.servable ? { ...heroCounts, committedSpentCents: null } : heroCounts,
   };
+}
+
+/** One showcase brand's vendor cost coverage over the channels its card reads (`lib/public-vendor-cost.ts`). */
+async function brandVendorCoverage(brandId: string, featureSlugs: string[], headers: DownstreamHeaders): Promise<VendorCoverage> {
+  const [vendor, unpriced, billed] = await Promise.all([
+    fetchRunsCostCents(brandId, undefined, featureSlugs, headers, "vendor"),
+    fetchRunsCostCents(brandId, undefined, featureSlugs, headers, "vendorUnpriced"),
+    fetchRunsCostCents(brandId, undefined, featureSlugs, headers, "gross"),
+  ]);
+  // Billed = what clients were charged + the unpriced rows (most are comped sends, absent from the charged total).
+  return vendorCoverage(vendor.committedCents / 100, unpriced.committedCents / 100, (billed.committedCents + unpriced.committedCents) / 100);
+}
+
+/** PURE. A walked chain with every money figure withheld (its counts kept). */
+function withoutMoney(f: ShowcaseFunnel): ShowcaseFunnel {
+  return { ...f, returnPerDollar: null, steps: f.steps.map((st) => ({ ...st, costPerReachUsd: null })) };
 }
 
 /** One walked showcase brand: its funnel-keyed entry, the brand-wide return its per-outcome twin states,
@@ -4086,6 +4200,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   });
 
   const funnelsPayload: ShowcaseFunnelsPayload = {
+    costBasis: "vendor",
     brands,
     groups: {
       recentlyStarted: groupOf(recentPick),
@@ -5156,12 +5271,15 @@ async function ledgerPipeFigures(
   featureSlug: string,
   legKey: string,
   campaigns: readonly FleetLegCampaign[],
+  pricing: PipeSpendPricing = "gross",
 ): Promise<Array<[string, LegMaturityFigures]> | null> {
-  const flashRead = await ledgerRegime("gross");
-  if (!flashRead) return null;
+  // The gate is the BILLED book's: a vendor twin is on the ledger exactly when the billed figures are.
+  if (!(await ledgerRegime("gross"))) return null;
+  const flashRead = await ledgerRegime(pricing);
+  if (!flashRead) throw new Error(`[features-service] ledger ${featureSlug}|${legKey}: the ${pricing} book is unreadable while the billed one is open`);
   const outcomeKey = await pipeOutcomeKey(featureSlug, legKey);
   const cutoffIso = legCutoffIso(legKey);
-  const matureRead = cutoffIso ? await ledgerRegime("gross", cutoffIso) : flashRead;
+  const matureRead = cutoffIso ? await ledgerRegime(pricing, cutoffIso) : flashRead;
   const ids = new Set(campaigns.map((c) => c.campaignId));
   const workflows = await fetchPublicWorkflows(featureSlug, "all");
   const dynastyOf = new Map(workflows.map((w) => [w.workflowSlug, w.workflowDynastySlug]));
@@ -5181,9 +5299,17 @@ async function ledgerPipeFigures(
   );
 }
 
+/**
+ * The basis a pipe's per-workflow spend is read on: `gross` (billed, incurred: every reader), or, for the PUBLIC money
+ * figures only (PUBLIC-VENDOR-COST-1031), `vendor` (real vendor cost of the priced rows) and `vendorUnpriced` (billed
+ * spend on the rows no vendor cost prices). Counts are the same on every basis.
+ */
+export type PipeSpendPricing = "gross" | "vendor" | "vendorUnpriced";
+
 export async function fleetPipeFigures(
   featureSlug: string,
   legKey: string,
+  pricing: PipeSpendPricing = "gross",
 ): Promise<{
   byDynasty: Array<[string, LegMaturityFigures]>;
   cutoffIso: string | null;
@@ -5192,7 +5318,7 @@ export async function fleetPipeFigures(
   meetingPopulation: MeetingPopulation | null;
 }> {
   const pipePopulation = await getFleetLegPopulation(featureSlug, legKey);
-  const onLedger = await ledgerPipeFigures(featureSlug, legKey, pipePopulation.campaigns);
+  const onLedger = await ledgerPipeFigures(featureSlug, legKey, pipePopulation.campaigns, pricing);
   if (onLedger) {
     return { byDynasty: onLedger, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: pipePopulation.campaigns.length, meetingPopulation: pipePopulation.population };
   }
@@ -5200,10 +5326,15 @@ export async function fleetPipeFigures(
   // unit run) is measured on its own runs' spend and the leads its trigger's events say it found (`lib/on-demand-pipe-fleet.ts`).
   const onDemandTrigger = await onDemandPipeTrigger(featureSlug, legKey);
   if (onDemandTrigger) {
+    if (pricing !== "gross") throw new Error(`[features-service] pipe ${featureSlug}|${legKey}: an on-demand pipe is not read on the ${pricing} basis`);
     const fleet = await getOnDemandPipeFleet(featureSlug, legKey);
     return { byDynasty: fleet.byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount, meetingPopulation: null };
   }
   const internalToStep = await internalPipeToStep(featureSlug, legKey);
+  if (internalToStep && pricing !== "gross") {
+    const fleet = await getInternalPipeFleet(featureSlug, legKey, internalToStep);
+    return { byDynasty: (await internalPipeSpendOn(featureSlug, legKey, fleet, pricing)).byDynasty, cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: fleet.campaignCount, meetingPopulation: fleet.population };
+  }
   if (internalToStep) {
     const fleet = await getInternalPipeFleet(featureSlug, legKey, internalToStep);
     if (fleet.unattributableCampaignIds.length > 0) {
@@ -5217,8 +5348,55 @@ export async function fleetPipeFigures(
   if (campaigns.length === 0) return { byDynasty: [], cutoffIso: legCutoffIso(legKey), measured: true, campaignCount: 0, meetingPopulation: population };
   // The pipe's OWN cost (owner 2026-10-11): an outreach pipe fed by sources reads its own slug only, its sources being
   // pipes measured on theirs (`lib/feature-scope.ts` `SpendSlugs`).
-  const maturity = await fetchFleetLegWorkflowMaturity(featureSlug, legKey, "own");
+  const maturity =
+    pricing === "gross"
+      ? await fetchFleetLegWorkflowMaturity(featureSlug, legKey, "own")
+      : await computeFleetLegWorkflowMaturity(featureSlug, legKey, effectiveSpendSlugs(featureSlug, "own"), pricing);
   return { ...maturity, campaignCount: campaigns.length, meetingPopulation: population };
+}
+
+/**
+ * An INTERNAL pipe's spend on a vendor basis (PUBLIC-VENDOR-COST-1031), the SAME attribution as its billed figures
+ * (`buildMeetingLegFleet`): per dynasty, each counted campaign credited to the one dynasty that spent on it; pooled, every
+ * counted campaign that ran, every dynasty on it. Each campaign's spend is read on `pricing`; the counts are the billed
+ * build's own.
+ */
+export async function internalPipeSpendOn(
+  featureSlug: string,
+  legKey: string,
+  fleet: MeetingLegFleet,
+  pricing: "vendor" | "vendorUnpriced",
+): Promise<{ byDynasty: Array<[string, LegMaturityFigures]>; pooledByDynasty: Record<string, number> }> {
+  const counted = fleet.perCampaign.filter((c) => c.inFleetPopulation);
+  const ran = fleet.ranCampaigns ?? [];
+  const ids = [...new Set([...counted.map((c) => c.campaignId), ...ran.map((c) => c.campaignId)])].sort();
+  const [workflows, groups] = await Promise.all([
+    fetchPublicWorkflows(featureSlug, "all"),
+    mapWithConcurrency(ids, 2, async (id) => [id, await fetchPublicCosts(featureSlug, "workflowSlug", pricing, "incurred", [id])] as const),
+  ]);
+  const toDynasty = dynastyOfSlug(workflows);
+  const byCampaign = new Map<string, Map<string, number>>();
+  for (const [id, gs] of groups) {
+    const m = byCampaign.get(id) ?? new Map<string, number>();
+    for (const g of gs) {
+      const slug = g.dimensions.workflowSlug;
+      if (!slug) continue;
+      const d = toDynasty(slug);
+      m.set(d, (m.get(d) ?? 0) + Number(g.totalCostInUsdCents));
+    }
+    byCampaign.set(id, m);
+  }
+  const spent = new Map<string, number>();
+  for (const c of counted) spent.set(c.dynasty, (spent.get(c.dynasty) ?? 0) + (byCampaign.get(c.campaignId)?.get(c.dynasty) ?? 0));
+  const pooled = new Map<string, number>();
+  for (const c of ran) for (const [d, cents] of byCampaign.get(c.campaignId) ?? []) pooled.set(d, (pooled.get(d) ?? 0) + cents);
+  return {
+    byDynasty: fleet.byDynasty.map(([d, f]) => {
+      const figures = outcomeFigures((spent.get(d) ?? 0) / 100, f.flash?.contacted ?? 0, f.flash?.outcomes ?? 0);
+      return [d, legMaturityFigures(legKey, figures, figures)] as [string, LegMaturityFigures];
+    }),
+    pooledByDynasty: Object.fromEntries([...pooled].filter(([, c]) => c !== 0).sort(([a], [b]) => (a < b ? -1 : 1)).map(([d, c]) => [d, c / 100])),
+  };
 }
 
 /**

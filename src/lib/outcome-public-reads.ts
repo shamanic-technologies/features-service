@@ -38,6 +38,7 @@ import {
   SHOWCASE_CONTACTED_KEY,
   SHOWCASE_CONTACTED_LABEL,
   type ShowcaseBrandFunnels,
+  type ShowcaseVendorCost,
   type ShowcaseFunnelsPayload,
   type ShowcaseGroup,
 } from "./showcase-funnels.js";
@@ -414,13 +415,15 @@ export interface ShowcaseBrandOutcomes {
   brand: { id: string; name: string | null; domain: string | null };
   outcomes: ShowcaseOutcome[];
   /**
-   * REALIZED — what a dollar came back as for this client, across every path it sells: the brand's
-   * own `costEconomics.roiMultiple` (net), the figure on its own dashboard. For a brand that sells ONE
-   * path it IS that path's `returnPerDollar` on the funnel-keyed read. Null = could not measure.
+   * REALIZED — what a dollar of real VENDOR cost came back as for this client, across every path it sells
+   * (PUBLIC-VENDOR-COST-1031; the served half of `costEconomics.maturity` on the vendor basis). For a brand that sells
+   * ONE path it IS that path's `returnPerDollar` on the funnel-keyed read. Null = could not measure.
    */
   returnPerDollar: number | null;
   measured: boolean;
   unmeasuredReason: ShowcaseOutcomeUnmeasuredReason | null;
+  /** The brand's vendor cost coverage, as on the funnel-keyed read. Absent when nothing was walked. */
+  vendorCost?: ShowcaseVendorCost;
 }
 
 export interface ShowcaseOutcomeGroup extends Omit<ShowcaseGroup, "brands"> {
@@ -428,6 +431,8 @@ export interface ShowcaseOutcomeGroup extends Omit<ShowcaseGroup, "brands"> {
 }
 
 export interface ShowcaseOutcomesPayload {
+  /** Every money figure is at real VENDOR cost, before our markup (PUBLIC-VENDOR-COST-1031). */
+  costBasis: "vendor";
   brands: ShowcaseBrandOutcomes[];
   groups: { recentlyStarted: ShowcaseOutcomeGroup; highestReturn: ShowcaseOutcomeGroup };
   minSpendUsd: number;
@@ -520,6 +525,7 @@ export function showcaseOutcomesOf(
     returnPerDollar: entry.measured ? brandReturnPerDollar : null,
     measured: entry.measured,
     unmeasuredReason: reason,
+    ...(entry.vendorCost ? { vendorCost: entry.vendorCost } : {}),
   };
 }
 
@@ -533,6 +539,7 @@ export function showcaseOutcomesPayloadOf(
     showcaseOutcomesOf(e, brandReturns.get(e.brand.id) ?? null, heroCounts.get(e.brand.id) ?? null);
   const group = (g: ShowcaseGroup): ShowcaseOutcomeGroup => ({ ...g, brands: g.brands.map(of) });
   return {
+    costBasis: payload.costBasis,
     brands: payload.brands.map(of),
     groups: { recentlyStarted: group(payload.groups.recentlyStarted), highestReturn: group(payload.groups.highestReturn) },
     minSpendUsd: payload.minSpendUsd,

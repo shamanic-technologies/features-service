@@ -707,7 +707,7 @@ export const writerTacticVerdicts = pgTable(
  * UTC day) = that index's value as recorded that day. TODAY's row is rewritten by every recorder tick (the day is
  * still open); a past day is never touched again, so the series is what we published, day after day.
  * `basis` = `recorded` (written live that day) or `recomputed` (a day before the recorder, rebuilt as of that day by
- * `scripts/backfill-fleet-indexes.ts`, never written over a recorded day).
+ * `scripts/backfill-fleet-indexes.ts`, never written over a recorded day). One row per (index, day, `cost_basis`).
  */
 export const fleetIndexPoints = pgTable(
   "fleet_index_points",
@@ -726,9 +726,14 @@ export const fleetIndexPoints = pgTable(
     unavailableReason: text("unavailable_reason"),
     inputs: jsonb("inputs").notNull(),
     basis: text("basis").notNull().default("recorded"),
+    /**
+     * The cost basis the money is on (PUBLIC-VENDOR-COST-1031): `billed` (what clients were charged: the staff Research
+     * series) or `vendor` (real vendor cost before our markup: the public indexes). Rates are the same on both.
+     */
+    costBasis: text("cost_basis").notNull().default("billed"),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("idx_fleet_index_points_slug_day").on(table.indexSlug, table.day)],
+  (table) => [uniqueIndex("idx_fleet_index_points_slug_day_basis").on(table.indexSlug, table.day, table.costBasis)],
 );
 
 export type FleetIndexPointRow = typeof fleetIndexPoints.$inferSelect;

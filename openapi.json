@@ -52307,7 +52307,7 @@
     "/public/stats/showcase-funnels": {
       "get": {
         "summary": "Ordered funnel counts AND money for the SHOWCASE brands named on our homepage (public, no auth)",
-        "description": "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT PAST CONTACTED IS OUR OUTREACH'S WIN ONLY (owner 2026-10-29): a rung reached only through an outcome lead-service did not judge caused by our outreach (`causedByOutreach` false or undecided, e.g. a CRM meeting booked before our first email to that person, or by someone we never emailed) is not counted here, unlike the client's own dashboard, which counts every conversion. The verdict is lead-service's alone: a booked/attended/sale rung counts only when a lead-service statement judged it ours. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: two rankings, served as `groups` — `recentlyStarted` (the hero row: the 3 most recently begun clients with at least 1 meeting booked, filled with the newest clients with at least 1 positive reply when fewer than 3; never one qualified by website visits alone) and `highestReturn` (the best realized return on spend past `minSpendUsd`, best first, with at least 5 people on one outcome past contacted). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the deduped union of both groups, in an unchanged shape, so an existing consumer keeps rendering while it moves onto the groups; a client picked by both rankings is in both. Every ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds — the per-brand return it ranks on is a full engine pass per brand and takes minutes. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. EVERY MONEY FIGURE HERE IS ON THE NET PRICING BASIS: what the client actually paid after their per-org usage discount, which is the basis their own dashboard reads, so the two surfaces cannot state two numbers. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+        "description": "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT PAST CONTACTED IS OUR OUTREACH'S WIN ONLY (owner 2026-10-29): a rung reached only through an outcome lead-service did not judge caused by our outreach (`causedByOutreach` false or undecided, e.g. a CRM meeting booked before our first email to that person, or by someone we never emailed) is not counted here, unlike the client's own dashboard, which counts every conversion. The verdict is lead-service's alone: a booked/attended/sale rung counts only when a lead-service statement judged it ours. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: two rankings, served as `groups` — `recentlyStarted` (the hero row: the 3 most recently begun clients with at least 1 meeting booked, filled with the newest clients with at least 1 positive reply when fewer than 3; never one qualified by website visits alone) and `highestReturn` (the best realized return on spend past `minSpendUsd`, best first, with at least 5 people on one outcome past contacted). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the deduped union of both groups, in an unchanged shape, so an existing consumer keeps rendering while it moves onto the groups; a client picked by both rankings is in both. Every ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds — the per-brand return it ranks on is a full engine pass per brand and takes minutes. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. EVERY MONEY FIGURE HERE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history, comped work included. The client's own dashboard keeps what the client paid. A brand whose billed spend lacks a vendor cost on more than 1% states `vendorCost.moneyUnavailableReason` and null money, never a mix. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
         "tags": [
           "Public"
         ],
@@ -52319,6 +52319,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "vendor"
+                      ],
+                      "description": "Every money figure is REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031). Counts are unchanged."
+                    },
                     "brands": {
                       "type": "array",
                       "items": {
@@ -52362,7 +52369,7 @@
                                 "returnPerDollar": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?pricing=net on a brand reading this funnel. READ ON THE NET PRICING BASIS - what this client ACTUALLY PAID after whatever per-org usage discount they carry - which is what makes that byte-same claim true rather than aspirational: every dashboard surface a client reads is net, so a gross figure here would be one that appears on no screen they own. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
+                                  "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
                                 },
                                 "steps": {
                                   "type": "array",
@@ -52385,7 +52392,7 @@
                                       "costPerReachUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                        "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
                                       }
                                     },
                                     "required": [
@@ -52421,6 +52428,29 @@
                               "read_failed",
                               null
                             ]
+                          },
+                          "vendorCost": {
+                            "type": "object",
+                            "properties": {
+                              "unpricedSharePct": {
+                                "type": "number",
+                                "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                              },
+                              "moneyUnavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "vendor_cost_unknown",
+                                  null
+                                ],
+                                "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                              }
+                            },
+                            "required": [
+                              "unpricedSharePct",
+                              "moneyUnavailableReason"
+                            ],
+                            "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                           }
                         },
                         "required": [
@@ -52481,7 +52511,7 @@
                                         "returnPerDollar": {
                                           "type": "number",
                                           "nullable": true,
-                                          "description": "WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?pricing=net on a brand reading this funnel. READ ON THE NET PRICING BASIS - what this client ACTUALLY PAID after whatever per-org usage discount they carry - which is what makes that byte-same claim true rather than aspirational: every dashboard surface a client reads is net, so a gross figure here would be one that appears on no screen they own. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
+                                          "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
                                         },
                                         "steps": {
                                           "type": "array",
@@ -52504,7 +52534,7 @@
                                               "costPerReachUsd": {
                                                 "type": "number",
                                                 "nullable": true,
-                                                "description": "WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                                "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
                                               }
                                             },
                                             "required": [
@@ -52540,6 +52570,29 @@
                                       "read_failed",
                                       null
                                     ]
+                                  },
+                                  "vendorCost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "unpricedSharePct": {
+                                        "type": "number",
+                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                                      },
+                                      "moneyUnavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "vendor_cost_unknown",
+                                          null
+                                        ],
+                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                                      }
+                                    },
+                                    "required": [
+                                      "unpricedSharePct",
+                                      "moneyUnavailableReason"
+                                    ],
+                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                                   }
                                 },
                                 "required": [
@@ -52629,7 +52682,7 @@
                                         "returnPerDollar": {
                                           "type": "number",
                                           "nullable": true,
-                                          "description": "WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED spend, i.e. the byte-same roiMultiple the client reads as ROI on their own dashboard for GET /features/:slug/revenue?pricing=net on a brand reading this funnel. READ ON THE NET PRICING BASIS - what this client ACTUALLY PAID after whatever per-org usage discount they carry - which is what makes that byte-same claim true rather than aspirational: every dashboard surface a client reads is net, so a gross figure here would be one that appears on no screen they own. A client carrying no discount has a frozen net equal to its gross per cost row and is unchanged. NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
+                                          "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
                                         },
                                         "steps": {
                                           "type": "array",
@@ -52652,7 +52705,7 @@
                                               "costPerReachUsd": {
                                                 "type": "number",
                                                 "nullable": true,
-                                                "description": "WHAT REACHING THIS RUNG COST THE CLIENT — the funnel's COMMITTED spend over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                                "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
                                               }
                                             },
                                             "required": [
@@ -52688,6 +52741,29 @@
                                       "read_failed",
                                       null
                                     ]
+                                  },
+                                  "vendorCost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "unpricedSharePct": {
+                                        "type": "number",
+                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                                      },
+                                      "moneyUnavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "vendor_cost_unknown",
+                                          null
+                                        ],
+                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                                      }
+                                    },
+                                    "required": [
+                                      "unpricedSharePct",
+                                      "moneyUnavailableReason"
+                                    ],
+                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                                   }
                                 },
                                 "required": [
@@ -52744,6 +52820,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "brands",
                     "groups",
                     "minSpendUsd"
@@ -54614,6 +54691,13 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "vendor"
+                      ],
+                      "description": "Every money figure is REAL VENDOR COST, before any markup, whole history (PUBLIC-VENDOR-COST-1031)."
+                    },
                     "brands": {
                       "type": "array",
                       "items": {
@@ -54667,7 +54751,7 @@
                                 "costPerReachUsd": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "Committed NET spend / people reached, in dollars. OBSERVED. Null when no denominator."
+                                  "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
                                 }
                               },
                               "required": [
@@ -54682,7 +54766,7 @@
                           "returnPerDollar": {
                             "type": "number",
                             "nullable": true,
-                            "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                            "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                           },
                           "measured": {
                             "type": "boolean"
@@ -54697,6 +54781,29 @@
                               "read_failed",
                               null
                             ]
+                          },
+                          "vendorCost": {
+                            "type": "object",
+                            "properties": {
+                              "unpricedSharePct": {
+                                "type": "number",
+                                "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                              },
+                              "moneyUnavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "vendor_cost_unknown",
+                                  null
+                                ],
+                                "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                              }
+                            },
+                            "required": [
+                              "unpricedSharePct",
+                              "moneyUnavailableReason"
+                            ],
+                            "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                           }
                         },
                         "required": [
@@ -54767,7 +54874,7 @@
                                         "costPerReachUsd": {
                                           "type": "number",
                                           "nullable": true,
-                                          "description": "Committed NET spend / people reached, in dollars. OBSERVED. Null when no denominator."
+                                          "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
                                         }
                                       },
                                       "required": [
@@ -54782,7 +54889,7 @@
                                   "returnPerDollar": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                                    "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                                   },
                                   "measured": {
                                     "type": "boolean"
@@ -54797,6 +54904,29 @@
                                       "read_failed",
                                       null
                                     ]
+                                  },
+                                  "vendorCost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "unpricedSharePct": {
+                                        "type": "number",
+                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                                      },
+                                      "moneyUnavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "vendor_cost_unknown",
+                                          null
+                                        ],
+                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                                      }
+                                    },
+                                    "required": [
+                                      "unpricedSharePct",
+                                      "moneyUnavailableReason"
+                                    ],
+                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                                   }
                                 },
                                 "required": [
@@ -54891,7 +55021,7 @@
                                         "costPerReachUsd": {
                                           "type": "number",
                                           "nullable": true,
-                                          "description": "Committed NET spend / people reached, in dollars. OBSERVED. Null when no denominator."
+                                          "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
                                         }
                                       },
                                       "required": [
@@ -54906,7 +55036,7 @@
                                   "returnPerDollar": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "REALIZED — the brand's own ROI across every path it sells, net, as its dashboard Today page states it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
+                                    "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
                                   },
                                   "measured": {
                                     "type": "boolean"
@@ -54921,6 +55051,29 @@
                                       "read_failed",
                                       null
                                     ]
+                                  },
+                                  "vendorCost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "unpricedSharePct": {
+                                        "type": "number",
+                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
+                                      },
+                                      "moneyUnavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "vendor_cost_unknown",
+                                          null
+                                        ],
+                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
+                                      }
+                                    },
+                                    "required": [
+                                      "unpricedSharePct",
+                                      "moneyUnavailableReason"
+                                    ],
+                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
                                   }
                                 },
                                 "required": [
@@ -54970,6 +55123,7 @@
                     }
                   },
                   "required": [
+                    "costBasis",
                     "brands",
                     "groups",
                     "minSpendUsd"
