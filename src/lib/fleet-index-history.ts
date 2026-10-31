@@ -22,8 +22,8 @@
  *
  * The meeting indexes, the meeting pipe's Research series and the outcome prices' meeting price are rebuilt too when the
  * AI Meeting Booking pipe's dated inputs are given (MEETING-COST-METHODS-1024, `meeting-pipe-history.ts`: acts dated by
- * lead-service's follow-up ledger, meetings and the reporting brands by its meeting facts). NOT rebuilt (series start
- * with the recorder): the client-median indexes (engaged lead, ROI), whose per-brand inputs this does not build.
+ * lead-service's follow-up ledger, meetings and the reporting brands by its meeting facts). The client-median indexes
+ * (engaged lead, ROI) are rebuilt per brand by `client-index-history.ts`, at vendor cost only.
  */
 import { bestMeetingPipePick, computeFleetIndexPoints, FLEET_INDEXES, SCEO_FEATURE_SLUG, type FleetIndexPoint, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import { vendorPooled, vendorRankingRows, type PipeVendorTwin } from "./fleet-index-vendor.js";

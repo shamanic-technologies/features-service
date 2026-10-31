@@ -155,6 +155,7 @@ import {
   type ShowcaseVendorCost,
 } from "../lib/showcase-funnels.js";
 import { fetchMatureSpendCents, fetchRunsCostCents } from "../lib/runs-cost-client.js";
+import { vendorReturnMedian } from "../lib/fleet-return-vendor.js";
 import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib/public-vendor-cost.js";
 import {
   buildShowcaseCandidates,
@@ -982,7 +983,7 @@ function matureIngredients(costEconomics: CostEconomics): {
 }
 
 /** One (org, brand) engine pass, or null when the membership is stale (the brand moved orgs). */
-async function computePairRevenue(
+export async function computePairRevenue(
   featureSlug: string,
   funnel: ReturnType<typeof getFunnel>,
   orgId: string,
@@ -1350,7 +1351,7 @@ interface PairVendorSpend {
  * The engine's own two spend reads (`computeFeatureRevenue`: the committed scope, and the MATURE cohort cut on the same
  * plan), on the vendor basis and its unpriced twin.
  */
-async function pairVendorSpend(featureSlug: string, orgId: string, brandId: string): Promise<PairVendorSpend> {
+export async function pairVendorSpend(featureSlug: string, orgId: string, brandId: string): Promise<PairVendorSpend> {
   const headers: DownstreamHeaders = { orgId, featureSlug };
   const { plan } = await resolveMaturityPlan(brandId, featureSlug, undefined, headers);
   const [vf, uf] = await Promise.all([
@@ -1711,14 +1712,9 @@ export async function readFleetVendorReturn(
 ): Promise<{ measured: boolean; reason: string | null; brandCount: number; minSpendUsd: number; medianReturnPerDollar: number | null; vendorCostUnknownBrands: number }> {
   const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
   if (!snapshot) return { ...fleetReturnPayloadOf(featureSlug, null, minSpendUsd), vendorCostUnknownBrands: 0 };
-  const floored = snapshot.brands.filter((b) => b.isMature === true && b.committedSpendUsd >= minSpendUsd);
-  const known = floored.filter((b) => {
-    const v = b.vendorSpend;
-    return Boolean(v) && vendorCoverage(v!.matureUsd, v!.unpricedMatureUsd, b.committedSpendUsd + v!.unpricedMatureUsd).servable;
-  });
-  const onVendor = known.map((b) => ({ ...b, committedSpendUsd: b.vendorSpend!.matureUsd, flashCommittedSpendUsd: b.vendorSpend!.flashUsd }));
-  const r = fleetReturnPayloadOf(featureSlug, { ...snapshot, brands: onVendor }, 0);
-  return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar, vendorCostUnknownBrands: floored.length - known.length };
+  // Kick the stale-snapshot warm exactly as the billed read does; the median itself is the shared pure rule.
+  fleetReturnPayloadOf(featureSlug, snapshot, minSpendUsd);
+  return { ...vendorReturnMedian(snapshot.brands, minSpendUsd), minSpendUsd };
 }
 
 function fleetReturnPayloadOf(featureSlug: string, snapshot: Awaited<ReturnType<typeof readFleetReturnSnapshotSoft>>, minSpendUsd: number): FleetReturnPayload {
