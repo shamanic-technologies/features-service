@@ -12,7 +12,7 @@ import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
-import { listDeclaredChannels, listTriggerCatalogue, loadChannelCatalogue } from "../lib/channel-declarations-store.js";
+import { listDeclaredChannels, listTriggerCatalogue, loadChannelCatalogue, loadRetiredChannels, type RetiredChannel } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
 import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
@@ -3502,6 +3502,8 @@ interface ChannelCataloguePayload {
   /** AI Meeting Booking before vs after go-live, per brand + fleet (`lib/meeting-booking-before-after.ts`). */
   meetingBookingBeforeAfter: MeetingBookingBeforeAfter;
   channels: PublicChannel[];
+  /** The RETIRED channels (superseded or deprecated), for DESCRIBING past campaigns: name, icon, legs. Never offered. */
+  retiredChannels: RetiredChannel[];
   /** EVERY declared sales funnel, mirrored from brand-service, whether or not a channel sells it today.
    *  Each states the STEP IT STARTS ON in the same vocabulary a channel's `producibleSteps` use, so
    *  "which funnels does this outcome lead into" is a lookup in this payload rather than a translation
@@ -3592,6 +3594,11 @@ export async function handlePublicChannels(res: import("express").Response, incl
       const channels = await withPipeIdentities(await withCampaignNames(await loadPublishedChannels()));
       return {
       channels,
+      // Describes past campaigns only: an unreadable list is logged and served empty, never a 500 on the live catalogue.
+      retiredChannels: await loadRetiredChannels().catch((err: Error) => {
+        console.error(`[features-service] retired channels unreadable (served empty): ${err.message}`);
+        return [];
+      }),
       funnels: salesFunnelCatalogue(),
       legs: funnelLegCatalogue(channels),
       steps: channelStepCatalogue(),

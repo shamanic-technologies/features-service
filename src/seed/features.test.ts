@@ -219,8 +219,8 @@ describe("SEED_FEATURES — pr-expert-quote-opportunities", () => {
     expect(seed?.displayOrder).toBe(10);
   });
 
-  it("uses the inbox icon (HITL queue metaphor)", () => {
-    expect(seed?.icon).toBe("inbox");
+  it("uses the tray icon (HITL queue metaphor; a Phosphor name)", () => {
+    expect(seed?.icon).toBe("tray");
   });
 
   it("has 4 inputs with required keys", () => {

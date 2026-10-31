@@ -6437,6 +6437,20 @@ const channelCatalogueResponseSchema = registry.register(
         }),
       )
       .describe("THE TRIGGER CATALOGUE (owner 2026-10-09, typed 2026-10-15): every kind of event that runs a REACTIVE leg, one row each in this service's database, the same for every client. The events themselves (one per occurrence, fired or skipped, per org x brand x offer) and each campaign's On/Off live in campaign-service. A condition `delay` instance (\"outcome X reached, still not Y after N\": `params {afterStep, minutes|days, unlessStep}`) is a declared row computed by campaign-service's generic detector: a new one is declared, never coded."),
+    retiredChannels: z
+      .array(
+        z.object({
+          slug: z.string(),
+          name: z.string(),
+          description: z.string(),
+          icon: z.string().describe("Icon token (Phosphor name), like a channel's `icon`."),
+          channelType: z.string(),
+          operatedBy: z.string(),
+          supersededBySlug: z.string().nullable().describe("The slug selling the same offering now; null on a deprecated channel."),
+          stepTransitions: z.array(z.object({ legKey: z.string(), from: z.object({ key: z.string() }).nullable(), to: z.object({ key: z.string() }) })),
+        }),
+      )
+      .describe("THE RETIRED CHANNELS (P5.1, owner 2026-10-31): a seeded channel retired for a successor (`supersededBySlug`) or deprecated, served ONLY so the past campaigns that ran on it keep their channel's name and icon. Never a channel: not bookable, never offered, absent from `channels`."),
     triggerAliases: z
       .array(
         z.object({
