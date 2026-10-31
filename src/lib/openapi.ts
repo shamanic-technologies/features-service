@@ -5867,6 +5867,11 @@ const legWorkflowRankingRowSchema = z.object({
   icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
 });
 
+// THREADS-IDEAS-AB: what a writer row's posts led to (LOCKED shape, the dashboard codes against it).
+const postFiguresSchema = z
+  .object({ posts: z.number(), views: z.number(), engagements: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number(), costPerSignupUsd: z.number().nullable() })
+  .nullable()
+  .describe("THREADS-IDEAS-AB: on a pipe whose writer records POSTS (content-generation's thread-generations feed), what this row's posts led to, everything to date, pooled over the dynasty's versions: posts published, latest views and engagements summed (social-service), website visits through the posts and signups credited on those visits (runs-service ledger), billed spend of the writing runs (published or not), cost per signup (null at 0). The ranking's outcome on such a pipe is the SIGNUP (contacted = posts). Null on a pipe whose writer records no posts.");
 const writerRankingRowSchema = z.object({
   rank: z.number().int().describe("1-based, total: the ONE leg order the workflows follow (`/public/stats/leg-workflow-ranking`), on $/outcome."),
   key: z.string().describe("Template: content-generation's dynasty slug (else a template version no dynasty of the pipe lists). LLM: the model's Research page key (its chat-service name, slugged)."),
@@ -5923,7 +5928,7 @@ registry.registerPath({
             strategyId: z.string().nullable(),
             leftOut: z.object({ templates: z.object({ contacted: z.number(), outcomes: z.number() }), llms: z.object({ contacted: z.number(), outcomes: z.number() }) }).describe("People whose writer is not on record: in no bar (as on the Research page)."),
             templates: writerRankingSchema.extend({
-              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable(), tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."), tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."), icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."), })),
+              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable(), postFigures: postFiguresSchema, tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."), tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."), icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."), })),
             }),
             llms: writerRankingSchema.extend({
               rows: z.array(
@@ -5933,6 +5938,7 @@ registry.registerPath({
                   aliases: z.array(z.object({ alias: z.string(), provider: z.string(), status: z.enum(["active", "deprecated"]) })).describe("content-generation writer aliases running this dynasty, active first."),
                   modelIds: z.array(z.string()).describe("Every concrete model id of the dynasty."),
                   provider: z.string().nullable(),
+                  postFigures: postFiguresSchema,
                   models: z
                     .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), basis: z.enum(["mature", "flash"]), spentUsd: z.number(), contacted: z.number(), outcomes: z.number() }))
                     .describe("Per model, newest first: its share of the row, read on the row's basis (they add up to it). Zero for a version that never wrote. Empty on an internal pipe (its ledger names the alias, not the version)."),
@@ -8926,6 +8932,7 @@ const researchCatalogPipeSchema = z.object({
       icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
       label: z.string().describe("The dynasty's name (`Blind Free Offer`); a version on its own reads its version label."),
       hasText: z.boolean().describe("`/internal/research/templates` serves a text under `key`: the head's on a dynasty."),
+      postFigures: postFiguresSchema,
       tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."), tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."),
       dynasty: z
         .object({
@@ -9552,7 +9559,7 @@ const engineShadow = z.object({
   comparable: z.number().int(),
   agreed: z.number().int(),
   expectedAgreementPct: z.number().nullable(),
-  clientEvidence: z.enum(["ledger", "ledger_unreadable"]),
+  clientEvidence: z.enum(["ledger", "ledger_unreconciled", "ledger_unreadable"]).describe("`ledger_unreconciled` = read while runs-service's ledger had a stale or missing day (stated, never red)."),
   limits: z.array(z.string()).describe("What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."),
 });
 const engineReplay = z.object({
@@ -9580,6 +9587,8 @@ const engineReplay = z.object({
   ),
   totals: z.object({ todayRegret: z.number().nullable(), engineRegret: z.number().nullable(), regretGain: z.number().nullable(), families: z.number().int() }).describe("Over the graded families, weighted by window decisions."),
   caveats: z.array(z.string()),
+  ledgerReconciled: z.boolean().optional().describe("False = the ledger was read while runs-service had not reconciled it (`ledgerDaysMissing` stale days): stated, never red."),
+  ledgerDaysMissing: z.number().int().optional(),
   failure: z.string().nullable().describe("Set when the replay failed (red)."),
 });
 
