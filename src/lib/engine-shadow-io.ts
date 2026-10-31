@@ -157,7 +157,11 @@ export async function engineShadowOfCampaign(
       const rows = selectableRows(pipe, ranking);
       if (rows.length === 0) return;
       const campaignIds = new Set((await getFleetLegCampaigns(base.channelSlug, base.computedLegKey)).filter((x) => x.brandId === c.brandId).map((x) => x.campaignId));
-      const client = campaignIds.size === 0 ? new Map<string, Evidence>() : await ledgerEvidence(memos, base, campaignIds, null, legCutoffIso(base.computedLegKey, now));
+      // The mature cut is a second ledger read per leg: taken only while the ledger is reconciled (the rankings read the
+      // same cut then, held); unreconciled, the client's decisions count in full (no censoring at the client level).
+      if (campaignIds.size > 0) await memos.book(null);
+      const matureCut = memos.unreconciled.reads === 0 ? legCutoffIso(base.computedLegKey, now) : null;
+      const client = campaignIds.size === 0 ? new Map<string, Evidence>() : await ledgerEvidence(memos, base, campaignIds, null, matureCut);
       if (client === null) ledgerRead = false;
       const rate = model.ratesOfChain([{ legKey: base.legKey, fromStep: base.fromStep, toStep: base.toStep }])[0]?.ratePct ?? null;
       for (const r of rows) {
@@ -209,8 +213,12 @@ export async function engineShadowOfCampaign(
 // ── The replay ─────────────────────────────────────────────────────────────────────────────────────
 
 export const REPLAY_WINDOW_DAYS = 30;
-/** Checkpoints of the window (days before today): beliefs are read as of each, its period runs to the next. */
-export const REPLAY_CHECKPOINTS = [30, 23, 16, 9, 2] as const;
+/**
+ * Checkpoints of the window (days before today): beliefs are read as of each, its period runs to the next. ONE: every
+ * cut is a full ledger read on runs-service, which calls features-service back; five cuts on 2026-10-31 (load 52) made
+ * runs-service 500 and the pass take 280 s. The Engine decides once, at the window's start, on what it knew then.
+ */
+export const REPLAY_CHECKPOINTS = [30] as const;
 
 /**
  * The replay (fleet, every outcome some pipe of ours produces): at each checkpoint the Engine's Thompson shares on the
