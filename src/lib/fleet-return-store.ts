@@ -23,7 +23,7 @@ export interface FleetReturnSnapshotRead {
 }
 
 /** Narrow one stored jsonb entry to a `BrandReturnRow`, or null when it is not one. */
-function parseRow(raw: unknown): BrandReturnRow | null {
+export function parseRow(raw: unknown): BrandReturnRow | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.brandId !== "string") return null;
@@ -75,6 +75,12 @@ function parseRow(raw: unknown): BrandReturnRow | null {
   ) {
     return null;
   }
+  // The vendor ingredients (PUBLIC-VENDOR-COST-1031): four finite numbers, or a recorded null; anything else is malformed.
+  const vendorSpend = r.vendorSpend;
+  if (vendorSpend !== undefined && vendorSpend !== null) {
+    const v = vendorSpend as Record<string, unknown>;
+    if (typeof v !== "object" || !["flashUsd", "matureUsd", "unpricedFlashUsd", "unpricedMatureUsd"].every((k) => typeof v[k] === "number" && Number.isFinite(v[k]))) return null;
+  }
   return {
     brandId: r.brandId,
     committedSpendUsd: r.committedSpendUsd,
@@ -91,6 +97,7 @@ function parseRow(raw: unknown): BrandReturnRow | null {
     ...(flashSpend !== undefined ? { flashCommittedSpendUsd: flashSpend as number } : {}),
     ...(flashPipeline !== undefined ? { flashExpectedPipelineUsd: flashPipeline as number | null } : {}),
     ...(legMaturity !== undefined ? { legMaturity: legMaturity as Record<string, boolean | null> | null } : {}),
+    ...(vendorSpend !== undefined ? { vendorSpend: vendorSpend as BrandReturnRow["vendorSpend"] } : {}),
   };
 }
 
