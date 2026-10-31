@@ -34,6 +34,8 @@ const RUNS_RETRY_WAIT_MS = 20_000;
 const WHOLE_READ_ATTEMPTS = 2;
 /** The first month a run can have started in (runs-service's ledger starts 2026-02-02; one month of margin). */
 const HISTORY_FIRST_MONTH = "2026-01";
+/** Tries of one month's read in a pair spend history (a loaded box times even a month out; the run is off any request). */
+const MONTH_READ_ATTEMPTS = 8;
 
 /** A runs-service read that failed; `status` null = no HTTP answer (connection refused, timeout). */
 class RunsReadError extends Error {
@@ -376,7 +378,7 @@ export async function readPairDatedSpend(featureSlug: string, orgId: string, bra
         const p = new URLSearchParams(params);
         p.set("startedAfter", after);
         p.set("startedBefore", before);
-        out.push(...(await once(path, p, headers, RUNS_ATTEMPTS)));
+        out.push(...(await once(path, p, headers, MONTH_READ_ATTEMPTS)));
       }
       return out;
     }
