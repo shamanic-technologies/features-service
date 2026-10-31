@@ -6859,6 +6859,16 @@ const c4ProjectedReason = z
   .nullable()
   .describe("Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in.");
 
+const figureMaturitySchema = z
+  .object({
+    isMature: z.boolean().describe("True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."),
+    notMatureReason: z.enum(["too_few_outcomes", "no_figure"]).nullable().describe("Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."),
+    measuredOutcome: z.enum(["positive_reply", "website_visit"]).nullable().describe("The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."),
+    outcomesMeasured: z.number().int().nullable().describe("How many of those outcomes the figure stands on. Null when the path measures none."),
+    outcomesRequired: z.number().int().describe("The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."),
+  })
+  .describe("CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?");
+
 const channelOutcomeEconomicsSchema = z.object({
   channelSlug: z.string(),
   channelName: z.string(),
@@ -6869,8 +6879,9 @@ const channelOutcomeEconomicsSchema = z.object({
         landedByChannel: z.boolean().describe("True when this channel performs a leg landing on the step."),
         costPerOutcomeUsd: z.number().nullable().describe("PROJECTED — the CHEAPEST path's price for reaching this step (the engine's best-path rule). Replaces a pair's `steps[].costPerStepUsd`."),
         unpricedReason: c4ProjectedReason,
+        maturity: figureMaturitySchema.describe("Is `costPerOutcomeUsd` mature enough to state and rank? The verdict of the path it was taken from."),
         pricedThroughLegKeys: z.array(z.string()).nullable().describe("The legs of the path the price was taken from."),
-        paths: z.array(z.object({ legKeys: z.array(z.string()), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason })).describe("Every path reaching this step with its own price. They OVERLAP — never sum."),
+        paths: z.array(z.object({ legKeys: z.array(z.string()), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason, maturity: figureMaturitySchema })).describe("Every path reaching this step with its own price. They OVERLAP — never sum."),
       }),
     )
     .describe("Every step this channel's paths reach, in the step vocabulary's order."),
@@ -6883,6 +6894,7 @@ const channelOutcomeEconomicsSchema = z.object({
         performedByChannel: z.boolean(),
         costPerOutcomeUsd: z.number().nullable().describe("PROJECTED — what landing a lead on this leg's step costs, cheapest path containing the leg."),
         unpricedReason: c4ProjectedReason,
+        maturity: figureMaturitySchema.describe("Is `costPerOutcomeUsd` mature enough to state and rank? The verdict of the path it was taken from."),
       }),
     )
     .describe("Every leg of those paths."),
@@ -6892,9 +6904,11 @@ const channelOutcomeEconomicsSchema = z.object({
         legKeys: z.array(z.string()).describe("The path's legs, first to last — its identity (no funnel key)."),
         measured: z.boolean(),
         unmeasuredReason: c4ProjectedReason,
-        steps: z.array(z.object({ step: c4StepSchema, legKey: z.string(), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason })),
+        steps: z.array(z.object({ step: c4StepSchema, legKey: z.string(), costPerOutcomeUsd: z.number().nullable(), unpricedReason: c4ProjectedReason, maturity: figureMaturitySchema })),
         costPerPaidClientUsd: z.number().nullable().describe("= the pair's `costPerSaleUsd`."),
+        costPerPaidClientMaturity: figureMaturitySchema,
         returnPerDollar: z.number().nullable().describe("PROJECTED — lifetimeRevenueUsd / costPerPaidClientUsd. Never a realized return."),
+        returnPerDollarMaturity: figureMaturitySchema,
         lifetimeRevenueUsd: z.number().nullable(),
         statedBrandCount: z.number().int().nullable().describe("= the pair's `evidence.brandCount`."),
         effectiveMinimumCommitmentDays: z.number().int(),
@@ -6902,6 +6916,7 @@ const channelOutcomeEconomicsSchema = z.object({
     )
     .describe("The pair rows 1:1, in catalogue order, named by their legs."),
   returnPerDollar: z.number().nullable().describe("PROJECTED — the best path's return per dollar."),
+  returnPerDollarMaturity: figureMaturitySchema.describe("Is `returnPerDollar` mature enough to state and rank? The verdict of the path it was taken from."),
   returnPathLegKeys: z.array(z.string()).nullable(),
   evidence: z.object({ totalSpentUsd: z.number(), conversationsProduced: z.number(), websiteVisitsProduced: z.number() }).nullable().describe("The channel-wide pooled evidence every path rides on. Null when no path was measured."),
   effectiveMinimumCommitmentDays: z.number().int().nullable().describe("The longest composed minimum run across the channel's paths. Null when it has none."),

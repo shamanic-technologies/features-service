@@ -53634,6 +53634,52 @@
                                   ],
                                   "description": "Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in."
                                 },
+                                "maturity": {
+                                  "type": "object",
+                                  "properties": {
+                                    "isMature": {
+                                      "type": "boolean",
+                                      "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                    },
+                                    "notMatureReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "too_few_outcomes",
+                                        "no_figure",
+                                        null
+                                      ],
+                                      "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                    },
+                                    "measuredOutcome": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "positive_reply",
+                                        "website_visit",
+                                        null
+                                      ],
+                                      "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                    },
+                                    "outcomesMeasured": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                    },
+                                    "outcomesRequired": {
+                                      "type": "integer",
+                                      "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                    }
+                                  },
+                                  "required": [
+                                    "isMature",
+                                    "notMatureReason",
+                                    "measuredOutcome",
+                                    "outcomesMeasured",
+                                    "outcomesRequired"
+                                  ],
+                                  "description": "Is `costPerOutcomeUsd` mature enough to state and rank? The verdict of the path it was taken from."
+                                },
                                 "pricedThroughLegKeys": {
                                   "type": "array",
                                   "nullable": true,
@@ -53670,12 +53716,59 @@
                                           null
                                         ],
                                         "description": "Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in."
+                                      },
+                                      "maturity": {
+                                        "type": "object",
+                                        "properties": {
+                                          "isMature": {
+                                            "type": "boolean",
+                                            "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                          },
+                                          "notMatureReason": {
+                                            "type": "string",
+                                            "nullable": true,
+                                            "enum": [
+                                              "too_few_outcomes",
+                                              "no_figure",
+                                              null
+                                            ],
+                                            "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                          },
+                                          "measuredOutcome": {
+                                            "type": "string",
+                                            "nullable": true,
+                                            "enum": [
+                                              "positive_reply",
+                                              "website_visit",
+                                              null
+                                            ],
+                                            "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                          },
+                                          "outcomesMeasured": {
+                                            "type": "integer",
+                                            "nullable": true,
+                                            "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                          },
+                                          "outcomesRequired": {
+                                            "type": "integer",
+                                            "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                          }
+                                        },
+                                        "required": [
+                                          "isMature",
+                                          "notMatureReason",
+                                          "measuredOutcome",
+                                          "outcomesMeasured",
+                                          "outcomesRequired"
+                                        ],
+                                        "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
                                       }
                                     },
                                     "required": [
                                       "legKeys",
                                       "costPerOutcomeUsd",
-                                      "unpricedReason"
+                                      "unpricedReason",
+                                      "maturity"
                                     ]
                                   },
                                   "description": "Every path reaching this step with its own price. They OVERLAP — never sum."
@@ -53686,6 +53779,7 @@
                                 "landedByChannel",
                                 "costPerOutcomeUsd",
                                 "unpricedReason",
+                                "maturity",
                                 "pricedThroughLegKeys",
                                 "paths"
                               ]
@@ -53762,6 +53856,52 @@
                                     null
                                   ],
                                   "description": "Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in."
+                                },
+                                "maturity": {
+                                  "type": "object",
+                                  "properties": {
+                                    "isMature": {
+                                      "type": "boolean",
+                                      "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                    },
+                                    "notMatureReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "too_few_outcomes",
+                                        "no_figure",
+                                        null
+                                      ],
+                                      "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                    },
+                                    "measuredOutcome": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "positive_reply",
+                                        "website_visit",
+                                        null
+                                      ],
+                                      "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                    },
+                                    "outcomesMeasured": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                    },
+                                    "outcomesRequired": {
+                                      "type": "integer",
+                                      "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                    }
+                                  },
+                                  "required": [
+                                    "isMature",
+                                    "notMatureReason",
+                                    "measuredOutcome",
+                                    "outcomesMeasured",
+                                    "outcomesRequired"
+                                  ],
+                                  "description": "Is `costPerOutcomeUsd` mature enough to state and rank? The verdict of the path it was taken from."
                                 }
                               },
                               "required": [
@@ -53770,7 +53910,8 @@
                                 "toStep",
                                 "performedByChannel",
                                 "costPerOutcomeUsd",
-                                "unpricedReason"
+                                "unpricedReason",
+                                "maturity"
                               ]
                             },
                             "description": "Every leg of those paths."
@@ -53849,13 +53990,60 @@
                                           null
                                         ],
                                         "description": "Why the figure is null — the SAME vocabulary /public/channel-funnel-economics uses (pair-level: nothing spent, entry step never produced / not measured, no economics stated; step-level: rate not stated, rate is 0). Never a 0 standing in."
+                                      },
+                                      "maturity": {
+                                        "type": "object",
+                                        "properties": {
+                                          "isMature": {
+                                            "type": "boolean",
+                                            "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                          },
+                                          "notMatureReason": {
+                                            "type": "string",
+                                            "nullable": true,
+                                            "enum": [
+                                              "too_few_outcomes",
+                                              "no_figure",
+                                              null
+                                            ],
+                                            "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                          },
+                                          "measuredOutcome": {
+                                            "type": "string",
+                                            "nullable": true,
+                                            "enum": [
+                                              "positive_reply",
+                                              "website_visit",
+                                              null
+                                            ],
+                                            "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                          },
+                                          "outcomesMeasured": {
+                                            "type": "integer",
+                                            "nullable": true,
+                                            "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                          },
+                                          "outcomesRequired": {
+                                            "type": "integer",
+                                            "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                          }
+                                        },
+                                        "required": [
+                                          "isMature",
+                                          "notMatureReason",
+                                          "measuredOutcome",
+                                          "outcomesMeasured",
+                                          "outcomesRequired"
+                                        ],
+                                        "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
                                       }
                                     },
                                     "required": [
                                       "step",
                                       "legKey",
                                       "costPerOutcomeUsd",
-                                      "unpricedReason"
+                                      "unpricedReason",
+                                      "maturity"
                                     ]
                                   }
                                 },
@@ -53864,10 +54052,102 @@
                                   "nullable": true,
                                   "description": "= the pair's `costPerSaleUsd`."
                                 },
+                                "costPerPaidClientMaturity": {
+                                  "type": "object",
+                                  "properties": {
+                                    "isMature": {
+                                      "type": "boolean",
+                                      "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                    },
+                                    "notMatureReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "too_few_outcomes",
+                                        "no_figure",
+                                        null
+                                      ],
+                                      "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                    },
+                                    "measuredOutcome": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "positive_reply",
+                                        "website_visit",
+                                        null
+                                      ],
+                                      "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                    },
+                                    "outcomesMeasured": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                    },
+                                    "outcomesRequired": {
+                                      "type": "integer",
+                                      "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                    }
+                                  },
+                                  "required": [
+                                    "isMature",
+                                    "notMatureReason",
+                                    "measuredOutcome",
+                                    "outcomesMeasured",
+                                    "outcomesRequired"
+                                  ],
+                                  "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
+                                },
                                 "returnPerDollar": {
                                   "type": "number",
                                   "nullable": true,
                                   "description": "PROJECTED — lifetimeRevenueUsd / costPerPaidClientUsd. Never a realized return."
+                                },
+                                "returnPerDollarMaturity": {
+                                  "type": "object",
+                                  "properties": {
+                                    "isMature": {
+                                      "type": "boolean",
+                                      "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                                    },
+                                    "notMatureReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "too_few_outcomes",
+                                        "no_figure",
+                                        null
+                                      ],
+                                      "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                                    },
+                                    "measuredOutcome": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "positive_reply",
+                                        "website_visit",
+                                        null
+                                      ],
+                                      "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                                    },
+                                    "outcomesMeasured": {
+                                      "type": "integer",
+                                      "nullable": true,
+                                      "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                                    },
+                                    "outcomesRequired": {
+                                      "type": "integer",
+                                      "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                                    }
+                                  },
+                                  "required": [
+                                    "isMature",
+                                    "notMatureReason",
+                                    "measuredOutcome",
+                                    "outcomesMeasured",
+                                    "outcomesRequired"
+                                  ],
+                                  "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
                                 },
                                 "lifetimeRevenueUsd": {
                                   "type": "number",
@@ -53888,7 +54168,9 @@
                                 "unmeasuredReason",
                                 "steps",
                                 "costPerPaidClientUsd",
+                                "costPerPaidClientMaturity",
                                 "returnPerDollar",
+                                "returnPerDollarMaturity",
                                 "lifetimeRevenueUsd",
                                 "statedBrandCount",
                                 "effectiveMinimumCommitmentDays"
@@ -53900,6 +54182,52 @@
                             "type": "number",
                             "nullable": true,
                             "description": "PROJECTED — the best path's return per dollar."
+                          },
+                          "returnPerDollarMaturity": {
+                            "type": "object",
+                            "properties": {
+                              "isMature": {
+                                "type": "boolean",
+                                "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
+                              },
+                              "notMatureReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "too_few_outcomes",
+                                  "no_figure",
+                                  null
+                                ],
+                                "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
+                              },
+                              "measuredOutcome": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "positive_reply",
+                                  "website_visit",
+                                  null
+                                ],
+                                "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
+                              },
+                              "outcomesMeasured": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "How many of those outcomes the figure stands on. Null when the path measures none."
+                              },
+                              "outcomesRequired": {
+                                "type": "integer",
+                                "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
+                              }
+                            },
+                            "required": [
+                              "isMature",
+                              "notMatureReason",
+                              "measuredOutcome",
+                              "outcomesMeasured",
+                              "outcomesRequired"
+                            ],
+                            "description": "Is `returnPerDollar` mature enough to state and rank? The verdict of the path it was taken from."
                           },
                           "returnPathLegKeys": {
                             "type": "array",
@@ -53942,6 +54270,7 @@
                           "legs",
                           "paths",
                           "returnPerDollar",
+                          "returnPerDollarMaturity",
                           "returnPathLegKeys",
                           "evidence",
                           "effectiveMinimumCommitmentDays"
