@@ -114,6 +114,41 @@ export function expectedStepCosts(path: SalesPath | null, basis: string | null, 
   return out;
 }
 
+/** What one outcome of a step is worth to the client, read off the SAME expected sales path as its expected cost. */
+export interface StepValue {
+  /** The offer's lifetime revenue ÷ the step's outcomes needed per paying client on the expected path. Null with the reason. */
+  valuePerOutcomeUsd: number | null;
+  unavailableReason: string | null;
+}
+
+/**
+ * PURE. The value of one outcome of each step on the offer's expected sales path (P5 OUTCOMES-ENTRY, owner 2026-10-31
+ * "Go with all": an outcome card states its $ / outcome AND its ROI where the outcome is valued). Paid client = the
+ * lifetime revenue; an earlier step = the lifetime revenue ÷ how many of that step one paying client needs.
+ */
+export function stepValues(path: SalesPath | null, unavailableReason: string | null): Map<string, StepValue> {
+  const out = new Map<string, StepValue>();
+  const none = (reason: string): StepValue => ({ valuePerOutcomeUsd: null, unavailableReason: reason });
+  for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? "step_not_on_expected_path" : (unavailableReason ?? "no_priced_sales_path")));
+  if (!path) return out;
+  const ltr = path.lifetimeRevenueUsd;
+  for (const leg of path.legs) {
+    const step = leg.toStep.key;
+    if (!out.has(step)) continue;
+    const needed = leg.outcomesNeededPerPayingClient;
+    if (ltr === null || !(ltr > 0)) out.set(step, none("no_lifetime_revenue"));
+    else if (needed === null || needed <= 0) out.set(step, none("zero_conversion_rate"));
+    else out.set(step, { valuePerOutcomeUsd: round2(ltr / needed), unavailableReason: null });
+  }
+  return out;
+}
+
+/** PURE. value ÷ cost, 2 decimals; null when either side is missing or the cost is not positive. */
+export function roiOf(valueUsd: number | null, costUsd: number | null): number | null {
+  if (valueUsd === null || costUsd === null || !(costUsd > 0)) return null;
+  return round2(valueUsd / costUsd);
+}
+
 export interface OutcomeCostMonth {
   /** `YYYY-MM` (UTC). */
   month: string;
@@ -145,6 +180,14 @@ export interface OutcomeCostStepSeries {
     learning: boolean;
   };
   expected: StepExpectedCost;
+  /** What one outcome of the step is worth (expected path), served beside its cost so a reader never divides. */
+  value: StepValue;
+  /**
+   * Return of one outcome: value.valuePerOutcomeUsd ÷ a cost per outcome. `measured` over sinceInception's cost (null at 0
+   * outcomes or when the step is not valued), `expected` over expected's cost. A reader shows `measured`, else `expected`
+   * marked expected.
+   */
+  roi: { measured: number | null; expected: number | null };
   months: OutcomeCostMonth[];
 }
 
@@ -176,9 +219,10 @@ export function buildOutcomeCostSeries(input: {
   outcomeDays: ReadonlyMap<OutcomeCostStep, readonly (string | null)[]>;
   learningBarOf: (step: OutcomeCostStep) => number;
   expectedOf: (step: OutcomeCostStep) => StepExpectedCost;
+  valueOf: (step: OutcomeCostStep) => StepValue;
   today: string;
 }): OutcomeCostStepSeries[] {
-  const { spendByDay, outcomeDays, learningBarOf, expectedOf, today } = input;
+  const { spendByDay, outcomeDays, learningBarOf, expectedOf, valueOf, today } = input;
   // Spend is summed EXACTLY (unrounded) and rounded ONCE on the cumulative, so the last cumulative is the scope's whole
   // spend to the cent (the offer spend chart's total) and each month's spend is the difference of two rounded
   // cumulatives (the months add up to the cumulative exactly).
@@ -228,6 +272,9 @@ export function buildOutcomeCostSeries(input: {
       };
     });
     const end = series.at(-1);
+    const expected = expectedOf(stepKey);
+    const value = valueOf(stepKey);
+    const measuredCost = end?.cumulativeCostPerOutcomeUsd ?? null;
     return {
       stepKey,
       learningOutcomesRequired: bar,
@@ -238,7 +285,9 @@ export function buildOutcomeCostSeries(input: {
         costPerOutcomeUsd: end?.cumulativeCostPerOutcomeUsd ?? null,
         learning: end?.learning ?? true,
       },
-      expected: expectedOf(stepKey),
+      expected,
+      value,
+      roi: { measured: roiOf(value.valuePerOutcomeUsd, measuredCost), expected: roiOf(value.valuePerOutcomeUsd, expected.costPerOutcomeUsd) },
       months: series,
     };
   });
