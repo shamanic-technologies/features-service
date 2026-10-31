@@ -2534,7 +2534,9 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
       name,
       face: name ? faceOf(name).svgPath : null,
       type: funnelTypeOf(f),
-      triggerLabel: funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null),
+      // A trigger-headed funnel is named by its HEAD (as the catalogue rows read it), never by its first pipe's own
+      // trigger: "Lead event", not "Signup Not Paid In 30 Min" beside a path headed ⚡ Lead event (P5.1 follow-up).
+      triggerLabel: f.headTriggerId ? (model.triggers.get(f.headTriggerId)?.name ?? null) : funnelTriggerLabel(f, (k) => stepLabel(model, k), (id) => model.triggers.get(id)?.name ?? null),
       shortDescription: short.shortDescription,
       shortDescriptionUnavailableReason: short.reason,
       path: funnelPathView(model, f),

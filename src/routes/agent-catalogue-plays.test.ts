@@ -337,6 +337,16 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(path!.legs[1]).toMatchObject({ legKey: "lead_found_to_conversation", channelSlug: "sales-cold-email-outreach" });
   });
 
+  it("a trigger-headed funnel a campaign runs (head never stated) has its path, and its type label is its HEAD (P5.1)", async () => {
+    const ID = "trigger:lead_event+signup_to_paid_client@ai-follow-up-email";
+    const { copies, pathOf } = await funnelCopiesFor([ID]);
+    const copy = copies.get(ID);
+    expect(copy).toMatchObject({ type: "reactive" });
+    // Named by the head (Lead event), never by the first pipe's own trigger (Follow-up Due).
+    expect(copy!.triggerLabel).not.toBe("Follow-up Due");
+    expect(pathOf(ID)!.items[0]).toMatchObject({ kind: "trigger", slug: "lead_event", name: copy!.triggerLabel });
+  });
+
   it("once a catch-all workflow is judged and assigned, the play runs it and only it", async () => {
     mem.assignments.push({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null });
     playState.verdicts.push(verdict("nova-v1", "nova", true));
