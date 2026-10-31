@@ -145,7 +145,7 @@ export function pipeDailyEvidence(s: string, campaignIds: ReadonlySet<string>, b
       bump(credit, `${c.sourceCampaignId}|${c.sourceWorkflowSlug}|${c.sourceRunStartDay}`, c.consumedKey, c.count);
       continue;
     }
-    if (!c.workflowSlug || !c.runStartDay || !campaignIds.has(c.campaignId)) continue;
+    if (!c.campaignId || !c.workflowSlug || !c.runStartDay || !campaignIds.has(c.campaignId)) continue;
     if (c.sourceCampaignId !== null && campaignIds.has(c.sourceCampaignId)) continue;
     bump(inputs, `${c.campaignId}|${c.workflowSlug}|${c.runStartDay}`, c.consumedKey, c.count);
   }
