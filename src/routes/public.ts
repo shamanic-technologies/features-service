@@ -1233,6 +1233,8 @@ const FLEET_RETURN_STALE_MS = 60 * 60 * 1000;
  * homepage hero (SHOWCASE-MEETINGS-1019). Off the request path, so nobody waits on it.
  */
 const FLEET_RETURN_BRAND_TIMEOUT_MS = 300_000;
+/** How much longer a pass still running at the timeout is awaited, after every other pass finished. */
+const FLEET_RETURN_LATE_WAIT_MS = 600_000;
 
 /** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
 const fleetReturnWarmInFlight = new Map<string, Promise<void>>();
@@ -1393,14 +1395,20 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
       ).values(),
     ];
 
-    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_PAIR_CONCURRENCY, async ({ orgId, brandId }) => {
+    // A pass still running at the timeout is NOT dropped (PUBLIC-VENDOR-COST-1031-HISTORY, 2026-10-31: under box load the
+    // biggest client's pass ran past 300 s and the public ROI median lost it): its own promise, still running, is awaited
+    // AFTER the others for up to FLEET_RETURN_LATE_WAIT_MS more. No second pass is started (the first keeps the load).
+    const late: Array<{ index: number; orgId: string; brandId: string; pass: ReturnType<typeof computePairReturns> }> = [];
+    const computed = await mapWithConcurrency(pairs.map((p, index) => ({ ...p, index })), PUBLIC_REVENUE_PAIR_CONCURRENCY, async ({ orgId, brandId, index }) => {
+      const pass = computePairReturns(featureSlug, funnel, orgId, brandId);
       try {
-        return await withTimeout(
-          computePairReturns(featureSlug, funnel, orgId, brandId),
-          FLEET_RETURN_BRAND_TIMEOUT_MS,
-          `fleet-return warm ${featureSlug} brand ${brandId}`,
-        );
+        return await withTimeout(pass, FLEET_RETURN_BRAND_TIMEOUT_MS, `fleet-return warm ${featureSlug} brand ${brandId}`);
       } catch (err) {
+        if (err instanceof Error && err.message.startsWith("Timed out after")) {
+          console.warn(`[features-service] fleet-return warm: brand ${brandId} (org ${orgId}) still running past ${FLEET_RETURN_BRAND_TIMEOUT_MS} ms, awaited after the others`);
+          late.push({ index, orgId, brandId, pass });
+          return null;
+        }
         console.error(
           `[features-service] fleet-return warm: brand ${brandId} (org ${orgId}) failed and contributes no data point:`,
           err,
@@ -1408,6 +1416,14 @@ export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void
         return null;
       }
     });
+    for (const l of late) {
+      try {
+        computed[l.index] = await withTimeout(l.pass, FLEET_RETURN_LATE_WAIT_MS, `fleet-return warm ${featureSlug} brand ${l.brandId} (late)`);
+        console.log(`[features-service] fleet-return warm: brand ${l.brandId} (org ${l.orgId}) finished late and is counted`);
+      } catch (err) {
+        console.error(`[features-service] fleet-return warm: brand ${l.brandId} (org ${l.orgId}) failed and contributes no data point:`, err);
+      }
+    }
 
     // A brand claimed by several orgs is ONE brand to the fleet: its spend sums and its pipeline sums
     // (leads are disjoint per org, so nothing is double-counted), exactly as the per-brand revenue read

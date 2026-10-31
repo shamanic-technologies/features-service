@@ -223,6 +223,8 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
 
   const engagement = emptyBrandEngagementHistory(days, today);
   const pairDays: Array<{ brandId: string; days: PairReturnDay[] }> = [];
+  // Each pair's LIVE pass (the warm's own computation, run now), the ROI gate's reference.
+  const livePairs: Array<{ brandId: string; days: PairReturnDay[] }> = [];
   let n = 0;
   for (const p of pairs) {
     n += 1;
@@ -244,6 +246,10 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
     pairDays.push({ brandId: p.brandId, days: replay });
     const t = replay[replay.length - 1]!;
     const lv = await withPairRetry(`${p.orgId}:${p.brandId} vendor`, () => pairVendorSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId));
+    livePairs.push({
+      brandId: p.brandId,
+      days: [{ maturePipelineUsd: live.maturePipeline, matureNetUsd: live.matureCommittedCostUsd, matureVendorUsd: lv.matureUsd, matureUnpricedUsd: lv.unpricedMatureUsd, isMature: live.isMature }],
+    });
     log(
       `pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: ${persons.length} persons | today replay/live: pipeline ${t.maturePipelineUsd?.toFixed(2) ?? "null"}/${live.maturePipeline?.toFixed(2) ?? "null"}` +
         ` net $${t.matureNetUsd.toFixed(2)}/$${live.matureCommittedCostUsd.toFixed(2)} vendor $${t.matureVendorUsd.toFixed(2)}/$${lv.matureUsd.toFixed(2)}` +
@@ -273,9 +279,12 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
   const [liveEngagement, liveReturn] = await Promise.all([readVendorBrandEngagement(), readFleetVendorReturn(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD)]);
   const liveEngaged = liveEngagement ? engagedLeadPoint(liveEngagement).value : null;
   const replayToday = (slug: string) => all.find((p) => p.day === today && p.point.indexSlug === slug)?.point ?? null;
+  // The ROI's live reference is the warm's computation on every pair, run now (`livePairs`): the stored snapshot drops a
+  // pair whose pass timed out (2026-10-31: the biggest client), so it is printed beside, never the gate.
+  const liveRoi = roiPointOn(brandReturnRowsOn(livePairs, 0));
   const checks = [
     { slug: engagedSlug, replay: replayToday(engagedSlug), live: liveEngaged },
-    { slug: roiSlug, replay: replayToday(roiSlug), live: liveReturn.measured ? liveReturn.medianReturnPerDollar : null },
+    { slug: roiSlug, replay: replayToday(roiSlug), live: liveRoi.value },
   ];
   let reproduced = true;
   for (const c of checks) {
@@ -283,7 +292,7 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
     if (!(gap <= REPLAY_TOLERANCE_PCT)) reproduced = false;
     log(`check ${c.slug} today: replay ${c.replay?.value ?? `null(${c.replay?.unavailableReason})`} ${JSON.stringify(c.replay?.inputs)} / live ${c.live} (gap ${gap.toFixed(3)}%)`);
   }
-  log(`live ROI snapshot read: brandCount ${liveReturn.brandCount}, vendorCostUnknownBrands ${liveReturn.vendorCostUnknownBrands}, reason ${liveReturn.reason}`);
+  log(`live ROI from the passes run now: ${liveRoi.value} ${JSON.stringify(liveRoi.inputs)}; stored snapshot read: ${liveReturn.medianReturnPerDollar} (brandCount ${liveReturn.brandCount}, vendorCostUnknownBrands ${liveReturn.vendorCostUnknownBrands}, reason ${liveReturn.reason})`);
   for (const slug of [roiSlug, engagedSlug]) {
     const s = series(slug);
     const sample = s.filter((_, i) => i % 7 === 0 || i === s.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}/${p.point.outcomes}`);
