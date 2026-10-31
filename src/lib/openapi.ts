@@ -3638,6 +3638,18 @@ const outcomeCostSeriesResponseRef = registry.register(
             learning: z.boolean(),
           }),
           expected: outcomeCostExpectedSchema,
+          value: z
+            .object({
+              valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, on the SAME expected sales path as expected.costPerOutcomeUsd: the offer's lifetime revenue / the step's outcomes needed per paying client (Paid client = the lifetime revenue). Null with unavailableReason."),
+              unavailableReason: z.string().nullable().describe("step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
+            })
+            .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
+          roi: z
+            .object({
+              measured: z.number().nullable().describe("value.valuePerOutcomeUsd / sinceInception.costPerOutcomeUsd, 2 decimals. Null when the step is not valued or has 0 outcomes."),
+              expected: z.number().nullable().describe("value.valuePerOutcomeUsd / expected.costPerOutcomeUsd, 2 decimals. Null when either is null. Readers show measured, else this one marked expected."),
+            })
+            .describe("Return of one outcome of this step."),
           months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
         }),
       )

@@ -24478,6 +24478,46 @@
                     "unavailableReason"
                   ]
                 },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "valuePerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What one outcome of this step is worth to the client, on the SAME expected sales path as expected.costPerOutcomeUsd: the offer's lifetime revenue / the step's outcomes needed per paying client (Paid client = the lifetime revenue). Null with unavailableReason."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."
+                    }
+                  },
+                  "required": [
+                    "valuePerOutcomeUsd",
+                    "unavailableReason"
+                  ],
+                  "description": "P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."
+                },
+                "roi": {
+                  "type": "object",
+                  "properties": {
+                    "measured": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "value.valuePerOutcomeUsd / sinceInception.costPerOutcomeUsd, 2 decimals. Null when the step is not valued or has 0 outcomes."
+                    },
+                    "expected": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "value.valuePerOutcomeUsd / expected.costPerOutcomeUsd, 2 decimals. Null when either is null. Readers show measured, else this one marked expected."
+                    }
+                  },
+                  "required": [
+                    "measured",
+                    "expected"
+                  ],
+                  "description": "Return of one outcome of this step."
+                },
                 "months": {
                   "type": "array",
                   "items": {
@@ -24535,6 +24575,8 @@
                 "learningOutcomesRequired",
                 "sinceInception",
                 "expected",
+                "value",
+                "roi",
                 "months"
               ]
             },
