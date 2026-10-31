@@ -520,7 +520,9 @@ export function enginePlaceOf(
 /** What the served body says the model does not do yet (v10 section 8), so nobody reads it as the whole rule. */
 export const ENGINE_LIMITS = ["uplift_reads_lifetime_mix", "beliefs_count_outcomes_to_date"] as const;
 /** The model's knobs, served beside every pick. */
-export const ENGINE_MODEL = { halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
+/** `rule` is bumped with any change to how evidence is read (the replay is recomputed at once when it moves): 2 = a
+ *  workflow-less run inside a campaign credits the send it answers (2026-10-31). */
+export const ENGINE_MODEL = { rule: 2, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
 
 export interface EngineShadow {
   computedAt: string;
