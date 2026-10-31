@@ -6044,6 +6044,9 @@ registry.registerPath({
 const fleetIndexStatusSchema = z.enum(["robust", "signal", "noise"]).describe("How far to trust the value, from the outcomes behind it (a chained index: its weakest link). `noise`: fewer than `statusRule.signalMinOutcomes` outcomes, or no mature workflow. `signal`: fewer than `statusRule.robustMinOutcomes`. `robust`: at least `statusRule.robustMinOutcomes`.");
 const fleetIndexStatusRuleSchema = z.object({ signalMinOutcomes: z.number().int(), robustMinOutcomes: z.number().int() });
 
+const fleetIndexCostBasisSchema = z.literal("vendor").describe("Every money value is real vendor cost, before any markup, whole history (PUBLIC-VENDOR-COST-1031).");
+const fleetIndexCostBasisTextSchema = z.string().describe("The cost basis in one plain sentence, for a label.");
+
 const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
@@ -6057,14 +6060,14 @@ const fleetIndexSummarySchema = registry.register(
     valuePer: z.string().describe("What one unit of the value is, in words (`per website visit`, `of people emailed`)."),
     method: z.string().describe("How the value is computed, one plain sentence."),
     day: z.string().nullable().describe("UTC day of the latest recorded point; null before the first recording."),
-    value: z.number().nullable().describe("The latest recorded value, unrounded. Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
+    value: z.number().nullable().describe("The latest recorded value, unrounded. Every MONEY value (`usd`, and the `multiple` of the ROI index) is REAL VENDOR COST: what the vendors charged us to produce it, before any markup (PUBLIC-VENDOR-COST-1031). Null = could not be stated (`unavailableReason`), never a 0 for unknown."),
     status: fleetIndexStatusSchema,
     outcomes: z.number().int().describe("Outcomes behind the value (website visits, positive replies, or meetings booked). On the two client-median indexes (`cold-email-cost-per-engaged-lead`, `cold-email-roi`): the CLIENTS behind the median, and `status` counts them."),
     contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
     workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
     workflowDynastyName: z.string().nullable(),
-    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either)."),
-    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."),
+    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too. The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
     recordedAt: z.string().nullable(),
   }),
 );
@@ -6074,12 +6077,12 @@ registry.registerPath({
   path: "/public/indexes",
   summary: "Every public fleet index, latest value (public, no auth)",
   description:
-    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
+    "One number per index, recorded every UTC day (hourly rewrite of today's point; a past day never moves). EVERY MONEY VALUE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history; who is picked (the best proven workflow) is the same as on what clients were charged, only its money is read at vendor cost; rates are unchanged. Cost / rate of an outcome = the best MATURE workflow of the pipe that can still run (`/public/stats/leg-workflow-ranking`, row `moneyGoesHere`); meeting indexes chain the reply index through the fleet's measured positive reply -> meeting booked rate (lead-service meeting attribution), measured on the brands that report their booked meetings to us only (`inputs.brandsCounted` / `inputs.brandsLeftOut`; none reporting = null `no_brand_reports_meetings`). A read is one small table read.",
   tags: ["Public"],
   responses: {
     200: {
       description: "Every index",
-      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
+      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, costBasis: fleetIndexCostBasisSchema, costBasisText: fleetIndexCostBasisTextSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
     },
     500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
   },
@@ -6090,7 +6093,7 @@ registry.registerPath({
   path: "/public/indexes/{slug}",
   summary: "One public fleet index and every recorded day (public, no auth)",
   description:
-    "The index summary (latest day) + one point per UTC day, oldest first. `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
+    "The index summary (latest day) + one point per UTC day, oldest first, every money value at REAL VENDOR COST (before any markup, the whole series recomputed on that basis from its first day). `basis` is `recorded` (written live that day) or `recomputed` (a day before the recorder existed, rebuilt once with today's rules on what had happened by the end of that day; never written over a recorded day). `basisRule` says each in words for a label. The meeting indexes have recorded days only.",
   tags: ["Public"],
   request: { params: z.object({ slug: z.string() }) },
   responses: {
@@ -6100,6 +6103,8 @@ registry.registerPath({
         "application/json": {
           schema: z.object({
             statusRule: fleetIndexStatusRuleSchema,
+            costBasis: fleetIndexCostBasisSchema,
+            costBasisText: fleetIndexCostBasisTextSchema,
             basisRule: z
               .object({ recorded: z.string(), recomputed: z.string() })
               .describe("What each `points[].basis` means, one plain sentence each, for a label beside the curve."),

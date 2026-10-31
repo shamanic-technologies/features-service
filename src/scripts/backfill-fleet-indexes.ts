@@ -4,12 +4,14 @@
  *
  *   node --max-old-space-size=1024 dist/scripts/backfill-fleet-indexes.js            # dry run: prints the plan
  *   node --max-old-space-size=1024 dist/scripts/backfill-fleet-indexes.js --apply    # writes it
+ *   ... --vendor [--apply]   # the PUBLIC series at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031):
+ *                            # the billed picks of each day, their money on the vendor twin of the same rows
  *
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
 import { FLEET_INDEXES, SCEO_FEATURE_SLUG, SCEO_POSITIVE_REPLY_LEG, SCEO_WEBSITE_VISIT_LEG } from "../lib/fleet-indexes.js";
-import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, rankingOn, recomputeIndexHistory } from "../lib/fleet-index-history.js";
-import { readAssignmentChanges, readDatedSlugSpend, readHistoryLegs, readMeetingHistoryInputs, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
+import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, rankingOn, recomputeIndexHistory, recomputeVendorIndexHistory, type DatedIndexPoint, type HistoryInputs } from "../lib/fleet-index-history.js";
+import { readAssignmentChanges, readDatedSlugSpend, readDatedSlugSpendBases, readHistoryLegs, readMeetingHistoryInputs, readMeetingSpendBases, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
 import { meetingPipeOn } from "../lib/meeting-pipe-history.js";
 import { fetchDynastyMerges } from "../lib/public-stats-clients.js";
 import { computeMeetingLegFleet } from "../lib/meeting-leg-fleet.js";
@@ -62,6 +64,10 @@ async function main(): Promise<void> {
   const fedSpend = await readDatedSlugSpend(SCEO_FEATURE_SLUG, legs.filter((l) => l.legKey === replyLeg), "fed");
   log(`${fedSpend.length} (version, day) fed spend buckets on ${replyLeg}`);
   const inputs = { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows, meeting, merges, fedSpend };
+  if (process.argv.includes("--vendor")) {
+    await vendorHistory(inputs, legs, spend, now, apply);
+    return;
+  }
   const points = recomputeIndexHistory(inputs);
   const slugs = [...FLEET_INDEXES.map((d) => d.slug), MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG, MEETING_COST_OUTCOME_PRICES_SLUG];
   const stored = await readFleetIndexRows(slugs);
@@ -98,6 +104,54 @@ async function main(): Promise<void> {
   }
   await writeRecomputedFleetIndexPoints(plan.writes, now);
   log(`wrote ${plan.writes.length} recomputed point(s)`);
+}
+
+const usd = (cents: number) => (cents / 100).toFixed(2);
+const sumCents = (xs: ReadonlyArray<{ spentCents: number }>) => xs.reduce((a, x) => a + x.spentCents, 0);
+
+/** The public series at real vendor cost: every day from the first, the billed picks, the vendor money (PUBLIC-VENDOR-COST-1031). */
+async function vendorHistory(
+  inputs: HistoryInputs,
+  legs: Awaited<ReturnType<typeof readHistoryLegs>>,
+  billedSpend: readonly { legKey: string; spentCents: number }[],
+  now: Date,
+  apply: boolean,
+): Promise<void> {
+  const bases = await readDatedSlugSpendBases(SCEO_FEATURE_SLUG, legs);
+  // The population check: the vendor read's own billed figure against the billed history's, per leg.
+  for (const l of legs) {
+    const billed = sumCents(billedSpend.filter((s) => s.legKey === l.legKey));
+    const gross = sumCents(bases.gross.filter((s) => s.legKey === l.legKey));
+    log(`vendor ${l.legKey}: billed $${usd(billed)} (history) / $${usd(gross)} (vendor read) | vendor $${usd(sumCents(bases.vendor.filter((s) => s.legKey === l.legKey)))} | unpriced $${usd(sumCents(bases.unpriced.filter((s) => s.legKey === l.legKey)))}`);
+  }
+  const meetingBases = inputs.meeting ? await readMeetingSpendBases(inputs.meeting.campaigns) : null;
+  if (meetingBases) {
+    log(`vendor meeting pipe: billed $${usd(sumCents(inputs.meeting!.spend))} (history) / $${usd(sumCents(meetingBases.gross))} (vendor read) | vendor $${usd(sumCents(meetingBases.vendor))} | unpriced $${usd(sumCents(meetingBases.unpriced))}`);
+  }
+  const points: DatedIndexPoint[] = recomputeVendorIndexHistory(inputs, {
+    spend: bases.vendor,
+    unpricedSpend: bases.unpriced,
+    meetingSpend: meetingBases?.vendor,
+    meetingUnpricedSpend: meetingBases?.unpriced,
+  });
+  const billedPoints = recomputeIndexHistory(inputs);
+  const slugs = FLEET_INDEXES.map((d) => d.slug);
+  for (const slug of slugs) {
+    const series = points.filter((p) => p.point.indexSlug === slug);
+    const first = series[0];
+    const last = series.at(-1);
+    const billedOn = (day: string | undefined) => billedPoints.find((p) => p.day === day && p.point.indexSlug === slug)?.point.value ?? null;
+    log(`vendor ${slug}: ${series.length} days; first ${first?.day ?? "-"} vendor ${first?.point.value ?? `null(${first?.point.unavailableReason})`} / billed ${billedOn(first?.day)}; last ${last?.day ?? "-"} vendor ${last?.point.value ?? `null(${last?.point.unavailableReason})`} / billed ${billedOn(last?.day)}`);
+  }
+  const stored = await readFleetIndexRows(slugs, "vendor");
+  const plan = planRecomputedWrites(points, stored);
+  log(`vendor plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
+  if (!apply) {
+    log("dry run: nothing written (pass --apply to write)");
+    return;
+  }
+  await writeRecomputedFleetIndexPoints(plan.writes, now, "vendor");
+  log(`wrote ${plan.writes.length} recomputed vendor point(s)`);
 }
 
 main()

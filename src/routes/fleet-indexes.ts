@@ -24,7 +24,7 @@ import {
 } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { vendorLegPrice, vendorPooled, vendorRankingRows, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
-import { VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
+import { PUBLIC_COST_BASIS_TEXT, VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
 import { meetingBookedPrice } from "../lib/outcome-prices.js";
 import { fetchPublicCosts } from "../lib/public-stats-clients.js";
 import { effectiveSpendSlugs } from "../lib/feature-scope.js";
@@ -87,8 +87,9 @@ function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefine
 
 router.get("/public/indexes", async (_req, res) => {
   try {
-    const latest = new Map((await readLatestFleetIndexPoints()).map((r) => [r.indexSlug, r]));
-    res.json({ statusRule: STATUS_RULE, indexes: FLEET_INDEXES.map((d) => summaryOf(d, latest.get(d.slug))) });
+    // Every money value a visitor reads is real vendor cost, before our markup, whole history (PUBLIC-VENDOR-COST-1031).
+    const latest = new Map((await readLatestFleetIndexPoints("vendor")).map((r) => [r.indexSlug, r]));
+    res.json({ statusRule: STATUS_RULE, costBasis: "vendor", costBasisText: PUBLIC_COST_BASIS_TEXT, indexes: FLEET_INDEXES.map((d) => summaryOf(d, latest.get(d.slug))) });
   } catch (error) {
     console.error("[features-service] GET /public/indexes failed:", error);
     res.status(500).json({ error: "fleet_indexes_unreadable" });
@@ -102,10 +103,12 @@ router.get("/public/indexes/:slug", async (req, res) => {
     return;
   }
   try {
-    const series = await readFleetIndexSeries(def.slug);
+    const series = await readFleetIndexSeries(def.slug, "vendor");
     res.json({
       statusRule: STATUS_RULE,
       basisRule: BASIS_RULE,
+      costBasis: "vendor",
+      costBasisText: PUBLIC_COST_BASIS_TEXT,
       index: summaryOf(def, series[series.length - 1]),
       points: series.map((r) => ({
         day: r.day,

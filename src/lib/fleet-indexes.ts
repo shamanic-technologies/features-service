@@ -74,7 +74,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per website visit",
-    method: "What our best proven cold email workflow spends to bring one person to a client's website, counting only clicks judged human.",
+    method: "Our real vendor cost, with no markup, for our best proven cold email workflow to bring one person to a client's website. Only clicks judged human count.",
   },
   {
     slug: "cold-email-click-rate",
@@ -94,7 +94,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per positive reply",
-    method: "What our best proven cold email workflow spends to get one positive reply.",
+    method: "Our real vendor cost, with no markup, for our best proven cold email workflow to get one positive reply.",
   },
   {
     slug: "cold-email-positive-reply-rate",
@@ -114,7 +114,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per meeting booked",
-    method: "Everything spent to book one meeting, from finding the lead to the meeting itself, read on our cost ledger: every client, every path, the leads that never replied included.",
+    method: "Our real vendor cost, with no markup, to book one meeting, from finding the lead to the meeting itself: every client, every path, the leads that never replied included.",
   },
   {
     slug: "cold-email-meeting-rate",
@@ -134,7 +134,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "cost_per_outcome",
     unit: "usd",
     valuePer: "per engaged lead, median of our clients",
-    method: "Each client's cold email spend divided by its engaged leads (people who replied positively, or visited its website from our email, link scanners left out), then the median across our clients.",
+    method: "Each client's cold email cost, at real vendor cost with no markup, divided by its engaged leads (people who replied positively, or visited its website from our email, link scanners left out), then the median across our clients.",
   },
   {
     slug: "cold-email-roi",
@@ -144,7 +144,7 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     metric: "return_on_spend",
     unit: "multiple",
     valuePer: "back per dollar spent, median of our clients",
-    method: "Each client's expected revenue from its cold email leads divided by its spend, then the median across our clients who spent at least $100. Revenue is valued on what each client told us a customer is worth.",
+    method: "Each client's expected revenue from its cold email leads divided by our real vendor cost for that outreach, with no markup, then the median across our clients who spent at least $100. Revenue is valued on what each client told us a customer is worth.",
   },
 ];
 
