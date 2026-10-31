@@ -176,6 +176,22 @@ function gapPct(a: number | null, b: number | null): number {
   return (Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b))) * 100;
 }
 
+const PAIR_ATTEMPTS = 4;
+const PAIR_RETRY_WAIT_MS = 60_000;
+
+/** One pair's reads, asked again on a failure (the run is one-off and off any request); fails loud after the last try. */
+async function withPairRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= PAIR_ATTEMPTS) throw err;
+      log(`pair ${label}: read failed (${(err as Error).message.slice(0, 160)}), attempt ${attempt}/${PAIR_ATTEMPTS}; retrying`);
+      await new Promise((w) => setTimeout(w, PAIR_RETRY_WAIT_MS * attempt));
+    }
+  }
+}
+
 /** The largest gap the as-of-today replay may show against the live point before the run refuses to write (%). */
 const REPLAY_TOLERANCE_PCT = 0.5;
 
@@ -210,10 +226,15 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
   let n = 0;
   for (const p of pairs) {
     n += 1;
-    const { persons, timelines } = await readPairPersons(p.orgId, p.brandId);
+    // Every read of the pair, retried together (a sibling restarted or dropped a socket mid-walk under load); nothing is
+    // added to the history before all of them answered, so a retry never counts a pair twice.
+    const { persons, timelines, captures, live } = await withPairRetry(`${p.orgId}:${p.brandId}`, async () => {
+      const read = await readPairPersons(p.orgId, p.brandId);
+      const caught: EngineCapture[] = [];
+      const pass = await withEngineCapture((c) => caught.push(c), () => computePairRevenue(SCEO_FEATURE_SLUG, getFunnel(SCEO_FEATURE_SLUG), p.orgId, p.brandId));
+      return { ...read, captures: caught, live: pass };
+    });
     addPairBrandEngagement(engagement, p.brandId, persons, timelines);
-    const captures: EngineCapture[] = [];
-    const live = await withEngineCapture((c) => captures.push(c), () => computePairRevenue(SCEO_FEATURE_SLUG, getFunnel(SCEO_FEATURE_SLUG), p.orgId, p.brandId));
     if (live === null) {
       log(`pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: stale membership, skipped (the live warm skips it too)`);
       continue;
@@ -222,7 +243,7 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
     const replay = replayPairReturn(captures[0] ?? null, spendOf.get(`${p.orgId}:${p.brandId}`) ?? [], days, today);
     pairDays.push({ brandId: p.brandId, days: replay });
     const t = replay[replay.length - 1]!;
-    const lv = await pairVendorSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId);
+    const lv = await withPairRetry(`${p.orgId}:${p.brandId} vendor`, () => pairVendorSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId));
     log(
       `pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: ${persons.length} persons | today replay/live: pipeline ${t.maturePipelineUsd?.toFixed(2) ?? "null"}/${live.maturePipeline?.toFixed(2) ?? "null"}` +
         ` net $${t.matureNetUsd.toFixed(2)}/$${live.matureCommittedCostUsd.toFixed(2)} vendor $${t.matureVendorUsd.toFixed(2)}/$${lv.matureUsd.toFixed(2)}` +
