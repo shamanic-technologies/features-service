@@ -1,4 +1,5 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { captureEngineInputs } from "../lib/engine-capture.js";
 import { createHash } from "node:crypto";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { perOfferPricer } from "../lib/per-offer-revenue.js";
@@ -2087,6 +2088,17 @@ export async function computeFeatureRevenue(
     plan.cutoffIso && matureCost
       ? computeRevenue(paths, maturePersons, economics.lifetimeRevenueUsd, funnel.milestones, contactedPricing)
       : result;
+  // A caller replaying this pass as of past days (the client-median index history) gets its exact inputs; no-op otherwise.
+  captureEngineInputs({
+    paths,
+    persons,
+    closeValueUsd: economics.lifetimeRevenueUsd,
+    milestones: funnel.milestones,
+    contacted: contactedPricing,
+    plan,
+    campaigns: maturityScope.campaigns,
+    matureCut: Boolean(plan.cutoffIso && matureCost),
+  });
   // THE ONE BASIS every ratio on this body divides (`lib/ratio-basis.ts`) — the cohort the ROI divides.
   const ratioBasis: RatioBasis = plan.unknown
     ? { kind: "unknown" }

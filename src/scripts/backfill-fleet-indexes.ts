@@ -6,6 +6,10 @@
  *   node --max-old-space-size=1024 dist/scripts/backfill-fleet-indexes.js --apply    # writes it
  *   ... --vendor [--apply]   # the PUBLIC series at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031):
  *                            # the billed picks of each day, their money on the vendor twin of the same rows
+ *   ... --vendor-clients [--apply]   # the two CLIENT-median public indexes (ROI, cost per engaged lead) at real vendor
+ *                            # cost, every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY, `lib/client-index-history.ts`):
+ *                            # each (org, brand) replayed as of each day; written only when the replay of today
+ *                            # reproduces the live point
  *
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
@@ -19,6 +23,13 @@ import { MEETING_RESEARCH_BEST_SLUG, MEETING_RESEARCH_MEDIAN_SLUG } from "../lib
 import { MEETING_COST_OUTCOME_PRICES_SLUG } from "../lib/research/meeting-cost-methods.js";
 import { readFleetIndexRows, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
+import { readMembershipPairs, readPairDatedSpend, readPairPersons } from "../lib/fleet-index-history-io.js";
+import { addPairBrandEngagement, brandReturnRowsOn, CLIENT_RETURN_MIN_SPEND_USD, emptyBrandEngagementHistory, engagedLeadPointOn, replayPairReturn, roiPointOn, type PairReturnDay, type PairSpendDay } from "../lib/client-index-history.js";
+import { withEngineCapture, type EngineCapture } from "../lib/engine-capture.js";
+import { engagedLeadPoint } from "../lib/fleet-indexes.js";
+import { getFunnel } from "../lib/funnel-registry.js";
+import { computePairRevenue, pairVendorSpend, readFleetVendorReturn } from "../routes/public.js";
+import { readVendorBrandEngagement } from "../routes/fleet-indexes.js";
 
 const log = (line: string) => console.log(`[fleet-index-backfill] ${line}`);
 
@@ -31,6 +42,10 @@ function computationLegKey(servedLeg: string): string {
 async function main(): Promise<void> {
   const apply = process.argv.includes("--apply");
   const now = new Date();
+  if (process.argv.includes("--vendor-clients")) {
+    await clientIndexHistory(now, apply);
+    return;
+  }
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
   const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
   const legKeys = [visitLeg, replyLeg];
@@ -152,6 +167,122 @@ async function vendorHistory(
   }
   await writeRecomputedFleetIndexPoints(plan.writes, now, "vendor");
   log(`wrote ${plan.writes.length} recomputed vendor point(s)`);
+}
+
+/** Relative gap between a replay and a live figure (both null = equal). */
+function gapPct(a: number | null, b: number | null): number {
+  if (a === null || b === null) return a === b ? 0 : Infinity;
+  if (a === b) return 0;
+  return (Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b))) * 100;
+}
+
+/** The largest gap the as-of-today replay may show against the live point before the run refuses to write (%). */
+const REPLAY_TOLERANCE_PCT = 0.5;
+
+/** The two client-median public indexes at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY). */
+async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
+  const today = now.toISOString().slice(0, 10);
+  const pairs = await readMembershipPairs(SCEO_FEATURE_SLUG);
+  log(`client indexes: ${pairs.length} (org, brand) pairs`);
+  const spendOf = new Map<string, PairSpendDay[]>();
+  for (const p of pairs) spendOf.set(`${p.orgId}:${p.brandId}`, await readPairDatedSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId));
+  const allSpend = [...spendOf.values()].flat();
+  if (allSpend.length === 0) throw new Error("no spend on any pair: nothing to rebuild");
+  const first = allSpend.reduce((a, s) => (s.day < a ? s.day : a), allSpend[0]!.day);
+  const days = dayRange(first, today);
+  // The population check: per day, the vendor read's own billed total against the billed read's, same rows.
+  const byDay = new Map<string, { v: number; b: number; vendor: number; unpriced: number; net: number }>();
+  for (const s of allSpend) {
+    const d = byDay.get(s.day) ?? { v: 0, b: 0, vendor: 0, unpriced: 0, net: 0 };
+    d.v += s.checkVendorReadCents;
+    d.b += s.checkBilledReadCents;
+    d.vendor += s.vendorCents;
+    d.unpriced += s.unpricedCents;
+    d.net += s.netCents;
+    byDay.set(s.day, d);
+  }
+  const off = [...byDay].filter(([, d]) => Math.abs(d.v - d.b) >= 1);
+  const tot = [...byDay.values()].reduce((a, d) => ({ v: a.v + d.v, b: a.b + d.b, vendor: a.vendor + d.vendor, unpriced: a.unpriced + d.unpriced, net: a.net + d.net }), { v: 0, b: 0, vendor: 0, unpriced: 0, net: 0 });
+  log(`spend ${first} .. ${today}: billed $${usd(tot.b)} (billed read) / $${usd(tot.v)} (vendor read) | net $${usd(tot.net)} | vendor $${usd(tot.vendor)} | unpriced $${usd(tot.unpriced)}; ${byDay.size} days, ${off.length} day(s) where the two reads differ by >= 1 cent${off.length ? `: ${off.slice(0, 10).map(([d, x]) => `${d} ${usd(x.b)}/${usd(x.v)}`).join(", ")}` : ""}`);
+
+  const engagement = emptyBrandEngagementHistory(days, today);
+  const pairDays: Array<{ brandId: string; days: PairReturnDay[] }> = [];
+  let n = 0;
+  for (const p of pairs) {
+    n += 1;
+    const { persons, timelines } = await readPairPersons(p.orgId, p.brandId);
+    addPairBrandEngagement(engagement, p.brandId, persons, timelines);
+    const captures: EngineCapture[] = [];
+    const live = await withEngineCapture((c) => captures.push(c), () => computePairRevenue(SCEO_FEATURE_SLUG, getFunnel(SCEO_FEATURE_SLUG), p.orgId, p.brandId));
+    if (live === null) {
+      log(`pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: stale membership, skipped (the live warm skips it too)`);
+      continue;
+    }
+    if (captures.length > 1) throw new Error(`pair ${p.orgId}:${p.brandId}: ${captures.length} engine passes captured, expected at most one`);
+    const replay = replayPairReturn(captures[0] ?? null, spendOf.get(`${p.orgId}:${p.brandId}`) ?? [], days, today);
+    pairDays.push({ brandId: p.brandId, days: replay });
+    const t = replay[replay.length - 1]!;
+    const lv = await pairVendorSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId);
+    log(
+      `pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: ${persons.length} persons | today replay/live: pipeline ${t.maturePipelineUsd?.toFixed(2) ?? "null"}/${live.maturePipeline?.toFixed(2) ?? "null"}` +
+        ` net $${t.matureNetUsd.toFixed(2)}/$${live.matureCommittedCostUsd.toFixed(2)} vendor $${t.matureVendorUsd.toFixed(2)}/$${lv.matureUsd.toFixed(2)}` +
+        ` unpriced $${t.matureUnpricedUsd.toFixed(2)}/$${lv.unpricedMatureUsd.toFixed(2)} mature ${t.isMature}/${live.isMature}`,
+    );
+  }
+
+  const roiSlug = "cold-email-roi";
+  const engagedSlug = "cold-email-cost-per-engaged-lead";
+  const all: DatedIndexPoint[] = [];
+  const spendByBrand = new Map<string, PairSpendDay[]>();
+  for (const p of pairs) spendByBrand.set(p.brandId, [...(spendByBrand.get(p.brandId) ?? []), ...(spendOf.get(`${p.orgId}:${p.brandId}`) ?? [])]);
+  for (let i = 0; i < days.length; i++) {
+    const day = days[i]!;
+    for (const point of [roiPointOn(brandReturnRowsOn(pairDays, i)), engagedLeadPointOn(engagement, spendByBrand, i).point]) {
+      all.push({ day, point: { ...point, inputs: { ...point.inputs, asOfDay: day, costBasis: "vendor" } } });
+    }
+  }
+  const series = (slug: string) => {
+    const s = all.filter((p) => p.point.indexSlug === slug);
+    const start = s.findIndex((p) => p.point.value !== null);
+    return start >= 0 ? s.slice(start) : [];
+  };
+  const points = [...series(roiSlug), ...series(engagedSlug)];
+
+  // The gate: the replay of TODAY against the live point computed now, the same live reads the recorder makes.
+  const [liveEngagement, liveReturn] = await Promise.all([readVendorBrandEngagement(), readFleetVendorReturn(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD)]);
+  const liveEngaged = liveEngagement ? engagedLeadPoint(liveEngagement).value : null;
+  const replayToday = (slug: string) => all.find((p) => p.day === today && p.point.indexSlug === slug)?.point ?? null;
+  const checks = [
+    { slug: engagedSlug, replay: replayToday(engagedSlug), live: liveEngaged },
+    { slug: roiSlug, replay: replayToday(roiSlug), live: liveReturn.measured ? liveReturn.medianReturnPerDollar : null },
+  ];
+  let reproduced = true;
+  for (const c of checks) {
+    const gap = gapPct(c.replay?.value ?? null, c.live);
+    if (!(gap <= REPLAY_TOLERANCE_PCT)) reproduced = false;
+    log(`check ${c.slug} today: replay ${c.replay?.value ?? `null(${c.replay?.unavailableReason})`} ${JSON.stringify(c.replay?.inputs)} / live ${c.live} (gap ${gap.toFixed(3)}%)`);
+  }
+  log(`live ROI snapshot read: brandCount ${liveReturn.brandCount}, vendorCostUnknownBrands ${liveReturn.vendorCostUnknownBrands}, reason ${liveReturn.reason}`);
+  for (const slug of [roiSlug, engagedSlug]) {
+    const s = series(slug);
+    const sample = s.filter((_, i) => i % 7 === 0 || i === s.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}/${p.point.outcomes}`);
+    log(`${slug}: ${s.length} days from ${s[0]?.day ?? "-"}; ${sample.join(" ")}`);
+  }
+
+  // Today is the recorder's: only past days are written, never over a recorded one.
+  const stored = await readFleetIndexRows([roiSlug, engagedSlug], "vendor");
+  const plan = planRecomputedWrites(points.filter((p) => p.day < today), stored);
+  log(`client plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
+  if (!reproduced) {
+    log(`REFUSED: the replay of today does not reproduce the live point within ${REPLAY_TOLERANCE_PCT}%: nothing written`);
+    return;
+  }
+  if (!apply) {
+    log("dry run: nothing written (pass --apply to write)");
+    return;
+  }
+  await writeRecomputedFleetIndexPoints(plan.writes, now, "vendor");
+  log(`wrote ${plan.writes.length} recomputed vendor client point(s)`);
 }
 
 main()

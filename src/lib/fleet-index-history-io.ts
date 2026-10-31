@@ -34,6 +34,8 @@ const RUNS_RETRY_WAIT_MS = 20_000;
 const WHOLE_READ_ATTEMPTS = 2;
 /** The first month a run can have started in (runs-service's ledger starts 2026-02-02; one month of margin). */
 const HISTORY_FIRST_MONTH = "2026-01";
+/** Tries of one month's read in a pair spend history (a loaded box times even a month out; the run is off any request). */
+const MONTH_READ_ATTEMPTS = 8;
 
 /** A runs-service read that failed; `status` null = no HTTP answer (connection refused, timeout). */
 class RunsReadError extends Error {
@@ -335,5 +337,92 @@ async function readMeetingFacts(): Promise<MeetingFact[]> {
   return body.attributedMeetings.map((m) => {
     if (typeof m.source !== "string") throw new Error("lead-service meeting-attribution: a meeting row has no source");
     return { brandId: m.brandId, source: m.source, leadId: m.leadId ?? null, event: m.event, occurredAt: m.occurredAt };
+  });
+}
+
+/**
+ * One (org, brand) pair's channel spend per (campaign, run-start UTC day) on four bases (PUBLIC-VENDOR-COST-1031-HISTORY,
+ * `lib/client-index-history.ts`): the vendor timeseries (vendor, unpriced, billed incurred) and the billed timeseries
+ * (net committed, the ROI floor's basis), joined on (campaign, day). The live reads' rows: the brand, the channel and its
+ * sourcing origins (`fed`), every campaign and none. FAIL-LOUD after retries.
+ */
+export async function readPairDatedSpend(featureSlug: string, orgId: string, brandId: string): Promise<import("./client-index-history.js").PairSpendDay[]> {
+  const baseUrl = process.env.RUNS_SERVICE_URL;
+  const apiKey = process.env.RUNS_SERVICE_API_KEY;
+  if (!baseUrl || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
+  const featureSlugs = runsSpendSlugsParam(featureSlug, "fed");
+  const once = async (path: string, params: URLSearchParams, headers: Record<string, string>, attempts: number): Promise<Array<Record<string, unknown>>> => {
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetchWithRetry(`${baseUrl}${path}?${params}`, { headers }, { timeoutMs: 300_000 });
+      if (res.ok) {
+        const body = (await res.json()) as { buckets?: Array<Record<string, unknown>> };
+        if (!Array.isArray(body.buckets)) throw new Error(`runs-service ${path} returned no buckets array`);
+        return body.buckets;
+      }
+      const failure = `${res.status}: ${(await res.text()).slice(0, 200)}`;
+      if (res.status < 500 || attempt >= attempts) throw new RunsReadError(`runs-service ${path} (org ${orgId}, brand ${brandId}) failed (${failure})`, res.status);
+      console.warn(`[fleet-index-backfill] ${path} (org ${orgId}, brand ${brandId}) failed (${failure}), attempt ${attempt}/${attempts}; retrying`);
+      await new Promise((w) => setTimeout(w, RUNS_RETRY_WAIT_MS * attempt));
+    }
+  };
+  // The whole history in one read; a big org whose read hits runs-service's statement timeout is read month by month
+  // (run-start windows, disjoint: each run lands in one day), like the other dated history reads.
+  const read = async (path: string, params: URLSearchParams, headers: Record<string, string>): Promise<Array<Record<string, unknown>>> => {
+    try {
+      return await once(path, params, headers, WHOLE_READ_ATTEMPTS);
+    } catch (err) {
+      if (!(err instanceof RunsReadError) || (err.status !== null && err.status < 500)) throw err;
+      console.warn(`[fleet-index-backfill] ${path} (org ${orgId}, brand ${brandId}): whole-history read failed, reading month by month`);
+      const out: Array<Record<string, unknown>> = [];
+      for (const [after, before] of monthWindows(HISTORY_FIRST_MONTH, new Date())) {
+        const p = new URLSearchParams(params);
+        p.set("startedAfter", after);
+        p.set("startedBefore", before);
+        out.push(...(await once(path, p, headers, MONTH_READ_ATTEMPTS)));
+      }
+      return out;
+    }
+  };
+  const common = { interval: "day", tz: "UTC", groupBy: "campaignId", brandId, featureSlugs };
+  // One heavy aggregation at a time (a run walks every pair beside live traffic).
+  const vendor = await read("/internal/stats/costs/timeseries/vendor", new URLSearchParams({ ...common, orgId }), { "x-api-key": apiKey });
+  const billed = await read("/v1/stats/costs/timeseries", new URLSearchParams(common), { "x-api-key": apiKey, "x-org-id": orgId });
+  const out = new Map<string, import("./client-index-history.js").PairSpendDay>();
+  const at = (b: Record<string, unknown>) => {
+    if (typeof b.period !== "string") throw new Error("runs-service timeseries bucket missing period");
+    const campaignId = typeof b.campaignId === "string" && b.campaignId ? b.campaignId : null;
+    const day = b.period.slice(0, 10);
+    const key = `${campaignId ?? ""}|${day}`;
+    const row = out.get(key) ?? { campaignId, day, netCents: 0, grossIncurredCents: 0, vendorCents: 0, unpricedCents: 0, checkVendorReadCents: 0, checkBilledReadCents: 0 };
+    out.set(key, row);
+    return row;
+  };
+  for (const b of vendor) {
+    const row = at(b);
+    row.grossIncurredCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "gross", "incurred"));
+    row.vendorCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "vendor"));
+    row.unpricedCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "vendorUnpriced"));
+    row.checkVendorReadCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "gross"));
+  }
+  for (const b of billed) {
+    const row = at(b);
+    row.netCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "net"));
+    row.checkBilledReadCents += Number(selectCostCentsString(b, "totalCostInUsdCents", "gross"));
+  }
+  return [...out.values()];
+}
+
+/** Every (org, brand) pair of the channel's lead memberships, deduped. */
+export async function readMembershipPairs(featureSlug: string): Promise<Array<{ orgId: string; brandId: string }>> {
+  const pairs = new Map<string, { orgId: string; brandId: string }>();
+  for (const m of await fetchFeatureMemberships(featureSlug)) if (m.orgId && m.brandId) pairs.set(`${m.orgId}:${m.brandId}`, { orgId: m.orgId, brandId: m.brandId });
+  return [...pairs.values()];
+}
+
+/** One pair's deduped persons and their timelines (the fleet person cell's own walk). */
+export async function readPairPersons(orgId: string, brandId: string) {
+  return outsideInteractiveView(async () => {
+    const [rows, journeys] = await Promise.all([fetchLeadsForRevenue(brandId, undefined, { orgId }), fetchServingRowJourneys(brandId, { orgId })]);
+    return { persons: dedupPersonsByLead(rows), timelines: indexTimelines(journeys) };
   });
 }
