@@ -1272,6 +1272,29 @@ export const pathById = (model: CatalogueModel, id: string): CataloguePath | nul
  * sourcing leg was named: it starts out of Lead found) resolves to its Lead Sourcing funnel (`legacyFunnelIdAliasOf`);
  * the funnel returned carries its CURRENT id.
  */
+/**
+ * The trigger-headed paths behind these funnel ids, added to `model` when valid (`triggerHeadedPath`) and not listed yet
+ * (P5.1 follow-up, owner 2026-10-31: every running campaign resolves its path and type). A campaign may run a
+ * trigger-headed funnel whose head was never stated through the creates (`trigger:lead_event+start_to_paid_client@…`):
+ * a read that only DESCRIBES the funnels campaigns run (`funnelCopiesFor`) lists them, so `funnelById` resolves them.
+ * Never used on the plan/candidate model: which heads a plan may pick stays the stated ones. Returns the ids added.
+ */
+export function addTriggerHeadedPathsOf(model: CatalogueModel, ids: readonly string[]): string[] {
+  const added: string[] = [];
+  for (const id of ids) {
+    const head = triggerHeadOf(id);
+    if (!head) continue;
+    const legKeys = canonicalFunnelId(model, head.rest).split("+").map((part) => part.split("@")[0]);
+    const pathId = triggerHeadedPathId(head.triggerId, legKeys);
+    if (model.paths.has(pathId)) continue;
+    const path = triggerHeadedPath(model, head.triggerId, legKeys);
+    if (!path) continue;
+    model.paths.set(path.id, path);
+    added.push(path.id);
+  }
+  return added;
+}
+
 export function funnelById(model: CatalogueModel, id: string): CatalogueFunnel | null {
   const head = triggerHeadOf(id);
   if (head) {

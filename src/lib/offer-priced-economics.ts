@@ -36,10 +36,10 @@ export type EconomicsUnpricedReason =
   | "lifetime_revenue_not_stated";
 
 /** Why a revenue body's pipeline is null: the economics' own reason, or the feature/scope has nothing to price. */
-export type PipelineUnpricedReason = EconomicsUnpricedReason | "no_funnel_wired" | "no_channel";
+export type PipelineUnpricedReason = EconomicsUnpricedReason | "no_funnel_wired" | "no_channel" | "outcome_unvalued";
 
 /** Every `PipelineUnpricedReason`, for the OpenAPI enum. */
-export const PIPELINE_UNPRICED_REASONS = ["no_priced_funnel", "lifetime_revenue_not_stated", "no_funnel_wired", "no_channel"] as const;
+export const PIPELINE_UNPRICED_REASONS = ["no_priced_funnel", "lifetime_revenue_not_stated", "no_funnel_wired", "no_channel", "outcome_unvalued"] as const;
 
 /** The economics a read is priced on, or null with the reason. `economics === null` ⟺ `unpricedReason !== null`. */
 export interface PricedEconomics {
