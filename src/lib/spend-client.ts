@@ -29,7 +29,7 @@
  * non-OK / malformed response throws and the caller returns 502 (mirrors fetchRunsCostCents).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
-import { selectCostCents, type Pricing } from "./pricing.js";
+import { runsCostsUrl, selectCostCents, type Pricing } from "./pricing.js";
 import { campaignFamilySet, campaignScopeIds, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
 import { pipeRunsScope } from "./pipe-spend-attribution.js";
 import { runsFeatureSlugsParam, type FeatureScope } from "./feature-scope.js";
@@ -100,8 +100,11 @@ async function fetchCostGroups(
   apiKey: string,
   params: URLSearchParams,
   reqHeaders: Record<string, string>,
+  // A vendor-basis read (PUBLIC-VENDOR-COST-1031: the public showcase walks the engine on vendor cost) goes to the
+  // vendor aggregation; every other basis keeps the byte-same `/v1/stats/costs` URL.
+  pricing: Pricing,
 ): Promise<RunsCostGroup[]> {
-  const response = await fetchWithRetry(`${baseUrl}/v1/stats/costs?${params}`, { headers: reqHeaders });
+  const response = await fetchWithRetry(runsCostsUrl(baseUrl, "org", pricing, params), { headers: reqHeaders });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`runs-service /v1/stats/costs failed (${response.status}): ${text}`);
@@ -250,10 +253,10 @@ export async function fetchSpendBreakdown(
   const brandLevelParams = new URLSearchParams({ groupBy: "campaignId,featureSlug", brandId, startedAfter: startOfUtcDay(now) });
 
   const [rawSourceGroups, rawTodayGroups, brandLevelGroups] = await Promise.all([
-    fetchCostGroups(baseUrl, apiKey, sourceParams, reqHeaders),
-    fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders),
+    fetchCostGroups(baseUrl, apiKey, sourceParams, reqHeaders, pricing),
+    fetchCostGroups(baseUrl, apiKey, todayParams, reqHeaders, pricing),
     brandLevel
-      ? fetchCostGroups(baseUrl, apiKey, brandLevelParams, buildHeaders(apiKey, brandId, undefined, { ...headers, featureSlug: undefined }))
+      ? fetchCostGroups(baseUrl, apiKey, brandLevelParams, buildHeaders(apiKey, brandId, undefined, { ...headers, featureSlug: undefined }), pricing)
       : Promise.resolve<RunsCostGroup[]>([]),
   ]);
 

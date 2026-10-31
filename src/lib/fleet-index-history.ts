@@ -25,7 +25,8 @@
  * lead-service's follow-up ledger, meetings and the reporting brands by its meeting facts). NOT rebuilt (series start
  * with the recorder): the client-median indexes (engaged lead, ROI), whose per-brand inputs this does not build.
  */
-import { bestMeetingPipePick, computeFleetIndexPoints, FLEET_INDEXES, SCEO_FEATURE_SLUG, type FleetIndexPoint } from "./fleet-indexes.js";
+import { bestMeetingPipePick, computeFleetIndexPoints, FLEET_INDEXES, SCEO_FEATURE_SLUG, type FleetIndexPoint, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { vendorPooled, vendorRankingRows, type PipeVendorTwin } from "./fleet-index-vendor.js";
 import { assignmentsOn, executableOn, meetingPipeOn, type MeetingHistoryInputs } from "./meeting-pipe-history.js";
 import { MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
 import { meetingBookedPrice, pickLegPrice } from "./outcome-prices.js";
@@ -429,4 +430,55 @@ export function planRecomputedWrites(points: readonly DatedIndexPoint[], stored:
     else writes.push(p);
   }
   return { writes, skippedRecorded, unchanged };
+}
+
+/** The dated spend the history reads, on the VENDOR basis and its unpriced twin (PUBLIC-VENDOR-COST-1031). */
+export interface VendorHistoryInputs {
+  /** Per (leg, version, run-start day): the cold email legs' spend at real vendor cost (same rows as `inputs.spend`). */
+  spend: readonly DatedSlugSpend[];
+  /** The same rows' billed spend no vendor cost prices. */
+  unpricedSpend: readonly DatedSlugSpend[];
+  /** The meeting pipe's per (campaign, version, day) spend on each basis (same rows as `inputs.meeting.spend`). */
+  meetingSpend?: MeetingHistoryInputs["spend"];
+  meetingUnpricedSpend?: MeetingHistoryInputs["spend"];
+}
+
+/**
+ * PURE. The PUBLIC indexes of every day of `inputs.days` at real VENDOR cost (PUBLIC-VENDOR-COST-1031): each day's picks
+ * are the BILLED history's (`rankingOn`, `meetingPipeOn`: who a client's money went to), each pick's money read on the
+ * vendor twin of the same rows (`lib/fleet-index-vendor.ts`). Only the public index series; a series starts on its first
+ * day with a value, like the billed one.
+ */
+export function recomputeVendorIndexHistory(inputs: HistoryInputs, vendor: VendorHistoryInputs): DatedIndexPoint[] {
+  const all: DatedIndexPoint[] = [];
+  const twinOn = (legKey: string, i: number): PipeVendorTwin => ({
+    vendor: legFiguresOn(inputs, legKey, i, vendor.spend),
+    unpriced: legFiguresOn(inputs, legKey, i, vendor.unpricedSpend),
+  });
+  for (let i = 0; i < inputs.days.length; i++) {
+    const day = inputs.days[i]!;
+    let meetingPipe: MeetingPipeEvidence | null = null;
+    if (inputs.meeting && vendor.meetingSpend && vendor.meetingUnpricedSpend) {
+      const billed = meetingPipeOn(inputs.meeting, day);
+      const v = meetingPipeOn({ ...inputs.meeting, spend: vendor.meetingSpend }, day).fleet;
+      const u = meetingPipeOn({ ...inputs.meeting, spend: vendor.meetingUnpricedSpend }, day).fleet;
+      meetingPipe = {
+        rows: vendorRankingRows(billed.rows, { vendor: new Map(v.byDynasty), unpriced: new Map(u.byDynasty) }),
+        pooled: vendorPooled(billed.fleet.pooled, v.pooled.spentByDynasty, u.pooled.spentByDynasty),
+      };
+    }
+    const points = computeFleetIndexPoints({
+      websiteVisitRows: vendorRankingRows(rankingOn(inputs, inputs.websiteVisitLeg, i), twinOn(inputs.websiteVisitLeg, i)),
+      positiveReplyRows: vendorRankingRows(rankingOn(inputs, inputs.positiveReplyLeg, i), twinOn(inputs.positiveReplyLeg, i)),
+      meetingPipe,
+    });
+    for (const p of points) all.push({ day, point: { ...p, inputs: { ...p.inputs, asOfDay: day, costBasis: "vendor" } } });
+  }
+  const out: DatedIndexPoint[] = [];
+  for (const def of FLEET_INDEXES) {
+    const series = all.filter((p) => p.point.indexSlug === def.slug);
+    const start = series.findIndex((p) => p.point.value !== null);
+    if (start >= 0) out.push(...series.slice(start));
+  }
+  return out;
 }

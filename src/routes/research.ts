@@ -1875,9 +1875,10 @@ function ledgerMeetingCostOf(unit: OutcomeUnitCost | null, totals: Pick<OutcomeL
  * Cost Per Meeting Index's input (owner 2026-10-24 « go ledger accounting direct »). Null (logged) when the ledger, the
  * campaigns or the catalogue cannot be read: the recorder then records nothing for that index.
  */
-export async function readLedgerMeetingCost(): Promise<LedgerMeetingCost | null> {
+export async function readLedgerMeetingCost(basis: "gross" | "vendor" = "gross"): Promise<LedgerMeetingCost | null> {
   try {
-    const [totals, rows, catalogue] = await Promise.all([fetchOutcomeLedgerTotals("gross"), fetchFleetCampaignRows(), loadChannelCatalogue({ publishedOnly: false })]);
+    // `vendor` = the public index's twin (PUBLIC-VENDOR-COST-1031): the same ledger at real vendor cost.
+    const [totals, rows, catalogue] = await Promise.all([fetchOutcomeLedgerTotals(basis), fetchFleetCampaignRows(), loadChannelCatalogue({ publishedOnly: false })]);
     const { outputOf, pipeOutputs } = campaignOutputsOf(rows, catalogue.channels);
     const unit = rollUpOutcomeUnitCosts(totals.produced, totals.consumed, outputOf, pipeOutputs).units.get("meeting_booked") ?? null;
     return ledgerMeetingCostOf(unit, totals);

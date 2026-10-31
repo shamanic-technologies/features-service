@@ -165,6 +165,19 @@ export interface ShowcaseBrandFunnels {
   /** True iff at least one chain was walked. False always names its reason. */
   measured: boolean;
   unmeasuredReason: ShowcaseUnmeasuredReason | null;
+  /**
+   * What the brand's money figures rest on (PUBLIC-VENDOR-COST-1031): every one is at real VENDOR cost. Absent on a brand
+   * nothing was walked for.
+   */
+  vendorCost?: ShowcaseVendorCost;
+}
+
+/** A showcase brand's vendor cost coverage (`lib/public-vendor-cost.ts`). */
+export interface ShowcaseVendorCost {
+  /** Share of the brand's billed spend with no known vendor cost, %. */
+  unpricedSharePct: number;
+  /** `vendor_cost_unknown` when that share is past the tolerance: every money figure of the brand is then null. */
+  moneyUnavailableReason: "vendor_cost_unknown" | null;
 }
 
 /**
@@ -196,6 +209,8 @@ export interface ShowcaseGroup {
  * slice of one list.
  */
 export interface ShowcaseFunnelsPayload {
+  /** Every money figure is at real VENDOR cost, before our markup (PUBLIC-VENDOR-COST-1031). */
+  costBasis: "vendor";
   brands: ShowcaseBrandFunnels[];
   groups: {
     /** Most recently begun clients that have produced at least one outcome, newest first. */

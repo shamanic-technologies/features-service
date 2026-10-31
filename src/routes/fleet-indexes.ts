@@ -19,15 +19,30 @@ import {
   type ClientReturnInput,
   type ExpectedMeetingPrice,
   type FleetIndexDefinition,
+  type FleetIndexPoint,
   type MeetingPipeEvidence,
 } from "../lib/fleet-indexes.js";
 import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
+import { vendorLegPrice, vendorPooled, vendorRankingRows, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
+import { VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
+import { meetingBookedPrice } from "../lib/outcome-prices.js";
+import { fetchPublicCosts } from "../lib/public-stats-clients.js";
+import { effectiveSpendSlugs } from "../lib/feature-scope.js";
 import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, type MeetingLegFleet } from "../lib/meeting-leg-fleet.js";
 import { meetingResearchPoints } from "../lib/research/pipe-series.js";
 import { fetchFleetEngagementByBrand } from "../lib/fleet-positive-repliers.js";
 import type { FleetIndexPointRow } from "../db/schema.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
-import { readFleetReturnOnSpend, readLegWorkflowRanking, readOutcomePricesMeetingBooked, readPublicRanked } from "./public.js";
+import {
+  computeFleetLegWorkflowMaturity,
+  fleetPipeFigures,
+  internalPipeSpendOn,
+  readFleetReturnOnSpend,
+  readFleetVendorReturn,
+  readLegWorkflowRanking,
+  readOutcomePricesMeetingBooked,
+  readPublicRanked,
+} from "./public.js";
 
 const router = Router();
 
@@ -153,9 +168,12 @@ async function readBrandEngagement(): Promise<BrandEngagement[] | null> {
 }
 
 /** The fleet return median; null (logged) when unreadable or not computed yet (no point beats a false "not measured"). */
-async function readClientReturn(): Promise<ClientReturnInput | null> {
+async function readClientReturn(costBasis: "billed" | "vendor" = "billed"): Promise<ClientReturnInput | null> {
   try {
-    const r = await readFleetReturnOnSpend(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD);
+    const r =
+      costBasis === "vendor"
+        ? await readFleetVendorReturn(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD)
+        : await readFleetReturnOnSpend(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD);
     if (!r.measured && (r.reason === "no_snapshot_yet" || r.reason === "maturity_not_recorded_yet")) return null;
     return { measured: r.measured, reason: r.reason, brandCount: r.brandCount, minSpendUsd: r.minSpendUsd, medianReturnPerDollar: r.medianReturnPerDollar };
   } catch (error) {
@@ -209,7 +227,125 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));
   await recordFleetIndexPoints(points, now);
   console.log(`[features-service] fleet indexes: recorded ${points.length} point(s) for ${now.toISOString().slice(0, 10)}`);
+  // The PUBLIC twin (PUBLIC-VENDOR-COST-1031): the same picks, every money value at real vendor cost. Its own failure
+  // records nothing on the vendor basis this tick (logged); the billed series above stands.
+  try {
+    const vendorPoints = await vendorIndexPoints({ visit, reply, mbRanking, mbFleet, meetingExpected });
+    await recordFleetIndexPoints(vendorPoints, now, "vendor");
+    console.log(`[features-service] fleet indexes: recorded ${vendorPoints.length} vendor-cost point(s)`);
+  } catch (error) {
+    console.error("[features-service] fleet indexes: vendor-cost points not recorded this tick:", error);
+  }
   return points.length;
+}
+
+type Ranking = Awaited<ReturnType<typeof readLegWorkflowRanking>>;
+
+/** One pipe's per-dynasty spend on the vendor basis and its unpriced twin, the billed figures' own population. */
+async function pipeVendorTwin(featureSlug: string, legKey: string): Promise<PipeVendorTwin> {
+  // One heavy vendor aggregation at a time (runs-service's vendor-priced fleet read takes ~16 s on a leg).
+  const vendor = await fleetPipeFigures(featureSlug, legKey, "vendor");
+  const unpriced = await fleetPipeFigures(featureSlug, legKey, "vendorUnpriced");
+  return { vendor: new Map(vendor.byDynasty), unpriced: new Map(unpriced.byDynasty) };
+}
+
+/**
+ * Today's point of every index on the VENDOR basis: the billed ranking's picks (`lib/fleet-index-vendor.ts`), each money
+ * value read on the vendor basis of the same rows. An input that cannot be read records nothing for its indexes.
+ */
+async function vendorIndexPoints(billed: {
+  visit: Ranking;
+  reply: Ranking;
+  mbRanking: Ranking;
+  mbFleet: MeetingLegFleet | null;
+  meetingExpected: ExpectedMeetingPrice | null;
+}): Promise<FleetIndexPoint[]> {
+  const visitRows = billed.visit?.computedAt ? vendorRankingRows(billed.visit.rows, await pipeVendorTwin(SCEO_FEATURE_SLUG, billed.visit.legKey)) : null;
+  const replyRows = billed.reply?.computedAt ? vendorRankingRows(billed.reply.rows, await pipeVendorTwin(SCEO_FEATURE_SLUG, billed.reply.legKey)) : null;
+  let meetingPipe: MeetingPipeEvidence | null = null;
+  let meetingTwin: PipeVendorTwin | null = null;
+  if (billed.mbRanking?.computedAt && billed.mbFleet) {
+    meetingTwin = await pipeVendorTwin(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY);
+    const vendor = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, billed.mbFleet, "vendor");
+    const unpriced = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, billed.mbFleet, "vendorUnpriced");
+    meetingPipe = {
+      rows: vendorRankingRows(billed.mbRanking.rows, meetingTwin),
+      pooled: vendorPooled(billed.mbFleet.pooled, vendor.pooledByDynasty, unpriced.pooledByDynasty),
+    };
+  }
+  const [brandEngagement, meetingExpected] = await Promise.all([
+    readVendorBrandEngagement(),
+    meetingTwin ? readVendorExpectedMeetingPrice(meetingTwin) : Promise.resolve(null),
+  ]);
+  return computeFleetIndexPoints({
+    websiteVisitRows: visitRows,
+    positiveReplyRows: replyRows,
+    meetingPipe,
+    brandEngagement,
+    clientReturn: await readClientReturn("vendor"),
+    // The ledger's figure is not a public price while it does not reconcile (its index reads expected meanwhile); the
+    // vendor twin reads the vendor book through the same gate.
+    meetingLedger: await (await import("./research.js")).readLedgerMeetingCost("vendor"),
+    meetingExpected,
+  });
+}
+
+/** Every client brand's cold email engagement with its spend at real vendor cost (null, logged, when unreadable). */
+async function readVendorBrandEngagement(): Promise<BrandEngagement[] | null> {
+  try {
+    const [ranked, engaged, vendor, unpriced] = await Promise.all([
+      readPublicRanked(SCEO_FEATURE_SLUG, RANKED_OBJECTIVE, "brand", RANKED_LIMIT),
+      fetchFleetEngagementByBrand(SCEO_FEATURE_SLUG),
+      // The ranked read's own population (`fetchPublicCosts(slug, "brandId")`: incurred, fed), on the vendor basis.
+      fetchPublicCosts(SCEO_FEATURE_SLUG, "brandId", "vendor", "incurred"),
+      fetchPublicCosts(SCEO_FEATURE_SLUG, "brandId", "vendorUnpriced", "incurred"),
+    ]);
+    const cents = (groups: Awaited<ReturnType<typeof fetchPublicCosts>>) => {
+      const m = new Map<string, number>();
+      for (const g of groups) if (g.dimensions.brandId) m.set(g.dimensions.brandId, (m.get(g.dimensions.brandId) ?? 0) + Number(g.totalCostInUsdCents));
+      return m;
+    };
+    const vendorByBrand = cents(vendor);
+    const unpricedByBrand = cents(unpriced);
+    return ranked.results.map((r) => {
+      const id = r.brand?.id;
+      const e = id ? engaged.get(id) : undefined;
+      const billedCents = statOf(r.stats, "totalCostInUsdCents");
+      const vendorCents = id ? (vendorByBrand.get(id) ?? 0) : 0;
+      const cov = vendorCoverage(vendorCents / 100, (id ? (unpricedByBrand.get(id) ?? 0) : 0) / 100, billedCents / 100);
+      return {
+        contacted: e?.contacted ?? 0,
+        positiveReplies: e?.positiveReplies ?? 0,
+        screenedContacted: e?.screenedContacted ?? 0,
+        humanClicks: e?.humanClicks ?? 0,
+        spendCents: vendorCents,
+        vendorCostUnknown: !cov.servable,
+      };
+    });
+  } catch (error) {
+    console.error("[features-service] fleet indexes: per-brand vendor spend unreadable:", error);
+    return null;
+  }
+}
+
+/** The outcome prices' meeting price with both legs at real vendor cost (the same picks); null when unreadable. */
+async function readVendorExpectedMeetingPrice(meetingTwin: PipeVendorTwin): Promise<ExpectedMeetingPrice | null> {
+  const price = await readOutcomePricesMeetingBooked(RANKING_WAIT_MS);
+  if (!price) return null;
+  const [replyLeg, meetingLeg] = price.legs;
+  if (!replyLeg || !meetingLeg) return null;
+  // The reply leg is priced on the leg maturity WITH its sourcing (`fed`, `coldEmailLegPrice`): its twin reads the same.
+  const slugs = effectiveSpendSlugs(SCEO_FEATURE_SLUG, "fed");
+  const vendor = await computeFleetLegWorkflowMaturity(SCEO_FEATURE_SLUG, replyLeg.legKey, slugs, "vendor");
+  const unpriced = await computeFleetLegWorkflowMaturity(SCEO_FEATURE_SLUG, replyLeg.legKey, slugs, "vendorUnpriced");
+  const reply = vendorLegPrice(replyLeg, { vendor: new Map(vendor.byDynasty), unpriced: new Map(unpriced.byDynasty) });
+  const meeting = vendorLegPrice(meetingLeg, meetingTwin);
+  const outcomes = Math.min(...price.legs.map((l) => l.figures?.outcomes ?? 0));
+  if (reply.vendorCostUnknown || meeting.vendorCostUnknown) {
+    return { priceUsd: null, maturity: price.maturity, outcomes: Number.isFinite(outcomes) ? outcomes : 0, unmeasuredReason: VENDOR_COST_UNKNOWN };
+  }
+  const v = meetingBookedPrice(reply, meeting);
+  return { priceUsd: v.priceUsd, maturity: v.maturity, outcomes: Number.isFinite(outcomes) ? outcomes : 0, unmeasuredReason: v.unmeasuredReason ?? null };
 }
 
 async function readExpectedMeetingPrice(): Promise<ExpectedMeetingPrice | null> {

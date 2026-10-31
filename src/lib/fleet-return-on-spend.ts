@@ -111,6 +111,12 @@ export interface BrandReturnRow {
   flashExpectedPipelineUsd?: number | null;
   /** The brand's verdict per LEG it performs on the channel (the outcome-keyed median's population). */
   legMaturity?: Record<string, boolean | null> | null;
+  /**
+   * The SAME spend at real VENDOR cost (PUBLIC-VENDOR-COST-1031), mature cohort and whole history, with the billed spend
+   * no vendor cost prices beside each (USD). Read only by the PUBLIC vendor ROI median. Absent on a row written before it
+   * existed; null = one claiming org's vendor spend could not be read.
+   */
+  vendorSpend?: { flashUsd: number; matureUsd: number; unpricedFlashUsd: number; unpricedMatureUsd: number } | null;
 }
 
 /** Why a median could not be stated. Both are real answers; neither is an error. */
