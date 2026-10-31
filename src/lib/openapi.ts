@@ -9504,6 +9504,85 @@ const factoryPlanLine = z.object({
   legs: z.array(z.object({ legKey: z.string(), pipeId: z.string().nullable(), channelSlug: z.string().nullable(), channelName: z.string().nullable(), playId: z.string().nullable().describe("The play id when the leg runs a play with a strategy, else null."), strategyName: z.string().nullable() })),
   figures: factoryTargetFigures,
 });
+// ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31, GTM Factory v10 sections 2, 3, 8; `lib/engine-shadow.ts`): shadow only.
+const enginePickRef = z.object({
+  candidateId: z.string().describe("`<base pipe id>::<workflow dynasty slug>`."),
+  pipeId: z.string().describe("The pipe or play it runs under."),
+  channelName: z.string(),
+  workflowDynastySlug: z.string(),
+  workflowDynastyName: z.string().nullable(),
+});
+const enginePlace = z.object({
+  outcome: z.string().describe("The outcome this candidate place calls (a catalogue step)."),
+  outcomeName: z.string(),
+  consumer: z.string().describe("Who calls it: the next outcome of the line, or `campaign` at the Target."),
+  consumerName: z.string(),
+  today: enginePickRef.nullable().describe("Today's pick: the pipe the campaign runs on this leg and the workflow its leg ranking puts first (best-ROI order, within the play)."),
+  todayUnavailableReason: z.string().nullable().describe("`no_pipe_on_leg`, `client_team_leg`, `workflow_ranking_not_computed_yet`; null with a pick."),
+  engine: enginePickRef.nullable().describe("The Engine's pick on this tick: ONE Thompson draw on value per dollar (rate x value added / cost per decision) over every candidate."),
+  engineModal: enginePickRef.nullable().describe("The candidate most of the 1,000 draws pick."),
+  agrees: z.boolean().nullable().describe("Today's pick IS the Engine's tick pick; null when either is missing."),
+  todayPickSharePct: z.number().nullable().describe("Share of the draws picking today's pick (%): the expected agreement."),
+  state: z.enum(["ok", "no_candidate", "no_candidate_priced"]).describe("`no_candidate*` = not yet (normal colours): nothing of ours runs on this outcome, or nothing is priced."),
+  candidates: z
+    .array(
+      enginePickRef.extend({
+        fromStep: z.string().nullable(),
+        valueAddedUsd: z.number().nullable().describe("The outcome's value on the offer's lifetime revenue less the value of the step it starts from."),
+        fleetDecisions: z.number(),
+        fleetOutcomes: z.number(),
+        clientDecisions: z.number().nullable().describe("The client's own decisions on this workflow (ledger at its campaigns); null = ledger unreadable."),
+        clientOutcomes: z.number().nullable(),
+        rateMeanPct: z.number().nullable().describe("The pooled belief's mean rate (%), censored delays."),
+        costPerDecisionMeanUsd: z.number().nullable(),
+        valuePerDollarMean: z.number().nullable(),
+        pickSharePct: z.number().nullable().describe("Share of the Thompson draws it wins (%); null = cannot be priced."),
+        isToday: z.boolean(),
+        isEnginePick: z.boolean(),
+      }),
+    )
+    .describe("Every candidate of the outcome's Engine: every runnable workflow of every pipe we run ending on it, under the brief's pipe and play verdicts, starting from a step the campaign holds."),
+  strengths: z.object({ pipe: z.number(), workflow: z.number() }).describe("The pooling strengths fitted from the siblings' spread (pseudo-trials)."),
+});
+const engineShadow = z.object({
+  computedAt: z.string(),
+  status: z.enum(["ok", "failed"]).describe("`failed` = could not be computed for this campaign (red on Monitoring)."),
+  failure: z.string().nullable(),
+  places: z.array(enginePlace).describe("One per leg of the running line, up to the Target (a leg only the client's team works is no place of ours)."),
+  comparable: z.number().int(),
+  agreed: z.number().int(),
+  expectedAgreementPct: z.number().nullable(),
+  clientEvidence: z.enum(["ledger", "ledger_unreadable"]),
+  limits: z.array(z.string()).describe("What the model does not do yet (v10 section 8): `no_half_life_fade`, `no_like_for_like_day_reading`, `no_branch_uplift`."),
+});
+const engineReplay = z.object({
+  computedAt: z.string(),
+  windowDays: z.number().int(),
+  checkpoints: z.array(z.string()).describe("Run-start cuts the beliefs were read as of; each period runs to the next, the last to today."),
+  families: z.array(
+    z.object({
+      outcome: z.string().describe("The Engine's outcome: the family of every pipe of ours ending on it."),
+      outcomeName: z.string(),
+      candidates: z.number().int(),
+      graded: z.number().int().describe("Candidates with >= 20 window decisions and spend: their value per dollar is measured."),
+      windowDecisions: z.number(),
+      bestValuePerDollar: z.number().nullable().describe("The window's best measured value per dollar (value added x outcomes / spend)."),
+      bestCandidateId: z.string().nullable(),
+      todayRegret: z.number().nullable().describe("Today's rule as it ran (the window's decisions as split): Σ share x (1 − value per dollar / best), graded candidates only."),
+      todayValuePerDollar: z.number().nullable(),
+      todayUngradedPct: z.number().nullable(),
+      engineRegret: z.number().nullable().describe("The Engine: its Thompson pick shares at each checkpoint on the evidence as of then, graded the same way, weighted by each period's decisions."),
+      engineValuePerDollar: z.number().nullable(),
+      engineUngradedPct: z.number().nullable().describe("Share of the Engine's picks on candidates the window cannot grade (exploration)."),
+      regretGain: z.number().nullable().describe("todayRegret − engineRegret: positive = the Engine would have bought more value per dollar."),
+      reason: z.string().nullable(),
+    }),
+  ),
+  totals: z.object({ todayRegret: z.number().nullable(), engineRegret: z.number().nullable(), regretGain: z.number().nullable(), families: z.number().int() }).describe("Over the graded families, weighted by window decisions."),
+  caveats: z.array(z.string()),
+  failure: z.string().nullable().describe("Set when the replay failed (red)."),
+});
+
 const factoryShadowBody = registry.register(
   "FactoryShadowPlan",
   z.object({
@@ -9571,6 +9650,7 @@ const factoryShadowBody = registry.register(
         briefNamedChannels: z.array(z.string()).optional().describe("Channels (slugs) the brief names: on a brief that rules some channels out, every channel the pipe judge kept. Every plan line carries as many of them as any line can (a named channel stays on its leg). Absent on a plan stored before 2026-10-29."),
       })
       .nullable(),
+    engine: engineShadow.nullable().optional().describe("ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): one Engine per outcome, the pick by Thompson sampling on value per dollar, beside today's pick. Absent on a body stored before."),
     computedAt: z.string(),
   }).openapi({ description: "SHADOW ONLY: nothing here changes what the campaign runs." }),
 );
@@ -9583,6 +9663,10 @@ const factoryOrgDay = z.object({
   judgeFailed: z.number().int(),
   planFailed: z.number().int().describe("Campaigns whose plan is a PROBLEM (unreadable, or following a plan it does not have). Since 2026-10-29 a plan only waiting on a first price is `notYet`."),
   notYet: z.number().int().describe("Campaigns waiting on a first price or a catalogue line to their Target: nothing broken (0 before 2026-10-29)."),
+  enginePlaces: z.number().int().optional().describe("Candidate places where today's pick and the Engine's both exist (0 before 2026-10-31)."),
+  engineAgreed: z.number().int().optional(),
+  engineTodayShareSum: z.number().optional(),
+  engineFailed: z.number().int().optional(),
 });
 const factoryChangeSide = z.object({
   pipes: z.array(z.object({ legKey: z.string(), pipeId: z.string().nullable(), name: z.string().describe("The pipe's served catalogue name: its channel, `: <strategy>` on a play.") })).describe("ONLY the legs that differ between the two lines (common head and tail cut), in line order."),
@@ -9608,6 +9692,12 @@ const factoryMonitoringCampaign = z.object({
   pickDiffers: z.boolean(),
   target: z.string().nullable(),
   change: z.object({ running: factoryChangeSide, best: factoryChangeSide }).nullable().describe("What would change when the plan differs: the running pipes vs the best-now pipes on the legs that differ, and both lines' $ per Target and ROI with their basis. Null when the plan does not differ."),
+  engine: engineShadow
+    .omit({ places: true, computedAt: true, clientEvidence: true, limits: true })
+    .extend({ places: z.array(enginePlace.omit({ candidates: true, strengths: true }).extend({ candidates: z.number().int() })) })
+    .nullable()
+    .optional()
+    .describe("Today's pick vs the Engine's pick per place (candidate rows on the campaign's own read)."),
 });
 
 registry.registerPath({
@@ -9652,6 +9742,15 @@ registry.registerPath({
             campaigns: z.array(factoryMonitoringCampaign),
             problems: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: problem` (red)."),
             notYet: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: not_yet` (normal colours)."),
+            engine: z
+              .object({
+                verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["engine_failed", "replay_failed"])) }).describe("Red ONLY when broken: a campaign's Engine or the replay failed. The pass staleness is `verdict` above."),
+                last: z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable(), expectedAgreementPct: z.number().nullable(), failed: z.number().int() }).nullable(),
+                series: z.array(z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable().describe("Places where today's pick IS the Engine's tick pick (%)."), expectedAgreementPct: z.number().nullable().describe("Mean share of Thompson draws picking today's pick (%)."), failed: z.number().int() })),
+                problems: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), failure: z.string().nullable() })),
+                replay: engineReplay.nullable().describe("The 30-day replay, recomputed once a day by the pass; null before the first."),
+              })
+              .describe("ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): today's pick vs the Engine's (Thompson on value per dollar), fleet daily agreement and the replay regret."),
           }),
         },
       },

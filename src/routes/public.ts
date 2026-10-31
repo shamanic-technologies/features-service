@@ -4565,7 +4565,7 @@ function getFleetLegPopulation(featureSlug: string, legKey: string): Promise<{ c
   });
 }
 
-async function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
+export async function getFleetLegCampaigns(featureSlug: string, legKey: string): Promise<FleetLegCampaign[]> {
   return (await getFleetLegPopulation(featureSlug, legKey)).campaigns;
 }
 
