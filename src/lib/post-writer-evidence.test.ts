@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import { postWriterBars, type PostGeneration, type RunCredit } from "./post-writer-evidence.js";
-import { generationsOfPipe, ledgerCredits, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
+import { generationOf, generationsOfPipe, ledgerCredits, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
 import { rankWriters, type WriterCandidate } from "./leg-writer-ranking.js";
 
 const LEG = "start_to_post_published";
@@ -57,7 +57,7 @@ describe("post writer evidence (THREADS-IDEAS-AB): each post filed under what wr
 });
 
 describe("post pipe membership and ledger credits", () => {
-  const feed = (workflowSlug: string | null, featureSlug = "threads-post"): FeedGeneration => ({ ...gen(workflowSlug ?? "x", "r", "hook"), orgId: "o", campaignId: "c", workflowSlug, featureSlug });
+  const feed = (workflowSlug: string | null, featureSlug = "threads-post"): FeedGeneration => ({ ...gen(workflowSlug ?? "x", "r", "hook"), orgId: "o", campaignId: "c", workflowSlug, featureSlug, dryRun: false });
   it("a generation is on the pipe its workflow dynasty is assigned on (longest dynasty wins), never on a slug literal", () => {
     const assignments = [
       { featureSlug: "threads-post", legKey: LEG, workflowDynastySlug: "threads-post-maasym" },
@@ -66,6 +66,20 @@ describe("post pipe membership and ledger credits", () => {
     const gens = [feed("threads-post-maasym-v2"), feed("threads-post-v3"), feed(null), feed("threads-post-maasym", "social-post")];
     expect(generationsOfPipe(gens, assignments, "threads-post", LEG).map((g) => g.workflowSlug)).toEqual(["threads-post-maasym-v2"]);
     expect(generationsOfPipe(gens, assignments, "threads-post", "other_leg").map((g) => g.workflowSlug)).toEqual(["threads-post-v3"]);
+  });
+
+  it("a staff dry run's generation is on no pipe (its spend never counts); a live one is", () => {
+    const assignments = [{ featureSlug: "threads-post", legKey: LEG, workflowDynastySlug: "threads-post-maasym" }];
+    const live = feed("threads-post-maasym-v4");
+    const dry = { ...feed("threads-post-maasym-v4"), generationId: "dry", dryRun: true };
+    expect(generationsOfPipe([live, dry], assignments, "threads-post", LEG).map((g) => g.generationId)).toEqual([live.generationId]);
+  });
+
+  it("dryRun parses leniently: absent = false, true only when stated true", () => {
+    const raw = { generationId: "g", createdAt: "2026-10-31T00:00:00Z", model: "m", orgId: "o", runId: "r", campaignId: "c", workflowSlug: "w", featureSlug: "f", templateDynasty: null };
+    expect(generationOf(raw).dryRun).toBe(false);
+    expect(generationOf({ ...raw, dryRun: false }).dryRun).toBe(false);
+    expect(generationOf({ ...raw, dryRun: true }).dryRun).toBe(true);
   });
 
   it("a visit consuming the post, then a signup consuming that visit, credit the run that published it", () => {
