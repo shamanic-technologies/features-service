@@ -113,6 +113,7 @@ vi.mock("../lib/channel-declarations-store.js", async () => {
       mem.paths.splice(i, 1);
       return { retiredAt: "2026-10-16T10:00:00.000Z" };
     },
+    listRetiredTriggerTypes: async () => (mem as any).retiredTriggers ?? [],
     listTriggerCatalogue: async () => (await import("../lib/channel-triggers.js")).withAnyOfMembers((await import("../lib/outcome-vocabulary.js")).withOutcomeTriggers(mem.triggers, mem.steps ?? [], (g: any) => g)),
     listDeclaredChannels: async () => [],
     listDeclaredLegs: async () => mem.legs,
@@ -1121,6 +1122,19 @@ describe("retiring a declared trigger and the sales funnel it heads", () => {
     const f = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: PIPES, triggerId: TRIGGER.id, createdBy: "staff" });
     expect(f.status).toBe(201);
     expect(f.body.id).toBe(FUNNEL);
+  });
+
+  it("once retired, a campaign that ran on it still names its trigger and its path (P5.1: the copy read knows retired triggers)", async () => {
+    const { funnelCopiesFor } = await import("./agent-catalogue.js");
+    mem.triggers = [];
+    (mem as any).retiredTriggers = [{ ...TRIGGER }];
+    try {
+      const { copies, pathOf } = await funnelCopiesFor([FUNNEL]);
+      expect(copies.get(FUNNEL)).toMatchObject({ type: "reactive", triggerLabel: "Signup Not Paid In 5 Min" });
+      expect(pathOf(FUNNEL)!.items[0]).toMatchObject({ kind: "trigger", slug: TRIGGER.id });
+    } finally {
+      (mem as any).retiredTriggers = [];
+    }
   });
 
   it("the trigger is refused while its funnel is declared; the funnel is refused while a campaign of any org runs it (stopped included)", async () => {
