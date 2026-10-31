@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import { postWriterBars, type PostGeneration, type RunCredit } from "./post-writer-evidence.js";
-import { generationOf, generationsOfPipe, ledgerCredits, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
+import { generationOf, generationsOfPipe, ledgerCredits, withoutSupportRuns, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
 import { rankWriters, type WriterCandidate } from "./leg-writer-ranking.js";
 
 const LEG = "start_to_post_published";
@@ -73,6 +73,22 @@ describe("post pipe membership and ledger credits", () => {
     const live = feed("threads-post-maasym-v4");
     const dry = { ...feed("threads-post-maasym-v4"), generationId: "dry", dryRun: true };
     expect(generationsOfPipe([live, dry], assignments, "threads-post", LEG).map((g) => g.generationId)).toEqual([live.generationId]);
+  });
+
+  it("a dry run still makes the pipe a post pipe when asked (includeDryRuns), so it reads zero, never the old build", () => {
+    const assignments = [{ featureSlug: "threads-post", legKey: LEG, workflowDynastySlug: "threads-post-maasym" }];
+    const dry = { ...feed("threads-post-maasym-v4"), dryRun: true };
+    expect(generationsOfPipe([dry], assignments, "threads-post", LEG)).toEqual([]);
+    expect(generationsOfPipe([dry], assignments, "threads-post", LEG, { includeDryRuns: true })).toHaveLength(1);
+  });
+
+  it("a writing run runs-service marks as support work (staff experiment) is dropped entirely; unmarked or absent = kept", () => {
+    const g = (runId: string | null) => ({ runId });
+    const spend = new Map([
+      ["staff", { usd: 0.15, supportFunction: "staff_experiment" }],
+      ["live", { usd: 0.2, supportFunction: null }],
+    ]);
+    expect(withoutSupportRuns([g("staff"), g("live"), g("unlisted"), g(null)], spend).map((x) => x.runId)).toEqual(["live", "unlisted", null]);
   });
 
   it("dryRun parses leniently: absent = false, true only when stated true", () => {
