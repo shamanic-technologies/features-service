@@ -29,7 +29,7 @@
 
 import { CHANNEL_STEPS, CHANNEL_STEP_KEYS, FUNNEL_STEP_LABEL_TO_KEY, type ChannelStepKey } from "./acquisition-channels.js";
 import type { ChannelStepDefWire, PublicChannel } from "./channel-catalogue.js";
-import type { PairResult, PairUnmeasuredReason, StepUnpricedReason } from "./channel-funnel-economics.js";
+import { funnelEntryChannel, type PairResult, type PairUnmeasuredReason, type StepUnpricedReason } from "./channel-funnel-economics.js";
 import { buildFunnelReturnOnSpend, type FunnelReturnOnSpend, MIN_FUNNEL_RETURN_BRANDS } from "./fleet-funnel-return.js";
 import type { BrandReturnRow } from "./fleet-return-on-spend.js";
 import { funnelLeg, legKeysOfFunnel } from "./funnel-legs.js";
@@ -52,6 +52,65 @@ function toStepOfLeg(legKey: string): ChannelStepKey | null {
 
 // ── 1. PROJECTED channel economics, per outcome and per leg ─────────────────────────────────────────
 
+// ── Maturity of a PROJECTED figure (CHANNEL-ECON-MATURITY-1031) ──────────────────────────────────
+//
+// Every projected figure on this read (a step's cost, a path's cost per paying client, its return per
+// dollar) is the channel's MEASURED entry unit cost (spend ÷ positive replies, or spend ÷ website visits)
+// carried down stated rates. So how much a figure stands on is the count of entry outcomes that unit cost
+// divides by — nothing downstream adds evidence. A figure is MATURE (a consumer may state it and rank it)
+// once that count reaches `MIN_OUTCOMES_TO_RANK`; below it the figure is still served, labelled Learning.
+//
+// WHY 30. Market practice for "how many conversions before a cost per conversion is trusted": Google Ads
+// asks for 15-30 conversions in 30 days before Target CPA bidding steers on a CPA; Meta keeps an ad set
+// in its learning phase until ~50 optimisation events; the classical statistics rule of thumb is n >= 30
+// (a count of n events has a relative standard error of ~1/sqrt(n): ±18% at 30, ±100% at 1). 30 is the
+// middle of that consensus. Our own history only illustrates it (2026-10-31): email-sending priced a
+// positive reply at $2.18 on ONE reply beside cold email's $319 on 52, and a public reader ranked the
+// one-reply figure 150x cheaper.
+
+/** Entry outcomes a projected figure must stand on before a consumer may state and rank it. */
+export const MIN_OUTCOMES_TO_RANK = 30;
+
+/** Why a figure is not mature. `too_few_outcomes` = served, but stands on fewer than the bar;
+ *  `no_figure` = the figure itself is null (its own reason says why). */
+export type FigureNotMatureReason = "too_few_outcomes" | "no_figure";
+
+/** The served verdict on ONE figure: may a consumer state and rank it? Never re-graded by a consumer. */
+export interface FigureMaturity {
+  isMature: boolean;
+  /** Present exactly when `isMature` is false. */
+  notMatureReason: FigureNotMatureReason | null;
+  /** The measured entry outcome the figure is priced from; null when the path measures none. */
+  measuredOutcome: "positive_reply" | "website_visit" | null;
+  /** How many of those outcomes the figure stands on; null when the path measures none. */
+  outcomesMeasured: number | null;
+  /** The bar: `MIN_OUTCOMES_TO_RANK`. */
+  outcomesRequired: number;
+}
+
+/** What one path's figures stand on: its entry outcome and how many of them were produced. */
+interface PathBasis {
+  measuredOutcome: FigureMaturity["measuredOutcome"];
+  outcomesMeasured: number | null;
+}
+
+function pathBasisOf(pair: ChannelPairInput): PathBasis {
+  const entry = funnelEntryChannel(pair.funnelKey);
+  if (!pair.result.measured || entry === null) return { measuredOutcome: null, outcomesMeasured: null };
+  const ev = pair.result.economics.evidence;
+  return entry === "reply"
+    ? { measuredOutcome: "positive_reply", outcomesMeasured: ev.conversationsProduced }
+    : { measuredOutcome: "website_visit", outcomesMeasured: ev.websiteVisitsProduced };
+}
+
+/** PURE: the verdict on one figure priced from `basis`. */
+export function figureMaturityOf(figure: number | null, basis: PathBasis): FigureMaturity {
+  const common = { measuredOutcome: basis.measuredOutcome, outcomesMeasured: basis.outcomesMeasured, outcomesRequired: MIN_OUTCOMES_TO_RANK };
+  if (figure == null) return { isMature: false, notMatureReason: "no_figure", ...common };
+  const isMature = (basis.outcomesMeasured ?? 0) >= MIN_OUTCOMES_TO_RANK;
+  return { isMature, notMatureReason: isMature ? null : "too_few_outcomes", ...common };
+}
+
 /** The fields of one funnel-keyed pair row this projection reads. Kept structural so the route owns
  *  its own row type and this module never imports a route. */
 export interface ChannelPairInput {
@@ -72,6 +131,8 @@ export interface PricedPathStep {
   legKey: string;
   costPerOutcomeUsd: number | null;
   unpricedReason: OutcomeUnpricedReason | null;
+  /** May a consumer state and rank `costPerOutcomeUsd`? */
+  maturity: FigureMaturity;
 }
 
 /** One way this channel's legs chain to a paying client — the pair row, named by its LEGS. */
@@ -84,8 +145,10 @@ export interface ChannelOutcomePath {
   steps: PricedPathStep[];
   /** What one PAYING CLIENT costs through this path (the pair's `costPerSaleUsd`). */
   costPerPaidClientUsd: number | null;
+  costPerPaidClientMaturity: FigureMaturity;
   /** PROJECTED — `lifetimeRevenueUsd / costPerPaidClientUsd`. Never a realized return. */
   returnPerDollar: number | null;
+  returnPerDollarMaturity: FigureMaturity;
   lifetimeRevenueUsd: number | null;
   /** Brands whose stated economics backed this path's rates. */
   statedBrandCount: number | null;
@@ -97,6 +160,7 @@ interface Candidate {
   legKeys: string[];
   cost: number | null;
   reason: OutcomeUnpricedReason | null;
+  maturity: FigureMaturity;
 }
 
 export interface ChannelOutcomeRow {
@@ -107,10 +171,12 @@ export interface ChannelOutcomeRow {
   costPerOutcomeUsd: number | null;
   /** Present exactly when `costPerOutcomeUsd` is null — the reason of the first path in catalogue order. */
   unpricedReason: OutcomeUnpricedReason | null;
+  /** May a consumer state and rank `costPerOutcomeUsd`? The verdict of the path it was taken from. */
+  maturity: FigureMaturity;
   /** The legs of the path the price was taken from (null when unpriced). */
   pricedThroughLegKeys: string[] | null;
   /** Every path reaching this step, each with its own price. They OVERLAP and must never be summed. */
-  paths: Array<{ legKeys: string[]; costPerOutcomeUsd: number | null; unpricedReason: OutcomeUnpricedReason | null }>;
+  paths: Array<{ legKeys: string[]; costPerOutcomeUsd: number | null; unpricedReason: OutcomeUnpricedReason | null; maturity: FigureMaturity }>;
 }
 
 export interface ChannelLegRow {
@@ -122,6 +188,8 @@ export interface ChannelLegRow {
   /** PROJECTED — what landing a lead on this leg's step costs, cheapest path containing the leg. */
   costPerOutcomeUsd: number | null;
   unpricedReason: OutcomeUnpricedReason | null;
+  /** May a consumer state and rank `costPerOutcomeUsd`? The verdict of the path it was taken from. */
+  maturity: FigureMaturity;
 }
 
 export interface ChannelOutcomeEconomics {
@@ -135,6 +203,8 @@ export interface ChannelOutcomeEconomics {
   paths: ChannelOutcomePath[];
   /** PROJECTED — the best path's return per dollar. Null when no path states one. */
   returnPerDollar: number | null;
+  /** May a consumer state and rank `returnPerDollar`? The verdict of the path it was taken from. */
+  returnPerDollarMaturity: FigureMaturity;
   /** The legs of the path that return was taken from. */
   returnPathLegKeys: string[] | null;
   /** The channel-wide evidence every path's prices ride on. Null when no path was measured. */
@@ -143,14 +213,20 @@ export interface ChannelOutcomeEconomics {
   effectiveMinimumCommitmentDays: number | null;
 }
 
-function pickCheapest(candidates: Candidate[]): { cost: number | null; reason: OutcomeUnpricedReason | null; legKeys: string[] | null } {
+function pickCheapest(candidates: Candidate[]): { cost: number | null; reason: OutcomeUnpricedReason | null; legKeys: string[] | null; maturity: FigureMaturity } {
   let best: Candidate | null = null;
   for (const c of candidates) {
     if (c.cost == null) continue;
     if (best === null || c.cost < (best.cost as number)) best = c;
   }
-  if (best) return { cost: best.cost, reason: null, legKeys: best.legKeys };
-  return { cost: null, reason: candidates[0]?.reason ?? null, legKeys: null };
+  if (best) return { cost: best.cost, reason: null, legKeys: best.legKeys, maturity: best.maturity };
+  const first = candidates[0];
+  return {
+    cost: null,
+    reason: first?.reason ?? null,
+    legKeys: null,
+    maturity: first ? first.maturity : figureMaturityOf(null, { measuredOutcome: null, outcomesMeasured: null }),
+  };
 }
 
 /** PURE: one channel's funnel-keyed pair rows → its per-outcome / per-leg / per-path answer. */
@@ -161,23 +237,34 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
   const paths: ChannelOutcomePath[] = pairs.map((pair) => {
     const legKeys = legKeysOfFunnel(pair.funnelKey);
     const r = pair.result;
+    const basis = pathBasisOf(pair);
     const steps: PricedPathStep[] = legKeys.map((legKey, i) => {
       const stepKey = toStepOfLeg(legKey) as ChannelStepKey;
-      if (!r.measured) return { step: stepWire(stepKey), legKey, costPerOutcomeUsd: null, unpricedReason: r.reason };
+      if (!r.measured) return { step: stepWire(stepKey), legKey, costPerOutcomeUsd: null, unpricedReason: r.reason, maturity: figureMaturityOf(null, basis) };
       const priced = r.economics.steps[i];
       // The pair walks the same labels in the same order; a mismatch means the two catalogues drifted.
       if (!priced || FUNNEL_STEP_LABEL_TO_KEY[priced.step] !== stepKey) {
         throw new Error(`channel-outcome economics: ${pair.funnelKey} step ${i} does not match leg ${legKey}`);
       }
-      return { step: stepWire(stepKey), legKey, costPerOutcomeUsd: priced.costPerStepUsd, unpricedReason: priced.unpricedReason };
+      return {
+        step: stepWire(stepKey),
+        legKey,
+        costPerOutcomeUsd: priced.costPerStepUsd,
+        unpricedReason: priced.unpricedReason,
+        maturity: figureMaturityOf(priced.costPerStepUsd, basis),
+      };
     });
+    const costPerPaidClientUsd = r.measured ? r.economics.costPerSaleUsd : null;
+    const returnPerDollar = r.measured ? r.economics.returnPerDollar : null;
     return {
       legKeys,
       measured: r.measured,
       unmeasuredReason: r.measured ? null : r.reason,
       steps,
-      costPerPaidClientUsd: r.measured ? r.economics.costPerSaleUsd : null,
-      returnPerDollar: r.measured ? r.economics.returnPerDollar : null,
+      costPerPaidClientUsd,
+      costPerPaidClientMaturity: figureMaturityOf(costPerPaidClientUsd, basis),
+      returnPerDollar,
+      returnPerDollarMaturity: figureMaturityOf(returnPerDollar, basis),
       lifetimeRevenueUsd: r.measured ? r.economics.lifetimeRevenueUsd : null,
       statedBrandCount: r.measured ? r.economics.evidence.brandCount : null,
       effectiveMinimumCommitmentDays: pair.effectiveMinimumCommitmentDays,
@@ -188,7 +275,7 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
   const byLeg = new Map<string, Candidate[]>();
   for (const path of paths) {
     for (const s of path.steps) {
-      const c: Candidate = { legKeys: path.legKeys, cost: s.costPerOutcomeUsd, reason: s.unpricedReason };
+      const c: Candidate = { legKeys: path.legKeys, cost: s.costPerOutcomeUsd, reason: s.unpricedReason, maturity: s.maturity };
       const key = s.step.key as ChannelStepKey;
       byStep.set(key, [...(byStep.get(key) ?? []), c]);
       byLeg.set(s.legKey, [...(byLeg.get(s.legKey) ?? []), c]);
@@ -204,8 +291,9 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
         landedByChannel: landed.has(key),
         costPerOutcomeUsd: best.cost,
         unpricedReason: best.reason,
+        maturity: best.maturity,
         pricedThroughLegKeys: best.legKeys,
-        paths: candidates.map((c) => ({ legKeys: c.legKeys, costPerOutcomeUsd: c.cost, unpricedReason: c.reason })),
+        paths: candidates.map((c) => ({ legKeys: c.legKeys, costPerOutcomeUsd: c.cost, unpricedReason: c.reason, maturity: c.maturity })),
       };
     });
 
@@ -220,6 +308,7 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
       performedByChannel: performed.has(legKey),
       costPerOutcomeUsd: best.cost,
       unpricedReason: best.reason,
+      maturity: best.maturity,
     };
   });
 
@@ -245,6 +334,9 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
     legs,
     paths,
     returnPerDollar: bestReturn?.returnPerDollar ?? null,
+    returnPerDollarMaturity: bestReturn
+      ? bestReturn.returnPerDollarMaturity
+      : paths[0]?.returnPerDollarMaturity ?? figureMaturityOf(null, { measuredOutcome: null, outcomesMeasured: null }),
     returnPathLegKeys: bestReturn?.legKeys ?? null,
     evidence,
     effectiveMinimumCommitmentDays:
