@@ -49451,6 +49451,44 @@
                                   null
                                 ]
                               },
+                              "postFigures": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "posts": {
+                                    "type": "number"
+                                  },
+                                  "views": {
+                                    "type": "number"
+                                  },
+                                  "engagements": {
+                                    "type": "number"
+                                  },
+                                  "visits": {
+                                    "type": "number"
+                                  },
+                                  "signups": {
+                                    "type": "number"
+                                  },
+                                  "spentUsd": {
+                                    "type": "number"
+                                  },
+                                  "costPerSignupUsd": {
+                                    "type": "number",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "posts",
+                                  "views",
+                                  "engagements",
+                                  "visits",
+                                  "signups",
+                                  "spentUsd",
+                                  "costPerSignupUsd"
+                                ],
+                                "description": "THREADS-IDEAS-AB: on a pipe whose writer records POSTS (content-generation's thread-generations feed), what this row's posts led to, everything to date, pooled over the dynasty's versions: posts published, latest views and engagements summed (social-service), website visits through the posts and signups credited on those visits (runs-service ledger), billed spend of the writing runs (published or not), cost per signup (null at 0). The ranking's outcome on such a pipe is the SIGNUP (contacted = posts). Null on a pipe whose writer records no posts."
+                              },
                               "tactics": {
                                 "type": "array",
                                 "nullable": true,
@@ -49510,6 +49548,7 @@
                               "templateDynastySlug",
                               "head",
                               "status",
+                              "postFigures",
                               "tactics",
                               "tacticsUnavailableReason",
                               "icon",
@@ -49773,6 +49812,44 @@
                                 "type": "string",
                                 "nullable": true
                               },
+                              "postFigures": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "posts": {
+                                    "type": "number"
+                                  },
+                                  "views": {
+                                    "type": "number"
+                                  },
+                                  "engagements": {
+                                    "type": "number"
+                                  },
+                                  "visits": {
+                                    "type": "number"
+                                  },
+                                  "signups": {
+                                    "type": "number"
+                                  },
+                                  "spentUsd": {
+                                    "type": "number"
+                                  },
+                                  "costPerSignupUsd": {
+                                    "type": "number",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "posts",
+                                  "views",
+                                  "engagements",
+                                  "visits",
+                                  "signups",
+                                  "spentUsd",
+                                  "costPerSignupUsd"
+                                ],
+                                "description": "THREADS-IDEAS-AB: on a pipe whose writer records POSTS (content-generation's thread-generations feed), what this row's posts led to, everything to date, pooled over the dynasty's versions: posts published, latest views and engagements summed (social-service), website visits through the posts and signups credited on those visits (runs-service ledger), billed spend of the writing runs (published or not), cost per signup (null at 0). The ranking's outcome on such a pipe is the SIGNUP (contacted = posts). Null on a pipe whose writer records no posts."
+                              },
                               "models": {
                                 "type": "array",
                                 "items": {
@@ -49847,6 +49924,7 @@
                               "aliases",
                               "modelIds",
                               "provider",
+                              "postFigures",
                               "models"
                             ]
                           }
@@ -73606,6 +73684,44 @@
                               "type": "boolean",
                               "description": "`/internal/research/templates` serves a text under `key`: the head's on a dynasty."
                             },
+                            "postFigures": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "posts": {
+                                  "type": "number"
+                                },
+                                "views": {
+                                  "type": "number"
+                                },
+                                "engagements": {
+                                  "type": "number"
+                                },
+                                "visits": {
+                                  "type": "number"
+                                },
+                                "signups": {
+                                  "type": "number"
+                                },
+                                "spentUsd": {
+                                  "type": "number"
+                                },
+                                "costPerSignupUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "posts",
+                                "views",
+                                "engagements",
+                                "visits",
+                                "signups",
+                                "spentUsd",
+                                "costPerSignupUsd"
+                              ],
+                              "description": "THREADS-IDEAS-AB: on a pipe whose writer records POSTS (content-generation's thread-generations feed), what this row's posts led to, everything to date, pooled over the dynasty's versions: posts published, latest views and engagements summed (social-service), website visits through the posts and signups credited on those visits (runs-service ledger), billed spend of the writing runs (published or not), cost per signup (null at 0). The ranking's outcome on such a pipe is the SIGNUP (contacted = posts). Null on a pipe whose writer records no posts."
+                            },
                             "tactics": {
                               "type": "array",
                               "nullable": true,
@@ -74573,6 +74689,7 @@
                             "color",
                             "label",
                             "hasText",
+                            "postFigures",
                             "tactics",
                             "tacticsUnavailableReason",
                             "dynasty",

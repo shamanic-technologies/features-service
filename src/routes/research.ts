@@ -44,8 +44,9 @@ import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js"
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/research/run-cost.js";
-import { pickPipeWriters } from "./leg-writer-ranking.js";
-import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
+import { pickPipeWriters, readLegWriterRanking } from "./leg-writer-ranking.js";
+import { rankWriters } from "../lib/leg-writer-ranking.js";
+import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type PipeCatalogInput, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
 import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
@@ -1095,6 +1096,17 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
 }
 
 const OTHER_PIPE_TIMEOUT_MS = 3 * 60_000;
+const WRITER_RANKING_WAIT_MS = 60_000;
+
+/** PURE. A post pipe's writer rows in rank order with their post figures (THREADS-IDEAS-AB); undefined on any other pipe. */
+export function postWritersOf(p: Awaited<ReturnType<typeof readLegWriterRanking>>): PipeCatalogInput["postWriters"] {
+  if (!p || !p.templates.candidates.some((c) => c.postFigures)) return undefined;
+  const post = new Map(p.templates.candidates.map((c) => [c.key, c.postFigures ?? null]));
+  return {
+    templates: rankWriters(p.templates.candidates).rows.map((r) => ({ key: r.key, postFigures: post.get(r.key) ?? null })),
+    models: rankWriters(p.llms.candidates).rows.map((r) => ({ key: r.key })),
+  };
+}
 
 type AliasStatus = ReadonlyMap<string, "active" | "deprecated"> | null;
 
@@ -1179,7 +1191,7 @@ async function otherPipeSection(
   const { featureSlug, legKey } = p;
   const internal = (await internalPipeToStep(featureSlug, legKey)) !== null;
   const rule = legMaturity(legKey);
-  const [read, tplRead, writers, ranking] = await Promise.all([
+  const [read, tplRead, writers, ranking, writerRanking] = await Promise.all([
     internal ? Promise.resolve(null) : coldEmailPipe(legKey, basis, now, { featureSlug, datedSpend: false, requireRanking: false, view }),
     readTemplateDynasties(featureSlug, legKey),
     shared.writersOf(featureSlug),
@@ -1190,7 +1202,13 @@ async function otherPipeSection(
         return null;
       },
     ),
+    // A pipe whose writer records posts (THREADS-IDEAS-AB): its template and model pages stand in the writer ranking's order.
+    readLegWriterRanking(featureSlug, legKey, WRITER_RANKING_WAIT_MS).catch((err) => {
+      console.error(`[features-service] research: writer ranking ${featureSlug}|${legKey} unreadable, no post figures this build:`, err);
+      return null;
+    }),
   ]);
+  const postWriters = postWritersOf(writerRanking);
   const terms = otherPipeTerms(p.entry, rule, read?.input.cutoffDay ?? null);
   const tplDyn = templateDynastyIndex(tplRead);
   const rankingNames = new Map((ranking ?? []).filter((r) => r.workflowDynastyName).map((r) => [r.workflowDynastySlug, r.workflowDynastyName]));
@@ -1285,6 +1303,7 @@ async function otherPipeSection(
       modelFiguresByVersion: gen.modelFiguresByVersion,
       modelVersionFiguresByVersion: gen.modelVersionFiguresByVersion,
       workflowVersionTotals: gen.workflowVersionTotals,
+      postWriters,
     }),
     ranking,
     view,
