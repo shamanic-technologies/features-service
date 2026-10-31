@@ -59,7 +59,8 @@ async function readFeed(): Promise<FeedGeneration[]> {
   const rows: FeedGeneration[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 500; page++) {
-    const q = new URLSearchParams({ since: "1970-01-01T00:00:00.000Z", limit: "1000" });
+    // The feed pages at most 500 (content-generation THREAD_GENERATIONS_MAX_LIMIT); omitting `since` = since the first.
+    const q = new URLSearchParams({ limit: "500" });
     if (cursor) q.set("cursor", cursor);
     const res = await fetchWithRetry(`${base}/internal/thread-generations?${q}`, { headers: { "x-api-key": key } }, { timeoutMs: 60_000 });
     if (!res.ok) throw new Error(`content-generation-service thread-generations ${res.status}: ${(await res.text()).slice(0, 300)}`);
