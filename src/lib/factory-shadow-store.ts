@@ -6,6 +6,7 @@ import { desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { factoryBriefJudgments, factoryBriefPrefills, factoryPipeVerdicts, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
 import type { BriefJudgment, OrgDayCounts, PipeVerdict, ShadowStatus } from "./factory-shadow.js";
+import type { EngineDayCounts } from "./engine-shadow.js";
 
 /** Every stored verdict of these campaigns, keyed `<campaignId>|<basePipeId>`. */
 export async function readJudgments(campaignIds: readonly string[]): Promise<Map<string, BriefJudgment>> {
@@ -72,14 +73,14 @@ export async function readPlansSince(since: Date): Promise<Array<{ campaignId: s
 }
 
 /** Rewrite TODAY's rows of the daily series with this pass's counts (an org absent from the pass is removed for today). */
-export async function writeDay(day: string, counts: readonly OrgDayCounts[], sweptAt: Date): Promise<void> {
+export async function writeDay(day: string, counts: ReadonlyArray<OrgDayCounts & Partial<EngineDayCounts>>, sweptAt: Date): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(factoryShadowDaily).where(eq(factoryShadowDaily.day, day));
     if (counts.length > 0) await tx.insert(factoryShadowDaily).values(counts.map((c) => ({ day, ...c, sweptAt })));
   });
 }
 
-export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & { day: string; sweptAt: string }>> {
+export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & EngineDayCounts & { day: string; sweptAt: string }>> {
   const rows = await db.select().from(factoryShadowDaily).where(gte(factoryShadowDaily.day, sinceDay)).orderBy(factoryShadowDaily.day, factoryShadowDaily.orgId);
   return rows.map((r) => ({
     day: r.day,
@@ -91,6 +92,10 @@ export async function readDays(sinceDay: string): Promise<Array<OrgDayCounts & {
     judgeFailed: r.judgeFailed,
     planFailed: r.planFailed,
     notYet: r.notYet,
+    enginePlaces: r.enginePlaces,
+    engineAgreed: r.engineAgreed,
+    engineTodayShareSum: r.engineTodayShareSum,
+    engineFailed: r.engineFailed,
     sweptAt: r.sweptAt.toISOString(),
   }));
 }
