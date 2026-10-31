@@ -292,6 +292,8 @@ export interface ClientReturnInput {
   brandCount: number;
   minSpendUsd: number;
   medianReturnPerDollar: number | null;
+  /** Vendor basis only: clients of the population left out of the median because their vendor cost is unknown. */
+  vendorCostUnknownBrands?: number;
 }
 
 /** A median over a single brand is that brand's own price, not a fleet figure (the landing's bar). */
@@ -319,14 +321,14 @@ function clientPoint(def: FleetIndexDefinition, value: number | null, clients: n
 /** PURE. The median client's cost per engaged lead (positive replies + human clicks). */
 export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndexPoint {
   const def = COST_PER_ENGAGED_LEAD;
+  // A client whose vendor cost is not known is left out of the median and COUNTED in the inputs (never silently).
+  const unknown = brands.filter((b) => b.vendorCostUnknown && b.positiveReplies + brandVisits(b) > 0).length;
   const priced = brands
+    .filter((b) => !b.vendorCostUnknown)
     .map((b) => ({ engaged: b.positiveReplies + brandVisits(b), spendCents: b.spendCents }))
     .filter((b) => b.engaged > 0 && b.spendCents > 0);
   const engagedLeads = Math.round(priced.reduce((t, b) => t + b.engaged, 0));
-  const unknown = brands.filter((b) => b.vendorCostUnknown && b.positiveReplies + brandVisits(b) > 0).length;
   const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human_over_reach", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS, ...(unknown > 0 ? { clientsVendorCostUnknown: unknown } : {}) };
-  // A client whose vendor cost is not known is not left out silently: the median is withheld.
-  if (unknown > 0) return clientPoint(def, null, priced.length, VENDOR_COST_UNKNOWN, inputs);
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
   return clientPoint(def, value, priced.length, null, inputs);
@@ -334,7 +336,7 @@ export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndex
 
 /** PURE. The median client's return on spend, as `/public/stats/return-on-spend` states it. */
 export function clientReturnPoint(r: ClientReturnInput): FleetIndexPoint {
-  const inputs = { population: "mature_clients_past_spend_floor", clients: r.brandCount, minSpendUsd: r.minSpendUsd };
+  const inputs = { population: "mature_clients_past_spend_floor", clients: r.brandCount, minSpendUsd: r.minSpendUsd, ...(r.vendorCostUnknownBrands ? { clientsVendorCostUnknown: r.vendorCostUnknownBrands } : {}) };
   const value = r.measured ? r.medianReturnPerDollar : null;
   return clientPoint(CLIENT_ROI, value, r.brandCount, r.reason ?? "not_measured", inputs);
 }
