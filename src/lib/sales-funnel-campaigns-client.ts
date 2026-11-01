@@ -35,6 +35,8 @@ export interface SalesFunnelCampaignRow {
   followsPlan?: boolean;
   /** The funnel it RUNS now: its plan's after a change, else `salesFunnelId` (which stays the billing caps key). Absent on an older build. */
   runningSalesFunnelId?: string | null;
+  /** ENGINE-PER-OUTCOME-SWITCH (campaign-service): the results whose workflow pick it hands to the Engine. Absent on an older build. */
+  engineOutcomes?: string[];
 }
 
 /** campaign-service's funnel campaigns of one brand (optionally one offer), org-scoped. FAIL-LOUD. */

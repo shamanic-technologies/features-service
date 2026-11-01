@@ -33,6 +33,8 @@ import {
   type ReplayCandidate,
 } from "./engine-shadow.js";
 import { getFleetLegCampaigns, readLegWorkflowRanking, type LegWorkflowRankingPayload } from "../routes/public.js";
+import { drivenDynastyOf, guardOf } from "./engine-drive.js";
+import type { EngineDriveRow } from "./engine-drive-store.js";
 import { readResearchBuild } from "../routes/research.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 
@@ -45,6 +47,8 @@ const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 interface PipeDays {
   fleet: Map<string, DayCounts[]>;
   byBrand: Map<string, Map<string, DayCounts[]>>;
+  /** Per unit campaign, every workflow summed (the drive guard reads what the unit did, whatever it ran). */
+  byCampaign: Map<string, DayCounts[]>;
   maturityDays: number;
 }
 
@@ -80,6 +84,7 @@ export function engineMemos() {
         const brandOf = new Map(campaigns.map((c) => [c.campaignId, c.brandId]));
         const fleet = new Map<string, Map<string, DayCounts>>();
         const byBrand = new Map<string, Map<string, Map<string, DayCounts>>>();
+        const byCampaign = new Map<string, Map<string, DayCounts>>();
         const add = (m: Map<string, Map<string, DayCounts>>, dyn: string, e: DayCounts) => {
           const days = m.get(dyn) ?? new Map<string, DayCounts>();
           const d = days.get(e.day) ?? { day: e.day, decisions: 0, outcomes: 0, spentUsd: 0 };
@@ -92,6 +97,7 @@ export function engineMemos() {
         for (const e of pipeDailyEvidence(s, new Set(brandOf.keys()), read.book, offCampaignUnitCost(s, read.book)).values()) {
           const dyn = dynastyOf.get(e.workflowSlug) ?? e.workflowSlug;
           add(fleet, dyn, e);
+          add(byCampaign, e.campaignId, e);
           const brand = brandOf.get(e.campaignId);
           if (brand) {
             if (!byBrand.has(brand)) byBrand.set(brand, new Map());
@@ -99,7 +105,7 @@ export function engineMemos() {
           }
         }
         const flat = (m: Map<string, Map<string, DayCounts>>) => new Map([...m].map(([k, v]) => [k, [...v.values()].sort((a, b) => (a.day < b.day ? -1 : 1))]));
-        return { fleet: flat(fleet), byBrand: new Map([...byBrand].map(([b, m]) => [b, flat(m)])), maturityDays: legMaturity(p.computedLegKey).durationDays };
+        return { fleet: flat(fleet), byBrand: new Map([...byBrand].map(([b, m]) => [b, flat(m)])), byCampaign: flat(byCampaign), maturityDays: legMaturity(p.computedLegKey).durationDays };
       }),
     /** Per pipe (`<channel>|<computed leg>`), per workflow dynasty, its template x LLM rows (Research Performance, flash). */
     subPicks: () =>
@@ -304,4 +310,59 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
     model: ENGINE_MODEL,
     failure: null,
   };
+}
+
+// ── The live drives (ENGINE-PER-OUTCOME-SWITCH, `lib/engine-drive.ts`) ─────────────────────────────
+
+/**
+ * One funnel campaign's drives: per leg of the line it runs whose result it hands to the Engine (`engineOutcomes`), the
+ * unit campaign working that leg, the workflow the Engine drives there and its guard. `existing` = the stored drives
+ * (a rolled-back unit stays rolled back; a driving one keeps its switch date).
+ */
+export async function drivesOfCampaign(
+  memos: EngineMemos,
+  model: CatalogueModel,
+  c: Pick<ShadowCampaign, "id" | "orgId" | "brandId" | "salesFunnelId" | "target" | "mode" | "triggerId" | "engineOutcomes" | "units">,
+  engine: EngineShadow,
+  existing: ReadonlyMap<string, EngineDriveRow>,
+  now: Date,
+): Promise<Array<Omit<EngineDriveRow, "updatedAt">>> {
+  const handed = new Set(c.engineOutcomes ?? []);
+  if (handed.size === 0 || engine.status !== "ok") return [];
+  const running = funnelById(model, c.salesFunnelId);
+  if (!running) return [];
+  const today = dayOf(now);
+  const out: Array<Omit<EngineDriveRow, "updatedAt">> = [];
+  for (const leg of running.legs) {
+    const outcome = legStepsOf(model, leg.legKey).toStep;
+    if (!handed.has(outcome) || !leg.pipe || leg.pipe.operatedBy !== "platform") continue;
+    const base = model.pipes.get(basePipeIdOf(leg.pipe)) ?? leg.pipe;
+    const unit = (c.units ?? []).find((u) => u.featureSlug === base.channelSlug && pipeLegKeyOf(u.featureSlug, u.legKey) === pipeLegKeyOf(base.channelSlug, base.computedLegKey));
+    const place = engine.places.find((p) => p.outcome === outcome);
+    if (!unit || !place) continue;
+    const kept = existing.get(unit.campaignId);
+    const driven = drivenDynastyOf(place, base.id);
+    if (!driven && !kept) continue;
+    const days = await memos.days(base);
+    const serviceDynasty = place.today?.workflowDynastySlug ?? null;
+    const serviceRow = serviceDynasty ? (await memos.ranking(base))?.rows.find((r) => r.workflowDynastySlug === serviceDynasty) : undefined;
+    const switchedAt = kept?.switchedAt ?? now.toISOString();
+    const guard = guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedAt.slice(0, 10), today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null);
+    const rolledBack = kept?.state === "rolled_back" || guard.verdict === "worse";
+    out.push({
+      unitCampaignId: unit.campaignId,
+      funnelCampaignId: c.id,
+      orgId: c.orgId,
+      brandId: c.brandId,
+      outcome,
+      pipeId: base.id,
+      workflowDynastySlug: kept?.state === "rolled_back" ? kept.workflowDynastySlug : (driven?.dynasty ?? kept!.workflowDynastySlug),
+      serviceDynastySlug: serviceDynasty,
+      state: rolledBack ? "rolled_back" : "driving",
+      switchedAt,
+      rolledBackAt: kept?.rolledBackAt ?? (rolledBack ? now.toISOString() : null),
+      guard: { ...(kept?.state === "rolled_back" && kept.guard ? kept.guard : guard), outcomeName: stepLabel(model, outcome), source: driven?.source ?? kept?.guard?.source ?? "engine_tick_pick" },
+    });
+  }
+  return out;
 }

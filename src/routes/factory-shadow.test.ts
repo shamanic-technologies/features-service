@@ -38,6 +38,12 @@ vi.mock("../lib/factory-shadow-store.js", () => ({
   readPipeVerdicts: vi.fn(async () => new Map(mem.pipeVerdicts)),
   writePipeVerdict: vi.fn(async (v: any) => void mem.pipeVerdicts.set(`${v.campaignId}|${v.pipeId}`, v)),
 }));
+vi.mock("../lib/engine-drive-store.js", () => ({
+  readDrives: vi.fn(async () => []),
+  readDrive: vi.fn(async () => null),
+  writeDrive: vi.fn(async () => undefined),
+  keepOnlyDrives: vi.fn(async () => undefined),
+}));
 vi.mock("../lib/fleet-cell-store.js", () => ({
   loadFleetCell: vi.fn(async (k: string) => mem.cells.get(k) ?? null),
   storeFleetCell: vi.fn(async (k: string, text: string, computedAt: number) => void mem.cells.set(k, { text, computedAt })),

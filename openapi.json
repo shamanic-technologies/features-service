@@ -80111,7 +80111,9 @@
                                 "type": "string",
                                 "enum": [
                                   "engine_failed",
-                                  "replay_failed"
+                                  "replay_failed",
+                                  "rolled_back",
+                                  "drives_unreadable"
                                 ]
                               }
                             }
@@ -80120,7 +80122,131 @@
                             "red",
                             "reasons"
                           ],
-                          "description": "Red ONLY when broken: a campaign's Engine or the replay failed. The pass staleness is `verdict` above."
+                          "description": "Red ONLY when broken: a campaign's Engine or the replay failed, a switched result ROLLED BACK (its guard measured it worse than the service path), or the drives are unreadable. The pass staleness is `verdict` above."
+                        },
+                        "results": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "family": {
+                                "type": "string"
+                              },
+                              "outcome": {
+                                "type": "string"
+                              },
+                              "outcomeName": {
+                                "type": "string"
+                              },
+                              "todayRegret": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "engineRegret": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "switched",
+                                  "shadow",
+                                  "rolled_back"
+                                ],
+                                "description": "`switched` = the Engine drives this result's workflow on at least one campaign that handed it over (campaign-service `engineOutcomes`); `rolled_back` = a guard put a unit back on the service path (red); `shadow` = nothing runs from it."
+                              },
+                              "units": {
+                                "type": "integer"
+                              },
+                              "driving": {
+                                "type": "integer"
+                              },
+                              "rolledBack": {
+                                "type": "integer"
+                              },
+                              "switchedSince": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "heldDays": {
+                                "type": "integer",
+                                "nullable": true,
+                                "description": "Days since the first switch with no roll-back."
+                              },
+                              "fleetEligible": {
+                                "type": "boolean",
+                                "description": "Held 7 days with no roll-back: the fleet may follow (never automatic)."
+                              },
+                              "drives": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "unitCampaignId": {
+                                      "type": "string"
+                                    },
+                                    "brandId": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "driving",
+                                        "rolled_back"
+                                      ]
+                                    },
+                                    "workflowDynastySlug": {
+                                      "type": "string"
+                                    },
+                                    "serviceDynastySlug": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "switchedAt": {
+                                      "type": "string"
+                                    },
+                                    "rolledBackAt": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "guard": {
+                                      "type": "object",
+                                      "nullable": true,
+                                      "additionalProperties": {
+                                        "nullable": true
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "unitCampaignId",
+                                    "brandId",
+                                    "state",
+                                    "workflowDynastySlug",
+                                    "serviceDynastySlug",
+                                    "switchedAt",
+                                    "rolledBackAt",
+                                    "guard"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "family",
+                              "outcome",
+                              "outcomeName",
+                              "todayRegret",
+                              "engineRegret",
+                              "status",
+                              "units",
+                              "driving",
+                              "rolledBack",
+                              "switchedSince",
+                              "heldDays",
+                              "fleetEligible",
+                              "drives"
+                            ]
+                          },
+                          "description": "ENGINE-PER-OUTCOME-SWITCH: per result family of the replay (plus any switched result), Switched / Shadow / Rolled back, with the guard of every switched unit."
                         },
                         "last": {
                           "type": "object",
