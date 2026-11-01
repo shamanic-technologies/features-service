@@ -9773,7 +9773,27 @@ registry.registerPath({
             notYet: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: not_yet` (normal colours)."),
             engine: z
               .object({
-                verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["engine_failed", "replay_failed"])) }).describe("Red ONLY when broken: a campaign's Engine or the replay failed. The pass staleness is `verdict` above."),
+                verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["engine_failed", "replay_failed", "rolled_back", "drives_unreadable"])) }).describe("Red ONLY when broken: a campaign's Engine or the replay failed, a switched result ROLLED BACK (its guard measured it worse than the service path), or the drives are unreadable. The pass staleness is `verdict` above."),
+                results: z
+                  .array(
+                    z.object({
+                      family: z.string(),
+                      outcome: z.string(),
+                      outcomeName: z.string(),
+                      todayRegret: z.number().nullable(),
+                      engineRegret: z.number().nullable(),
+                      status: z.enum(["switched", "shadow", "rolled_back"]).describe("`switched` = the Engine drives this result's workflow on at least one campaign that handed it over (campaign-service `engineOutcomes`); `rolled_back` = a guard put a unit back on the service path (red); `shadow` = nothing runs from it."),
+                      units: z.number().int(),
+                      driving: z.number().int(),
+                      rolledBack: z.number().int(),
+                      switchedSince: z.string().nullable(),
+                      heldDays: z.number().int().nullable().describe("Days since the first switch with no roll-back."),
+                      fleetEligible: z.boolean().describe("Held 7 days with no roll-back: the fleet may follow (never automatic)."),
+                      drives: z.array(z.object({ unitCampaignId: z.string(), brandId: z.string(), state: z.enum(["driving", "rolled_back"]), workflowDynastySlug: z.string(), serviceDynastySlug: z.string().nullable(), switchedAt: z.string(), rolledBackAt: z.string().nullable(), guard: z.record(z.string(), z.unknown()).nullable() })),
+                    }),
+                  )
+                  .optional()
+                  .describe("ENGINE-PER-OUTCOME-SWITCH: per result family of the replay (plus any switched result), Switched / Shadow / Rolled back, with the guard of every switched unit."),
                 last: z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable(), expectedAgreementPct: z.number().nullable(), failed: z.number().int() }).nullable(),
                 series: z.array(z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable().describe("Places where today's pick IS the Engine's tick pick (%)."), expectedAgreementPct: z.number().nullable().describe("Mean share of Thompson draws picking today's pick (%)."), failed: z.number().int() })),
                 problems: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), failure: z.string().nullable() })),

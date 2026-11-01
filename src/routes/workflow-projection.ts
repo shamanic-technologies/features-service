@@ -1,4 +1,6 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { withEngineDrive, type EngineDriveAnswer } from "../lib/engine-drive.js";
+import { readDrive } from "../lib/engine-drive-store.js";
 import type { GrainLedger } from "../lib/workflow-projection-grains.js";
 import { ledgerRegime, outcomeStatKeyOf, pipeOutcomeKey } from "../lib/ledger-book.js";
 import { ledgerAudienceEvidence, ledgerSlugEvidence } from "../lib/ledger-pipe-costs.js";
@@ -1377,6 +1379,20 @@ export async function playOfLegRead(
   };
 }
 
+/**
+ * ENGINE-PER-OUTCOME-SWITCH (`lib/engine-drive.ts`): the leg-keyed answer of a unit campaign the Engine drives, with the
+ * Engine's workflow at rank 1. An unreadable drive is logged and the service order stands: a selection never blocks a run.
+ */
+async function withEngineDriveOf<B extends Parameters<typeof withEngineDrive>[0]>(campaignId: string, body: B): Promise<B | (B & { engineDrive: EngineDriveAnswer })> {
+  try {
+    const drive = await readDrive(campaignId);
+    return drive?.state === "driving" ? withEngineDrive(body, drive.workflowDynastySlug) : body;
+  } catch (error) {
+    console.error(`[features-service] engine drive of unit ${campaignId} unreadable, the service order stands:`, error);
+    return body;
+  }
+}
+
 export async function handleWorkflowProjection(req: Request, res: Response, costBasis: ProjectionCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -1417,7 +1433,8 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId })).salesFunnelIdOf(unpricedCampaignId)
         : null;
       const played = await playOfLegRead(featureSlug, pipeLegKey, salesFunnelId);
-      return res.json(await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize, played));
+      const unpriced = await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize, played);
+      return res.json(unpricedCampaignId ? await withEngineDriveOf(unpricedCampaignId, unpriced) : unpriced);
     }
     // Both spellings of an outbound leg are one identity (wave 1, `lib/funnel-legs.ts`): resolved to the stored one.
     legKey = matchChannelLegKey(featureSlug, legParam);
@@ -1922,15 +1939,16 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     }
 
     const rows = withAudienceAvailability(response.rows, audienceAvailability);
-
-    res.json({
+    const answer = {
       ...response,
       rows,
       ...(legBlock ? { leg: legBlock } : {}),
       ...(playAnswer ? { play: withPlayCount(playAnswer, rows) } : {}),
       ...(campaignIdentityView ? { campaignIdentity: campaignIdentityView } : {}),
       ...(observedPicks !== undefined ? { observedPicks } : {}),
-    });
+    };
+    // A unit whose result its funnel campaign hands to the Engine runs the Engine's workflow (ENGINE-PER-OUTCOME-SWITCH).
+    res.json(legKey && campaignId ? await withEngineDriveOf(campaignId, answer) : answer);
   } catch (error) {
     console.error("[features-service] Workflow projection error:", error);
     res.status(502).json({ error: "Failed to compute workflow projection" });

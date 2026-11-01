@@ -65,6 +65,10 @@ export interface ShadowCampaign {
   /** The funnel the campaign was BORN on (campaign-service `salesFunnelId`): what the client chose; `salesFunnelId` above
    *  is the one it runs now (its plan's when it follows it). Absent = the same. */
   bornSalesFunnelId?: string;
+  /** ENGINE-PER-OUTCOME-SWITCH: the results it hands to the Engine (campaign-service `engineOutcomes`), and its unit
+   *  campaigns (one per pipe). Absent = none / not read. */
+  engineOutcomes?: string[];
+  units?: Array<{ campaignId: string; featureSlug: string; legKey: string }>;
 }
 
 /**
