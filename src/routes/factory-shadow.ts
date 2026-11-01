@@ -521,7 +521,12 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
     await mapWithConcurrency([...campaigns.keys()], CAMPAIGN_CONCURRENCY, async (i) => {
       const c = campaigns[i]!;
       const engine = bodies[i]?.engine;
-      if (!engine || (c.engineOutcomes ?? []).length === 0) return [];
+      if ((c.engineOutcomes ?? []).length === 0) return [];
+      // An Engine that failed this pass says nothing about the drives: they stand as stored (never a silent hand-back).
+      if (!engine || engine.status !== "ok") {
+        failed.add(c.id);
+        return [];
+      }
       try {
         return await drivesOfCampaign(engines, (await memos.pricing(c)).model, c, engine, stored, now);
       } catch (error) {

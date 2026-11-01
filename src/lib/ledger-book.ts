@@ -104,15 +104,18 @@ export function monthRanges(first: string, last: string): Array<[string, string]
   return out;
 }
 
-async function readRange(groupBy: string, since: string, until: string, runStartUntil?: string): Promise<Wire> {
+async function readRange(groupBy: string, since: string, until: string, runStartUntil?: string, depth = 0): Promise<Wire> {
   const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}&since=${since}&until=${until}${matureCutParams(runStartUntil)}`, {
     headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
   });
   // over runs-service's group cap: the range splits in halves (every section is additive over disjoint days)
-  if (r.status === 422 && since < until) {
+  // ...and on a server error too, up to 3 halvings: a month that times out under load (runs-service 500, statement
+  // timeout, 2026-11-01) reads as two smaller ones. Every section is additive over disjoint days either way.
+  if ((r.status === 422 || (r.status >= 500 && depth < 3)) && since < until) {
+    if (r.status >= 500) console.warn(`[features-service] runs-service outcome-costs ${r.status} on ${groupBy} ${since}..${until}, read in halves`);
     const mid = new Date((Date.parse(`${since}T00:00:00Z`) + Date.parse(`${until}T00:00:00Z`)) / 2).toISOString().slice(0, 10);
     const after = new Date(Date.parse(`${mid}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    return concatWire([await readRange(groupBy, since, mid, runStartUntil), await readRange(groupBy, after, until, runStartUntil)]);
+    return concatWire([await readRange(groupBy, since, mid, runStartUntil, depth + 1), await readRange(groupBy, after, until, runStartUntil, depth + 1)]);
   }
   if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy} ${since}..${until}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return (await r.json()) as Wire;
@@ -180,12 +183,30 @@ export async function loadDailyLedgerBook(basis: BookBasis, sinceDay: string): P
   if (h && Date.now() - h.at < DAILY_HELD_MS) return h.value;
   const running = inFlight.get(key);
   if (running) return running;
+  try {
+    return await readDailyBook(basis, sinceDay, key);
+  } catch (error) {
+    // The last good daily book (any since-day) for up to a day: one failed read never blanks every Engine pick.
+    const last = lastGoodDaily.get(basis);
+    if (last && Date.now() - last.at < DAILY_LAST_GOOD_MS) {
+      console.error(`[features-service] daily ledger book unreadable, serving the copy of ${new Date(last.at).toISOString()}:`, error);
+      return last.value;
+    }
+    throw error;
+  }
+}
+
+const lastGoodDaily = new Map<BookBasis, { at: number; value: LedgerBookRead }>();
+const DAILY_LAST_GOOD_MS = 24 * 3_600_000;
+
+async function readDailyBook(basis: BookBasis, sinceDay: string, key: string): Promise<LedgerBookRead> {
   const p = (async () => {
     const produced = await read("outcomeKey,campaignId,workflowSlug,runStartDay", undefined, sinceDay);
     const consumed = await read("outcomeKey,campaignId,workflowSlug,sourceCampaignId,sourceWorkflowSlug,runStartDay,sourceRunStartDay", undefined, sinceDay);
     const scope = await read("campaignId,workflowSlug,runStartDay", undefined, sinceDay);
     const value = parseLedgerBook(produced, consumed, scope, basis);
     held.set(key, { at: Date.now(), value });
+    lastGoodDaily.set(basis, { at: Date.now(), value });
     return value;
   })().finally(() => inFlight.delete(key));
   inFlight.set(key, p);
