@@ -979,6 +979,27 @@ export const factoryShadowDaily = pgTable(
 );
 
 /**
+ * ENGINE-PER-OUTCOME-SWITCH (owner 2026-11-01, migration 0059): per unit campaign whose result its funnel campaign hands
+ * to the Engine, the workflow the Engine drives (`driving`) or the roll-back (`rolled_back`: its measured cost per outcome
+ * over 50 decisions came out worse than the service path). Read by the leg-keyed workflow-projection.
+ */
+export const engineDrives = pgTable("engine_drives", {
+  unitCampaignId: text("unit_campaign_id").primaryKey(),
+  funnelCampaignId: text("funnel_campaign_id").notNull(),
+  orgId: text("org_id").notNull(),
+  brandId: text("brand_id").notNull(),
+  outcome: text("outcome").notNull(),
+  pipeId: text("pipe_id").notNull(),
+  workflowDynastySlug: text("workflow_dynasty_slug").notNull(),
+  serviceDynastySlug: text("service_dynasty_slug"),
+  state: text("state").notNull(),
+  switchedAt: timestamp("switched_at", { withTimezone: true }).notNull(),
+  rolledBackAt: timestamp("rolled_back_at", { withTimezone: true }),
+  guard: jsonb("guard"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every brief this service PREFILLED on a funnel campaign (what it runs today,
  * written through campaign-service's own PATCH as `system-features-service`). One row per campaign, written once: a brief
  * someone later clears or edits is never prefilled again.
