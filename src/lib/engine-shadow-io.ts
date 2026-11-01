@@ -248,11 +248,23 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
   const untilDay = recentMissing[0] && recentMissing[0] < countedOnDay ? recentMissing[0] : countedOnDay;
   const sinceDay = dayOf(new Date(Date.parse(`${untilDay}T00:00:00Z`) - REPLAY_WINDOW_DAYS * DAY_MS));
   const valueOf = (s: string) => model.steps.get(s)?.valueUsd ?? null;
-  const byOutcome = new Map<string, CataloguePipe[]>();
-  for (const p of model.pipes.values()) if (p.operatedBy === "platform" && pipeRunnable(p)) byOutcome.set(p.toStep, [...(byOutcome.get(p.toStep) ?? []), p]);
+  // A FAMILY = the pipes that can stand in for each other: same outcome, same step consumed, same trigger. Pooled on the
+  // outcome alone, API-pushed leads answered for cents (Email Sending, $362 of value per dollar) graded every cold email
+  // pick as 99% value lost (2026-11-01): no campaign could have swapped one for the other.
+  const byFamily = new Map<string, CataloguePipe[]>();
+  for (const p of model.pipes.values())
+    if (p.operatedBy === "platform" && pipeRunnable(p)) {
+      const from = p.fromStep === "lead_found" ? null : p.fromStep;
+      const k = `${p.toStep}|${from ?? "start"}|${p.triggerId ?? "-"}`;
+      byFamily.set(k, [...(byFamily.get(k) ?? []), p]);
+    }
   const families = [];
   const checkpoints = new Set<string>();
-  for (const [outcome, pipes] of [...byOutcome].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  for (const [familyKey, pipes] of [...byFamily].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const outcome = pipes[0]!.toStep;
+    const from = pipes[0]!.fromStep === "lead_found" ? null : pipes[0]!.fromStep;
+    const trigger = pipes[0]!.triggerId;
+    const familyName = `${stepLabel(model, outcome)}, from ${from === null ? (outcome === "lead_found" ? "Start" : "Lead found") : stepLabel(model, from)}${trigger ? `, on ${model.triggers.get(trigger)?.name ?? trigger}` : ""}`;
     const candidates: ReplayCandidate[] = [];
     for (const p of pipes) {
       const rows = selectableRows(p, await memos.ranking(p));
@@ -275,9 +287,9 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
       }
     }
     if (candidates.length === 0) continue;
-    const fam = replayFamily(outcome, stepLabel(model, outcome), candidates.sort((a, b) => (a.id < b.id ? -1 : 1)), valueOf(outcome) != null, { sinceDay, untilDay, countedOnDay }, `replay|${outcome}|${countedOnDay}`);
+    const fam = replayFamily(outcome, familyName, candidates.sort((a, b) => (a.id < b.id ? -1 : 1)), valueOf(outcome) != null, { sinceDay, untilDay, countedOnDay }, `replay|${outcome}|${countedOnDay}`);
     for (const c of candidates) for (const d of c.days) if (d.day >= sinceDay && d.day < untilDay && d.decisions > 0) checkpoints.add(d.day);
-    families.push(fam);
+    families.push({ ...fam, family: familyKey });
   }
   return {
     computedAt: now.toISOString(),

@@ -521,8 +521,9 @@ export function enginePlaceOf(
 export const ENGINE_LIMITS = ["uplift_reads_lifetime_mix", "beliefs_count_outcomes_to_date"] as const;
 /** The model's knobs, served beside every pick. */
 /** `rule` is bumped with any change to how evidence is read (the replay is recomputed at once when it moves): 2 = a
- *  workflow-less run inside a campaign credits the send it answers (2026-10-31). */
-export const ENGINE_MODEL = { rule: 2, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
+ *  workflow-less run inside a campaign credits the send it answers (2026-10-31); 3 = replay families = outcome x step
+ *  consumed x trigger (2026-11-01). */
+export const ENGINE_MODEL = { rule: 3, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
 
 export interface EngineShadow {
   computedAt: string;
@@ -620,6 +621,8 @@ export interface ReplayCandidate {
 export const REPLAY_MIN_DECISIONS = 20;
 
 export interface ReplayFamily {
+  /** `<outcome>|<step consumed or start>|<trigger or ->`: pipes that can stand in for each other. */
+  family?: string;
   outcome: string;
   outcomeName: string;
   candidates: number;
