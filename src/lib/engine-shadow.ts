@@ -229,6 +229,8 @@ export interface Belief {
 
 /** Prior strength used when the siblings cannot fit one (fewer than two with data): the v10 worked example's 200 trials. */
 export const DEFAULT_STRENGTH = 200;
+/** The strongest pull a level may fit (v10's worked example: a fleet rate counted as 200 trials of prior experience). */
+export const MAX_STRENGTH = 200;
 /** Strength of the catalogue's default rate at the top of the tree. */
 export const CATALOGUE_STRENGTH = 20;
 /** Pseudo-decisions behind a cost prior at each level. */
@@ -249,8 +251,11 @@ export function fitStrength(groups: ReadonlyArray<{ successes: number; trials: n
   const observed = g.reduce((s, x) => s + x.trials * (Math.min(1, x.successes / x.trials) - m) ** 2, 0) / n;
   const noise = (m * (1 - m) * g.length) / n;
   const between = observed - noise;
-  if (between <= 0) return 1000;
-  return Math.min(1000, Math.max(5, (m * (1 - m)) / between - 1));
+  // Never stronger than `MAX_STRENGTH`: on a rare outcome (0.3% positive replies) the siblings' spread is mostly noise and
+  // the fit hit 1,000 pseudo-trials, so a workflow with 1,264 decisions and 0 replies still read the pipe's rate and
+  // took half the picks while the window measured it 8x worse (2026-11-01 replay).
+  if (between <= 0) return MAX_STRENGTH;
+  return Math.min(MAX_STRENGTH, Math.max(5, (m * (1 - m)) / between - 1));
 }
 
 const rateOf = (s: number, n: number, prior: number, k: number) => (s + k * prior) / (n + k);
@@ -522,8 +527,8 @@ export const ENGINE_LIMITS = ["uplift_reads_lifetime_mix", "beliefs_count_outcom
 /** The model's knobs, served beside every pick. */
 /** `rule` is bumped with any change to how evidence is read (the replay is recomputed at once when it moves): 2 = a
  *  workflow-less run inside a campaign credits the send it answers (2026-10-31); 3 = replay families = outcome x step
- *  consumed x trigger (2026-11-01). */
-export const ENGINE_MODEL = { rule: 3, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
+ *  consumed x trigger (2026-11-01); 4 = pooling strength capped at `MAX_STRENGTH` (2026-11-01). */
+export const ENGINE_MODEL = { rule: 4, maxStrength: MAX_STRENGTH, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
 
 export interface EngineShadow {
   computedAt: string;

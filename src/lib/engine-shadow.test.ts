@@ -132,7 +132,13 @@ describe("Thompson on value per dollar", () => {
   it("picks the best value per dollar almost always when both are well measured", () => {
     const t = thompson(placeBeliefs([strong, weak]).beliefs, () => 100, "seed");
     expect(t.modalPick).toBe("email::cheap");
-    expect(t.shares.get("email::cheap")!).toBeGreaterThan(0.95);
+    expect(t.shares.get("email::cheap")!).toBeGreaterThan(0.9);
+  });
+  it("learns a workflow is bad from its zeros: 1,264 decisions, 0 replies, 3x cheaper, loses to the measured one (2026-11-01)", () => {
+    const ballad = cand("ballad", "email", ev(8_000, 16, 3_700, 4_400));
+    const keel = cand("keel", "email", ev(1_264, 0, 184, 700));
+    const t = thompson(placeBeliefs([ballad, keel]).beliefs, () => 100, "seed");
+    expect(t.shares.get("email::ballad")!).toBeGreaterThan(t.shares.get("email::keel")!);
   });
   it("explores a candidate with little data by construction", () => {
     const t = thompson(placeBeliefs([strong, weak, cand("fresh", "email", ev(30, 1, 2))]).beliefs, () => 100, "seed");

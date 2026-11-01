@@ -36090,6 +36090,9 @@
                   "rule": {
                     "type": "number"
                   },
+                  "maxStrength": {
+                    "type": "number"
+                  },
                   "halfLifeDays": {
                     "type": "number"
                   },
@@ -78934,6 +78937,9 @@
                                   "rule": {
                                     "type": "number"
                                   },
+                                  "maxStrength": {
+                                    "type": "number"
+                                  },
                                   "halfLifeDays": {
                                     "type": "number"
                                   },
@@ -79401,6 +79407,9 @@
                                 "type": "object",
                                 "properties": {
                                   "rule": {
+                                    "type": "number"
+                                  },
+                                  "maxStrength": {
                                     "type": "number"
                                   },
                                   "halfLifeDays": {
@@ -79871,6 +79880,9 @@
                                 "type": "object",
                                 "properties": {
                                   "rule": {
+                                    "type": "number"
+                                  },
+                                  "maxStrength": {
                                     "type": "number"
                                   },
                                   "halfLifeDays": {
@@ -80394,6 +80406,9 @@
                               "type": "object",
                               "properties": {
                                 "rule": {
+                                  "type": "number"
+                                },
+                                "maxStrength": {
                                   "type": "number"
                                 },
                                 "halfLifeDays": {
