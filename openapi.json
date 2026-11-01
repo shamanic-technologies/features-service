@@ -80259,12 +80259,17 @@
                               "items": {
                                 "type": "object",
                                 "properties": {
+                                  "family": {
+                                    "type": "string",
+                                    "description": "`<outcome>|<step consumed or start>|<trigger or ->`: the pipes that can stand in for each other (same outcome, same input, same trigger)."
+                                  },
                                   "outcome": {
                                     "type": "string",
-                                    "description": "The Engine's outcome: the family of every pipe of ours ending on it."
+                                    "description": "The Engine's outcome."
                                   },
                                   "outcomeName": {
-                                    "type": "string"
+                                    "type": "string",
+                                    "description": "The family in words: \"Positive reply, from Lead found\" (+ \", on <trigger>\")."
                                   },
                                   "candidates": {
                                     "type": "integer"

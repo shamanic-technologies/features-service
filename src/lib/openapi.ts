@@ -9585,8 +9585,9 @@ const engineReplay = z.object({
   checkpoints: z.array(z.string()).describe("Decision days of the window the Engine picked on, each on the evidence as of that day."),
   families: z.array(
     z.object({
-      outcome: z.string().describe("The Engine's outcome: the family of every pipe of ours ending on it."),
-      outcomeName: z.string(),
+      family: z.string().optional().describe("`<outcome>|<step consumed or start>|<trigger or ->`: the pipes that can stand in for each other (same outcome, same input, same trigger)."),
+      outcome: z.string().describe("The Engine's outcome."),
+      outcomeName: z.string().describe("The family in words: \"Positive reply, from Lead found\" (+ \", on <trigger>\")."),
       candidates: z.number().int(),
       graded: z.number().int().describe("Candidates with >= 20 window decisions and spend: their value per dollar is measured."),
       windowDecisions: z.number(),
