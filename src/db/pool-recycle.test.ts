@@ -4,11 +4,11 @@ import { describe, it, expect } from "vitest";
 // query it ever ran until it exits, so the pool recycles its connections
 // (5 min lifetime, 60 s idle) instead of postgres.js's 30-60 min default.
 describe("db pool recycles its connections", () => {
-  it("sets max_lifetime 300 s, idle_timeout 60 s, max 10", async () => {
+  it("sets max_lifetime 300 s, idle_timeout 60 s, max 5 (PG-CONN-1101)", async () => {
     process.env.FEATURES_SERVICE_DATABASE_URL ||= "postgres://u:p@localhost:5432/features_test";
     const { sql } = await import("./index.js");
     expect(sql.options.max_lifetime).toBe(300);
     expect(sql.options.idle_timeout).toBe(60);
-    expect(sql.options.max).toBe(10);
+    expect(sql.options.max).toBe(5);
   });
 });
