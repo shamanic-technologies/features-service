@@ -562,18 +562,24 @@ export function engineResultsOf(
   now: Date,
   unpicked: readonly UnpickedResult[] = [],
 ) {
-  const seen = new Set<string>();
-  const rows = families.map((f) => {
-    seen.add(f.outcome);
-    return { family: f.family ?? f.outcome, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret };
-  });
-  for (const d of [...drives.map((x) => ({ outcome: x.outcome, outcomeName: x.guard?.outcomeName ?? x.outcome })), ...unpicked]) if (!seen.has(d.outcome)) {
-    seen.add(d.outcome);
-    rows.push({ family: d.outcome, outcome: d.outcome, outcomeName: d.outcomeName, todayRegret: null, engineRegret: null });
-  }
+  const rows = families.map((f) => ({ family: f.family ?? f.outcome, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret }));
+  // A drive / unpicked leg belongs to ONE family (its pipe's outcome, step consumed, trigger), never to every family of
+  // its outcome: grouping on the outcome counted the same 17 drives under four "Positive reply" families (2026-11-02).
+  // A row written before the family was stored falls back to its outcome until the next pass rewrites it.
+  const familyOfDrive = (d: EngineDriveRow) => d.guard?.family ?? d.outcome;
+  const familyOfUnpicked = (u: UnpickedResult) => u.family ?? u.outcome;
+  const seen = new Set(rows.map((r) => r.family));
+  for (const d of [
+    ...drives.map((x) => ({ family: familyOfDrive(x), outcome: x.outcome, outcomeName: x.guard?.outcomeName ?? x.outcome })),
+    ...unpicked.map((u) => ({ family: familyOfUnpicked(u), outcome: u.outcome, outcomeName: u.outcomeName })),
+  ])
+    if (!seen.has(d.family)) {
+      seen.add(d.family);
+      rows.push({ family: d.family, outcome: d.outcome, outcomeName: d.outcomeName, todayRegret: null, engineRegret: null });
+    }
   return rows.map((r) => {
-    const mine = drives.filter((d) => d.outcome === r.outcome);
-    const missing = unpicked.filter((u) => u.outcome === r.outcome);
+    const mine = drives.filter((d) => familyOfDrive(d) === r.family);
+    const missing = unpicked.filter((u) => familyOfUnpicked(u) === r.family);
     const rolledBack = mine.filter((d) => d.state === "rolled_back").length;
     const driving = mine.filter((d) => d.state === "driving");
     const since = driving.map((d) => d.switchedAt).sort()[0] ?? null;
