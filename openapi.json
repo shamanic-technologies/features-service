@@ -78531,6 +78531,173 @@
         }
       }
     },
+    "/offers/{offerId}/engine-picks": {
+      "get": {
+        "summary": "Why each one was picked: the workflow the Engine runs for each result of the offer's live campaigns, newest first",
+        "description": "FACTORY-USER-DASHBOARD-1102 (customer Today page, GTM Factory). One row per result of each live funnel campaign of the offer the Engine drives: the workflow it runs, its share of the Engine's draws on the campaign's last pass, one plain sentence saying why, when it was picked and since when it runs. A campaign the guard rolled back (it did worse than the previous choice) reads `rolled_back` with the date it retries. Read from the last stored pass (every 3 hours, and within minutes of a new campaign); nothing computed yet = `picks: []`, `computedAt: null`. Org-scoped (x-org-id); `brandId` required (400 `brand_id_required`).",
+        "tags": [
+          "Sales funnel campaigns"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The offer's Engine picks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "When the last pass ran (null before the first)."
+                    },
+                    "picks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "campaignName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "description": "Catalogue step key of the result."
+                          },
+                          "outcomeName": {
+                            "type": "string"
+                          },
+                          "workflowDynastySlug": {
+                            "type": "string"
+                          },
+                          "workflowName": {
+                            "type": "string"
+                          },
+                          "channelName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "sharePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Share of the Engine's draws this workflow took (%), null when not listed."
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "rolled_back"
+                            ]
+                          },
+                          "why": {
+                            "type": "string",
+                            "description": "One plain sentence, customer copy."
+                          },
+                          "pickedAt": {
+                            "type": "string"
+                          },
+                          "runningSince": {
+                            "type": "string"
+                          },
+                          "retryAt": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "campaignName",
+                          "outcome",
+                          "outcomeName",
+                          "workflowDynastySlug",
+                          "workflowName",
+                          "channelName",
+                          "sharePct",
+                          "state",
+                          "why",
+                          "pickedAt",
+                          "runningSince",
+                          "retryAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "brandId",
+                    "computedAt",
+                    "picks"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "brandId missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/brands/{brandId}/sales-funnel-campaigns/{id}/milestones": {
       "get": {
         "summary": "Milestones of one funnel campaign, Start to its Target: outcomes, $ per outcome, $ from Start, % conversion, attempts per Target",

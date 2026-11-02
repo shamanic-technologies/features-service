@@ -9756,6 +9756,52 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/offers/{offerId}/engine-picks",
+  summary: "Why each one was picked: the workflow the Engine runs for each result of the offer's live campaigns, newest first",
+  description:
+    "FACTORY-USER-DASHBOARD-1102 (customer Today page, GTM Factory). One row per result of each live funnel campaign of the offer the Engine drives: the workflow it runs, " +
+    "its share of the Engine's draws on the campaign's last pass, one plain sentence saying why, when it was picked and since when it runs. A campaign the guard rolled back " +
+    "(it did worse than the previous choice) reads `rolled_back` with the date it retries. Read from the last stored pass (every 3 hours, and within minutes of a new campaign); " +
+    "nothing computed yet = `picks: []`, `computedAt: null`. Org-scoped (x-org-id); `brandId` required (400 `brand_id_required`).",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ offerId: z.string() }), query: z.object({ brandId: z.string() }) },
+  responses: {
+    200: {
+      description: "The offer's Engine picks.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            offerId: z.string(),
+            brandId: z.string(),
+            computedAt: z.string().nullable().describe("When the last pass ran (null before the first)."),
+            picks: z.array(
+              z.object({
+                campaignId: z.string(),
+                campaignName: z.string().nullable(),
+                outcome: z.string().describe("Catalogue step key of the result."),
+                outcomeName: z.string(),
+                workflowDynastySlug: z.string(),
+                workflowName: z.string(),
+                channelName: z.string().nullable(),
+                sharePct: z.number().nullable().describe("Share of the Engine's draws this workflow took (%), null when not listed."),
+                state: z.enum(["running", "rolled_back"]),
+                why: z.string().describe("One plain sentence, customer copy."),
+                pickedAt: z.string(),
+                runningSince: z.string(),
+                retryAt: z.string().nullable(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "brandId missing", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/brands/{brandId}/sales-funnel-campaigns/{id}/milestones",
   summary: "Milestones of one funnel campaign, Start to its Target: outcomes, $ per outcome, $ from Start, % conversion, attempts per Target",
   description:
