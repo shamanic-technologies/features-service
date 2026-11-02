@@ -2,7 +2,7 @@
  * Persistence of the GTM Factory shadow (`lib/factory-shadow.ts`): the brief judge's verdicts, the last plan per funnel
  * campaign, the daily Monitoring rows. Derived and rebuildable: the next pass rewrites them.
  */
-import { desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { factoryBriefJudgments, factoryBriefPrefills, factoryPipeVerdicts, factoryShadowDaily, factoryShadowPlans } from "../db/schema.js";
 import type { BriefJudgment, OrgDayCounts, PipeVerdict, ShadowStatus } from "./factory-shadow.js";
@@ -64,6 +64,15 @@ export async function writePlan(row: { campaignId: string; orgId: string; brandI
 export async function readPlan(campaignId: string): Promise<{ orgId: string; brandId: string; offerId: string; status: string; failure: string | null; body: unknown; computedAt: string } | null> {
   const [r] = await db.select().from(factoryShadowPlans).where(eq(factoryShadowPlans.campaignId, campaignId)).limit(1);
   return r ? { orgId: r.orgId, brandId: r.brandId, offerId: r.offerId, status: r.status, failure: r.failure, body: r.body, computedAt: r.computedAt.toISOString() } : null;
+}
+
+/** One offer's stored plans of a brand, for an org, computed at or after `since` (the live campaigns of the last pass). */
+export async function readOfferPlans(orgId: string, brandId: string, offerId: string, since: Date): Promise<Array<{ campaignId: string; body: unknown; computedAt: string }>> {
+  const rows = await db
+    .select()
+    .from(factoryShadowPlans)
+    .where(and(eq(factoryShadowPlans.orgId, orgId), eq(factoryShadowPlans.brandId, brandId), eq(factoryShadowPlans.offerId, offerId), gte(factoryShadowPlans.computedAt, since)));
+  return rows.map((r) => ({ campaignId: r.campaignId, body: r.body, computedAt: r.computedAt.toISOString() }));
 }
 
 /** The plans of the campaigns of the last pass (the Monitoring drill-down), newest first. */
