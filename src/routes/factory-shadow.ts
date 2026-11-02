@@ -594,7 +594,6 @@ export function engineResultsOf(
       unpicked: missing.length,
       switchedSince: since,
       heldDays,
-      fleetEligible: status === "switched",
       drives: mine.map((d) => ({ unitCampaignId: d.unitCampaignId, brandId: d.brandId, state: d.state, workflowDynastySlug: d.workflowDynastySlug, serviceDynastySlug: d.serviceDynastySlug, switchedAt: d.switchedAt, rolledBackAt: d.rolledBackAt, guard: d.guard })),
       unpickedCampaigns: missing.map((u) => ({ funnelCampaignId: u.funnelCampaignId, orgId: u.orgId, brandId: u.brandId, pipeId: u.pipeId, unitCampaignId: u.unitCampaignId, reason: u.reason })),
     };
