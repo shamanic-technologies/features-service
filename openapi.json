@@ -80232,10 +80232,6 @@
                                 "nullable": true,
                                 "description": "Days since the first switch with no roll-back."
                               },
-                              "fleetEligible": {
-                                "type": "boolean",
-                                "description": "Deprecated (ENGINE-FULL-MIGRATION-1102: every client is driven, no fleet gate): true exactly when `status` is `switched`."
-                              },
                               "drives": {
                                 "type": "array",
                                 "items": {
@@ -80346,7 +80342,6 @@
                               "unpicked",
                               "switchedSince",
                               "heldDays",
-                              "fleetEligible",
                               "drives",
                               "unpickedCampaigns"
                             ]

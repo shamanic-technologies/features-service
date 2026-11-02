@@ -356,7 +356,7 @@ describe("ENGINE-FULL-MIGRATION-1102: Monitoring's Engine results", () => {
       { funnelCampaignId: "f3", orgId: "o3", brandId: "b3", outcome: "booking_call", outcomeName: "Booking call", family: "booking_call", pipeId: "p3", unitCampaignId: "u3", reason: "no_candidate" },
     ]);
     const by = new Map(rows.map((r) => [r.outcome, r]));
-    expect(by.get("lead_found")).toMatchObject({ status: "switched", driving: 1, fleetEligible: true });
+    expect(by.get("lead_found")).toMatchObject({ status: "switched", driving: 1 });
     expect(by.get("conversation")).toMatchObject({ status: "no_engine_pick", unpicked: 1, unpickedCampaigns: [{ funnelCampaignId: "f2", reason: "no_candidate_priced" }] });
     expect(by.get("meeting_booked")?.status).toBe("rolled_back");
     expect(by.get("paid_client")?.status).toBe("shadow");
