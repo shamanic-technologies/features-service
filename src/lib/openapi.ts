@@ -32,11 +32,11 @@ const expectedReturnRef = registry.register(
             input: z.enum(["lifetime_revenue", "rate", "cost", "sales_path"]),
             legKey: z.string().nullable().describe("The leg a rate or a cost is about. Null otherwise."),
             basis: expectedBasisSchema,
-            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
+            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
           }),
         )
         .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
-      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (its sourcing legs dropped: a path counts from Lead found; the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), never the offer's: unpriceable = null + own_sales_path_unpriced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
+      combinationKey: z.string().nullable().describe("The sales path (combination key, stored spelling) the figure is read off. A funnel campaign reads its OWN (its sourcing legs dropped: a path counts from Lead found; the listed path, else its own legs priced on the same rates and costs; a reactive funnel on the value it adds over what its people were already worth at the trigger step), never the offer's; a funnel the offer's sales paths do not list and its own legs cannot price there (a play ~<strategy>, a trigger head, a declared leg, a pipe the offer's ladder does not price) reads the catalogue funnel's own expected figure priced on this offer (its lifetime revenue and the brand's measured / stated leg rates; whole cost from Start, sourcing included; combinationKey = the funnel id), EXPECTED-ROI-WIDE-EMAIL-1102; unpriceable there too = null + own_sales_path_unpriced; a campaign the best selected path running it; an offer its best selected path (proactive first); a brand its best offer. Null on a measured figure."),
       costPerOutcome: z
         .object({
           costPerOutcomeUsd: z.number(),
@@ -50,7 +50,7 @@ const expectedReturnRef = registry.register(
       unavailableReason: z
         .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path", "own_sales_path_unpriced"])
         .nullable()
-        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced (a leg with no rate or no platform cost, e.g. a leads-only funnel: never another funnel's figure)."),
+        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure)."),
     })
     .describe("THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."),
 );
