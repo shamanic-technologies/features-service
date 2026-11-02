@@ -480,6 +480,15 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
  * read: the GTM Factory shadow plan decides on each pipe's own cost and yield, `lib/factory-shadow.ts`). Off the request
  * path only.
  */
+/**
+ * The catalogue model priced for ONE offer (its lifetime revenue and its brand's own measured/stated leg rates, the
+ * `?offerId=` read's inputs minus the step fit), for the expected return of a funnel campaign whose own path the offer's
+ * sales-path model cannot price (EXPECTED-ROI-WIDE-EMAIL-1102, `lib/expected-return.ts`).
+ */
+export async function loadCatalogueModelForOffer(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates">): Promise<CatalogueModel> {
+  return (await loadModel(offer)).model;
+}
+
 export async function loadCatalogueModelForLifetimeRevenue(lifetimeRevenueUsd: number | null, lifetimeRevenueSource: OfferContext["lifetimeRevenueSource"]): Promise<CatalogueModel> {
   return (await loadModel({ lifetimeRevenueUsd, lifetimeRevenueSource, rates: new Map() })).model;
 }

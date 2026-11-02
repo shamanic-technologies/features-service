@@ -43,6 +43,7 @@ import {
 import type { EffectiveArrowRate, EffectiveRateSource } from "./effective-conversion-rates.js";
 import type { OfferLifetimeRevenueSource as LifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 import type { AudienceStatsEnvelope } from "./audience-stats-compute.js";
+import type { CatalogueFunnel } from "./agent-catalogue.js";
 
 /** What an expected figure rests on, weakest last. */
 export type ExpectedBasis = "measured" | "stated" | "fleet" | "default";
@@ -488,6 +489,122 @@ export class ExpectedModelComputing extends Error {
   }
 }
 
+// ── A funnel the offer's sales-path model cannot price: the catalogue funnel's own EXPECTED figure ───────────────
+
+/** The served cost source of a catalogue cost word (the wire enum stays `workflow | fleet_measured | default | benchmark`). */
+const servedCostSourceOf = (source: string): SalesPathCostSource =>
+  source === "workflow" || source === "default" || source === "benchmark" ? source : "fleet_measured";
+
+/**
+ * PURE: a catalogue funnel's `expected` figure (`expectedFunnelEconomics`: the catalogue's, the GTM Factory planner's
+ * and the funnel lists' one formula, every leg known: a play's own allowed workflows, a declared leg, a trigger-headed
+ * funnel, the value ADDED over the takeover step) as an expected return. Its cost per outcome = the first platform leg
+ * that does more than find people (the leg the campaign's spend chart counts, `leadingUnit`). Null when the catalogue
+ * cannot price it either (its own `unavailableReason`, logged by the caller).
+ */
+export function expectedFromCatalogueFunnel(funnel: CatalogueFunnel, lifetimeRevenueSource: LifetimeRevenueSource | null): ExpectedReturn | null {
+  const e = funnel.expected;
+  if (e.roi === null || !Number.isFinite(e.roi) || e.basis === null) return null;
+  const assumptions: ExpectedAssumption[] = [];
+  if (lifetimeRevenueSource) assumptions.push({ input: "lifetime_revenue", legKey: null, basis: LTR_BASIS[lifetimeRevenueSource], source: lifetimeRevenueSource });
+  let costPerOutcome: ExpectedCostPerOutcome | null = null;
+  e.legs.forEach((l, i) => {
+    if (i > 0 && l.rateSource && l.rateBasis) assumptions.push({ input: "rate", legKey: l.legKey, basis: l.rateBasis, source: l.rateSource });
+    if (l.costSource && l.costSource !== "customer_team" && l.costBasis && l.costPerOutcomeUsd !== null) {
+      assumptions.push({ input: "cost", legKey: l.legKey, basis: l.costBasis, source: l.costSource });
+      const toStep = funnel.legs[i]?.pipe?.toStep ?? null;
+      if (!costPerOutcome && toStep && toStep !== "lead_found") {
+        costPerOutcome = { costPerOutcomeUsd: l.costPerOutcomeUsd, legKey: l.legKey, stepKey: toStep, basis: l.costBasis, source: servedCostSourceOf(l.costSource) };
+      }
+    }
+  });
+  return { roiMultiple: e.roi, basis: e.basis, assumptions, combinationKey: funnel.id, costPerOutcome, unavailableReason: null };
+}
+
+interface CatalogueEntry {
+  at: number;
+  value?: ExpectedReturn;
+  pending?: Promise<ExpectedReturn>;
+}
+const catalogueEntries = new Map<string, CatalogueEntry>();
+
+export function __resetCatalogueExpectedMemo(): void {
+  catalogueEntries.clear();
+}
+
+/** The brand's own measured / stated rates of the offer model, keyed the catalogue's way (`<from>><to>`). */
+function offerRatesOf(m: OfferExpectedModel): Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }> {
+  const out = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" }>();
+  for (const r of m.inputs?.rates ?? []) {
+    if (!r.catalogueFromStep || !r.catalogueToStep || r.effectiveRatePct === null || !(r.effectiveRatePct > 0)) continue;
+    if (r.source !== "measured" && r.source !== "manual") continue;
+    out.set(`${r.catalogueFromStep}>${r.catalogueToStep}`, { ratePct: r.effectiveRatePct, source: r.source === "measured" ? "offer_measured" : "offer_stated" });
+  }
+  return out;
+}
+
+async function computeCatalogueExpected(m: OfferExpectedModel, salesFunnelId: string): Promise<ExpectedReturn> {
+  const { loadCatalogueModelForOffer } = await import("../routes/agent-catalogue.js");
+  const { funnelById } = await import("./agent-catalogue.js");
+  const model = await loadCatalogueModelForOffer({
+    lifetimeRevenueUsd: m.inputs?.lifetimeRevenueUsd ?? null,
+    lifetimeRevenueSource: m.lifetimeRevenueSource,
+    rates: offerRatesOf(m),
+  });
+  const funnel = funnelById(model, salesFunnelId);
+  const e = funnel ? expectedFromCatalogueFunnel(funnel, m.lifetimeRevenueSource) : null;
+  if (e) return e;
+  console.warn(
+    `[features-service] expected return: funnel ${salesFunnelId} (offer ${m.offerId}) unpriced on the catalogue too: ${funnel ? funnel.expected.unavailableReason : "funnel_not_in_catalogue"}`,
+  );
+  return unavailableExpectedReturn("own_sales_path_unpriced");
+}
+
+/**
+ * The catalogue rung, memoized per (org, brand, offer, funnel) like the offer model (fresh 2 min, stale 30 min served
+ * while recomputed behind). A cold read waits `coldWaitMs` then answers `expected_model_computing`.
+ */
+async function catalogueExpected(identity: ExpectedIdentity, brandId: string, m: OfferExpectedModel, salesFunnelId: string, coldWaitMs: number): Promise<ExpectedReturn> {
+  const key = `${identity.orgId}|${brandId}|${m.offerId}|${salesFunnelId}`;
+  const now = Date.now();
+  const entry = catalogueEntries.get(key);
+  const start = (): Promise<ExpectedReturn> => {
+    const pending = computeCatalogueExpected(m, salesFunnelId);
+    catalogueEntries.set(key, { ...(entry ?? { at: 0 }), pending });
+    pending.then(
+      (value) => {
+        catalogueEntries.set(key, { at: Date.now(), value });
+        while (catalogueEntries.size > MAX_ENTRIES) catalogueEntries.delete(catalogueEntries.keys().next().value!);
+      },
+      () => {
+        const prev = catalogueEntries.get(key);
+        if (prev?.pending === pending) catalogueEntries.set(key, prev.value ? { at: prev.at, value: prev.value } : { at: 0 });
+      },
+    );
+    return pending;
+  };
+  if (entry?.value) {
+    const age = now - entry.at;
+    if (age <= FRESH_MS) return entry.value;
+    if (age <= STALE_MS) {
+      if (!entry.pending) start().catch(() => {});
+      return entry.value;
+    }
+  }
+  const pending = entry?.pending ?? start();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ExpectedModelComputing(m.offerId)), coldWaitMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Soft: any failure is a named null figure, logged, never a failed read. */
 async function soft(what: string, run: () => Promise<ExpectedReturn>): Promise<ExpectedReturn> {
   try {
@@ -519,9 +636,14 @@ export function expectedReturnForFunnelCampaign(
   measured: MeasuredReturnPair | null | undefined,
   coldWaitMs: number = TABLE_COLD_WAIT_MS,
 ): Promise<ExpectedReturn> {
-  return soft(`funnel campaign ${salesFunnelId}`, async () =>
-    withMeasuredReturn(expectedForCombination(await modelOrThrow(identity, brandId, offerId, coldWaitMs), salesFunnelId), measured),
-  );
+  return soft(`funnel campaign ${salesFunnelId}`, async () => {
+    const m = await modelOrThrow(identity, brandId, offerId, coldWaitMs);
+    const own = expectedForCombination(m, salesFunnelId);
+    // A path the offer's sales-path model cannot price (a play, a trigger head, a declared leg, a pipe its ladder does
+    // not price): the catalogue funnel's own expected figure, priced on this offer (EXPECTED-ROI-WIDE-EMAIL-1102).
+    const model = own.unavailableReason === "own_sales_path_unpriced" ? await catalogueExpected(identity, brandId, m, salesFunnelId, coldWaitMs) : own;
+    return withMeasuredReturn(model, measured);
+  });
 }
 
 /** A campaign (identity) scope: its offer, channel and legs. No offer stated → the brand's figure. */
