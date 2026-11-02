@@ -9855,7 +9855,7 @@ registry.registerPath({
     "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a " +
     "step, to a step), `people` = the campaign's people who made it since it started (the campaign page's own count, the milestones' `outcomes`), and `scripts` = each " +
     "workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; no share = `scripts: []` + `scriptsUnavailableReason` " +
-    "`no_spend_yet` (nobody yet) or `spend_recorded_under_another_pipe` (people made it, the work was paid under another pipe of the campaign). Org-scoped (x-org-id).",
+    "`done_by_your_team` (the client's team works it), `no_spend_yet` (nobody yet) or `spend_recorded_under_another_pipe` (people made it, the work was paid under another pipe of the campaign). Org-scoped (x-org-id).",
   tags: ["Sales funnel campaigns"],
   request: { params: z.object({ brandId: z.string(), id: z.string() }), query: z.object({ pricing: z.enum(["gross", "net"]).optional() }) },
   responses: {
@@ -9875,6 +9875,7 @@ registry.registerPath({
                 toStep: z.string(),
                 toLabel: z.string(),
                 people: z.number(),
+                runByUs: z.boolean().describe("False: the client's own team works this step (no workflow of ours, nothing spent by us)."),
                 shareBasis: z.enum(["spend"]),
                 scripts: z.array(z.object({ workflowDynastySlug: z.string(), workflowName: z.string(), sharePct: z.number() })),
                 scriptsUnavailableReason: z.string().nullable(),
