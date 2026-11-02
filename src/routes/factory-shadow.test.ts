@@ -352,8 +352,8 @@ describe("ENGINE-FULL-MIGRATION-1102: Monitoring's Engine results", () => {
   it("reads Switched for a driven result, No Engine pick for a result with none, Rolled back, and Shadow where no live campaign works it", () => {
     const families = ["lead_found", "conversation", "meeting_booked", "paid_client"].map((o) => ({ outcome: o, outcomeName: o, todayRegret: null, engineRegret: null }));
     const rows = engineResultsOf(families, [drive("lead_found", "driving"), drive("meeting_booked", "rolled_back")], now, [
-      { funnelCampaignId: "f2", orgId: "o2", brandId: "b2", outcome: "conversation", outcomeName: "Positive reply", pipeId: "p2", unitCampaignId: "u2", reason: "no_candidate_priced" },
-      { funnelCampaignId: "f3", orgId: "o3", brandId: "b3", outcome: "booking_call", outcomeName: "Booking call", pipeId: "p3", unitCampaignId: "u3", reason: "no_candidate" },
+      { funnelCampaignId: "f2", orgId: "o2", brandId: "b2", outcome: "conversation", outcomeName: "Positive reply", family: "conversation", pipeId: "p2", unitCampaignId: "u2", reason: "no_candidate_priced" },
+      { funnelCampaignId: "f3", orgId: "o3", brandId: "b3", outcome: "booking_call", outcomeName: "Booking call", family: "booking_call", pipeId: "p3", unitCampaignId: "u3", reason: "no_candidate" },
     ]);
     const by = new Map(rows.map((r) => [r.outcome, r]));
     expect(by.get("lead_found")).toMatchObject({ status: "switched", driving: 1, fleetEligible: true });
@@ -361,5 +361,27 @@ describe("ENGINE-FULL-MIGRATION-1102: Monitoring's Engine results", () => {
     expect(by.get("meeting_booked")?.status).toBe("rolled_back");
     expect(by.get("paid_client")?.status).toBe("shadow");
     expect(by.get("booking_call")).toMatchObject({ status: "no_engine_pick", outcomeName: "Booking call" });
+  });
+});
+
+describe("ENGINE-FULL-MIGRATION-1102: a drive counts in ONE family, never every family of its outcome", () => {
+  it("splits two Positive reply families by the pipe's family stored on each drive / unpicked leg", () => {
+    const now = new Date("2026-11-02T12:00:00Z");
+    const d = (id: string, family: string) => ({
+      unitCampaignId: id, funnelCampaignId: "f", orgId: "o", brandId: "b", outcome: "conversation", pipeId: "p", workflowDynastySlug: "w", serviceDynastySlug: null,
+      state: "driving" as const, switchedAt: "2026-11-02T00:00:00.000Z", rolledBackAt: null, updatedAt: "2026-11-02T00:00:00.000Z",
+      guard: { decisions: 0, outcomes: 0, spentUsd: 0, costPerOutcomeUsd: null, serviceCostPerOutcomeUsd: null, serviceBasis: null, verdict: "measuring" as const, outcomeName: "Positive reply", source: "engine_tick_pick", family },
+    });
+    const families = [
+      { family: "conversation|start|-", outcome: "conversation", outcomeName: "Positive reply, from Lead found", todayRegret: null, engineRegret: null },
+      { family: "conversation|start|email_pushed_via_api", outcome: "conversation", outcomeName: "Positive reply, from Lead found, on Email Pushed Via API", todayRegret: null, engineRegret: null },
+    ];
+    const rows = engineResultsOf(families, [d("u1", "conversation|start|-"), d("u2", "conversation|start|-"), d("u3", "conversation|start|email_pushed_via_api")], now, [
+      { funnelCampaignId: "f9", orgId: "o", brandId: "b", outcome: "conversation", outcomeName: "Positive reply", family: "conversation|start|email_pushed_via_api", pipeId: "p", unitCampaignId: "u9", reason: "no_candidate" },
+    ]);
+    expect(rows.map((r) => [r.family, r.driving, r.unpicked])).toEqual([
+      ["conversation|start|-", 2, 0],
+      ["conversation|start|email_pushed_via_api", 1, 1],
+    ]);
   });
 });
