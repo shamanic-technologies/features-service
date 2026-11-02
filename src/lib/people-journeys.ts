@@ -12,6 +12,8 @@ export interface JourneyPipe {
   fromStep: string | null;
   toStep: string;
   people: number;
+  /** False: the client's own team works this step (no workflow of ours, nothing spent by us). */
+  runByUs: boolean;
   /** Committed cents per workflow DYNASTY on the pipe's campaign. */
   spendByDynasty: ReadonlyMap<string, number>;
 }
@@ -27,9 +29,10 @@ export interface JourneyTransition {
   toStep: string;
   toLabel: string;
   people: number;
+  runByUs: boolean;
   shareBasis: "spend";
   scripts: JourneyScript[];
-  /** `no_spend_yet` (nobody made it, nothing spent) | `spend_recorded_under_another_pipe` (people made it, its spend sits under another pipe). */
+  /** `done_by_your_team` (the client's team works it) | `no_spend_yet` (nobody made it, nothing spent) | `spend_recorded_under_another_pipe` (people made it, its spend sits under another pipe). */
   scriptsUnavailableReason: string | null;
 }
 
@@ -56,11 +59,12 @@ export function peopleJourneysOf(
       toStep: p.toStep,
       toLabel: labelOf(p.toStep),
       people: p.people,
+      runByUs: p.runByUs,
       shareBasis: "spend" as const,
       scripts,
       // People made it but the pipe recorded no spend of its own: its work was paid under another pipe of the campaign
       // (a sourcing serve filed under the outreach unit), so no share can be said, and it is not free.
-      scriptsUnavailableReason: total > 0 ? null : p.people > 0 ? "spend_recorded_under_another_pipe" : "no_spend_yet",
+      scriptsUnavailableReason: total > 0 ? null : !p.runByUs ? "done_by_your_team" : p.people > 0 ? "spend_recorded_under_another_pipe" : "no_spend_yet",
     };
   });
 }

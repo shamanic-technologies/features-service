@@ -6,7 +6,7 @@ const name = (d: string) => ({ keel: "Keel", ballad: "Ballad" })[d] ?? d;
 
 describe("what its people went through (FACTORY-USER-DASHBOARD-1102)", () => {
   it("per transition: people who made it and each workflow's share of the work, biggest first", () => {
-    const [t] = peopleJourneysOf([{ pipeId: "cold|lead_found_to_conversation", fromStep: "lead_found", toStep: "conversation", people: 23, spendByDynasty: new Map([["ballad", 14], ["keel", 86]]) }], label, name);
+    const [t] = peopleJourneysOf([{ pipeId: "cold|lead_found_to_conversation", fromStep: "lead_found", toStep: "conversation", people: 23, runByUs: true, spendByDynasty: new Map([["ballad", 14], ["keel", 86]]) }], label, name);
     expect(t).toMatchObject({ fromLabel: "Lead found", toLabel: "Positive reply", people: 23, shareBasis: "spend", scriptsUnavailableReason: null });
     expect(t!.scripts).toEqual([
       { workflowDynastySlug: "keel", workflowName: "Keel", sharePct: 86 },
@@ -15,14 +15,21 @@ describe("what its people went through (FACTORY-USER-DASHBOARD-1102)", () => {
   });
 
   it("a transition from nothing reads from Start; a pipe that spent nothing yet says so", () => {
-    const [t] = peopleJourneysOf([{ pipeId: "src|start_to_lead_found", fromStep: null, toStep: "lead_found", people: 0, spendByDynasty: new Map() }], label, name);
+    const [t] = peopleJourneysOf([{ pipeId: "src|start_to_lead_found", fromStep: null, toStep: "lead_found", people: 0, runByUs: true, spendByDynasty: new Map() }], label, name);
     expect(t).toMatchObject({ fromStep: "start", fromLabel: "Start", scripts: [], scriptsUnavailableReason: "no_spend_yet" });
   });
 });
 
 describe("a pipe whose people arrived with no spend of its own", () => {
   it("says its spend sits under another pipe, never that it spent nothing", () => {
-    const [t] = peopleJourneysOf([{ pipeId: "src|start_to_lead_found", fromStep: null, toStep: "lead_found", people: 256, spendByDynasty: new Map() }], label, name);
+    const [t] = peopleJourneysOf([{ pipeId: "src|start_to_lead_found", fromStep: null, toStep: "lead_found", people: 256, runByUs: true, spendByDynasty: new Map() }], label, name);
     expect(t).toMatchObject({ scripts: [], scriptsUnavailableReason: "spend_recorded_under_another_pipe" });
+  });
+});
+
+describe("a step the client's own team works", () => {
+  it("says the team does it, never that our spend sits elsewhere", () => {
+    const [t] = peopleJourneysOf([{ pipeId: "your-team-reply-closing|conversation_to_paid_client", fromStep: "conversation", toStep: "paid_client", people: 3, runByUs: false, spendByDynasty: new Map() }], label, name);
+    expect(t).toMatchObject({ runByUs: false, scripts: [], scriptsUnavailableReason: "done_by_your_team" });
   });
 });
