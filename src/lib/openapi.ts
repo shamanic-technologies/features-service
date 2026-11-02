@@ -9892,6 +9892,56 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/internal/research/engine-places",
+  summary: "Research: the Engines' places fleet-wide, their favourites, clear winners, callers and the replay's value lost (internal, api-key)",
+  description:
+    "FACTORY-USER-DASHBOARD-1102 (GTM Factory Research). Read from the last stored pass over every live funnel campaign: a PLACE = one outcome as one caller asks " +
+    "for it (the next outcome, or the campaign at its Target); per place every candidate workflow with its MEAN share of the Engine's draws over the campaigns holding " +
+    "the place (a campaign without the candidate counts 0), its belief (rate %, cost per decision) and fleet evidence; the favourite = highest mean share, a clear " +
+    "winner at >= `clearWinnerPct` (90). `engines` = per outcome, the callers it serves and each one's favourite. `replay` = the 30-day replay's value lost per result " +
+    "family (today's rule vs the Engine). Nothing computed yet = empty lists, `computedAt: null`. Staff-gated at api-service.",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "The Engines' places.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string().nullable(),
+            clearWinnerPct: z.number(),
+            summary: z.object({ places: z.number().int(), clearWinners: z.number().int(), campaigns: z.number().int() }),
+            places: z.array(
+              z.object({
+                key: z.string(),
+                outcome: z.string(),
+                outcomeName: z.string(),
+                consumer: z.string(),
+                consumerName: z.string(),
+                campaigns: z.number().int(),
+                favourite: z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() }).extend({ chancePct: z.number().nullable() }).nullable(),
+                clearWinner: z.boolean(),
+                candidates: z.array(z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() })),
+              }),
+            ),
+            engines: z.array(z.object({ outcome: z.string(), outcomeName: z.string(), callers: z.array(z.object({ consumer: z.string(), consumerName: z.string(), best: z.string().nullable() })) })),
+            replay: z
+              .object({
+                computedAt: z.string(),
+                windowDays: z.number(),
+                families: z.array(z.object({ family: z.string(), outcome: z.string(), outcomeName: z.string(), todayRegret: z.number().nullable(), engineRegret: z.number().nullable() })),
+                failure: z.string().nullable(),
+              })
+              .nullable(),
+          }),
+        },
+      },
+    },
+    502: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/internal/factory-shadow/monitoring",
   summary: "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
   description:
