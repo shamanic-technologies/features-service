@@ -421,6 +421,13 @@
       "when": 1794153600000,
       "tag": "0059_engine_drives",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794240000000,
+      "tag": "0060_box_health_disk",
+      "breakpoints": true
     }
   ]
 }

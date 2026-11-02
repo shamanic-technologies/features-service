@@ -881,6 +881,9 @@ export const boxHealthSamples = pgTable(
     oomKills: integer("oom_kills"),
     /** `[{ name, cpuCores, memMb }]`, null when the sample carried no per-container list. */
     containers: jsonb("containers").$type<Array<{ name: string; cpuCores: number; memMb: number }>>(),
+    /** Root filesystem size / free, MB (BOX-DISK-1101, migration 0060); null = the sample did not state it. */
+    diskTotalMb: doublePrecision("disk_total_mb"),
+    diskAvailableMb: doublePrecision("disk_available_mb"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );

@@ -11,7 +11,14 @@ vi.mock("../lib/box-health-store.js", () => ({
   upsertBoxHealthSamples: vi.fn(async (samples: BoxHealthSample[]) => {
     for (const s of samples) {
       const at = new Date(s.sampledAt);
-      mem.rows.set(at.getTime(), { ...s, sampledAt: at, oomKills: s.oomKills ?? null, containers: s.containers ?? null });
+      mem.rows.set(at.getTime(), {
+        ...s,
+        sampledAt: at,
+        oomKills: s.oomKills ?? null,
+        containers: s.containers ?? null,
+        diskTotalMb: s.diskTotalMb ?? null,
+        diskAvailableMb: s.diskAvailableMb ?? null,
+      });
     }
     return { pruned: 0 };
   }),
@@ -87,6 +94,28 @@ describe("box health routes", () => {
     expect(res.body.status).toBe("green");
     expect(mem.rows.size).toBe(1);
     expect(res.body.latest.containers).toHaveLength(1);
+  });
+
+  it("stores the root-filesystem disk and serves it: red under 10 % free, absent disk stays green", async () => {
+    const at = new Date(Date.now() - 2 * 60_000);
+    const post = await request(app)
+      .post("/internal/box-health/samples")
+      .set(KEY)
+      .send({ samples: [liveSample(at, { diskTotalMb: 150_000, diskAvailableMb: 4_500 })] });
+    expect(post.status).toBe(200);
+    let res = await request(app).get("/internal/box-health").set(KEY);
+    expect(res.body.status).toBe("red");
+    expect(res.body.reason).toMatch(/Disk free 3 % \(< 10 %\)/);
+    expect(res.body.thresholds.diskAvailablePctMin).toBe(10);
+    expect(res.body.latest).toMatchObject({ diskTotalMb: 150_000, diskAvailableMb: 4_500, diskAvailablePct: 3 });
+    expect(res.body.daily.at(-1)).toMatchObject({ diskAvailableMinMb: 4_500, diskAvailablePctMin: 3 });
+    expect(res.body.recent.at(-1).diskAvailablePct).toBe(3);
+
+    await request(app).post("/internal/box-health/samples").set(KEY).send({ samples: [liveSample(at)] });
+    res = await request(app).get("/internal/box-health").set(KEY);
+    expect(res.body.status).toBe("green");
+    expect(res.body.latest).toMatchObject({ diskTotalMb: null, diskAvailableMb: null, diskAvailablePct: null });
+    expect((await request(app).post("/internal/box-health/samples").set(KEY).send({ samples: [liveSample(at, { diskTotalMb: 10, diskAvailableMb: 11 })] })).status).toBe(400);
   });
 
   it("accepts a backfill chunk well above the 100 kB default body limit", async () => {
