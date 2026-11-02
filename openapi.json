@@ -79207,6 +79207,10 @@
                     "clearWinnerPct": {
                       "type": "number"
                     },
+                    "dailyBasis": {
+                      "type": "string",
+                      "description": "How `places[].daily` is read."
+                    },
                     "summary": {
                       "type": "object",
                       "properties": {
@@ -79304,6 +79308,35 @@
                           "clearWinner": {
                             "type": "boolean"
                           },
+                          "daily": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "day": {
+                                  "type": "string"
+                                },
+                                "decisions": {
+                                  "type": "number"
+                                },
+                                "favouriteSharePct": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "lostUsd": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "day",
+                                "decisions",
+                                "favouriteSharePct",
+                                "lostUsd"
+                              ]
+                            },
+                            "description": "Last 30 days, one row per day with decisions: the fleet decisions that RAN on the place's candidates, the share on TODAY's favourite, and the dollars spent on the other candidates (value lost to weaker picks). Written by every pass; null before the first."
+                          },
                           "candidates": {
                             "type": "array",
                             "items": {
@@ -79363,6 +79396,7 @@
                           "campaigns",
                           "favourite",
                           "clearWinner",
+                          "daily",
                           "candidates"
                         ]
                       }

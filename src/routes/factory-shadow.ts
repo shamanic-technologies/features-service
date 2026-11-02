@@ -66,7 +66,7 @@ import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
-import { CLEAR_WINNER_PCT, enginesOf, researchPlacesOf, strategySplitsOf, type StoredEnginePlace } from "../lib/research/engine-places.js";
+import { CLEAR_WINNER_PCT, enginesOf, placeDailyOf, researchPlacesOf, strategySplitsOf, type PlaceDay, type StoredEnginePlace } from "../lib/research/engine-places.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
@@ -78,6 +78,8 @@ const CAMPAIGN_CONCURRENCY = 2;
 const PASS_CELL = "factory-shadow:last-pass";
 /** The results of live campaigns the Engine could not pick for on the last pass (ENGINE-FULL-MIGRATION-1102). */
 const UNPICKED_CELL = "engine-drive:unpicked";
+/** Per Research place, its last 30 days of picks that ran (`placeDailyOf`), written by every pass. */
+const PLACE_DAILY_CELL = "research:engine-place-daily";
 /** A live funnel campaign the last pass did not see is picked up within this (its units run the Engine from then on). */
 const NEW_CAMPAIGN_PROBE_MS = 5 * 60_000;
 /** The Engine replay (ENGINE-PER-OUTCOME-SHADOW): recomputed by the pass once it is older than `REPLAY_EVERY_MS`. */
@@ -483,6 +485,7 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     for (const b of bodies) await writePlan({ campaignId: b.campaignId, orgId: b.orgId, brandId: b.brandId, offerId: b.offerId, status: b.status, failure: b.failure, body: b, computedAt: now });
     const summaries: ShadowRowSummary[] = bodies.map((b) => ({ orgId: b.orgId, status: b.status, planDiffers: b.plan?.planDiffers ?? null, pickDiffers: b.pickDiffers, state: shadowStateOf(b).state }));
     await refreshEngineDrives(campaigns, bodies, memos, engines, now).catch((error) => console.error("[features-service] engine drives refresh failed, the stored drives stand:", error));
+    await refreshPlaceDaily(campaigns, bodies, memos, engines, now).catch((error) => console.error("[features-service] research place daily refresh failed, the stored series stand:", error));
     const engineCounts = engineDayCountsOf(bodies);
     await writeDay(now.toISOString().slice(0, 10), orgDayCountsOf(summaries).map((c) => ({ ...c, ...engineCounts.get(c.orgId) })), now);
     await refreshEngineReplay(engines, now);
@@ -553,6 +556,31 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
   await keepOnlyDrives(keep);
   await storeFleetCell(UNPICKED_CELL, JSON.stringify(unpicked), now.getTime());
   if (unpicked.length > 0) console.warn(`[features-service] engine drives: ${unpicked.length} result(s) of live campaigns with no Engine pick: ${unpicked.map((u) => `${u.funnelCampaignId}:${u.outcome}:${u.reason}`).join(", ")}`);
+}
+
+/** Research: per place, its last 30 days of picks that ran, on the fleet ledger days of each candidate (one read per pipe). */
+async function refreshPlaceDaily(campaigns: readonly ShadowCampaign[], bodies: readonly ShadowBody[], memos: ReturnType<typeof passMemos>, engines: EngineMemos, now: Date): Promise<void> {
+  const live = bodies.flatMap((b, i) => (b.engine?.status === "ok" ? [{ c: campaigns[i]!, places: b.engine.places as unknown as StoredEnginePlace[] }] : []));
+  if (live.length === 0) return;
+  const places = researchPlacesOf(live.map((l) => l.places));
+  const { model } = await memos.pricing(live[0]!.c);
+  const untilDay = now.toISOString().slice(0, 10);
+  const sinceDay = new Date(now.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const daysByBase = new Map<string, Awaited<ReturnType<EngineMemos["days"]>> | null>();
+  for (const p of places)
+    for (const c of p.candidates) {
+      const base = c.candidateId.split("::")[0]!;
+      if (daysByBase.has(base)) continue;
+      const pipe = model.pipes.get(base);
+      daysByBase.set(base, pipe ? await engines.days(pipe) : null);
+    }
+  const daysOf = (candidateId: string) => {
+    const [base, dyn] = candidateId.split("::");
+    return daysByBase.get(base!)?.fleet.get(dyn!) ?? [];
+  };
+  const out: Record<string, PlaceDay[]> = {};
+  for (const p of places) out[p.key] = placeDailyOf(p, daysOf, sinceDay, untilDay);
+  await storeFleetCell(PLACE_DAILY_CELL, JSON.stringify(out), now.getTime());
 }
 
 /**
@@ -795,12 +823,15 @@ router.get("/internal/research/engine-places", apiKeyOnly, async (_req, res) => 
     }
     const plans = await readPlansSince(new Date(pass.sweptAt));
     const placesByCampaign = plans.map((p) => ((p.body as { engine?: { status?: string; places?: StoredEnginePlace[] } }).engine?.status === "ok" ? ((p.body as { engine: { places?: StoredEnginePlace[] } }).engine.places ?? []) : []));
-    const places = researchPlacesOf(placesByCampaign);
+    const dailyCell = await loadFleetCell(PLACE_DAILY_CELL);
+    const daily = dailyCell ? (JSON.parse(dailyCell.text) as Record<string, PlaceDay[]>) : null;
+    const places = researchPlacesOf(placesByCampaign).map((p) => ({ ...p, daily: daily?.[p.key] ?? null }));
     const catalogue = await loadPlayCatalogue();
     const strategySplits = strategySplitsOf(places, catalogue.tacticsByDynasty, [...catalogue.tactics.values()]);
     res.json({
       computedAt: pass.sweptAt,
       clearWinnerPct: CLEAR_WINNER_PCT,
+      dailyBasis: "picks_that_ran_fleet_ledger_vs_todays_favourite",
       summary: { places: places.length, clearWinners: places.filter((p) => p.clearWinner).length, campaigns: plans.length },
       places,
       engines: enginesOf(places),
