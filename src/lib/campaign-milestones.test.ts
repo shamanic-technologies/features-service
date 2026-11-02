@@ -25,10 +25,15 @@ describe("campaign milestones (FACTORY-USER-DASHBOARD-1102)", () => {
     expect(rows[1]).toMatchObject({ outcomes: 1000, costPerOutcomeUsd: { value: 0.04, basis: "measured" }, costFromStartUsd: { value: 0.04, basis: "measured" } });
     expect(rows[2]).toMatchObject({
       outcomes: 4,
-      costPerOutcomeUsd: { value: 90, basis: "measured" },
+      costPerOutcomeUsd: { value: 90, basis: "measured" }, // $360 / the row's 4 people
       costFromStartUsd: { value: 100, basis: "measured" }, // ($40 + $360) / 4
       conversionFromAbovePct: { value: 0.4, basis: "measured" },
     });
+  });
+
+  it("a pipe's cost per outcome divides the row's own people, the count the cost from Start divides", () => {
+    const r = milestonesOf({ legs, steps, pipes: [{ toStep: "lead_found", spendUsd: 40, outcomes: 1000 }, { toStep: "conversation", spendUsd: 360, outcomes: 2 }] });
+    expect(r[2]!.costPerOutcomeUsd).toMatchObject({ value: 90, basis: "measured" });
   });
 
   it("a pipe with outcomes and no spend of its own reads its expected cost, never a measured $0", () => {

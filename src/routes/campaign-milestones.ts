@@ -98,7 +98,13 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
     const row = rows.find((r) => r.id === salesFunnelCampaignId);
     if (!row) return void res.status(404).json({ error: "No sales funnel campaign with this id on this brand", reason: "sales_funnel_campaign_not_found" });
 
-    const [activity, charts] = await Promise.all([funnelCampaignActivity(row, brandId, headers, pricing), funnelCampaignSpendCharts(row, brandId, pricing, headers)]);
+    const [activity, charts, { pathOf }] = await Promise.all([
+      funnelCampaignActivity(row, brandId, headers, pricing),
+      funnelCampaignSpendCharts(row, brandId, pricing, headers),
+      funnelCopiesFor([row.salesFunnelId]),
+    ]);
+    const runByUs = new Map((pathOf(row.salesFunnelId)?.items ?? []).flatMap((i) => (i.kind === "channel" ? [[i.pipeId, i.runByUs] as const] : [])));
+    const runByUsOf = (pipeId: string) => runByUs.get(pipeId) ?? runByUs.get(pipeId.split("~")[0]!) ?? true;
     const slugs = [...new Set(row.units.map((u) => u.featureSlug))];
     const [workflows, spends] = await Promise.all([
       fetchPublicWorkflows(slugs.join(",")),
@@ -116,7 +122,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
         for (const [slug, c] of spends[i]!) byDynasty.set(dynastyOf(slug), (byDynasty.get(dynastyOf(slug)) ?? 0) + c.committedCents);
         // The campaign page's own count of who reached the step (the milestones' too), the chart's when the page has none.
         const people = peopleOf.get(p.leg.toStep) ?? p.totals.outcomes;
-        return [{ pipeId: p.pipeId, fromStep: p.leg.fromStep, toStep: p.leg.toStep, people, spendByDynasty: byDynasty }];
+        return [{ pipeId: p.pipeId, fromStep: p.leg.fromStep, toStep: p.leg.toStep, people, runByUs: runByUsOf(p.pipeId), spendByDynasty: byDynasty }];
       }),
       (k) => labels.get(k) ?? titleOf(k),
       (d) => names.get(d) ?? titleOf(d.replace(/-/g, "_")),
