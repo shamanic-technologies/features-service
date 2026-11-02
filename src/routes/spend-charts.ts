@@ -191,6 +191,23 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
   return { salesFunnelCampaignId: row.id, brandId, offerId: row.offerId, pricing, costBasis: "charged", campaign, pipes };
 }
 
+/** One funnel campaign's spend charts through their Gold cell (the route's read; the milestones read shares the cell). */
+export function funnelCampaignSpendCharts(row: SalesFunnelCampaignRow, brandId: string, pricing: Pricing, headers: DownstreamHeaders): Promise<FunnelCampaignSpendChartsBody> {
+  return servedCached({
+    view: "funnel-campaign-spend-charts",
+    scopeKey: buildScopeKey(row.id, {
+      orgId: headers.orgId,
+      brandId,
+      offerId: row.offerId,
+      units: row.units.map((u) => `${u.campaignId}:${u.legKey}`).sort().join("+"),
+      pricing,
+    }),
+    orgId: headers.orgId,
+    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"),
+    compute: () => computeFunnelCampaignSpendCharts(row, pricing, headers),
+  });
+}
+
 export async function computeOfferSpendCharts(
   offerId: string,
   brandId: string,
@@ -221,20 +238,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/spend
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, null, headers), assertBrandHeld(brandId, headers)]);
     const row = rows.find((r) => r.id === salesFunnelCampaignId);
     if (!row) return void res.status(404).json({ error: "No sales funnel campaign with this id on this brand", reason: "sales_funnel_campaign_not_found" });
-    const body = await servedCached({
-      view: "funnel-campaign-spend-charts",
-      scopeKey: buildScopeKey(row.id, {
-        orgId: headers.orgId,
-        brandId,
-        offerId: row.offerId,
-        units: row.units.map((u) => `${u.campaignId}:${u.legKey}`).sort().join("+"),
-        pricing,
-      }),
-      orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"),
-      compute: () => computeFunnelCampaignSpendCharts(row, pricing, headers),
-    });
-    res.json(body);
+    res.json(await funnelCampaignSpendCharts(row, brandId, pricing, headers));
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] funnel campaign spend charts error:", err);

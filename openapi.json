@@ -78698,6 +78698,488 @@
         }
       }
     },
+    "/brands/{brandId}/sales-funnel-campaigns/{id}/milestones": {
+      "get": {
+        "summary": "Milestones of one funnel campaign, Start to its Target: outcomes, $ per outcome, $ from Start, % conversion, attempts per Target",
+        "description": "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per milestone of the campaign's line from Start to its Target. `outcomes` = the campaign's people who reached it since it started (measured, never expected). Every money/rate figure is MEASURED on the campaign when it can be (the pipe making the milestone: its spend ÷ its outcomes; from Start: everything the pipes up to it spent ÷ its people; conversion: its people ÷ the row above's), else EXPECTED from the campaign's plan line, and `basis` says which. `attemptsPerTarget` = how many of this milestone one Target needs (expected). Before the first plan pass: `milestones: []` + `milestonesUnavailableReason: plan_not_computed_yet`. Org-scoped (x-org-id).",
+        "tags": [
+          "Sales funnel campaigns"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ]
+            },
+            "required": false,
+            "name": "pricing",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's milestones.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "salesFunnelCampaignId": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ]
+                    },
+                    "target": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "planComputedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "milestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "string",
+                            "description": "Catalogue step key; `start` for the first row."
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "isTarget": {
+                            "type": "boolean"
+                          },
+                          "outcomes": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomesUnavailableReason": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "costPerOutcomeUsd": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "expected",
+                                  null
+                                ]
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "basis",
+                              "unavailableReason"
+                            ]
+                          },
+                          "costFromStartUsd": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "expected",
+                                  null
+                                ]
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "basis",
+                              "unavailableReason"
+                            ]
+                          },
+                          "conversionFromAbovePct": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "expected",
+                                  null
+                                ]
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "basis",
+                              "unavailableReason"
+                            ]
+                          },
+                          "attemptsPerTarget": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "basis": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "measured",
+                                  "expected",
+                                  null
+                                ]
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "basis",
+                              "unavailableReason"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "label",
+                          "isTarget",
+                          "outcomes",
+                          "outcomesUnavailableReason",
+                          "costPerOutcomeUsd",
+                          "costFromStartUsd",
+                          "conversionFromAbovePct",
+                          "attemptsPerTarget"
+                        ]
+                      }
+                    },
+                    "milestonesUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "salesFunnelCampaignId",
+                    "brandId",
+                    "pricing",
+                    "target",
+                    "planComputedAt",
+                    "milestones",
+                    "milestonesUnavailableReason"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Campaign or brand not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A read failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{id}/people-journeys": {
+      "get": {
+        "summary": "What one funnel campaign's people went through: per transition, how many made it and each workflow's share of the work",
+        "description": "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a step, to a step), `people` = the campaign's people who made it since it started (the pipe's own outcome count, the spend charts' figure), and `scripts` = each workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; a pipe with no spend yet = `scripts: []` + `scriptsUnavailableReason: no_spend_yet`. Org-scoped (x-org-id).",
+        "tags": [
+          "Sales funnel campaigns"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ]
+            },
+            "required": false,
+            "name": "pricing",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The campaign's transitions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "salesFunnelCampaignId": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ]
+                    },
+                    "transitions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "pipeId": {
+                            "type": "string"
+                          },
+                          "fromStep": {
+                            "type": "string",
+                            "description": "Catalogue step key, `start` from nothing."
+                          },
+                          "fromLabel": {
+                            "type": "string"
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "toLabel": {
+                            "type": "string"
+                          },
+                          "people": {
+                            "type": "number"
+                          },
+                          "shareBasis": {
+                            "type": "string",
+                            "enum": [
+                              "spend"
+                            ]
+                          },
+                          "scripts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "workflowDynastySlug": {
+                                  "type": "string"
+                                },
+                                "workflowName": {
+                                  "type": "string"
+                                },
+                                "sharePct": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "workflowDynastySlug",
+                                "workflowName",
+                                "sharePct"
+                              ]
+                            }
+                          },
+                          "scriptsUnavailableReason": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "pipeId",
+                          "fromStep",
+                          "fromLabel",
+                          "toStep",
+                          "toLabel",
+                          "people",
+                          "shareBasis",
+                          "scripts",
+                          "scriptsUnavailableReason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "salesFunnelCampaignId",
+                    "brandId",
+                    "pricing",
+                    "transitions"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Campaign or brand not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A read failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/factory-shadow/monitoring": {
       "get": {
         "summary": "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
