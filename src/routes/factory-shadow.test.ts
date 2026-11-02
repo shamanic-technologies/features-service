@@ -93,7 +93,7 @@ const { buildCatalogueModel } = await import("../lib/agent-catalogue.js");
 const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
 const { SEED_FEATURES } = await import("../seed/features.js");
 const { servedLegKeyOf } = await import("../lib/funnel-legs.js");
-const { default: router, runFactoryShadowPass } = await import("./factory-shadow.js");
+const { default: router, runFactoryShadowPass, engineResultsOf } = await import("./factory-shadow.js");
 
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
 const channels = buildChannelCatalogue(SEED_FEATURES.filter((f) => f.status === "active"));
@@ -329,5 +329,37 @@ describe("reads", () => {
   it("refuses a days window out of range", async () => {
     const res = await request(app).get("/internal/factory-shadow/monitoring?days=0").set({ "x-api-key": "test-key" });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("ENGINE-FULL-MIGRATION-1102: Monitoring's Engine results", () => {
+  const now = new Date("2026-11-02T12:00:00Z");
+  const drive = (outcome: string, state: "driving" | "rolled_back") => ({
+    unitCampaignId: `u-${outcome}-${state}`,
+    funnelCampaignId: "f1",
+    orgId: "o1",
+    brandId: "b1",
+    outcome,
+    pipeId: "p",
+    workflowDynastySlug: "w",
+    serviceDynastySlug: null,
+    state,
+    switchedAt: "2026-11-02T00:00:00.000Z",
+    rolledBackAt: state === "rolled_back" ? "2026-11-02T06:00:00.000Z" : null,
+    guard: null,
+    updatedAt: "2026-11-02T06:00:00.000Z",
+  });
+  it("reads Switched for a driven result, No Engine pick for a result with none, Rolled back, and Shadow where no live campaign works it", () => {
+    const families = ["lead_found", "conversation", "meeting_booked", "paid_client"].map((o) => ({ outcome: o, outcomeName: o, todayRegret: null, engineRegret: null }));
+    const rows = engineResultsOf(families, [drive("lead_found", "driving"), drive("meeting_booked", "rolled_back")], now, [
+      { funnelCampaignId: "f2", orgId: "o2", brandId: "b2", outcome: "conversation", outcomeName: "Positive reply", pipeId: "p2", unitCampaignId: "u2", reason: "no_candidate_priced" },
+      { funnelCampaignId: "f3", orgId: "o3", brandId: "b3", outcome: "booking_call", outcomeName: "Booking call", pipeId: "p3", unitCampaignId: "u3", reason: "no_candidate" },
+    ]);
+    const by = new Map(rows.map((r) => [r.outcome, r]));
+    expect(by.get("lead_found")).toMatchObject({ status: "switched", driving: 1, fleetEligible: true });
+    expect(by.get("conversation")).toMatchObject({ status: "no_engine_pick", unpicked: 1, unpickedCampaigns: [{ funnelCampaignId: "f2", reason: "no_candidate_priced" }] });
+    expect(by.get("meeting_booked")?.status).toBe("rolled_back");
+    expect(by.get("paid_client")?.status).toBe("shadow");
+    expect(by.get("booking_call")).toMatchObject({ status: "no_engine_pick", outcomeName: "Booking call" });
   });
 });
