@@ -79180,6 +79180,318 @@
         }
       }
     },
+    "/internal/research/engine-places": {
+      "get": {
+        "summary": "Research: the Engines' places fleet-wide, their favourites, clear winners, callers and the replay's value lost (internal, api-key)",
+        "description": "FACTORY-USER-DASHBOARD-1102 (GTM Factory Research). Read from the last stored pass over every live funnel campaign: a PLACE = one outcome as one caller asks for it (the next outcome, or the campaign at its Target); per place every candidate workflow with its MEAN share of the Engine's draws over the campaigns holding the place (a campaign without the candidate counts 0), its belief (rate %, cost per decision) and fleet evidence; the favourite = highest mean share, a clear winner at >= `clearWinnerPct` (90). `engines` = per outcome, the callers it serves and each one's favourite. `replay` = the 30-day replay's value lost per result family (today's rule vs the Engine). Nothing computed yet = empty lists, `computedAt: null`. Staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The Engines' places.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "clearWinnerPct": {
+                      "type": "number"
+                    },
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "places": {
+                          "type": "integer"
+                        },
+                        "clearWinners": {
+                          "type": "integer"
+                        },
+                        "campaigns": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "places",
+                        "clearWinners",
+                        "campaigns"
+                      ]
+                    },
+                    "places": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "outcomeName": {
+                            "type": "string"
+                          },
+                          "consumer": {
+                            "type": "string"
+                          },
+                          "consumerName": {
+                            "type": "string"
+                          },
+                          "campaigns": {
+                            "type": "integer"
+                          },
+                          "favourite": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "candidateId": {
+                                "type": "string"
+                              },
+                              "workflowDynastySlug": {
+                                "type": "string"
+                              },
+                              "workflowName": {
+                                "type": "string"
+                              },
+                              "channelName": {
+                                "type": "string"
+                              },
+                              "sharePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "beliefRatePct": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "costPerDecisionUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "fleetDecisions": {
+                                "type": "number"
+                              },
+                              "fleetOutcomes": {
+                                "type": "number"
+                              },
+                              "chancePct": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "candidateId",
+                              "workflowDynastySlug",
+                              "workflowName",
+                              "channelName",
+                              "sharePct",
+                              "beliefRatePct",
+                              "costPerDecisionUsd",
+                              "fleetDecisions",
+                              "fleetOutcomes",
+                              "chancePct"
+                            ]
+                          },
+                          "clearWinner": {
+                            "type": "boolean"
+                          },
+                          "candidates": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "candidateId": {
+                                  "type": "string"
+                                },
+                                "workflowDynastySlug": {
+                                  "type": "string"
+                                },
+                                "workflowName": {
+                                  "type": "string"
+                                },
+                                "channelName": {
+                                  "type": "string"
+                                },
+                                "sharePct": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "beliefRatePct": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "costPerDecisionUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "fleetDecisions": {
+                                  "type": "number"
+                                },
+                                "fleetOutcomes": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "candidateId",
+                                "workflowDynastySlug",
+                                "workflowName",
+                                "channelName",
+                                "sharePct",
+                                "beliefRatePct",
+                                "costPerDecisionUsd",
+                                "fleetDecisions",
+                                "fleetOutcomes"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "outcome",
+                          "outcomeName",
+                          "consumer",
+                          "consumerName",
+                          "campaigns",
+                          "favourite",
+                          "clearWinner",
+                          "candidates"
+                        ]
+                      }
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "outcomeName": {
+                            "type": "string"
+                          },
+                          "callers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "consumer": {
+                                  "type": "string"
+                                },
+                                "consumerName": {
+                                  "type": "string"
+                                },
+                                "best": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "consumer",
+                                "consumerName",
+                                "best"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "outcomeName",
+                          "callers"
+                        ]
+                      }
+                    },
+                    "replay": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "computedAt": {
+                          "type": "string"
+                        },
+                        "windowDays": {
+                          "type": "number"
+                        },
+                        "families": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "family": {
+                                "type": "string"
+                              },
+                              "outcome": {
+                                "type": "string"
+                              },
+                              "outcomeName": {
+                                "type": "string"
+                              },
+                              "todayRegret": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "engineRegret": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "family",
+                              "outcome",
+                              "outcomeName",
+                              "todayRegret",
+                              "engineRegret"
+                            ]
+                          }
+                        },
+                        "failure": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "computedAt",
+                        "windowDays",
+                        "families",
+                        "failure"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "clearWinnerPct",
+                    "summary",
+                    "places",
+                    "engines",
+                    "replay"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/factory-shadow/monitoring": {
       "get": {
         "summary": "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
