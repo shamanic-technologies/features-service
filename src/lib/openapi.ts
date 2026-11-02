@@ -9802,6 +9802,96 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{id}/milestones",
+  summary: "Milestones of one funnel campaign, Start to its Target: outcomes, $ per outcome, $ from Start, % conversion, attempts per Target",
+  description:
+    "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per milestone of the campaign's line from Start to its Target. `outcomes` = the campaign's " +
+    "people who reached it since it started (measured, never expected). Every money/rate figure is MEASURED on the campaign when it can be (the pipe making the milestone: " +
+    "its spend ÷ its outcomes; from Start: everything the pipes up to it spent ÷ its people; conversion: its people ÷ the row above's), else EXPECTED from the campaign's " +
+    "plan line, and `basis` says which. `attemptsPerTarget` = how many of this milestone one Target needs (expected). Before the first plan pass: `milestones: []` + " +
+    "`milestonesUnavailableReason: plan_not_computed_yet`. Org-scoped (x-org-id).",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ brandId: z.string(), id: z.string() }), query: z.object({ pricing: z.enum(["gross", "net"]).optional() }) },
+  responses: {
+    200: {
+      description: "The campaign's milestones.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            salesFunnelCampaignId: z.string(),
+            brandId: z.string(),
+            pricing: z.enum(["gross", "net"]),
+            target: z.string().nullable(),
+            planComputedAt: z.string().nullable(),
+            milestones: z.array(
+              z.object({
+                step: z.string().describe("Catalogue step key; `start` for the first row."),
+                label: z.string(),
+                isTarget: z.boolean(),
+                outcomes: z.number().nullable(),
+                outcomesUnavailableReason: z.string().nullable(),
+                costPerOutcomeUsd: z.object({ value: z.number().nullable(), basis: z.enum(["measured", "expected"]).nullable(), unavailableReason: z.string().nullable() }),
+                costFromStartUsd: z.object({ value: z.number().nullable(), basis: z.enum(["measured", "expected"]).nullable(), unavailableReason: z.string().nullable() }),
+                conversionFromAbovePct: z.object({ value: z.number().nullable(), basis: z.enum(["measured", "expected"]).nullable(), unavailableReason: z.string().nullable() }),
+                attemptsPerTarget: z.object({ value: z.number().nullable(), basis: z.enum(["measured", "expected"]).nullable(), unavailableReason: z.string().nullable() }),
+              }),
+            ),
+            milestonesUnavailableReason: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "Bad pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Campaign or brand not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A read failed", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{id}/people-journeys",
+  summary: "What one funnel campaign's people went through: per transition, how many made it and each workflow's share of the work",
+  description:
+    "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a " +
+    "step, to a step), `people` = the campaign's people who made it since it started (the pipe's own outcome count, the spend charts' figure), and `scripts` = each " +
+    "workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; a pipe with no spend yet = `scripts: []` + " +
+    "`scriptsUnavailableReason: no_spend_yet`. Org-scoped (x-org-id).",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ brandId: z.string(), id: z.string() }), query: z.object({ pricing: z.enum(["gross", "net"]).optional() }) },
+  responses: {
+    200: {
+      description: "The campaign's transitions.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            salesFunnelCampaignId: z.string(),
+            brandId: z.string(),
+            pricing: z.enum(["gross", "net"]),
+            transitions: z.array(
+              z.object({
+                pipeId: z.string(),
+                fromStep: z.string().describe("Catalogue step key, `start` from nothing."),
+                fromLabel: z.string(),
+                toStep: z.string(),
+                toLabel: z.string(),
+                people: z.number(),
+                shareBasis: z.enum(["spend"]),
+                scripts: z.array(z.object({ workflowDynastySlug: z.string(), workflowName: z.string(), sharePct: z.number() })),
+                scriptsUnavailableReason: z.string().nullable(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "Bad pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Campaign or brand not found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A read failed", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/internal/factory-shadow/monitoring",
   summary: "Monitoring: per client org and day, the funnel campaigns whose shadow plan or Jev pick differs from what runs (internal, api-key)",
   description:
