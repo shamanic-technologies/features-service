@@ -6,14 +6,16 @@
  * renders as-is. Pure: no DB, no clock (the caller passes `now`).
  *
  * Red, from the LATEST sample, when: load average (5 min) > LOAD_PER_CORE_MAX x cores, MemAvailable < MEM_AVAILABLE_MIN_MB,
- * swap used > SWAP_USED_PCT_MAX % of swap total, swap total = 0, any OOM kill in the last OOM_WINDOW_HOURS, OR no sample in the
- * last STALE_AFTER_MINUTES (a blind monitor is loud, never read as "healthy"), OR nothing was ever sampled.
+ * swap used > SWAP_USED_PCT_MAX % of swap total, swap total = 0, root-filesystem free < DISK_AVAILABLE_PCT_MIN % (only when the
+ * sample states its disk: unknown disk is never red on its own, BOX-DISK-1101), any OOM kill in the last OOM_WINDOW_HOURS, OR no
+ * sample in the last STALE_AFTER_MINUTES (a blind monitor is loud, never read as "healthy"), OR nothing was ever sampled.
  */
 import { z } from "zod";
 
 export const LOAD_PER_CORE_MAX = 1.5;
 export const MEM_AVAILABLE_MIN_MB = 1024;
 export const SWAP_USED_PCT_MAX = 50;
+export const DISK_AVAILABLE_PCT_MIN = 10;
 export const OOM_WINDOW_HOURS = 24;
 export const STALE_AFTER_MINUTES = 20;
 export const RECENT_HOURS = 48;
@@ -60,8 +62,19 @@ export const BoxHealthSampleSchema = z
       .nullable()
       .optional()
       .describe("Per-container usage. Absent for backfilled history."),
+    diskTotalMb: nonNeg
+      .nullable()
+      .optional()
+      .describe("Size of the root filesystem (/), MB. Absent/null when unknown (backfill, older cron): never red on its own."),
+    diskAvailableMb: nonNeg
+      .nullable()
+      .optional()
+      .describe("Free space on the root filesystem (/) available to processes (df 'Avail'), MB. Absent/null when unknown."),
   })
-  .refine((s) => s.memAvailableMb <= s.memTotalMb, { message: "memAvailableMb cannot exceed memTotalMb" });
+  .refine((s) => s.memAvailableMb <= s.memTotalMb, { message: "memAvailableMb cannot exceed memTotalMb" })
+  .refine((s) => s.diskTotalMb == null || s.diskAvailableMb == null || s.diskAvailableMb <= s.diskTotalMb, {
+    message: "diskAvailableMb cannot exceed diskTotalMb",
+  });
 
 export const BoxHealthBatchSchema = z
   .object({
@@ -88,6 +101,9 @@ export interface StoredBoxSample {
   swapUsedMb: number;
   oomKills: number | null;
   containers: BoxContainerSample[] | null;
+  /** Root filesystem size / free, MB; null when the sample did not state it. */
+  diskTotalMb: number | null;
+  diskAvailableMb: number | null;
 }
 
 /** What the view needs, as the store reads it. */
@@ -105,6 +121,7 @@ export interface BoxHealthThresholds {
   load5Max: number | null;
   memAvailableMinMb: number;
   swapUsedPctMax: number;
+  diskAvailablePctMin: number;
   oomWindowHours: number;
   staleAfterMinutes: number;
 }
@@ -117,6 +134,9 @@ export interface BoxDailyPoint {
   memAvailableMinMb: number;
   swapUsedPctMax: number | null;
   oomKills: number | null;
+  /** The day's minimum free disk, MB / % of total, over the samples that stated their disk; null when none did. */
+  diskAvailableMinMb: number | null;
+  diskAvailablePctMin: number | null;
 }
 
 export interface BoxRecentPoint {
@@ -126,6 +146,7 @@ export interface BoxRecentPoint {
   load15: number;
   memAvailableMb: number;
   swapUsedPct: number | null;
+  diskAvailablePct: number | null;
 }
 
 export interface BoxHealthView {
@@ -135,7 +156,7 @@ export interface BoxHealthView {
   stale: boolean;
   minutesSinceLastSample: number | null;
   thresholds: BoxHealthThresholds;
-  latest: (Omit<StoredBoxSample, "sampledAt"> & { sampledAt: string; swapUsedPct: number | null; oomKillsLast24h: number | null }) | null;
+  latest: (Omit<StoredBoxSample, "sampledAt"> & { sampledAt: string; swapUsedPct: number | null; diskAvailablePct: number | null; oomKillsLast24h: number | null }) | null;
   windowDays: number;
   daily: BoxDailyPoint[];
   recentHours: number;
@@ -160,6 +181,13 @@ export function windowStart(now: Date, windowDays: number): Date {
 
 export function swapUsedPctOf(s: Pick<StoredBoxSample, "swapTotalMb" | "swapUsedMb">): number | null {
   return s.swapTotalMb > 0 ? round1((s.swapUsedMb / s.swapTotalMb) * 100) : null;
+}
+
+/** Free disk, % of the root filesystem (0.1 precision); null unless the sample states both fields and a total > 0. */
+export function diskAvailablePctOf(s: Pick<StoredBoxSample, "diskTotalMb" | "diskAvailableMb">): number | null {
+  return s.diskTotalMb != null && s.diskAvailableMb != null && s.diskTotalMb > 0
+    ? round1((s.diskAvailableMb / s.diskTotalMb) * 100)
+    : null;
 }
 
 function round1(n: number): number {
@@ -215,14 +243,24 @@ export function buildBoxHealthView(inputs: BoxHealthInputs, now: Date, windowDay
         );
       }
     }
+    // Unknown disk (either field null) is never red on its own. Judged on the exact ratio, like swap.
+    if (latest.diskTotalMb != null && latest.diskAvailableMb != null && latest.diskTotalMb > 0) {
+      const exact = (latest.diskAvailableMb / latest.diskTotalMb) * 100;
+      if (exact < DISK_AVAILABLE_PCT_MIN) {
+        reasons.push(
+          `Disk free ${diskAvailablePctOf(latest)} % (< ${DISK_AVAILABLE_PCT_MIN} %): ${Math.round(latest.diskAvailableMb)} of ${Math.round(latest.diskTotalMb)} MB left on /.`,
+        );
+      }
+    }
   }
   if (oomKillsLast24h != null && oomKillsLast24h > 0) {
     reasons.push(`${oomKillsLast24h} process${oomKillsLast24h === 1 ? " was" : "es were"} killed for lack of memory in the last ${OOM_WINDOW_HOURS} hours.`);
   }
   const red = reasons.length > 0;
   if (!red) {
+    const diskPct = diskAvailablePctOf(latest!);
     reasons.push(
-      `Box healthy: load ${latest!.load5} (limit ${load5Max}), ${Math.round(latest!.memAvailableMb)} MB memory available, swap ${swapUsedPctOf(latest!)}% full.`,
+      `Box healthy: load ${latest!.load5} (limit ${load5Max}), ${Math.round(latest!.memAvailableMb)} MB memory available, swap ${swapUsedPctOf(latest!)}% full${diskPct == null ? "" : `, disk ${diskPct} % free`}.`,
     );
   }
 
@@ -240,6 +278,7 @@ export function buildBoxHealthView(inputs: BoxHealthInputs, now: Date, windowDay
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([day, ss]) => {
       const pcts = ss.map(swapUsedPctOf).filter((p): p is number => p != null);
+      const withDisk = ss.filter((s) => diskAvailablePctOf(s) != null);
       return {
         day,
         sampleCount: ss.length,
@@ -248,6 +287,8 @@ export function buildBoxHealthView(inputs: BoxHealthInputs, now: Date, windowDay
         memAvailableMinMb: Math.round(Math.min(...ss.map((s) => s.memAvailableMb))),
         swapUsedPctMax: pcts.length === 0 ? null : Math.max(...pcts),
         oomKills: sumKnown(ss.map((s) => s.oomKills)),
+        diskAvailableMinMb: withDisk.length === 0 ? null : Math.round(Math.min(...withDisk.map((s) => s.diskAvailableMb!))),
+        diskAvailablePctMin: withDisk.length === 0 ? null : Math.min(...withDisk.map((s) => diskAvailablePctOf(s)!)),
       };
     });
 
@@ -262,6 +303,7 @@ export function buildBoxHealthView(inputs: BoxHealthInputs, now: Date, windowDay
       load15: s.load15,
       memAvailableMb: Math.round(s.memAvailableMb),
       swapUsedPct: swapUsedPctOf(s),
+      diskAvailablePct: diskAvailablePctOf(s),
     }));
 
   // TOP CONTAINERS: mean over the last hour's agent samples IN WHICH the container appears.
@@ -298,13 +340,14 @@ export function buildBoxHealthView(inputs: BoxHealthInputs, now: Date, windowDay
       load5Max,
       memAvailableMinMb: MEM_AVAILABLE_MIN_MB,
       swapUsedPctMax: SWAP_USED_PCT_MAX,
+      diskAvailablePctMin: DISK_AVAILABLE_PCT_MIN,
       oomWindowHours: OOM_WINDOW_HOURS,
       staleAfterMinutes: STALE_AFTER_MINUTES,
     },
     latest:
       latest == null
         ? null
-        : { ...latest, sampledAt: latest.sampledAt.toISOString(), swapUsedPct: swapUsedPctOf(latest), oomKillsLast24h },
+        : { ...latest, sampledAt: latest.sampledAt.toISOString(), swapUsedPct: swapUsedPctOf(latest), diskAvailablePct: diskAvailablePctOf(latest), oomKillsLast24h },
     windowDays,
     daily,
     recentHours: RECENT_HOURS,
