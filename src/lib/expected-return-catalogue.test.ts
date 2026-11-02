@@ -118,6 +118,15 @@ describe("a funnel campaign the offer's model cannot price reads the catalogue f
     expect(e).toMatchObject({ roiMultiple: null, unavailableReason: "own_sales_path_unpriced" });
   });
 
+  it("a funnel ending after Paid client (Client Satisfied) reads no return multiple, never 0x", () => {
+    const funnel = {
+      id: "paid_client_to_client_satisfied@cold-whatsapp-outreach",
+      legs: [{ legKey: "paid_client_to_client_satisfied", pipe: { toStep: "client_satisfied" } }],
+      expected: { roi: 0, basis: "default", costUsd: 1, unavailableReason: null, legs: [{ legKey: "paid_client_to_client_satisfied", rateSource: null, rateBasis: null, costSource: "default", costBasis: "default", costPerOutcomeUsd: 1 }] },
+    };
+    expect(er.expectedFromCatalogueFunnel(funnel as never, "offer_stated")).toBeNull();
+  });
+
   it("a listed path never asks the catalogue", async () => {
     const e = await er.expectedReturnForFunnelCampaign(id, "b1", "o1", "start_to_conversation@sales-cold-email-outreach+conversation_to_paid_client", null, 25_000);
     expect(e.roiMultiple).toBe(3);

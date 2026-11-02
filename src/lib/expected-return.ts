@@ -500,11 +500,14 @@ const servedCostSourceOf = (source: string): SalesPathCostSource =>
  * and the funnel lists' one formula, every leg known: a play's own allowed workflows, a declared leg, a trigger-headed
  * funnel, the value ADDED over the takeover step) as an expected return. Its cost per outcome = the first platform leg
  * that does more than find people (the leg the campaign's spend chart counts, `leadingUnit`). Null when the catalogue
- * cannot price it either (its own `unavailableReason`, logged by the caller).
+ * cannot price it either (its own `unavailableReason`, logged by the caller) or when it ends after Paid client.
  */
 export function expectedFromCatalogueFunnel(funnel: CatalogueFunnel, lifetimeRevenueSource: LifetimeRevenueSource | null): ExpectedReturn | null {
   const e = funnel.expected;
   if (e.roi === null || !Number.isFinite(e.roi) || e.basis === null) return null;
+  // A funnel that ends after Paid client (Client Satisfied) adds nothing to the client's value: no return multiple,
+  // never a 0x (its people were already worth the whole value at the takeover step).
+  if (funnel.legs[funnel.legs.length - 1]?.pipe?.toStep !== "paid_client") return null;
   const assumptions: ExpectedAssumption[] = [];
   if (lifetimeRevenueSource) assumptions.push({ input: "lifetime_revenue", legKey: null, basis: LTR_BASIS[lifetimeRevenueSource], source: lifetimeRevenueSource });
   let costPerOutcome: ExpectedCostPerOutcome | null = null;
