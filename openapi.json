@@ -80166,7 +80166,8 @@
                                   "engine_failed",
                                   "replay_failed",
                                   "rolled_back",
-                                  "drives_unreadable"
+                                  "drives_unreadable",
+                                  "results_without_engine"
                                 ]
                               }
                             }
@@ -80175,7 +80176,7 @@
                             "red",
                             "reasons"
                           ],
-                          "description": "Red ONLY when broken: a campaign's Engine or the replay failed, a switched result ROLLED BACK (its guard measured it worse than the service path), or the drives are unreadable. The pass staleness is `verdict` above."
+                          "description": "Red ONLY when broken: a campaign's Engine or the replay failed, a driven result ROLLED BACK (its guard measured it worse than the service path), the drives are unreadable, or a result of a live campaign has no Engine pick (`results_without_engine`: it would run the old per-pipe order, listed per result in `results[].unpickedCampaigns`). The pass staleness is `verdict` above."
                         },
                         "results": {
                           "type": "array",
@@ -80204,9 +80205,10 @@
                                 "enum": [
                                   "switched",
                                   "shadow",
-                                  "rolled_back"
+                                  "rolled_back",
+                                  "no_engine_pick"
                                 ],
-                                "description": "`switched` = the Engine drives this result's workflow on at least one campaign that handed it over (campaign-service `engineOutcomes`); `rolled_back` = a guard put a unit back on the service path (red); `shadow` = nothing runs from it."
+                                "description": "ENGINE-FULL-MIGRATION-1102: the Engine drives every result of every live funnel campaign. `switched` = it drives this result on at least one unit; `rolled_back` = a guard put a unit back on the service path until its re-trial (red); `no_engine_pick` = a live campaign works this result but the Engine has no workflow to pick for it (red, see `unpickedCampaigns`); `shadow` = no live campaign works it."
                               },
                               "units": {
                                 "type": "integer"
@@ -80216,6 +80218,10 @@
                               },
                               "rolledBack": {
                                 "type": "integer"
+                              },
+                              "unpicked": {
+                                "type": "integer",
+                                "description": "Units of live campaigns working this result with no Engine pick."
                               },
                               "switchedSince": {
                                 "type": "string",
@@ -80228,7 +80234,7 @@
                               },
                               "fleetEligible": {
                                 "type": "boolean",
-                                "description": "Held 7 days with no roll-back: the fleet may follow (never automatic)."
+                                "description": "Deprecated (ENGINE-FULL-MIGRATION-1102: every client is driven, no fleet gate): true exactly when `status` is `switched`."
                               },
                               "drives": {
                                 "type": "array",
@@ -80267,7 +80273,8 @@
                                       "nullable": true,
                                       "additionalProperties": {
                                         "nullable": true
-                                      }
+                                      },
+                                      "description": "The guard: decisions, outcomes, spend and cost per outcome since the switch beside the service path's, `verdict`, `rollBacks` taken so far and, on a rolled-back unit, `retryAt` (its re-trial: 14 days after the first roll-back, doubled per repeat, 56 at most, or at once when the Engine's pick on its pipe moves to another workflow)."
                                     }
                                   },
                                   "required": [
@@ -80281,6 +80288,49 @@
                                     "guard"
                                   ]
                                 }
+                              },
+                              "unpickedCampaigns": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "funnelCampaignId": {
+                                      "type": "string"
+                                    },
+                                    "orgId": {
+                                      "type": "string"
+                                    },
+                                    "brandId": {
+                                      "type": "string"
+                                    },
+                                    "pipeId": {
+                                      "type": "string"
+                                    },
+                                    "unitCampaignId": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "reason": {
+                                      "type": "string",
+                                      "enum": [
+                                        "no_unit_campaign",
+                                        "no_engine_place",
+                                        "no_candidate",
+                                        "no_candidate_priced",
+                                        "no_candidate_on_pipe"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "funnelCampaignId",
+                                    "orgId",
+                                    "brandId",
+                                    "pipeId",
+                                    "unitCampaignId",
+                                    "reason"
+                                  ]
+                                },
+                                "description": "The live campaigns working this result with no Engine pick, and why."
                               }
                             },
                             "required": [
@@ -80293,13 +80343,15 @@
                               "units",
                               "driving",
                               "rolledBack",
+                              "unpicked",
                               "switchedSince",
                               "heldDays",
                               "fleetEligible",
-                              "drives"
+                              "drives",
+                              "unpickedCampaigns"
                             ]
                           },
-                          "description": "ENGINE-PER-OUTCOME-SWITCH: per result family of the replay (plus any switched result), Switched / Shadow / Rolled back, with the guard of every switched unit."
+                          "description": "ENGINE-FULL-MIGRATION-1102: per result family of the replay (plus any driven or unpicked result), Switched / Shadow / Rolled back / No Engine pick, with the guard of every driven unit."
                         },
                         "last": {
                           "type": "object",

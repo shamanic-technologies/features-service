@@ -33,7 +33,7 @@ import {
   type ReplayCandidate,
 } from "./engine-shadow.js";
 import { getFleetLegCampaigns, readLegWorkflowRanking, type LegWorkflowRankingPayload } from "../routes/public.js";
-import { drivenDynastyOf, guardOf } from "./engine-drive.js";
+import { driveStepOf, drivenDynastyOf, guardOf } from "./engine-drive.js";
 import type { EngineDriveRow } from "./engine-drive-store.js";
 import { readResearchBuild } from "../routes/research.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
@@ -312,57 +312,75 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
   };
 }
 
-// ── The live drives (ENGINE-PER-OUTCOME-SWITCH, `lib/engine-drive.ts`) ─────────────────────────────
+// ── The live drives (ENGINE-FULL-MIGRATION-1102, `lib/engine-drive.ts`) ─────────────────────────────
+
+/** A result of a live campaign the Engine cannot pick a workflow for this pass (loud on Monitoring, never silent). */
+export interface UnpickedResult {
+  funnelCampaignId: string;
+  orgId: string;
+  brandId: string;
+  outcome: string;
+  outcomeName: string;
+  pipeId: string;
+  unitCampaignId: string | null;
+  /** `no_unit_campaign` (campaign-service runs no unit on that pipe), `no_engine_place` (the Engine computed no place for
+   *  that result), `no_candidate` / `no_candidate_priced` (the place has no workflow to draw), `no_candidate_on_pipe` (its
+   *  draws pick only other pipes' workflows). */
+  reason: "no_unit_campaign" | "no_engine_place" | "no_candidate" | "no_candidate_priced" | "no_candidate_on_pipe";
+}
 
 /**
- * One funnel campaign's drives: per leg of the line it runs whose result it hands to the Engine (`engineOutcomes`), the
- * unit campaign working that leg, the workflow the Engine drives there and its guard. `existing` = the stored drives
- * (a rolled-back unit stays rolled back; a driving one keeps its switch date).
+ * One funnel campaign's drives: EVERY leg of the line it runs that a platform pipe works (a client-team leg runs no
+ * workflow), the unit campaign working it, the workflow the Engine drives there and its guard. `existing` = the stored
+ * drives (a rolled-back unit re-trials under `driveStepOf`; a driving one keeps its switch date). A leg the Engine cannot
+ * pick for comes back in `unpicked`.
  */
 export async function drivesOfCampaign(
   memos: EngineMemos,
   model: CatalogueModel,
-  c: Pick<ShadowCampaign, "id" | "orgId" | "brandId" | "salesFunnelId" | "target" | "mode" | "triggerId" | "engineOutcomes" | "units">,
+  c: Pick<ShadowCampaign, "id" | "orgId" | "brandId" | "salesFunnelId" | "units">,
   engine: EngineShadow,
   existing: ReadonlyMap<string, EngineDriveRow>,
   now: Date,
-): Promise<Array<Omit<EngineDriveRow, "updatedAt">>> {
-  const handed = new Set(c.engineOutcomes ?? []);
-  if (handed.size === 0 || engine.status !== "ok") return [];
+): Promise<{ drives: Array<Omit<EngineDriveRow, "updatedAt">>; unpicked: UnpickedResult[] }> {
   const running = funnelById(model, c.salesFunnelId);
-  if (!running) return [];
+  if (!running) throw new Error(`running funnel ${c.salesFunnelId} is not in the catalogue`);
   const today = dayOf(now);
-  const out: Array<Omit<EngineDriveRow, "updatedAt">> = [];
+  const drives: Array<Omit<EngineDriveRow, "updatedAt">> = [];
+  const unpicked: UnpickedResult[] = [];
   for (const leg of running.legs) {
+    if (!leg.pipe || leg.pipe.operatedBy !== "platform") continue;
     const outcome = legStepsOf(model, leg.legKey).toStep;
-    if (!handed.has(outcome) || !leg.pipe || leg.pipe.operatedBy !== "platform") continue;
+    const outcomeName = stepLabel(model, outcome);
     const base = model.pipes.get(basePipeIdOf(leg.pipe)) ?? leg.pipe;
     const unit = (c.units ?? []).find((u) => u.featureSlug === base.channelSlug && pipeLegKeyOf(u.featureSlug, u.legKey) === pipeLegKeyOf(base.channelSlug, base.computedLegKey));
+    const miss = (reason: UnpickedResult["reason"]) =>
+      unpicked.push({ funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, outcomeName, pipeId: base.id, unitCampaignId: unit?.campaignId ?? null, reason });
+    if (!unit) {
+      miss("no_unit_campaign");
+      continue;
+    }
     const place = engine.places.find((p) => p.outcome === outcome);
-    if (!unit || !place) continue;
-    const kept = existing.get(unit.campaignId);
-    const driven = drivenDynastyOf(place, base.id);
-    if (!driven && !kept) continue;
+    const kept = existing.get(unit.campaignId) ?? null;
+    const driven = place ? drivenDynastyOf(place, base.id) : null;
+    // No pick now and none stored: the unit would run the service order, said loud. A stored drive keeps the Engine's
+    // last pick (still an Engine drive) until its pipe has a pick again.
+    if (!driven && !kept) {
+      miss(!place ? "no_engine_place" : place.state !== "ok" ? place.state : "no_candidate_on_pipe");
+      continue;
+    }
     const days = await memos.days(base);
-    const serviceDynasty = place.today?.workflowDynastySlug ?? null;
+    const serviceDynasty = place?.today?.workflowDynastySlug ?? kept?.serviceDynastySlug ?? null;
     const serviceRow = serviceDynasty ? (await memos.ranking(base))?.rows.find((r) => r.workflowDynastySlug === serviceDynasty) : undefined;
-    const switchedAt = kept?.switchedAt ?? now.toISOString();
-    const guard = guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedAt.slice(0, 10), today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null);
-    const rolledBack = kept?.state === "rolled_back" || guard.verdict === "worse";
-    out.push({
-      unitCampaignId: unit.campaignId,
-      funnelCampaignId: c.id,
-      orgId: c.orgId,
-      brandId: c.brandId,
-      outcome,
-      pipeId: base.id,
-      workflowDynastySlug: kept?.state === "rolled_back" ? kept.workflowDynastySlug : (driven?.dynasty ?? kept!.workflowDynastySlug),
-      serviceDynastySlug: serviceDynasty,
-      state: rolledBack ? "rolled_back" : "driving",
-      switchedAt,
-      rolledBackAt: kept?.rolledBackAt ?? (rolledBack ? now.toISOString() : null),
-      guard: { ...(kept?.state === "rolled_back" && kept.guard ? kept.guard : guard), outcomeName: stepLabel(model, outcome), source: driven?.source ?? kept?.guard?.source ?? "engine_tick_pick" },
+    const next = driveStepOf({
+      kept,
+      driven,
+      now,
+      outcomeName,
+      guardAt: (switchedDay, serviceSinceDay) => guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedDay, today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null, serviceSinceDay),
     });
+    if (!next) continue;
+    drives.push({ unitCampaignId: unit.campaignId, funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, pipeId: base.id, serviceDynastySlug: serviceDynasty, ...next });
   }
-  return out;
+  return { drives, unpicked };
 }
