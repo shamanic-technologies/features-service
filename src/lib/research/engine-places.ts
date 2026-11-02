@@ -7,6 +7,8 @@
  * candidate workflow with its MEAN share of the Engine's draws and belief over the live campaigns that hold the place;
  * the favourite = the highest mean share, a CLEAR winner when that share is >= 90%. Per outcome, the callers it serves.
  */
+import { compareVerdict, type VerdictKind } from "./verdict.js";
+
 export interface StoredEngineCandidate {
   candidateId: string;
   channelName: string;
@@ -117,4 +119,79 @@ export function enginesOf(places: readonly ResearchPlace[]) {
     outcomeName: ps[0]!.outcomeName,
     callers: ps.map((p) => ({ consumer: p.consumer, consumerName: p.consumerName, best: p.favourite ? p.favourite.workflowName : null })),
   }));
+}
+
+// ── Proposed strategies (GTM Factory "Proposed strategies") ─────────────────────────────────────────
+
+
+export interface StrategySplit {
+  placeKey: string;
+  outcomeName: string;
+  consumerName: string;
+  tacticId: string;
+  tacticName: string;
+  /** The tactic's own words (what a workflow following it does). */
+  tacticDescription: string;
+  inside: { workflows: number; outcomes: number; decisions: number; ratePct: number | null };
+  outside: { workflows: number; outcomes: number; decisions: number; ratePct: number | null };
+  /** Which side converts better on the fleet evidence. */
+  better: "inside" | "outside" | null;
+  verdict: VerdictKind;
+  reason: string;
+  /** Kept as a proposed strategy only on a conclusion (the Research rule). */
+  proposed: boolean;
+}
+
+/**
+ * PURE: per place, every WORKFLOW tactic that splits its candidates in two judged halves (follows it / does not), the
+ * fleet outcomes per decision on each side, read by the Research verdict (`lib/research/verdict.ts`, Bonferroni over the
+ * place's splits). The client mix cannot be ruled out on this read (no per-client strata), so a split tops out at
+ * `signal`: it is PROPOSED only on a conclusion, never on a hunch.
+ */
+export function strategySplitsOf(
+  places: readonly ResearchPlace[],
+  tacticsByDynasty: ReadonlyMap<string, ReadonlyMap<string, boolean>>,
+  tactics: ReadonlyArray<{ id: string; name: string; description: string; appliesTo?: string }>,
+): StrategySplit[] {
+  const workflowTactics = tactics.filter((t) => (t.appliesTo ?? "workflow") === "workflow");
+  const out: StrategySplit[] = [];
+  for (const place of places) {
+    const halves = workflowTactics.flatMap((t) => {
+      const judged = place.candidates.filter((c) => tacticsByDynasty.get(c.workflowDynastySlug)?.has(t.id));
+      const ins = judged.filter((c) => tacticsByDynasty.get(c.workflowDynastySlug)!.get(t.id) === true);
+      const outs = judged.filter((c) => tacticsByDynasty.get(c.workflowDynastySlug)!.get(t.id) === false);
+      return ins.length > 0 && outs.length > 0 ? [{ t, ins, outs }] : [];
+    });
+    for (const { t, ins, outs } of halves) {
+      const side = (cs: ResearchPlaceCandidate[]) => {
+        const outcomes = cs.reduce((a, c) => a + c.fleetOutcomes, 0);
+        const decisions = cs.reduce((a, c) => a + c.fleetDecisions, 0);
+        return { workflows: cs.length, outcomes, decisions, ratePct: decisions > 0 ? Math.round((outcomes / decisions) * 10000) / 100 : null };
+      };
+      const inside = side(ins);
+      const outside = side(outs);
+      const rIn = inside.decisions > 0 ? inside.outcomes / inside.decisions : -1;
+      const rOut = outside.decisions > 0 ? outside.outcomes / outside.decisions : -1;
+      const better = rIn < 0 && rOut < 0 ? null : rIn >= rOut ? ("inside" as const) : ("outside" as const);
+      const arm = (label: string, s: typeof inside) => ({ label, outcomes: s.outcomes, exposure: s.decisions, spend: 0 });
+      const a = better === "outside" ? arm(`Not ${t.name}`, outside) : arm(t.name, inside);
+      const b = better === "outside" ? arm(t.name, inside) : arm(`Not ${t.name}`, outside);
+      const v = compareVerdict({ a, b, goal: "rate", comparisons: halves.length, strata: null, noun: "outcome", nouns: "outcomes", per: "per decision" });
+      out.push({
+        placeKey: place.key,
+        outcomeName: place.outcomeName,
+        consumerName: place.consumerName,
+        tacticId: t.id,
+        tacticName: t.name,
+        tacticDescription: t.description,
+        inside,
+        outside,
+        better,
+        verdict: v.kind,
+        reason: v.reason,
+        proposed: v.kind === "conclusion",
+      });
+    }
+  }
+  return out;
 }
