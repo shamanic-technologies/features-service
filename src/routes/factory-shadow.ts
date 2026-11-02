@@ -61,10 +61,11 @@ import {
   type ShadowRowSummary,
   type ShadowStatus,
 } from "../lib/factory-shadow.js";
-import { readDays, readJudgments, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
+import { readDays, readJudgments, readOfferPlans, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
+import { enginePicksOf } from "../lib/engine-picks.js";
 import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
@@ -743,6 +744,35 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/factory-shadow", apiKeyA
   } catch (error) {
     console.error("[features-service] factory shadow read failed:", error);
     res.status(500).json({ error: "factory_shadow_unreadable" });
+  }
+});
+
+/**
+ * FACTORY-USER-DASHBOARD-1102: the workflow the Engine runs for each result of an offer's live campaigns, newest pick
+ * first, with its share of draws and why (`lib/engine-picks.ts`). Org-scoped; a campaign the last pass did not cover
+ * (stopped, or born since) is not listed. Nothing computed yet = `picks: []` + `computedAt: null`.
+ */
+router.get("/offers/:offerId/engine-picks", apiKeyAuth, async (req, res) => {
+  const { orgId } = req as AuthenticatedRequest;
+  const brandId = typeof req.query.brandId === "string" ? req.query.brandId : "";
+  if (!brandId) {
+    res.status(400).json({ error: "brand_id_required", detail: "brandId is required" });
+    return;
+  }
+  try {
+    const passCell = await loadFleetCell(PASS_CELL);
+    const pass = passCell ? (JSON.parse(passCell.text) as PassRecord) : null;
+    if (!pass) {
+      res.json({ offerId: req.params.offerId, brandId, computedAt: null, picks: [] });
+      return;
+    }
+    const plans = await readOfferPlans(orgId, brandId, req.params.offerId, new Date(pass.sweptAt));
+    const ids = new Set(plans.map((p) => p.campaignId));
+    const drives = (await readDrives()).filter((d) => ids.has(d.funnelCampaignId) && d.orgId === orgId);
+    res.json({ offerId: req.params.offerId, brandId, computedAt: pass.sweptAt, picks: enginePicksOf(plans as Parameters<typeof enginePicksOf>[0], drives) });
+  } catch (error) {
+    console.error("[features-service] engine picks read failed:", error);
+    res.status(502).json({ error: "engine_picks_unreadable" });
   }
 });
 
