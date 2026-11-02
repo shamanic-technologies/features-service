@@ -419,6 +419,14 @@ export function thompson(beliefs: ReadonlyMap<string, Belief>, valueOf: (id: str
 /** PURE: the value a candidate's score multiplies (its value added; 1 on an unvalued Target, which ranks on cost). */
 export const scoreValueOf = (c: Pick<EngineCandidate, "valueAddedUsd"> & { uplift?: number }, targetValued: boolean): number => (targetValued ? (c.valueAddedUsd ?? 0) : 1) * (c.uplift ?? 1);
 
+/**
+ * PURE (ENGINE-FULL-MIGRATION-1102): whether a place scores on value. A place none of whose candidates carries a value
+ * (its outcome has no priced route for this offer) ranks on cost per outcome, the unvalued Target's rule: every
+ * candidate makes the same outcome, so an unknown value shared by all of them changes no order, and the Engine still picks.
+ */
+export const placeValued = (candidates: ReadonlyArray<Pick<EngineCandidate, "valueAddedUsd"> & { uplift?: number }>, targetValued: boolean): boolean =>
+  targetValued && candidates.some((c) => scoreValueOf(c, true) > 0);
+
 // ── One place, served ──────────────────────────────────────────────────────────────────────────────
 
 export interface EnginePickRef {
@@ -476,7 +484,8 @@ export function enginePlaceOf(
   today: { candidateId: string | null; ref: EnginePickRef | null; unavailableReason: string | null },
 ): EnginePlace {
   const pooled = placeBeliefs(candidates);
-  const valueOf = (id: string) => scoreValueOf(candidates.find((c) => c.id === id)!, input.targetValued);
+  const valued = placeValued(candidates, input.targetValued);
+  const valueOf = (id: string) => scoreValueOf(candidates.find((c) => c.id === id)!, valued);
   const t = thompson(pooled.beliefs, valueOf, input.seed);
   const refOf = (id: string | null): EnginePickRef | null => {
     const c = id ? candidates.find((x) => x.id === id) : undefined;
@@ -485,7 +494,7 @@ export function enginePlaceOf(
   const rows: EngineCandidateRow[] = candidates.map((c) => {
     const b = pooled.beliefs.get(c.id) ?? null;
     const rate = b ? b.alpha / (b.alpha + b.beta) : null;
-    const v = scoreValueOf(c, input.targetValued);
+    const v = scoreValueOf(c, valued);
     return {
       ...refOf(c.id)!,
       fromStep: c.fromStep,
@@ -528,7 +537,7 @@ export const ENGINE_LIMITS = ["uplift_reads_lifetime_mix", "beliefs_count_outcom
 /** `rule` is bumped with any change to how evidence is read (the replay is recomputed at once when it moves): 2 = a
  *  workflow-less run inside a campaign credits the send it answers (2026-10-31); 3 = replay families = outcome x step
  *  consumed x trigger (2026-11-01); 4 = pooling strength capped at `MAX_STRENGTH` (2026-11-01). */
-export const ENGINE_MODEL = { rule: 4, maxStrength: MAX_STRENGTH, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
+export const ENGINE_MODEL = { rule: 5, maxStrength: MAX_STRENGTH, halfLifeDays: HALF_LIFE_DAYS, upliftCap: UPLIFT_CAP, upliftMinOutcomes: UPLIFT_MIN_OUTCOMES, draws: THOMPSON_DRAWS } as const;
 
 export interface EngineShadow {
   computedAt: string;
@@ -708,9 +717,10 @@ export function replayFamily(
   draws = 300,
 ): ReplayFamily {
   const until = window.untilDay ?? window.countedOnDay;
+  const valued = placeValued(candidates, targetValued);
   const vpd = new Map<string, number>();
   for (const c of candidates) {
-    const v = windowValuePerDollar(c, window.sinceDay, window.countedOnDay, targetValued, until);
+    const v = windowValuePerDollar(c, window.sinceDay, window.countedOnDay, valued, until);
     if (v !== null) vpd.set(c.id, v);
   }
   const days = [...new Set(candidates.flatMap((c) => c.days.filter((d) => d.day >= window.sinceDay && d.day < until && d.decisions > 0).map((d) => d.day)))].sort();
@@ -746,7 +756,7 @@ export function replayFamily(
       defaultRatePct: c.defaultRatePct,
     }));
     const byId = new Map(asOf.map((c) => [c.id, c]));
-    const t = thompson(placeBeliefs(asOf).beliefs, (id) => scoreValueOf(byId.get(id)!, targetValued), `${seed}|${day}`, draws);
+    const t = thompson(placeBeliefs(asOf).beliefs, (id) => scoreValueOf(byId.get(id)!, valued), `${seed}|${day}`, draws);
     const g = gradeSplit(t.shares, vpd, best[1]);
     eAll += weight;
     eUng += weight * (g.all > 0 ? (g.all - g.graded) / g.all : 1);
