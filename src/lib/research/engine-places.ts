@@ -3,7 +3,8 @@
  * pipes »; GTM Factory Research design): the Engines' picks fleet-wide, read off the stored pass (every live campaign's
  * Engine places, `lib/engine-shadow.ts`) and the 30-day replay. PURE; IO in `routes/factory-shadow.ts`.
  *
- * A PLACE = one outcome as one caller asks for it (the next outcome, or the campaign at its Target). Per place, every
+ * A PLACE = one outcome as one caller asks for it (the next outcome, or the campaign at its Target) among one set of
+ * candidate workflows (campaigns choosing among other workflows are another place). Per place, every
  * candidate workflow with its MEAN share of the Engine's draws and belief over the live campaigns that hold the place;
  * the favourite = the highest mean share, a CLEAR winner when that share is >= 90%. Per outcome, the callers it serves.
  */
@@ -68,7 +69,11 @@ export function researchPlacesOf(placesByCampaign: ReadonlyArray<readonly Stored
   const groups = new Map<string, { place: StoredEnginePlace; campaigns: number; byCand: Map<string, StoredEngineCandidate[]> }>();
   for (const places of placesByCampaign)
     for (const p of places) {
-      const key = `${p.outcome}|${p.consumer}`;
+      // A place = the same choice: the same outcome for the same caller among the SAME candidates. Campaigns choosing
+      // among different workflows (another trigger, another pipe) are different places: pooled, six campaigns each sure
+      // of its own Paid client pick read as a 33% "no winner" (2026-11-02).
+      const pool = (p.candidates ?? []).map((c) => c.candidateId).sort().join(",");
+      const key = `${p.outcome}|${p.consumer}|${pool}`;
       const g = groups.get(key) ?? { place: p, campaigns: 0, byCand: new Map() };
       g.campaigns += 1;
       for (const c of p.candidates ?? []) g.byCand.set(c.candidateId, [...(g.byCand.get(c.candidateId) ?? []), c]);
@@ -107,7 +112,7 @@ export function researchPlacesOf(placesByCampaign: ReadonlyArray<readonly Stored
       candidates,
     });
   }
-  return out.sort((a, b) => (a.consumerName < b.consumerName ? -1 : a.consumerName > b.consumerName ? 1 : a.outcomeName < b.outcomeName ? -1 : 1));
+  return out.sort((a, b) => (a.consumerName < b.consumerName ? -1 : a.consumerName > b.consumerName ? 1 : a.outcomeName < b.outcomeName ? -1 : a.outcomeName > b.outcomeName ? 1 : a.key < b.key ? -1 : 1));
 }
 
 /** PURE: per outcome Engine, the callers it serves and each caller's favourite (GTM Factory "One Engine, several callers"). */

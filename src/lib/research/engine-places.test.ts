@@ -9,9 +9,14 @@ const place = (consumer: string, cands: ReturnType<typeof cand>[]) => ({ outcome
 
 describe("Research: the Engines' places fleet-wide (FACTORY-USER-DASHBOARD-1102)", () => {
   it("averages each candidate's share over every campaign holding the place, a missing candidate counting 0", () => {
-    const [p] = researchPlacesOf([[place("campaign", [cand("keel", 100)])], [place("campaign", [cand("keel", 90), cand("ballad", 10)])]]);
+    const [p] = researchPlacesOf([[place("campaign", [cand("keel", 100), cand("ballad", 0)])], [place("campaign", [cand("keel", 90), cand("ballad", 10)])]]);
     expect(p).toMatchObject({ campaigns: 2, clearWinner: true, favourite: { workflowName: "KEEL", chancePct: 95 } });
     expect(p!.candidates.map((c) => [c.workflowDynastySlug, c.sharePct])).toEqual([["keel", 95], ["ballad", 5]]);
+  });
+
+  it("campaigns choosing among different workflows are different places, each with its own winner", () => {
+    const places = researchPlacesOf([[place("campaign", [cand("keel", 100)])], [place("campaign", [cand("ballad", 100)])]]);
+    expect(places.map((p) => [p.favourite?.workflowName, p.clearWinner])).toEqual([["BALLAD", true], ["KEEL", true]]);
   });
 
   it("no clear winner under 90%; one Engine lists every caller with its favourite", () => {
