@@ -260,8 +260,7 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
   const byFamily = new Map<string, CataloguePipe[]>();
   for (const p of model.pipes.values())
     if (p.operatedBy === "platform" && pipeRunnable(p)) {
-      const from = p.fromStep === "lead_found" ? null : p.fromStep;
-      const k = `${p.toStep}|${from ?? "start"}|${p.triggerId ?? "-"}`;
+      const k = engineFamilyKeyOf(p);
       byFamily.set(k, [...(byFamily.get(k) ?? []), p]);
     }
   const families = [];
@@ -312,6 +311,12 @@ export async function computeEngineReplay(memos: EngineMemos, model: CatalogueMo
   };
 }
 
+/** PURE: a pipe's replay FAMILY (same outcome, same step consumed, same trigger): the key Monitoring groups drives on. */
+export function engineFamilyKeyOf(p: Pick<CataloguePipe, "toStep" | "fromStep" | "triggerId">): string {
+  const from = p.fromStep === "lead_found" ? null : p.fromStep;
+  return `${p.toStep}|${from ?? "start"}|${p.triggerId ?? "-"}`;
+}
+
 // ── The live drives (ENGINE-FULL-MIGRATION-1102, `lib/engine-drive.ts`) ─────────────────────────────
 
 /** A result of a live campaign the Engine cannot pick a workflow for this pass (loud on Monitoring, never silent). */
@@ -321,6 +326,8 @@ export interface UnpickedResult {
   brandId: string;
   outcome: string;
   outcomeName: string;
+  /** The replay family of the pipe (`engineFamilyKeyOf`). */
+  family: string;
   pipeId: string;
   unitCampaignId: string | null;
   /** `no_unit_campaign` (campaign-service runs no unit on that pipe), `no_engine_place` (the Engine computed no place for
@@ -355,7 +362,7 @@ export async function drivesOfCampaign(
     const base = model.pipes.get(basePipeIdOf(leg.pipe)) ?? leg.pipe;
     const unit = (c.units ?? []).find((u) => u.featureSlug === base.channelSlug && pipeLegKeyOf(u.featureSlug, u.legKey) === pipeLegKeyOf(base.channelSlug, base.computedLegKey));
     const miss = (reason: UnpickedResult["reason"]) =>
-      unpicked.push({ funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, outcomeName, pipeId: base.id, unitCampaignId: unit?.campaignId ?? null, reason });
+      unpicked.push({ funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, outcomeName, family: engineFamilyKeyOf(base), pipeId: base.id, unitCampaignId: unit?.campaignId ?? null, reason });
     if (!unit) {
       miss("no_unit_campaign");
       continue;
@@ -380,6 +387,7 @@ export async function drivesOfCampaign(
       guardAt: (switchedDay, serviceSinceDay) => guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedDay, today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null, serviceSinceDay),
     });
     if (!next) continue;
+    if (next.guard) next.guard = { ...next.guard, family: engineFamilyKeyOf(base) };
     drives.push({ unitCampaignId: unit.campaignId, funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, pipeId: base.id, serviceDynastySlug: serviceDynasty, ...next });
   }
   return { drives, unpicked };

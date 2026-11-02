@@ -117,6 +117,8 @@ export type StoredGuard = DriveGuard & {
   rollBacks?: number;
   /** A rolled-back unit re-trials the Engine at this instant (null while driving). */
   retryAt?: string | null;
+  /** The replay family of the unit's pipe (outcome, step consumed, trigger): Monitoring groups drives on it. */
+  family?: string;
 };
 
 export interface DriveState {
