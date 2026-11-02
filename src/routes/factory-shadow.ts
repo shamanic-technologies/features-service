@@ -66,7 +66,8 @@ import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
-import { CLEAR_WINNER_PCT, enginesOf, researchPlacesOf, type StoredEnginePlace } from "../lib/research/engine-places.js";
+import { CLEAR_WINNER_PCT, enginesOf, researchPlacesOf, strategySplitsOf, type StoredEnginePlace } from "../lib/research/engine-places.js";
+import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
@@ -789,18 +790,21 @@ router.get("/internal/research/engine-places", apiKeyOnly, async (_req, res) => 
     const replayCell = await loadFleetCell(REPLAY_CELL);
     const replay = replayCell ? (JSON.parse(replayCell.text) as EngineReplay) : null;
     if (!pass) {
-      res.json({ computedAt: null, clearWinnerPct: CLEAR_WINNER_PCT, summary: { places: 0, clearWinners: 0, campaigns: 0 }, places: [], engines: [], replay: null });
+      res.json({ computedAt: null, clearWinnerPct: CLEAR_WINNER_PCT, summary: { places: 0, clearWinners: 0, campaigns: 0 }, places: [], engines: [], strategySplits: [], replay: null });
       return;
     }
     const plans = await readPlansSince(new Date(pass.sweptAt));
     const placesByCampaign = plans.map((p) => ((p.body as { engine?: { status?: string; places?: StoredEnginePlace[] } }).engine?.status === "ok" ? ((p.body as { engine: { places?: StoredEnginePlace[] } }).engine.places ?? []) : []));
     const places = researchPlacesOf(placesByCampaign);
+    const catalogue = await loadPlayCatalogue();
+    const strategySplits = strategySplitsOf(places, catalogue.tacticsByDynasty, [...catalogue.tactics.values()]);
     res.json({
       computedAt: pass.sweptAt,
       clearWinnerPct: CLEAR_WINNER_PCT,
       summary: { places: places.length, clearWinners: places.filter((p) => p.clearWinner).length, campaigns: plans.length },
       places,
       engines: enginesOf(places),
+      strategySplits,
       replay: replay
         ? { computedAt: replay.computedAt, windowDays: replay.windowDays, families: replay.families.map((f) => ({ family: f.family ?? f.outcome, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret })), failure: replay.failure }
         : null,
