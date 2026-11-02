@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enginesOf, researchPlacesOf, strategySplitsOf } from "./engine-places.js";
+import { enginesOf, placeDailyOf, researchPlacesOf, strategySplitsOf } from "./engine-places.js";
 
 const cand = (id: string, share: number | null, rate = 1) => ({
   candidateId: `cold|lead_found_to_conversation::${id}`, channelName: "Cold Email", workflowDynastySlug: id, workflowDynastyName: id.toUpperCase(),
@@ -40,5 +40,19 @@ describe("Research: proposed strategies, a split on the workflows' tactics", () 
   it("a tactic every candidate follows, or nobody judged, splits nothing", () => {
     const places = researchPlacesOf([[place("campaign", [cand("keel", 50), cand("ballad", 50)])]]);
     expect(strategySplitsOf(places, new Map([["keel", new Map([["x", true]])], ["ballad", new Map([["x", true]])]]), [{ id: "x", name: "X", description: "x" }])).toEqual([]);
+  });
+});
+
+describe("Research: a place's last 30 days of picks that ran", () => {
+  it("per day: decisions, the share on today's favourite and the dollars spent on the others", () => {
+    const [p] = researchPlacesOf([[place("campaign", [cand("keel", 80), cand("ballad", 20)])]]);
+    const days: Record<string, Array<{ day: string; decisions: number; spentUsd: number }>> = {
+      "cold|lead_found_to_conversation::keel": [{ day: "2026-10-30", decisions: 30, spentUsd: 3 }, { day: "2026-11-01", decisions: 40, spentUsd: 4 }],
+      "cold|lead_found_to_conversation::ballad": [{ day: "2026-10-30", decisions: 10, spentUsd: 2 }, { day: "2026-09-01", decisions: 99, spentUsd: 9 }],
+    };
+    expect(placeDailyOf(p!, (id) => days[id] ?? [], "2026-10-03", "2026-11-02")).toEqual([
+      { day: "2026-10-30", decisions: 40, favouriteSharePct: 75, lostUsd: 2 },
+      { day: "2026-11-01", decisions: 40, favouriteSharePct: 100, lostUsd: 0 },
+    ]);
   });
 });

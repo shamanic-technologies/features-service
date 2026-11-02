@@ -201,3 +201,46 @@ export function strategySplitsOf(
   }
   return out;
 }
+
+// ── Per place, the last 30 days of picks that RAN (Research sparklines and "value lost" chart) ───────
+
+export interface PlaceDay {
+  day: string;
+  /** Fleet decisions that day on the place's candidates. */
+  decisions: number;
+  /** Share of that day's decisions on TODAY's favourite (%); null with no decision. */
+  favouriteSharePct: number | null;
+  /** Dollars spent that day on the place's other candidates (value lost to weaker picks). */
+  lostUsd: number;
+}
+
+/**
+ * PURE: a place's daily series over `[sinceDay, untilDay)`, one row per day with decisions, read on the fleet ledger days
+ * of its candidates (`daysOf(candidateId)`): what RAN, measured against today's favourite.
+ */
+export function placeDailyOf(
+  place: Pick<ResearchPlace, "candidates" | "favourite">,
+  daysOf: (candidateId: string) => ReadonlyArray<{ day: string; decisions: number; spentUsd: number }>,
+  sinceDay: string,
+  untilDay: string,
+): PlaceDay[] {
+  const fav = place.favourite?.candidateId ?? null;
+  const byDay = new Map<string, { decisions: number; fav: number; lost: number }>();
+  for (const c of place.candidates)
+    for (const d of daysOf(c.candidateId)) {
+      if (d.day < sinceDay || d.day >= untilDay || d.decisions <= 0) continue;
+      const row = byDay.get(d.day) ?? { decisions: 0, fav: 0, lost: 0 };
+      row.decisions += d.decisions;
+      if (c.candidateId === fav) row.fav += d.decisions;
+      else row.lost += d.spentUsd;
+      byDay.set(d.day, row);
+    }
+  return [...byDay]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([day, r]) => ({
+      day,
+      decisions: Math.round(r.decisions * 10) / 10,
+      favouriteSharePct: fav === null || r.decisions === 0 ? null : Math.round((r.fav / r.decisions) * 1000) / 10,
+      lostUsd: Math.round(r.lost * 100) / 100,
+    }));
+}
