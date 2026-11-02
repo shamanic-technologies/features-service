@@ -29,7 +29,7 @@ export interface JourneyTransition {
   people: number;
   shareBasis: "spend";
   scripts: JourneyScript[];
-  /** `no_spend_yet`: the pipe spent nothing yet, so no share can be said. */
+  /** `no_spend_yet` (nobody made it, nothing spent) | `spend_recorded_under_another_pipe` (people made it, its spend sits under another pipe). */
   scriptsUnavailableReason: string | null;
 }
 
@@ -58,7 +58,9 @@ export function peopleJourneysOf(
       people: p.people,
       shareBasis: "spend" as const,
       scripts,
-      scriptsUnavailableReason: total > 0 ? null : "no_spend_yet",
+      // People made it but the pipe recorded no spend of its own: its work was paid under another pipe of the campaign
+      // (a sourcing serve filed under the outreach unit), so no share can be said, and it is not free.
+      scriptsUnavailableReason: total > 0 ? null : p.people > 0 ? "spend_recorded_under_another_pipe" : "no_spend_yet",
     };
   });
 }

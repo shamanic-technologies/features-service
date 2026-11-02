@@ -32,7 +32,7 @@ describe("Research: proposed strategies, a split on the workflows' tactics", () 
     const places = researchPlacesOf([[place("campaign", [big("keel", 40), big("ballad", 5)])]]);
     const tactics = [{ id: "blind", name: "Blind angle", description: "Never names the client." }];
     const [s] = strategySplitsOf(places, new Map([["keel", new Map([["blind", true]])], ["ballad", new Map([["blind", false]])]]), tactics);
-    expect(s).toMatchObject({ tacticName: "Blind angle", better: "inside", inside: { workflows: 1, outcomes: 40, ratePct: 4 }, outside: { outcomes: 5, ratePct: 0.5 } });
+    expect(s).toMatchObject({ tacticName: "Blind angle", better: "inside", inside: { workflows: 1, outcomes: 40, outcomesPer100Decisions: 4 }, outside: { outcomes: 5, outcomesPer100Decisions: 0.5 } });
     // No per-client strata on this read: a strong gap reads signal, never a conclusion, so nothing is proposed.
     expect(s).toMatchObject({ verdict: "signal", proposed: false });
   });

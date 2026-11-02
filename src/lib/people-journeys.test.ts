@@ -19,3 +19,10 @@ describe("what its people went through (FACTORY-USER-DASHBOARD-1102)", () => {
     expect(t).toMatchObject({ fromStep: "start", fromLabel: "Start", scripts: [], scriptsUnavailableReason: "no_spend_yet" });
   });
 });
+
+describe("a pipe whose people arrived with no spend of its own", () => {
+  it("says its spend sits under another pipe, never that it spent nothing", () => {
+    const [t] = peopleJourneysOf([{ pipeId: "src|start_to_lead_found", fromStep: null, toStep: "lead_found", people: 256, spendByDynasty: new Map() }], label, name);
+    expect(t).toMatchObject({ scripts: [], scriptsUnavailableReason: "spend_recorded_under_another_pipe" });
+  });
+});

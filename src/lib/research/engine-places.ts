@@ -137,8 +137,9 @@ export interface StrategySplit {
   tacticName: string;
   /** The tactic's own words (what a workflow following it does). */
   tacticDescription: string;
-  inside: { workflows: number; outcomes: number; decisions: number; ratePct: number | null };
-  outside: { workflows: number; outcomes: number; decisions: number; ratePct: number | null };
+  /** `outcomesPer100Decisions` can pass 100: one decision may make several outcomes (a message per reply). */
+  inside: { workflows: number; outcomes: number; decisions: number; outcomesPer100Decisions: number | null };
+  outside: { workflows: number; outcomes: number; decisions: number; outcomesPer100Decisions: number | null };
   /** Which side converts better on the fleet evidence. */
   better: "inside" | "outside" | null;
   verdict: VerdictKind;
@@ -171,7 +172,7 @@ export function strategySplitsOf(
       const side = (cs: ResearchPlaceCandidate[]) => {
         const outcomes = cs.reduce((a, c) => a + c.fleetOutcomes, 0);
         const decisions = cs.reduce((a, c) => a + c.fleetDecisions, 0);
-        return { workflows: cs.length, outcomes, decisions, ratePct: decisions > 0 ? Math.round((outcomes / decisions) * 10000) / 100 : null };
+        return { workflows: cs.length, outcomes, decisions, outcomesPer100Decisions: decisions > 0 ? Math.round((outcomes / decisions) * 10000) / 100 : null };
       };
       const inside = side(ins);
       const outside = side(outs);
