@@ -31,6 +31,11 @@ describe("campaign milestones (FACTORY-USER-DASHBOARD-1102)", () => {
     });
   });
 
+  it("a pipe with outcomes and no spend of its own reads its expected cost, never a measured $0", () => {
+    const [, lead] = milestonesOf({ legs, steps, pipes: [{ toStep: "lead_found", spendUsd: 0, outcomes: 1000 }] });
+    expect(lead!.costPerOutcomeUsd).toMatchObject({ value: 0.04, basis: "expected" });
+  });
+
   it("expected (and said so) where it has not happened yet", () => {
     // Nobody paid yet: cost from Start = the plan's spend up to here per paying client.
     expect(rows[3]!.costFromStartUsd).toEqual({ value: 0.04 * 11000 + 150 * 20, basis: "expected", unavailableReason: null });

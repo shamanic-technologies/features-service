@@ -9853,9 +9853,9 @@ registry.registerPath({
   summary: "What one funnel campaign's people went through: per transition, how many made it and each workflow's share of the work",
   description:
     "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a " +
-    "step, to a step), `people` = the campaign's people who made it since it started (the pipe's own outcome count, the spend charts' figure), and `scripts` = each " +
-    "workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; a pipe with no spend yet = `scripts: []` + " +
-    "`scriptsUnavailableReason: no_spend_yet`. Org-scoped (x-org-id).",
+    "step, to a step), `people` = the campaign's people who made it since it started (the campaign page's own count, the milestones' `outcomes`), and `scripts` = each " +
+    "workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; no share = `scripts: []` + `scriptsUnavailableReason` " +
+    "`no_spend_yet` (nobody yet) or `spend_recorded_under_another_pipe` (people made it, the work was paid under another pipe of the campaign). Org-scoped (x-org-id).",
   tags: ["Sales funnel campaigns"],
   request: { params: z.object({ brandId: z.string(), id: z.string() }), query: z.object({ pricing: z.enum(["gross", "net"]).optional() }) },
   responses: {
@@ -9933,8 +9933,8 @@ registry.registerPath({
                   tacticId: z.string(),
                   tacticName: z.string(),
                   tacticDescription: z.string(),
-                  inside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), ratePct: z.number().nullable() }),
-                  outside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), ratePct: z.number().nullable() }),
+                  inside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), outcomesPer100Decisions: z.number().nullable().describe("Fleet outcomes per 100 decisions; can pass 100 (one decision may make several outcomes).") }),
+                  outside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), outcomesPer100Decisions: z.number().nullable().describe("Fleet outcomes per 100 decisions; can pass 100 (one decision may make several outcomes).") }),
                   better: z.enum(["inside", "outside"]).nullable(),
                   verdict: z.enum(["conclusion", "signal", "noise"]),
                   reason: z.string(),
@@ -9946,7 +9946,7 @@ registry.registerPath({
               .object({
                 computedAt: z.string(),
                 windowDays: z.number(),
-                families: z.array(z.object({ family: z.string(), outcome: z.string(), outcomeName: z.string(), todayRegret: z.number().nullable(), engineRegret: z.number().nullable() })),
+                families: z.array(z.object({ family: z.string(), familyName: z.string().describe("The family in plain words (\"Positive reply, from Lead found, on Email Pushed Via API\")."), outcome: z.string(), outcomeName: z.string().describe("Same plain words as familyName (kept for older readers)."), todayRegret: z.number().nullable(), engineRegret: z.number().nullable() })),
                 failure: z.string().nullable(),
               })
               .nullable(),

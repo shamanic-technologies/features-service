@@ -83,7 +83,8 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/miles
 
 /**
  * `GET /brands/:brandId/sales-funnel-campaigns/:id/people-journeys` (GTM Factory "What its people went through"):
- * per transition of the campaign's pipes (path order), how many of its people made it (the spend chart's count) and
+ * per transition of the campaign's pipes (path order), how many of its people made it (the campaign page's own count, as
+ * the milestones read) and
  * each workflow's share of that pipe's committed spend (`lib/people-journeys.ts`). Org-scoped.
  */
 router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/people-journeys", apiKeyAuth, async (req, res) => {
@@ -106,13 +107,16 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
     const dynastyOf = dynastyOfSlug(workflows);
     const names = new Map(workflows.map((w) => [w.workflowDynastySlug, w.workflowDynastyName] as const));
     const labels = new Map((activity.funnel?.steps ?? []).map((s) => [s.key, s.label] as const));
+    const peopleOf = new Map((activity.funnel?.steps ?? []).flatMap((s) => (s.kind === "step" && s.people !== null ? [[s.key, s.people] as const] : [])));
     const titleOf = (key: string) => key.split("_").map((w, i) => (i === 0 ? w[0]!.toUpperCase() + w.slice(1) : w)).join(" ");
     const transitions = peopleJourneysOf(
       charts.pipes.flatMap((p, i) => {
         if (!p.leg) return [];
         const byDynasty = new Map<string, number>();
         for (const [slug, c] of spends[i]!) byDynasty.set(dynastyOf(slug), (byDynasty.get(dynastyOf(slug)) ?? 0) + c.committedCents);
-        return [{ pipeId: p.pipeId, fromStep: p.leg.fromStep, toStep: p.leg.toStep, people: p.totals.outcomes, spendByDynasty: byDynasty }];
+        // The campaign page's own count of who reached the step (the milestones' too), the chart's when the page has none.
+        const people = peopleOf.get(p.leg.toStep) ?? p.totals.outcomes;
+        return [{ pipeId: p.pipeId, fromStep: p.leg.fromStep, toStep: p.leg.toStep, people, spendByDynasty: byDynasty }];
       }),
       (k) => labels.get(k) ?? titleOf(k),
       (d) => names.get(d) ?? titleOf(d.replace(/-/g, "_")),
