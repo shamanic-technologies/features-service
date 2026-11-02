@@ -9780,7 +9780,7 @@ registry.registerPath({
             notYet: z.array(factoryMonitoringCampaign).describe("The last pass's campaigns in `state: not_yet` (normal colours)."),
             engine: z
               .object({
-                verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["engine_failed", "replay_failed", "rolled_back", "drives_unreadable"])) }).describe("Red ONLY when broken: a campaign's Engine or the replay failed, a switched result ROLLED BACK (its guard measured it worse than the service path), or the drives are unreadable. The pass staleness is `verdict` above."),
+                verdict: z.object({ red: z.boolean(), reasons: z.array(z.enum(["engine_failed", "replay_failed", "rolled_back", "drives_unreadable", "results_without_engine"])) }).describe("Red ONLY when broken: a campaign's Engine or the replay failed, a driven result ROLLED BACK (its guard measured it worse than the service path), the drives are unreadable, or a result of a live campaign has no Engine pick (`results_without_engine`: it would run the old per-pipe order, listed per result in `results[].unpickedCampaigns`). The pass staleness is `verdict` above."),
                 results: z
                   .array(
                     z.object({
@@ -9789,18 +9789,22 @@ registry.registerPath({
                       outcomeName: z.string(),
                       todayRegret: z.number().nullable(),
                       engineRegret: z.number().nullable(),
-                      status: z.enum(["switched", "shadow", "rolled_back"]).describe("`switched` = the Engine drives this result's workflow on at least one campaign that handed it over (campaign-service `engineOutcomes`); `rolled_back` = a guard put a unit back on the service path (red); `shadow` = nothing runs from it."),
+                      status: z.enum(["switched", "shadow", "rolled_back", "no_engine_pick"]).describe("ENGINE-FULL-MIGRATION-1102: the Engine drives every result of every live funnel campaign. `switched` = it drives this result on at least one unit; `rolled_back` = a guard put a unit back on the service path until its re-trial (red); `no_engine_pick` = a live campaign works this result but the Engine has no workflow to pick for it (red, see `unpickedCampaigns`); `shadow` = no live campaign works it."),
                       units: z.number().int(),
                       driving: z.number().int(),
                       rolledBack: z.number().int(),
+                      unpicked: z.number().int().describe("Units of live campaigns working this result with no Engine pick."),
                       switchedSince: z.string().nullable(),
                       heldDays: z.number().int().nullable().describe("Days since the first switch with no roll-back."),
-                      fleetEligible: z.boolean().describe("Held 7 days with no roll-back: the fleet may follow (never automatic)."),
-                      drives: z.array(z.object({ unitCampaignId: z.string(), brandId: z.string(), state: z.enum(["driving", "rolled_back"]), workflowDynastySlug: z.string(), serviceDynastySlug: z.string().nullable(), switchedAt: z.string(), rolledBackAt: z.string().nullable(), guard: z.record(z.string(), z.unknown()).nullable() })),
+                      fleetEligible: z.boolean().describe("Deprecated (ENGINE-FULL-MIGRATION-1102: every client is driven, no fleet gate): true exactly when `status` is `switched`."),
+                      drives: z.array(z.object({ unitCampaignId: z.string(), brandId: z.string(), state: z.enum(["driving", "rolled_back"]), workflowDynastySlug: z.string(), serviceDynastySlug: z.string().nullable(), switchedAt: z.string(), rolledBackAt: z.string().nullable(), guard: z.record(z.string(), z.unknown()).nullable().describe("The guard: decisions, outcomes, spend and cost per outcome since the switch beside the service path's, `verdict`, `rollBacks` taken so far and, on a rolled-back unit, `retryAt` (its re-trial: 14 days after the first roll-back, doubled per repeat, 56 at most, or at once when the Engine's pick on its pipe moves to another workflow).") })),
+                      unpickedCampaigns: z
+                        .array(z.object({ funnelCampaignId: z.string(), orgId: z.string(), brandId: z.string(), pipeId: z.string(), unitCampaignId: z.string().nullable(), reason: z.enum(["no_unit_campaign", "no_engine_place", "no_candidate", "no_candidate_priced", "no_candidate_on_pipe"]) }))
+                        .describe("The live campaigns working this result with no Engine pick, and why."),
                     }),
                   )
                   .optional()
-                  .describe("ENGINE-PER-OUTCOME-SWITCH: per result family of the replay (plus any switched result), Switched / Shadow / Rolled back, with the guard of every switched unit."),
+                  .describe("ENGINE-FULL-MIGRATION-1102: per result family of the replay (plus any driven or unpicked result), Switched / Shadow / Rolled back / No Engine pick, with the guard of every driven unit."),
                 last: z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable(), expectedAgreementPct: z.number().nullable(), failed: z.number().int() }).nullable(),
                 series: z.array(z.object({ day: z.string(), places: z.number().int(), agreed: z.number().int(), disagreed: z.number().int(), agreementPct: z.number().nullable().describe("Places where today's pick IS the Engine's tick pick (%)."), expectedAgreementPct: z.number().nullable().describe("Mean share of Thompson draws picking today's pick (%)."), failed: z.number().int() })),
                 problems: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), failure: z.string().nullable() })),

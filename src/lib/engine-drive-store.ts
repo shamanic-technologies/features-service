@@ -5,7 +5,7 @@
 import { eq, notInArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { engineDrives } from "../db/schema.js";
-import type { DriveGuard } from "./engine-drive.js";
+import type { StoredGuard } from "./engine-drive.js";
 
 export interface EngineDriveRow {
   unitCampaignId: string;
@@ -19,7 +19,7 @@ export interface EngineDriveRow {
   state: "driving" | "rolled_back";
   switchedAt: string;
   rolledBackAt: string | null;
-  guard: (DriveGuard & { outcomeName: string; source: string }) | null;
+  guard: StoredGuard | null;
   updatedAt: string;
 }
 
@@ -58,7 +58,7 @@ export async function writeDrive(row: Omit<EngineDriveRow, "updatedAt">): Promis
   await db.insert(engineDrives).values(values).onConflictDoUpdate({ target: engineDrives.unitCampaignId, set: values });
 }
 
-/** Every drive whose unit is no longer handed to the Engine is removed (the service path again). */
+/** Every drive whose unit is no longer live (or no longer works a leg of its running funnel) is removed. */
 export async function keepOnlyDrives(unitCampaignIds: readonly string[]): Promise<void> {
   if (unitCampaignIds.length === 0) await db.delete(engineDrives);
   else await db.delete(engineDrives).where(notInArray(engineDrives.unitCampaignId, [...unitCampaignIds]));

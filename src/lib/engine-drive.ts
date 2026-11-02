@@ -3,13 +3,16 @@
  * time. PURE; the IO lives in `routes/factory-shadow.ts` (the stored pass writes `engine_drives`) and
  * `routes/workflow-projection.ts` (the leg-keyed read campaign-service runs its rank 1 from).
  *
- * A funnel campaign hands a RESULT to the Engine as data on the campaign (campaign-service `engineOutcomes`). For each
- * of its unit campaigns whose pipe makes that result, the pass records the workflow the Engine picks on that pipe (its
- * tick pick when it is a workflow of the pipe the unit runs; else the pipe's workflow most draws pick: moving to another
- * pipe is the plan's job, never a unit's), and the leg-keyed workflow-projection puts it at rank 1 for that unit. A
- * GUARD reads what the unit did since the switch: once it took `GUARD_DECISIONS` decisions, a cost per outcome worse than
- * the service path's rolls the unit back to the service path (`rolled_back`, red on Monitoring); it stays rolled back
- * until the result is handed back and handed over again.
+ * ENGINE-FULL-MIGRATION-1102 (owner 2026-11-02, « mets sur tout partout pour tous les clients, il est temps de migrer
+ * fully »): the Engine drives EVERY result of every leg of every live funnel campaign, no hand-over. For each unit
+ * campaign the pass records the workflow the Engine picks on that unit's pipe (its tick pick when it is a workflow of the
+ * pipe the unit runs; else the pipe's workflow most draws pick: moving to another pipe is the plan's job, never a
+ * unit's), and the leg-keyed workflow-projection puts it at rank 1 for that unit. A GUARD reads what the unit did since
+ * the switch: once it took `GUARD_DECISIONS` decisions, a cost per outcome worse than the service path's rolls the unit
+ * back to the service path (`rolled_back`, red on Monitoring). RECOVERY (`driveStepOf`): a rolled-back unit re-trials
+ * the Engine after a cool-down (`RETRY_AFTER_DAYS`, doubled per repeated roll-back up to `RETRY_MAX_DAYS`), or at once
+ * when the Engine's pick on its pipe moved to another workflow (a new candidate, the guard judged the old one); the new
+ * trial is judged from zero against the cool-down's own service figures.
  */
 import { dueShare, type DayCounts, type EnginePlace } from "./engine-shadow.js";
 
@@ -17,8 +20,20 @@ import { dueShare, type DayCounts, type EnginePlace } from "./engine-shadow.js";
 export const GUARD_DECISIONS = 50;
 /** The service path's own cost is read on the unit's last days before the switch. */
 export const SERVICE_LOOKBACK_DAYS = 30;
-/** Our brand holds this many days with no roll-back before the fleet may follow (stated, never automatic). */
-export const FLEET_AFTER_DAYS = 7;
+/**
+ * A rolled-back unit re-trials the Engine after 14 days (two full weekly cycles: the minimum test length experimentation
+ * practice asks for, Kohavi, Tang & Xu, "Trustworthy Online Controlled Experiments", 2020), doubled per repeated roll-back
+ * (exponential backoff, the canary / retry consensus) up to 56 days, so a non-stationary arm is re-explored rather than
+ * written off forever (Garivier & Moulines 2011, sliding-window / discounted bandits).
+ */
+export const RETRY_AFTER_DAYS = 14;
+export const RETRY_MAX_DAYS = 56;
+
+/** PURE: when a unit rolled back for the `rollBacks`-th time at `rolledBackAt` re-trials the Engine. */
+export function retryAtOf(rolledBackAt: string, rollBacks: number): string {
+  const days = Math.min(RETRY_MAX_DAYS, RETRY_AFTER_DAYS * 2 ** Math.max(0, rollBacks - 1));
+  return new Date(Date.parse(rolledBackAt) + days * 86_400_000).toISOString();
+}
 
 /** PURE: the workflow the Engine drives on the pipe a unit runs (null: the place has no Engine pick on that pipe). */
 export function drivenDynastyOf(place: EnginePlace, runningBasePipeId: string): { dynasty: string; source: "engine_tick_pick" | "pipe_most_drawn" } | null {
@@ -66,9 +81,18 @@ const sumDays = (days: readonly DayCounts[], from: string, until: string, counte
  * `fleetServiceCost` the service workflow's fleet cost per outcome (the ranking's). Worse = its cost per outcome above
  * the service path's, or no outcome at all, after `GUARD_DECISIONS` decisions.
  */
-export function guardOf(unitDays: readonly DayCounts[], switchedDay: string, countedOnDay: string, maturityDays: number, fleetServiceCost: number | null): DriveGuard {
+export function guardOf(
+  unitDays: readonly DayCounts[],
+  switchedDay: string,
+  countedOnDay: string,
+  maturityDays: number,
+  fleetServiceCost: number | null,
+  /** A re-trial's service figure is read on its cool-down only (from the last roll-back day), never on the Engine's days. */
+  serviceSinceDay: string | null = null,
+): DriveGuard {
   const since = sumDays(unitDays, switchedDay, "9999-12-31", countedOnDay, maturityDays);
-  const lookback = new Date(Date.parse(`${switchedDay}T00:00:00Z`) - SERVICE_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const window = new Date(Date.parse(`${switchedDay}T00:00:00Z`) - SERVICE_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const lookback = serviceSinceDay !== null && serviceSinceDay > window ? serviceSinceDay : window;
   const before = sumDays(unitDays, lookback, switchedDay, countedOnDay, maturityDays);
   const service = before.cost !== null ? { cost: before.cost, basis: "unit_before_switch" as const } : fleetServiceCost !== null && fleetServiceCost > 0 ? { cost: fleetServiceCost, basis: "fleet_service_workflow" as const } : null;
   const verdict: DriveGuard["verdict"] =
@@ -83,6 +107,72 @@ export function guardOf(unitDays: readonly DayCounts[], switchedDay: string, cou
     serviceBasis: service?.basis ?? null,
     verdict,
   };
+}
+
+/** A drive's guard as stored: the verdict figures plus its roll-back history. */
+export type StoredGuard = DriveGuard & {
+  outcomeName: string;
+  source: string;
+  /** Roll-backs this unit took so far (sets its next cool-down). */
+  rollBacks?: number;
+  /** A rolled-back unit re-trials the Engine at this instant (null while driving). */
+  retryAt?: string | null;
+};
+
+export interface DriveState {
+  state: "driving" | "rolled_back";
+  workflowDynastySlug: string;
+  switchedAt: string;
+  rolledBackAt: string | null;
+  guard: StoredGuard | null;
+}
+
+/**
+ * PURE: a unit's next drive. `kept` = its stored drive, `driven` = the Engine's workflow on its pipe now, `guardAt(switchedDay,
+ * serviceSinceDay)` its guard. Null = nothing to drive (no Engine pick and nothing stored).
+ */
+export function driveStepOf(input: {
+  kept: DriveState | null;
+  driven: { dynasty: string; source: string } | null;
+  now: Date;
+  outcomeName: string;
+  guardAt: (switchedDay: string, serviceSinceDay: string | null) => DriveGuard;
+}): DriveState | null {
+  const { kept, driven, now, outcomeName, guardAt } = input;
+  if (!driven && !kept) return null;
+  const nowIso = now.toISOString();
+  const rollBacks = kept?.guard?.rollBacks ?? (kept?.state === "rolled_back" ? 1 : 0);
+  const source = driven?.source ?? kept?.guard?.source ?? "engine_tick_pick";
+  if (kept?.state === "rolled_back") {
+    const retryAt = kept.guard?.retryAt ?? retryAtOf(kept.rolledBackAt ?? kept.switchedAt, rollBacks);
+    const newCandidate = driven !== null && driven.dynasty !== kept.workflowDynastySlug;
+    if (nowIso < retryAt && !newCandidate) {
+      return { ...kept, guard: kept.guard ? { ...kept.guard, outcomeName, rollBacks, retryAt } : null };
+    }
+    // A new trial: switched now, judged from zero against the cool-down's service path.
+    const day = nowIso.slice(0, 10);
+    const guard = guardAt(day, (kept.rolledBackAt ?? day).slice(0, 10));
+    return {
+      state: "driving",
+      workflowDynastySlug: driven?.dynasty ?? kept.workflowDynastySlug,
+      switchedAt: nowIso,
+      rolledBackAt: kept.rolledBackAt,
+      guard: { ...guard, outcomeName, source, rollBacks, retryAt: null },
+    };
+  }
+  const switchedAt = kept?.switchedAt ?? nowIso;
+  const guard = guardAt(switchedAt.slice(0, 10), kept?.rolledBackAt ? kept.rolledBackAt.slice(0, 10) : null);
+  const workflowDynastySlug = driven?.dynasty ?? kept!.workflowDynastySlug;
+  if (guard.verdict === "worse") {
+    return {
+      state: "rolled_back",
+      workflowDynastySlug,
+      switchedAt,
+      rolledBackAt: nowIso,
+      guard: { ...guard, outcomeName, source, rollBacks: rollBacks + 1, retryAt: retryAtOf(nowIso, rollBacks + 1) },
+    };
+  }
+  return { state: "driving", workflowDynastySlug, switchedAt, rolledBackAt: kept?.rolledBackAt ?? null, guard: { ...guard, outcomeName, source, rollBacks, retryAt: null } };
 }
 
 /** A leg-keyed projection body as far as the drive reads it (priced and unpriced pipes alike). */
