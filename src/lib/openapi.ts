@@ -9910,6 +9910,7 @@ registry.registerPath({
           schema: z.object({
             computedAt: z.string().nullable(),
             clearWinnerPct: z.number(),
+            dailyBasis: z.string().optional().describe("How `places[].daily` is read."),
             summary: z.object({ places: z.number().int(), clearWinners: z.number().int(), campaigns: z.number().int() }),
             places: z.array(
               z.object({
@@ -9921,6 +9922,10 @@ registry.registerPath({
                 campaigns: z.number().int(),
                 favourite: z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() }).extend({ chancePct: z.number().nullable() }).nullable(),
                 clearWinner: z.boolean(),
+                daily: z
+                  .array(z.object({ day: z.string(), decisions: z.number(), favouriteSharePct: z.number().nullable(), lostUsd: z.number() }))
+                  .nullable()
+                  .describe("Last 30 days, one row per day with decisions: the fleet decisions that RAN on the place's candidates, the share on TODAY's favourite, and the dollars spent on the other candidates (value lost to weaker picks). Written by every pass; null before the first."),
                 candidates: z.array(z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() })),
               }),
             ),
