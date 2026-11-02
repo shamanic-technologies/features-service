@@ -16,7 +16,12 @@
  */
 import { dueShare, type DayCounts, type EnginePlace } from "./engine-shadow.js";
 
-/** Decisions a switched unit takes before its guard judges it. */
+/**
+ * DUE decisions a switched unit takes before its guard judges it: decisions weighted by the share of their outcomes
+ * already due at their age (`dueShare` over the leg's maturity window). Never raw decisions: on a 21-day positive-reply
+ * leg, 57 emails sent this morning owe no reply yet, and "no outcome" read as worse rolled a unit back two hours after its
+ * switch (2026-11-02, the classic peeking error of reading an experiment before its outcomes can land).
+ */
 export const GUARD_DECISIONS = 50;
 /** The service path's own cost is read on the unit's last days before the switch. */
 export const SERVICE_LOOKBACK_DAYS = 30;
@@ -48,6 +53,8 @@ export function drivenDynastyOf(place: EnginePlace, runningBasePipeId: string): 
 export interface DriveGuard {
   /** Decisions, outcomes and spend of the unit since the switch (every workflow it ran). */
   decisions: number;
+  /** Of those decisions, the share whose outcomes are due by now (the guard judges once this reaches `GUARD_DECISIONS`). */
+  dueDecisions?: number;
   outcomes: number;
   spentUsd: number;
   /** Its cost per outcome since the switch, censored like for like (spend over the outcomes already due); null at 0. */
@@ -55,7 +62,7 @@ export interface DriveGuard {
   /** The service path's cost per outcome: the unit's own before the switch, else the pipe's service workflow's (fleet). */
   serviceCostPerOutcomeUsd: number | null;
   serviceBasis: "unit_before_switch" | "fleet_service_workflow" | null;
-  /** `measuring` (< GUARD_DECISIONS), `holds`, `worse` (roll back), `no_service_figure` (nothing to compare: holds). */
+  /** `measuring` (< GUARD_DECISIONS due), `holds`, `worse` (roll back), `no_service_figure` (nothing to compare: holds). */
   verdict: "measuring" | "holds" | "worse" | "no_service_figure";
 }
 
@@ -73,7 +80,7 @@ const sumDays = (days: readonly DayCounts[], from: string, until: string, counte
   }
   // Spend over the outcomes already due: an open decision is not yet a failure.
   const cost = outcomes > 0 && decisions > 0 ? (spentUsd * (due / decisions)) / outcomes : null;
-  return { decisions, outcomes, spentUsd, cost };
+  return { decisions, due, outcomes, spentUsd, cost };
 };
 
 /**
@@ -89,17 +96,20 @@ export function guardOf(
   fleetServiceCost: number | null,
   /** A re-trial's service figure is read on its cool-down only (from the last roll-back day), never on the Engine's days. */
   serviceSinceDay: string | null = null,
+  /** The Engine's days end here (a rolled-back unit is re-judged on the days it was driven only). */
+  untilDay = "9999-12-31",
 ): DriveGuard {
-  const since = sumDays(unitDays, switchedDay, "9999-12-31", countedOnDay, maturityDays);
+  const since = sumDays(unitDays, switchedDay, untilDay, countedOnDay, maturityDays);
   const window = new Date(Date.parse(`${switchedDay}T00:00:00Z`) - SERVICE_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const lookback = serviceSinceDay !== null && serviceSinceDay > window ? serviceSinceDay : window;
   const before = sumDays(unitDays, lookback, switchedDay, countedOnDay, maturityDays);
   const service = before.cost !== null ? { cost: before.cost, basis: "unit_before_switch" as const } : fleetServiceCost !== null && fleetServiceCost > 0 ? { cost: fleetServiceCost, basis: "fleet_service_workflow" as const } : null;
   const verdict: DriveGuard["verdict"] =
-    since.decisions < GUARD_DECISIONS ? "measuring" : service === null ? "no_service_figure" : since.cost === null || since.cost > service.cost ? "worse" : "holds";
+    since.due < GUARD_DECISIONS ? "measuring" : service === null ? "no_service_figure" : since.cost === null || since.cost > service.cost ? "worse" : "holds";
   const r = (v: number | null) => (v === null ? null : Math.round(v * 10_000) / 10_000);
   return {
     decisions: Math.round(since.decisions * 10) / 10,
+    dueDecisions: Math.round(since.due * 10) / 10,
     outcomes: Math.round(since.outcomes * 10) / 10,
     spentUsd: r(since.spentUsd) ?? 0,
     costPerOutcomeUsd: r(since.cost),
@@ -138,7 +148,7 @@ export function driveStepOf(input: {
   driven: { dynasty: string; source: string } | null;
   now: Date;
   outcomeName: string;
-  guardAt: (switchedDay: string, serviceSinceDay: string | null) => DriveGuard;
+  guardAt: (switchedDay: string, serviceSinceDay: string | null, untilDay?: string) => DriveGuard;
 }): DriveState | null {
   const { kept, driven, now, outcomeName, guardAt } = input;
   if (!driven && !kept) return null;
@@ -146,6 +156,15 @@ export function driveStepOf(input: {
   const rollBacks = kept?.guard?.rollBacks ?? (kept?.state === "rolled_back" ? 1 : 0);
   const source = driven?.source ?? kept?.guard?.source ?? "engine_tick_pick";
   if (kept?.state === "rolled_back") {
+    // A roll-back the evidence no longer supports is undone (outcomes landed late, or it was judged before any was due):
+    // the unit is re-judged on the days it was driven, against the same service figure, and drives on from its switch.
+    const rolledBackDay = (kept.rolledBackAt ?? nowIso).slice(0, 10);
+    const dayAfter = new Date(Date.parse(`${rolledBackDay}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const rejudged = guardAt(kept.switchedAt.slice(0, 10), null, dayAfter);
+    if (rejudged.verdict !== "worse") {
+      const back = Math.max(0, rollBacks - 1);
+      return { state: "driving", workflowDynastySlug: driven?.dynasty ?? kept.workflowDynastySlug, switchedAt: kept.switchedAt, rolledBackAt: null, guard: { ...rejudged, outcomeName, source, rollBacks: back, retryAt: null } };
+    }
     const retryAt = kept.guard?.retryAt ?? retryAtOf(kept.rolledBackAt ?? kept.switchedAt, rollBacks);
     const newCandidate = driven !== null && driven.dynasty !== kept.workflowDynastySlug;
     if (nowIso < retryAt && !newCandidate) {

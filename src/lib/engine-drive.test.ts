@@ -93,7 +93,8 @@ describe("ENGINE-FULL-MIGRATION-1102: every unit is driven, a roll-back recovers
       guard: { ...g("worse"), outcomeName: "Lead", source: "engine_tick_pick", rollBacks: 1, retryAt: "2026-11-16T10:00:00.000Z" },
     };
     const calls: Array<[string, string | null]> = [];
-    const guardAt = (day: string, since: string | null) => (calls.push([day, since]), g("measuring"));
+    // The roll-back still stands on the days it was driven (re-judged worse); a re-trial starts measuring.
+    const guardAt = (day: string, since: string | null, until?: string) => (until ? g("worse") : (calls.push([day, since]), g("measuring")));
     expect(driveStepOf({ kept, driven: pick, now: at("2026-11-10T00:00:00Z"), outcomeName: "Lead", guardAt })!.state).toBe("rolled_back");
     const back = driveStepOf({ kept, driven: pick, now: at("2026-11-16T10:00:00Z"), outcomeName: "Lead", guardAt })!;
     expect(back).toMatchObject({ state: "driving", switchedAt: "2026-11-16T10:00:00.000Z", rolledBackAt: "2026-11-02T10:00:00.000Z", guard: { verdict: "measuring", rollBacks: 1, retryAt: null } });
@@ -102,7 +103,7 @@ describe("ENGINE-FULL-MIGRATION-1102: every unit is driven, a roll-back recovers
 
   it("re-trials at once when the Engine's pick on its pipe moved to another workflow", () => {
     const kept: DriveState = { state: "rolled_back", workflowDynastySlug: "a", switchedAt: "2026-10-20T00:00:00.000Z", rolledBackAt: "2026-11-01T00:00:00.000Z", guard: { ...g("worse"), outcomeName: "Lead", source: "engine_tick_pick", rollBacks: 1, retryAt: "2026-11-15T00:00:00.000Z" } };
-    expect(driveStepOf({ kept, driven: pick, now: at("2026-11-02T00:00:00Z"), outcomeName: "Lead", guardAt: () => g("measuring") })).toMatchObject({ state: "driving", workflowDynastySlug: "b" });
+    expect(driveStepOf({ kept, driven: pick, now: at("2026-11-02T00:00:00Z"), outcomeName: "Lead", guardAt: (_d, _s, until) => g(until ? "worse" : "measuring") })).toMatchObject({ state: "driving", workflowDynastySlug: "b", switchedAt: "2026-11-02T00:00:00.000Z" });
   });
 
   it("a repeated roll-back waits twice as long, capped", () => {
@@ -118,5 +119,24 @@ describe("ENGINE-FULL-MIGRATION-1102: every unit is driven, a roll-back recovers
       { day: "2026-11-17", decisions: 60, outcomes: 10, spentUsd: 6 }, // the re-trial: $0.60 per lead
     ];
     expect(guardOf(days, "2026-11-16", "2026-11-20", 0, null, "2026-11-02")).toMatchObject({ verdict: "worse", serviceCostPerOutcomeUsd: 0.2 });
+  });
+
+  it("never judges before outcomes are due: 57 emails sent this morning on a 21-day reply leg owe no reply yet", () => {
+    const g0 = guardOf([{ day: "2026-11-02", decisions: 57, outcomes: 0, spentUsd: 0.44 }], "2026-11-02", "2026-11-02", 21, 23.41);
+    expect(g0).toMatchObject({ verdict: "measuring", decisions: 57, dueDecisions: 0 });
+  });
+
+  it("undoes a roll-back the evidence no longer supports, from its original switch", () => {
+    const kept: DriveState = {
+      state: "rolled_back",
+      workflowDynastySlug: "ballad",
+      switchedAt: "2026-11-02T05:46:27.890Z",
+      rolledBackAt: "2026-11-02T07:18:40.784Z",
+      guard: { ...g("worse"), outcomeName: "Positive reply", source: "engine_tick_pick", rollBacks: 1, retryAt: "2026-11-16T07:18:40.784Z" },
+    };
+    const seen: Array<string | undefined> = [];
+    const d = driveStepOf({ kept, driven: { dynasty: "ballad", source: "engine_tick_pick" }, now: at("2026-11-02T09:00:00Z"), outcomeName: "Positive reply", guardAt: (_d, _s, until) => (seen.push(until), g("measuring")) })!;
+    expect(seen[0]).toBe("2026-11-03");
+    expect(d).toMatchObject({ state: "driving", switchedAt: "2026-11-02T05:46:27.890Z", rolledBackAt: null, guard: { rollBacks: 0, retryAt: null } });
   });
 });

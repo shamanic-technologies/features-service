@@ -384,7 +384,7 @@ export async function drivesOfCampaign(
       driven,
       now,
       outcomeName,
-      guardAt: (switchedDay, serviceSinceDay) => guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedDay, today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null, serviceSinceDay),
+      guardAt: (switchedDay, serviceSinceDay, untilDay) => guardOf(days.byCampaign.get(unit.campaignId) ?? [], switchedDay, today, days.maturityDays, serviceRow?.costPerOutcomeUsd ?? null, serviceSinceDay, untilDay),
     });
     if (!next) continue;
     if (next.guard) next.guard = { ...next.guard, family: engineFamilyKeyOf(base) };
