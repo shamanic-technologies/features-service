@@ -29,6 +29,7 @@ vi.mock("../lib/factory-shadow-store.js", () => ({
   writePlan: vi.fn(async (r: any) => void mem.plans.set(r.campaignId, { ...r, computedAt: r.computedAt.toISOString() })),
   readPlan: vi.fn(async (id: string) => mem.plans.get(id) ?? null),
   readPlansSince: vi.fn(async () => [...mem.plans.values()]),
+  readOfferPlans: vi.fn(async () => []),
   writeDay: vi.fn(async (day: string, counts: any[], at: Date) => {
     mem.days = [...mem.days.filter((d) => d.day !== day), ...counts.map((c) => ({ day, ...c, sweptAt: at.toISOString() }))];
   }),
