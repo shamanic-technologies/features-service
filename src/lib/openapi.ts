@@ -9796,7 +9796,6 @@ registry.registerPath({
                       unpicked: z.number().int().describe("Units of live campaigns working this result with no Engine pick."),
                       switchedSince: z.string().nullable(),
                       heldDays: z.number().int().nullable().describe("Days since the first switch with no roll-back."),
-                      fleetEligible: z.boolean().describe("Deprecated (ENGINE-FULL-MIGRATION-1102: every client is driven, no fleet gate): true exactly when `status` is `switched`."),
                       drives: z.array(z.object({ unitCampaignId: z.string(), brandId: z.string(), state: z.enum(["driving", "rolled_back"]), workflowDynastySlug: z.string(), serviceDynastySlug: z.string().nullable(), switchedAt: z.string(), rolledBackAt: z.string().nullable(), guard: z.record(z.string(), z.unknown()).nullable().describe("The guard: decisions, outcomes, spend and cost per outcome since the switch beside the service path's, `verdict`, `rollBacks` taken so far and, on a rolled-back unit, `retryAt` (its re-trial: 14 days after the first roll-back, doubled per repeat, 56 at most, or at once when the Engine's pick on its pipe moves to another workflow).") })),
                       unpickedCampaigns: z
                         .array(z.object({ funnelCampaignId: z.string(), orgId: z.string(), brandId: z.string(), pipeId: z.string(), unitCampaignId: z.string().nullable(), reason: z.enum(["no_unit_campaign", "no_engine_place", "no_candidate", "no_candidate_priced", "no_candidate_on_pipe"]) }))
