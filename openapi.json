@@ -34528,7 +34528,7 @@
               "red",
               "green"
             ],
-            "description": "The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."
+            "description": "The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, root-filesystem free < thresholds.diskAvailablePctMin % (only when the latest sample states its disk: unknown disk is never red on its own), any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."
           },
           "reason": {
             "type": "string",
@@ -34569,6 +34569,10 @@
                 "type": "number",
                 "description": "Red above this swap used, % of swap total (50)."
               },
+              "diskAvailablePctMin": {
+                "type": "number",
+                "description": "Red below this free disk on the root filesystem, % of its size (10)."
+              },
               "oomWindowHours": {
                 "type": "number",
                 "description": "Red when any OOM kill happened within this many hours (24)."
@@ -34583,6 +34587,7 @@
               "load5Max",
               "memAvailableMinMb",
               "swapUsedPctMax",
+              "diskAvailablePctMin",
               "oomWindowHours",
               "staleAfterMinutes"
             ]
@@ -34664,6 +34669,21 @@
                   ]
                 },
                 "description": "Per-container usage of this sample (CPU in cores); null for backfilled history."
+              },
+              "diskTotalMb": {
+                "type": "number",
+                "nullable": true,
+                "description": "Root filesystem size, MB; null = this sample did not state its disk."
+              },
+              "diskAvailableMb": {
+                "type": "number",
+                "nullable": true,
+                "description": "Root filesystem free space (df Avail), MB; null = unknown."
+              },
+              "diskAvailablePct": {
+                "type": "number",
+                "nullable": true,
+                "description": "diskAvailableMb / diskTotalMb x 100 (0.1 precision); null when either is unknown."
               }
             },
             "required": [
@@ -34680,7 +34700,10 @@
               "swapUsedPct",
               "oomKills",
               "oomKillsLast24h",
-              "containers"
+              "containers",
+              "diskTotalMb",
+              "diskAvailableMb",
+              "diskAvailablePct"
             ],
             "description": "The most recent sample, all fields; null when nothing was ever sampled."
           },
@@ -34720,6 +34743,16 @@
                   "type": "integer",
                   "nullable": true,
                   "description": "OOM kills that day; null when no sample stated a count."
+                },
+                "diskAvailableMinMb": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Min free disk on / over the day's samples that stated their disk, MB; null when none did."
+                },
+                "diskAvailablePctMin": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Min free disk on /, % of its size, over the day's samples that stated their disk; null when none did."
                 }
               },
               "required": [
@@ -34729,7 +34762,9 @@
                 "load5Max",
                 "memAvailableMinMb",
                 "swapUsedPctMax",
-                "oomKills"
+                "oomKills",
+                "diskAvailableMinMb",
+                "diskAvailablePctMin"
               ]
             },
             "description": "One point per UTC day of the window THAT HAS SAMPLES, oldest first. A day without samples is ABSENT (a gap, never a zero)."
@@ -34761,6 +34796,11 @@
                 "swapUsedPct": {
                   "type": "number",
                   "nullable": true
+                },
+                "diskAvailablePct": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Free disk on /, % of its size; null when the sample did not state its disk."
                 }
               },
               "required": [
@@ -34769,7 +34809,8 @@
                 "load5",
                 "load15",
                 "memAvailableMb",
-                "swapUsedPct"
+                "swapUsedPct",
+                "diskAvailablePct"
               ]
             },
             "description": "Every sample of the last 48 hours, oldest first."
@@ -77911,6 +77952,18 @@
                           },
                           "maxItems": 500,
                           "description": "Per-container usage. Absent for backfilled history."
+                        },
+                        "diskTotalMb": {
+                          "type": "number",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Size of the root filesystem (/), MB. Absent/null when unknown (backfill, older cron): never red on its own."
+                        },
+                        "diskAvailableMb": {
+                          "type": "number",
+                          "nullable": true,
+                          "minimum": 0,
+                          "description": "Free space on the root filesystem (/) available to processes (df 'Avail'), MB. Absent/null when unknown."
                         }
                       },
                       "required": [

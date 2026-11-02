@@ -9254,7 +9254,7 @@ registry.registerComponent("securitySchemes", "ApiKeyAuth", {
 const boxHealthView = registry.register(
   "BoxHealthView",
   z.object({
-    status: z.enum(["red", "green"]).describe("The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."),
+    status: z.enum(["red", "green"]).describe("The served verdict, rendered as-is. Red from the LATEST sample when load5 > thresholds.load5Max, memAvailableMb < thresholds.memAvailableMinMb, swap used > thresholds.swapUsedPctMax % of swap total, swap total = 0, root-filesystem free < thresholds.diskAvailablePctMin % (only when the latest sample states its disk: unknown disk is never red on its own), any OOM kill in the last thresholds.oomWindowHours, OR no sample for more than thresholds.staleAfterMinutes (the monitor is blind), OR nothing ever sampled."),
     reason: z.string().describe("Every reason joined in plain words."),
     reasons: z.array(z.string()).describe("One plain sentence per failing check (one 'Box healthy' sentence when green)."),
     stale: z.boolean().describe("True when the latest sample is older than staleAfterMinutes, or none exists."),
@@ -9264,6 +9264,7 @@ const boxHealthView = registry.register(
       load5Max: z.number().nullable().describe("loadPerCoreMax x latest cores (12 on 8 cores); null when nothing sampled."),
       memAvailableMinMb: z.number().describe("Red below this MemAvailable, MB (1024)."),
       swapUsedPctMax: z.number().describe("Red above this swap used, % of swap total (50)."),
+      diskAvailablePctMin: z.number().describe("Red below this free disk on the root filesystem, % of its size (10)."),
       oomWindowHours: z.number().describe("Red when any OOM kill happened within this many hours (24)."),
       staleAfterMinutes: z.number().describe("Red when no sample arrived for this many minutes (20)."),
     }),
@@ -9282,6 +9283,9 @@ const boxHealthView = registry.register(
       oomKills: z.number().int().nullable().describe("OOM kills reported by this sample (since the previous one); null = unknown."),
       oomKillsLast24h: z.number().int().nullable().describe("Sum over the samples of the last 24 h; null when none stated a count."),
       containers: z.array(z.object({ name: z.string(), cpuCores: z.number(), memMb: z.number() })).nullable().describe("Per-container usage of this sample (CPU in cores); null for backfilled history."),
+      diskTotalMb: z.number().nullable().describe("Root filesystem size, MB; null = this sample did not state its disk."),
+      diskAvailableMb: z.number().nullable().describe("Root filesystem free space (df Avail), MB; null = unknown."),
+      diskAvailablePct: z.number().nullable().describe("diskAvailableMb / diskTotalMb x 100 (0.1 precision); null when either is unknown."),
     }).nullable().describe("The most recent sample, all fields; null when nothing was ever sampled."),
     windowDays: z.number().int(),
     daily: z.array(
@@ -9293,6 +9297,8 @@ const boxHealthView = registry.register(
         memAvailableMinMb: z.number().describe("Min MemAvailable over the day's samples, MB."),
         swapUsedPctMax: z.number().nullable().describe("Max swap used % over the day; null when the box had no swap all day."),
         oomKills: z.number().int().nullable().describe("OOM kills that day; null when no sample stated a count."),
+        diskAvailableMinMb: z.number().nullable().describe("Min free disk on / over the day's samples that stated their disk, MB; null when none did."),
+        diskAvailablePctMin: z.number().nullable().describe("Min free disk on /, % of its size, over the day's samples that stated their disk; null when none did."),
       }),
     ).describe("One point per UTC day of the window THAT HAS SAMPLES, oldest first. A day without samples is ABSENT (a gap, never a zero)."),
     recentHours: z.number().int().describe("48."),
@@ -9304,6 +9310,7 @@ const boxHealthView = registry.register(
         load15: z.number(),
         memAvailableMb: z.number(),
         swapUsedPct: z.number().nullable(),
+        diskAvailablePct: z.number().nullable().describe("Free disk on /, % of its size; null when the sample did not state its disk."),
       }),
     ).describe("Every sample of the last 48 hours, oldest first."),
     topContainers: z.object({

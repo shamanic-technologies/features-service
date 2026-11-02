@@ -18,6 +18,8 @@ function sample(at: Date, over: Partial<StoredBoxSample> = {}): StoredBoxSample 
     swapUsedMb: 1_000,
     oomKills: 0,
     containers: null,
+    diskTotalMb: null,
+    diskAvailableMb: null,
     ...over,
   };
 }
@@ -41,6 +43,7 @@ describe("box health verdict", () => {
       load5Max: 12,
       memAvailableMinMb: 1024,
       swapUsedPctMax: 50,
+      diskAvailablePctMin: 10,
       oomWindowHours: 24,
       staleAfterMinutes: 20,
     });
@@ -109,6 +112,73 @@ describe("box health verdict", () => {
   });
 });
 
+describe("box health disk (BOX-DISK-1101)", () => {
+  it("free disk below 10 % is red; at exactly 10 % is green", () => {
+    const red = view([sample(minsAgo(3), { diskTotalMb: 100_000, diskAvailableMb: 9_999 })]);
+    expect(red.status).toBe("red");
+    expect(red.reason).toMatch(/Disk free 10 % \(< 10 %\)/);
+    expect(red.latest!.diskAvailablePct).toBe(10);
+    const low = view([sample(minsAgo(3), { diskTotalMb: 100_000, diskAvailableMb: 6_200 })]);
+    expect(low.reason).toMatch(/^Disk free 6\.2 % \(< 10 %\)/);
+    const edge = view([sample(minsAgo(3), { diskTotalMb: 100_000, diskAvailableMb: 10_000 })]);
+    expect(edge.status).toBe("green");
+    expect(edge.reason).toMatch(/disk 10 % free/);
+    expect(edge.latest).toMatchObject({ diskTotalMb: 100_000, diskAvailableMb: 10_000, diskAvailablePct: 10 });
+  });
+
+  it("unknown disk is never red on its own and is served null", () => {
+    for (const over of [{}, { diskTotalMb: 100_000 }, { diskAvailableMb: 0 }]) {
+      const v = view([sample(minsAgo(3), over)]);
+      expect(v.status).toBe("green");
+      expect(v.latest!.diskAvailablePct).toBeNull();
+      expect(v.recent[0].diskAvailablePct).toBeNull();
+      expect(v.daily[0].diskAvailablePctMin).toBeNull();
+      expect(v.daily[0].diskAvailableMinMb).toBeNull();
+    }
+  });
+
+  it("only the LATEST sample's disk decides the verdict", () => {
+    const v = view([
+      sample(minsAgo(30), { diskTotalMb: 100_000, diskAvailableMb: 1_000 }),
+      sample(minsAgo(3), { diskTotalMb: 100_000, diskAvailableMb: 40_000 }),
+    ]);
+    expect(v.status).toBe("green");
+  });
+
+  it("daily: the minimum free over the samples that stated their disk; recent carries the percent", () => {
+    const v = view([
+      sample(minsAgo(60), { diskTotalMb: 200_000, diskAvailableMb: 30_000 }),
+      sample(minsAgo(30), { diskTotalMb: 100_000, diskAvailableMb: 20_000 }),
+      sample(minsAgo(3)),
+    ]);
+    const today = v.daily.at(-1)!;
+    expect(today.diskAvailableMinMb).toBe(20_000);
+    expect(today.diskAvailablePctMin).toBe(15);
+    expect(v.recent.map((p) => p.diskAvailablePct)).toEqual([15, 20, null]);
+    expect(v.latest!.diskAvailablePct).toBeNull();
+  });
+
+  it("the schema accepts disk fields, absent or null, and refuses available > total or a negative", () => {
+    const base = {
+      sampledAt: NOW.toISOString(),
+      source: "agent",
+      load1: 1,
+      load5: 1,
+      load15: 1,
+      cores: 8,
+      memTotalMb: 16_000,
+      memAvailableMb: 8_000,
+      swapTotalMb: 8_192,
+      swapUsedMb: 0,
+    };
+    expect(BoxHealthBatchSchema.safeParse({ samples: [base] }).success).toBe(true);
+    expect(BoxHealthBatchSchema.safeParse({ samples: [{ ...base, diskTotalMb: null, diskAvailableMb: null }] }).success).toBe(true);
+    expect(BoxHealthBatchSchema.safeParse({ samples: [{ ...base, diskTotalMb: 1000, diskAvailableMb: 500 }] }).success).toBe(true);
+    expect(BoxHealthBatchSchema.safeParse({ samples: [{ ...base, diskTotalMb: 1000, diskAvailableMb: 1001 }] }).success).toBe(false);
+    expect(BoxHealthBatchSchema.safeParse({ samples: [{ ...base, diskTotalMb: -1 }] }).success).toBe(false);
+  });
+});
+
 describe("box health series", () => {
   it("daily: one point per UTC day with samples, a day without samples is absent (gap)", () => {
     const v = view([
@@ -126,6 +196,8 @@ describe("box health series", () => {
       memAvailableMinMb: 3000,
       swapUsedPctMax: 50,
       oomKills: 3,
+      diskAvailableMinMb: null,
+      diskAvailablePctMin: null,
     });
   });
 
@@ -145,6 +217,7 @@ describe("box health series", () => {
       load15: 6,
       memAvailableMb: 6000,
       swapUsedPct: 25,
+      diskAvailablePct: null,
     });
   });
 

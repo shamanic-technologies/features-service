@@ -31,6 +31,8 @@ export async function upsertBoxHealthSamples(samples: BoxHealthSample[], now: Da
         swapUsedMb: s.swapUsedMb,
         oomKills: s.oomKills ?? null,
         containers: s.containers ?? null,
+        diskTotalMb: s.diskTotalMb ?? null,
+        diskAvailableMb: s.diskAvailableMb ?? null,
         receivedAt: now,
       }));
       await tx
@@ -50,6 +52,8 @@ export async function upsertBoxHealthSamples(samples: BoxHealthSample[], now: Da
             swapUsedMb: sql`excluded.swap_used_mb`,
             oomKills: sql`excluded.oom_kills`,
             containers: sql`excluded.containers`,
+            diskTotalMb: sql`excluded.disk_total_mb`,
+            diskAvailableMb: sql`excluded.disk_available_mb`,
             receivedAt: sql`excluded.received_at`,
           },
         });
@@ -76,6 +80,8 @@ function toStored(r: Partial<BoxHealthSampleRow> & Omit<BoxHealthSampleRow, "con
     swapUsedMb: r.swapUsedMb,
     oomKills: r.oomKills,
     containers: r.containers ?? null,
+    diskTotalMb: r.diskTotalMb ?? null,
+    diskAvailableMb: r.diskAvailableMb ?? null,
   };
 }
 
@@ -93,6 +99,8 @@ export async function readBoxHealthInputs(since: Date, now: Date): Promise<BoxHe
     swapTotalMb: boxHealthSamples.swapTotalMb,
     swapUsedMb: boxHealthSamples.swapUsedMb,
     oomKills: boxHealthSamples.oomKills,
+    diskTotalMb: boxHealthSamples.diskTotalMb,
+    diskAvailableMb: boxHealthSamples.diskAvailableMb,
   };
   const [windowRows, latestRows, hourRows] = await Promise.all([
     db.select(slim).from(boxHealthSamples).where(gte(boxHealthSamples.sampledAt, since)),
