@@ -90,7 +90,9 @@ export function milestonesOf(input: { legs: readonly MilestoneLegFigures[]; step
     const needed = leg.outcomesNeededPerPayingClient;
 
     const costPerOutcomeUsd =
-      own.length > 0 && ownOutcomes > 0
+      // A pipe with outcomes and NO spend of its own is not free: its spend sits under another unit (a sourcing serve run
+      // filed under the outreach campaign). Measured only with spend on both sides, else the plan's expected cost.
+      own.length > 0 && ownOutcomes > 0 && ownSpend > 0
         ? measured(ownSpend / ownOutcomes)
         : leg.costSource === "customer_team"
           ? { value: 0, basis: "expected" as const, unavailableReason: null }

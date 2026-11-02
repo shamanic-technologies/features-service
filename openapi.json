@@ -78987,7 +78987,7 @@
     "/brands/{brandId}/sales-funnel-campaigns/{id}/people-journeys": {
       "get": {
         "summary": "What one funnel campaign's people went through: per transition, how many made it and each workflow's share of the work",
-        "description": "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a step, to a step), `people` = the campaign's people who made it since it started (the pipe's own outcome count, the spend charts' figure), and `scripts` = each workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; a pipe with no spend yet = `scripts: []` + `scriptsUnavailableReason: no_spend_yet`. Org-scoped (x-org-id).",
+        "description": "FACTORY-USER-DASHBOARD-1102 (customer campaign page, GTM Factory). One row per pipe of the campaign, in path order: the transition it makes (from Start or a step, to a step), `people` = the campaign's people who made it since it started (the campaign page's own count, the milestones' `outcomes`), and `scripts` = each workflow dynasty's share of that pipe's committed spend (`shareBasis: spend`), biggest first; no share = `scripts: []` + `scriptsUnavailableReason` `no_spend_yet` (nobody yet) or `spend_recorded_under_another_pipe` (people made it, the work was paid under another pipe of the campaign). Org-scoped (x-org-id).",
         "tags": [
           "Sales funnel campaigns"
         ],
@@ -79439,16 +79439,17 @@
                               "decisions": {
                                 "type": "number"
                               },
-                              "ratePct": {
+                              "outcomesPer100Decisions": {
                                 "type": "number",
-                                "nullable": true
+                                "nullable": true,
+                                "description": "Fleet outcomes per 100 decisions; can pass 100 (one decision may make several outcomes)."
                               }
                             },
                             "required": [
                               "workflows",
                               "outcomes",
                               "decisions",
-                              "ratePct"
+                              "outcomesPer100Decisions"
                             ]
                           },
                           "outside": {
@@ -79463,16 +79464,17 @@
                               "decisions": {
                                 "type": "number"
                               },
-                              "ratePct": {
+                              "outcomesPer100Decisions": {
                                 "type": "number",
-                                "nullable": true
+                                "nullable": true,
+                                "description": "Fleet outcomes per 100 decisions; can pass 100 (one decision may make several outcomes)."
                               }
                             },
                             "required": [
                               "workflows",
                               "outcomes",
                               "decisions",
-                              "ratePct"
+                              "outcomesPer100Decisions"
                             ]
                           },
                           "better": {
@@ -79534,11 +79536,16 @@
                               "family": {
                                 "type": "string"
                               },
+                              "familyName": {
+                                "type": "string",
+                                "description": "The family in plain words (\"Positive reply, from Lead found, on Email Pushed Via API\")."
+                              },
                               "outcome": {
                                 "type": "string"
                               },
                               "outcomeName": {
-                                "type": "string"
+                                "type": "string",
+                                "description": "Same plain words as familyName (kept for older readers)."
                               },
                               "todayRegret": {
                                 "type": "number",
@@ -79551,6 +79558,7 @@
                             },
                             "required": [
                               "family",
+                              "familyName",
                               "outcome",
                               "outcomeName",
                               "todayRegret",

@@ -806,7 +806,7 @@ router.get("/internal/research/engine-places", apiKeyOnly, async (_req, res) => 
       engines: enginesOf(places),
       strategySplits,
       replay: replay
-        ? { computedAt: replay.computedAt, windowDays: replay.windowDays, families: replay.families.map((f) => ({ family: f.family ?? f.outcome, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret })), failure: replay.failure }
+        ? { computedAt: replay.computedAt, windowDays: replay.windowDays, families: replay.families.map((f) => ({ family: f.family ?? f.outcome, familyName: f.outcomeName, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret })), failure: replay.failure }
         : null,
     });
   } catch (error) {
