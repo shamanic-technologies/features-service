@@ -166,6 +166,17 @@ describe("one place served", () => {
     const days = engineDayCountsOf([{ orgId: "o", engine: shadow }, { orgId: "o", engine: { ...shadow, status: "failed", places: [] } }]);
     expect(days.get("o")).toMatchObject({ enginePlaces: 1, engineAgreed: 1, engineFailed: 1 });
   });
+
+  it("ENGINE-FULL-MIGRATION-1102: a place none of whose candidates carries a value still picks, on cost per outcome", () => {
+    const a = { ...cand("a", "src", ev(20_000, 400, 1000)), valueAddedUsd: null };
+    const b = { ...cand("b", "src", ev(20_000, 200, 2000)), valueAddedUsd: null };
+    const p = enginePlaceOf({ outcome: "lead_found", outcomeName: "Lead", consumer: "campaign", consumerName: "Campaign", targetValued: true, seed: "s" }, [a, b], { candidateId: b.id, ref: null, unavailableReason: null });
+    expect(p.state).toBe("ok");
+    expect(p.engine?.workflowDynastySlug).toBe("a");
+    // One valued candidate keeps the value rule: the unvalued one is never drawn.
+    const q = enginePlaceOf({ outcome: "lead_found", outcomeName: "Lead", consumer: "campaign", consumerName: "Campaign", targetValued: true, seed: "s" }, [a, cand("c", "src", ev(20_000, 10, 2000))], { candidateId: null, ref: null, unavailableReason: null });
+    expect(q.engine?.workflowDynastySlug).toBe("c");
+  });
 });
 
 describe("the replay (regret proxy)", () => {
