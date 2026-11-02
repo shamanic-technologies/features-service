@@ -79404,6 +79404,118 @@
                         ]
                       }
                     },
+                    "strategySplits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "placeKey": {
+                            "type": "string"
+                          },
+                          "outcomeName": {
+                            "type": "string"
+                          },
+                          "consumerName": {
+                            "type": "string"
+                          },
+                          "tacticId": {
+                            "type": "string"
+                          },
+                          "tacticName": {
+                            "type": "string"
+                          },
+                          "tacticDescription": {
+                            "type": "string"
+                          },
+                          "inside": {
+                            "type": "object",
+                            "properties": {
+                              "workflows": {
+                                "type": "integer"
+                              },
+                              "outcomes": {
+                                "type": "number"
+                              },
+                              "decisions": {
+                                "type": "number"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflows",
+                              "outcomes",
+                              "decisions",
+                              "ratePct"
+                            ]
+                          },
+                          "outside": {
+                            "type": "object",
+                            "properties": {
+                              "workflows": {
+                                "type": "integer"
+                              },
+                              "outcomes": {
+                                "type": "number"
+                              },
+                              "decisions": {
+                                "type": "number"
+                              },
+                              "ratePct": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "workflows",
+                              "outcomes",
+                              "decisions",
+                              "ratePct"
+                            ]
+                          },
+                          "better": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "inside",
+                              "outside",
+                              null
+                            ]
+                          },
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "conclusion",
+                              "signal",
+                              "noise"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "proposed": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "placeKey",
+                          "outcomeName",
+                          "consumerName",
+                          "tacticId",
+                          "tacticName",
+                          "tacticDescription",
+                          "inside",
+                          "outside",
+                          "better",
+                          "verdict",
+                          "reason",
+                          "proposed"
+                        ]
+                      },
+                      "description": "GTM Factory \"Proposed strategies\": per place, every workflow tactic that splits its candidates in two judged halves, fleet outcomes per decision inside vs outside, the Research verdict (Bonferroni over the place's splits). No per-client strata on this read, so a split tops out at signal; `proposed` only on a conclusion."
+                    },
                     "replay": {
                       "type": "object",
                       "nullable": true,
@@ -79465,6 +79577,7 @@
                     "summary",
                     "places",
                     "engines",
+                    "strategySplits",
                     "replay"
                   ]
                 }

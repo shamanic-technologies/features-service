@@ -9924,6 +9924,24 @@ registry.registerPath({
               }),
             ),
             engines: z.array(z.object({ outcome: z.string(), outcomeName: z.string(), callers: z.array(z.object({ consumer: z.string(), consumerName: z.string(), best: z.string().nullable() })) })),
+            strategySplits: z
+              .array(
+                z.object({
+                  placeKey: z.string(),
+                  outcomeName: z.string(),
+                  consumerName: z.string(),
+                  tacticId: z.string(),
+                  tacticName: z.string(),
+                  tacticDescription: z.string(),
+                  inside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), ratePct: z.number().nullable() }),
+                  outside: z.object({ workflows: z.number().int(), outcomes: z.number(), decisions: z.number(), ratePct: z.number().nullable() }),
+                  better: z.enum(["inside", "outside"]).nullable(),
+                  verdict: z.enum(["conclusion", "signal", "noise"]),
+                  reason: z.string(),
+                  proposed: z.boolean(),
+                }),
+              )
+              .describe("GTM Factory \"Proposed strategies\": per place, every workflow tactic that splits its candidates in two judged halves, fleet outcomes per decision inside vs outside, the Research verdict (Bonferroni over the place's splits). No per-client strata on this read, so a split tops out at signal; `proposed` only on a conclusion."),
             replay: z
               .object({
                 computedAt: z.string(),
