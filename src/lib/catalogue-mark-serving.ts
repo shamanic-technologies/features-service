@@ -71,3 +71,69 @@ export async function withPerformanceMarks<
     ]),
   ) as T;
 }
+
+/**
+ * SCRIPT-MARKS-1103 (owner 2026-11-03, « Tu utilises les icônes Workflow pour les objets scripts, c'est normal ? »): every
+ * workflow (script) an Engine read names carries its dynasty's served mark, the same `icon` + `color` Research shows for it.
+ * Both null when the dynasty has no mark (never a substitute look); the consumer draws a neutral mark.
+ */
+export interface ScriptMark {
+  icon: string | null;
+  color: string | null;
+}
+type WorkflowRef = { workflowDynastySlug: string };
+
+/** PURE: `ref` + its mark, `icon`/`color` null when none. */
+export function withScriptMark<T extends WorkflowRef>(ref: T, mark: CatalogueMark | undefined): T & ScriptMark {
+  return { ...ref, icon: mark ? mark.icon : null, color: mark ? mark.color : null };
+}
+
+/** The customer engine picks (`GET /offers/:offerId/engine-picks`), each pick with its workflow's mark. */
+export async function withEnginePickMarks<T extends WorkflowRef>(picks: readonly T[]): Promise<Array<T & ScriptMark>> {
+  const marks = await marksFor("workflow", picks.map((p) => p.workflowDynastySlug));
+  return picks.map((p) => withScriptMark(p, marks.get(p.workflowDynastySlug)));
+}
+
+type StoredPlaceRefs = { today?: WorkflowRef | null; engine?: WorkflowRef | null; engineModal?: WorkflowRef | null; candidates?: WorkflowRef[] };
+
+/**
+ * A stored per-campaign factory body (`GET /brands/:brandId/sales-funnel-campaigns/:id/factory-shadow`) with every Engine
+ * place's workflow refs marked: `today`, `engine`, `engineModal` and each of `candidates[]`. Any other field is untouched;
+ * a body with no Engine places is returned as stored.
+ */
+export async function withFactoryEngineMarks<B>(body: B): Promise<B> {
+  const engine = (body as { engine?: { places?: StoredPlaceRefs[] } } | null)?.engine;
+  if (!engine || !Array.isArray(engine.places)) return body;
+  const refsOf = (p: StoredPlaceRefs) => [...[p.today, p.engine, p.engineModal].filter((r): r is WorkflowRef => !!r), ...(p.candidates ?? [])];
+  const marks = await marksFor("workflow", engine.places.flatMap((p) => refsOf(p).map((r) => r.workflowDynastySlug)));
+  const mark = <R extends WorkflowRef>(r: R | null | undefined) => (r ? withScriptMark(r, marks.get(r.workflowDynastySlug)) : r);
+  return {
+    ...body,
+    engine: {
+      ...engine,
+      places: engine.places.map((p) => ({
+        ...p,
+        ...("today" in p ? { today: mark(p.today) } : {}),
+        ...("engine" in p ? { engine: mark(p.engine) } : {}),
+        ...("engineModal" in p ? { engineModal: mark(p.engineModal) } : {}),
+        ...(p.candidates ? { candidates: p.candidates.map((c) => mark(c)!) } : {}),
+      })),
+    },
+  } as B;
+}
+
+/** The Research Engine places (`GET /internal/research/engine-places`), each candidate and favourite with its workflow's mark. */
+export async function withResearchPlaceMarks<C extends WorkflowRef, P extends { favourite: C | null; candidates: C[] }>(places: readonly P[]): Promise<P[]> {
+  const marks = await marksFor("workflow", places.flatMap((p) => p.candidates.map((c) => c.workflowDynastySlug)));
+  return places.map((p) => ({
+    ...p,
+    favourite: p.favourite ? withScriptMark(p.favourite, marks.get(p.favourite.workflowDynastySlug)) : null,
+    candidates: p.candidates.map((c) => withScriptMark(c, marks.get(c.workflowDynastySlug))),
+  }));
+}
+
+/** A campaign's people journeys (`GET /brands/:brandId/sales-funnel-campaigns/:id/people-journeys`), each script with its mark. */
+export async function withJourneyScriptMarks<S extends WorkflowRef, T extends { scripts: S[] }>(transitions: readonly T[]): Promise<Array<T & { scripts: Array<S & ScriptMark> }>> {
+  const marks = await marksFor("workflow", transitions.flatMap((t) => t.scripts.map((s) => s.workflowDynastySlug)));
+  return transitions.map((t) => ({ ...t, scripts: t.scripts.map((s) => withScriptMark(s, marks.get(s.workflowDynastySlug))) }));
+}
