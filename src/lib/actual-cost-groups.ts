@@ -44,7 +44,7 @@ function nullSpend<G extends MoneyGroup>(group: G): G {
     costPerAcquisitionUsd: null,
     ...(ce.costPerConversionUsd !== undefined ? { costPerConversionUsd: null } : {}),
     ...(ce.ratioBasis ? { ratioBasis: { ...ce.ratioBasis, committedCostUsd: null } } : {}),
-    ...(ce.realizedReturn ? { realizedReturn: { ...ce.realizedReturn, roiMultiple: null } } : {}),
+    ...(ce.realizedReturn ? { realizedReturn: { ...ce.realizedReturn, spentUsd: null as unknown as number, roiMultiple: null } } : {}),
     // Both halves of the maturity pair divide the same unknown vendor spend; the verdict is about
     // outcomes, not money, so it stands.
     ...(ce.maturity ? { maturity: { ...ce.maturity, flash: null, mature: null } } : {}),
