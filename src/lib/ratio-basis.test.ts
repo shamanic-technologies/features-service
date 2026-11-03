@@ -101,7 +101,7 @@ describe("the funnel rungs' cost per reach rides the same basis", () => {
 });
 
 describe("costEconomics serves the totals its ratios divide, and a measured return", () => {
-  it("roiMultiple = ratioBasis.totalPipelineUsd ÷ ratioBasis.committedCostUsd, and the measured return divides the same spend", () => {
+  it("roiMultiple = ratioBasis.totalPipelineUsd ÷ ratioBasis.committedCostUsd, and the realized return divides money actually spent (ROI-CONSISTENCY-1103)", () => {
     const ce = buildCostEconomics({
       committedCostInUsdCents: 550346,
       actualCostInUsdCents: 543179,
@@ -113,11 +113,10 @@ describe("costEconomics serves the totals its ratios divide, and a measured retu
     expect(ce.committedCostUsd).toBeCloseTo(5503.46, 9);
     expect(ce.ratioBasis).toEqual({ committedCostUsd: 3984.27, totalPipelineUsd: 6023.97 });
     expect(ce.roiMultiple).toBeCloseTo(6023.97 / 3984.27, 9);
-    expect(ce.realizedReturn).toEqual({ closedWonCount: 1, closedWonRevenueUsd: 2500, roiMultiple: 2500 / 3984.27 });
-    expect(ce.realizedReturn!.roiMultiple).toBeCloseTo(0.627, 3);
+    expect(ce.realizedReturn).toEqual({ closedWonCount: 1, closedWonRevenueUsd: 2500, spentUsd: 5431.79, roiMultiple: 2500 / 5431.79 });
   });
 
-  it("no realized input → null, never a fabricated 0; maturity unknown → every basis total null", () => {
+  it("no realized input → null, never a fabricated 0; maturity unknown → every basis total null, the realized return still measured", () => {
     const plain = buildCostEconomics({ committedCostInUsdCents: 1000, actualCostInUsdCents: 1000, totalPipelineUsd: 50 });
     expect(plain.realizedReturn).toBeNull();
     expect(plain.ratioBasis).toEqual({ committedCostUsd: 10, totalPipelineUsd: 50 });
@@ -129,7 +128,7 @@ describe("costEconomics serves the totals its ratios divide, and a measured retu
       realized: { closedWonCount: 1, closedWonRevenueUsd: 100 },
     });
     expect(unknown.ratioBasis).toEqual({ committedCostUsd: null, totalPipelineUsd: null });
-    expect(unknown.realizedReturn).toBeNull();
+    expect(unknown.realizedReturn).toEqual({ closedWonCount: 1, closedWonRevenueUsd: 100, spentUsd: 10, roiMultiple: 10 });
   });
 });
 
