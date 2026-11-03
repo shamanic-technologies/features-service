@@ -12,7 +12,8 @@ import { describe, expect, it } from "vitest";
 // the LEGACY list below. The LEGACY list holds every field served before the rule: they are retired once
 // no screen reads them anymore (consumers first, then this list shrinks). Never add a name to LEGACY.
 
-const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "realizedReturn"]);
+// `returns` = the period recap block holding exactly the expected + realized returns.
+const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "realizedReturn", "returns"]);
 
 const LEGACY = new Set([
   "/internal/stats/workflow-return-history/actual-cost",

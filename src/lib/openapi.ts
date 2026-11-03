@@ -4419,6 +4419,22 @@ const orgPeriodRecapResponseRef = registry.register(
       revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: revenue at the same served return scales with spend. Null when roiMultiple is null or nothing was spent in the window."),
       nullReason: recapNullReason.nullable(),
     }),
+    returns: z.object({
+      expected: z.object({
+        roiMultiple: z.number().nullable().describe("The EXPECTED return of the offers that sent in the window: each offer body's expectedReturn.roiMultiple (/offers/{offerId}/revenue?pricing=net), one value across them, never a blend."),
+        basis: z.string().nullable().describe("Weakest input behind it, as the offer body serves it (measured < stated < fleet < default). Null when scopes differ."),
+        nullReason: z.enum(["nothing_sent", "return_unavailable", "return_differs_across_scopes", "several_scopes"]).nullable(),
+        scopes: z.array(z.object({ brandId: z.string(), offerId: z.string().nullable(), roiMultiple: z.number().nullable(), basis: z.string().nullable(), unavailableReason: z.string().nullable() })),
+      }),
+      realized: z.object({
+        roiMultiple: z.number().nullable().describe("The REALIZED return: closedWonRevenueUsd / spentUsd, whole history (costEconomics.realizedReturn of the one offer that sent). 0 is measured (no paid client yet)."),
+        closedWonCount: z.number().int().nullable().describe("Paid clients our outreach caused, whole history."),
+        closedWonRevenueUsd: z.number().nullable(),
+        spentUsd: z.number().nullable().describe("Money actually spent, whole history (follow-ups only reserved excluded)."),
+        nullReason: z.enum(["nothing_sent", "return_unavailable", "return_differs_across_scopes", "several_scopes"]).nullable().describe("several_scopes = more than one offer sent: a brand's campaign-less spend joins every offer in full, so spends never add."),
+        scopes: z.array(z.object({ brandId: z.string(), offerId: z.string().nullable(), roiMultiple: z.number().nullable(), closedWonCount: z.number().int().nullable(), closedWonRevenueUsd: z.number().nullable(), spentUsd: z.number().nullable() })),
+      }),
+    }).describe("ROI-CONSISTENCY-1103 (owner 2026-11-03): the ONLY returns a client email may state. expectedReturn and budgetIncrease above are RETIRED (pipeline-based) and removed once billing reads this block."),
     brands: z.array(recapBrandSchema).describe("Every brand the org ever broadcast for, ascending brandId. Counts add up to the top-level figures."),
     fleetPositiveReplyRate: z.object({
       ratePct: z.number(),

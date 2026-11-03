@@ -42,6 +42,14 @@ function outcomeSeriesOf(v: unknown): OutcomeSeries | null {
   return { total, daily, undatedCount };
 }
 
+function realizedOf(v: { roiMultiple?: unknown; closedWonCount?: unknown; closedWonRevenueUsd?: unknown; spentUsd?: unknown } | null | undefined): OfferReturnRead["realized"] {
+  if (!v) return null;
+  const closedWonCount = num(v.closedWonCount);
+  const closedWonRevenueUsd = num(v.closedWonRevenueUsd);
+  if (closedWonCount === null || closedWonRevenueUsd === null) return null;
+  return { roiMultiple: num(v.roiMultiple), closedWonCount, closedWonRevenueUsd, spentUsd: num(v.spentUsd) };
+}
+
 /**
  * The offer's return EXACTLY as the dashboard's Today page reads it: `/offers/:offerId/revenue?brandId=&pricing=net`
  * with every other parameter at its default, through the route's own `offerRevenueJson` (same Gold cell,
@@ -67,7 +75,12 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
   }
   const body = JSON.parse(json) as {
     headline?: { totalPipelineUsd?: unknown };
-    costEconomics?: { committedCostUsd?: unknown; maturity?: OfferReturnRead["pair"] };
+    costEconomics?: {
+      committedCostUsd?: unknown;
+      maturity?: OfferReturnRead["pair"];
+      realizedReturn?: { roiMultiple?: unknown; closedWonCount?: unknown; closedWonRevenueUsd?: unknown; spentUsd?: unknown } | null;
+    };
+    expectedReturn?: { roiMultiple?: unknown; basis?: unknown; unavailableReason?: unknown } | null;
     recipientsRepliesPositive?: unknown;
     meetingsBooked?: unknown;
   };
@@ -82,6 +95,14 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
       positiveReplies: outcomeSeriesOf(body.recipientsRepliesPositive),
       meetingsBooked: outcomeSeriesOf(body.meetingsBooked),
     },
+    expected: body.expectedReturn
+      ? {
+          roiMultiple: num(body.expectedReturn.roiMultiple),
+          basis: typeof body.expectedReturn.basis === "string" ? body.expectedReturn.basis : null,
+          unavailableReason: typeof body.expectedReturn.unavailableReason === "string" ? body.expectedReturn.unavailableReason : null,
+        }
+      : null,
+    realized: realizedOf(body.costEconomics.realizedReturn),
   };
 }
 
