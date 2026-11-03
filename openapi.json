@@ -13528,6 +13528,16 @@
             },
             "description": "Per one-to-one channel slug, the contact method(s) a person must carry for that channel to write to them (ALL required): email for the cold email channels, phone for WhatsApp / SMS / calls, a profile for LinkedIn / X / Instagram / Reddit. A serve made for the channel never hands out a person without them (lead-service passes it as `reachableBy`). A channel absent here states none."
           },
+          "messagingNetworkByChannel": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "whatsapp"
+              ]
+            },
+            "description": "Per one-to-one channel slug, the messaging network it writes on (only channels that write on one: `cold-whatsapp-outreach` = whatsapp). A phone number does not say whether it is on WhatsApp: lead-service passes this as `reachableOn` on each serve, so a person crm-service says is not on the network is never handed to that channel. A channel absent here writes on none."
+          },
           "leadFoundStep": {
             "type": "object",
             "properties": {
@@ -13606,6 +13616,7 @@
           "sourcingChannels",
           "originsByChannel",
           "contactMethodsByChannel",
+          "messagingNetworkByChannel",
           "leadFoundStep",
           "sourceLegKey",
           "leadSourcing"
@@ -60970,6 +60981,16 @@
           {
             "schema": {
               "type": "string",
+              "description": "Rows to skip before this page (whole number >= 0, default 0; else 400 `offset_unrecognised`). To read EVERY row: start at 0, then ask again with `offset` = the answer's `nextOffset` until it is null. Same filters on every page: rows keep one order (ROI first, then id), so no row is read twice and none is missed."
+            },
+            "required": false,
+            "description": "Rows to skip before this page (whole number >= 0, default 0; else 400 `offset_unrecognised`). To read EVERY row: start at 0, then ask again with `offset` = the answer's `nextOffset` until it is null. Same filters on every page: rows keep one order (ROI first, then id), so no row is read twice and none is missed.",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured."
             },
             "required": false,
@@ -61366,6 +61387,15 @@
                         ]
                       },
                       "description": "Per-offer read only: each missing step and how many set-aside rows it accounts for, most first."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "description": "Rows skipped before this page (the `offset` asked, 0 when none)."
+                    },
+                    "nextOffset": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The `offset` of the next page; null on the last page. `truncated` = `nextOffset` is not null."
                     }
                   },
                   "required": [
@@ -61374,7 +61404,9 @@
                     "order",
                     "total",
                     "truncated",
-                    "rows"
+                    "rows",
+                    "offset",
+                    "nextOffset"
                   ]
                 }
               }
@@ -68025,11 +68057,21 @@
             "description": "1..25, default 10.",
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Rows to skip before this page (whole number >= 0, default 0; else 400 `offset_unrecognised`). To read EVERY row: start at 0, then ask again with `offset` = the answer's `nextOffset` until it is null. Same filters on every page: rows keep one order (ROI first, then id), so no row is read twice and none is missed."
+            },
+            "required": false,
+            "description": "Rows to skip before this page (whole number >= 0, default 0; else 400 `offset_unrecognised`). To read EVERY row: start at 0, then ask again with `offset` = the answer's `nextOffset` until it is null. Same filters on every page: rows keep one order (ROI first, then id), so no row is read twice and none is missed.",
+            "name": "offset",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "One page, ROI first.",
+            "description": "One page, ROI first. Page through every row with `offset` / `nextOffset`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -68224,6 +68266,15 @@
                           "mixed"
                         ]
                       }
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "description": "Rows skipped before this page (the `offset` asked, 0 when none)."
+                    },
+                    "nextOffset": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "The `offset` of the next page; null on the last page. `truncated` = `nextOffset` is not null."
                     }
                   },
                   "required": [
@@ -68232,7 +68283,9 @@
                     "order",
                     "total",
                     "truncated",
-                    "rows"
+                    "rows",
+                    "offset",
+                    "nextOffset"
                   ]
                 }
               }

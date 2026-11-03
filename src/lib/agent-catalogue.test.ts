@@ -240,7 +240,7 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
     expect(sources).toEqual(expect.arrayContaining(["lead-sourcing", "sourcing-apollo-cold-filters", "sourcing-apollo-buying-signals", "sourcing-linkedin-engagement-signals", "sourcing-crm-contacts"]));
   });
 
-  it("Your CRM Contacts -> Cold WhatsApp Outreach -> your team is a funnel; WhatsApp takes no other source (owner 2026-10-12)", () => {
+  it("Your CRM Contacts -> Cold WhatsApp Outreach -> your team is a funnel; WhatsApp takes CRM, Google Maps and Lead Sourcing only (owner 2026-10-12, GMAPS-SOURCE-1103)", () => {
     const id = "start_to_lead_found@sourcing-crm-contacts+lead_found_to_conversation@cold-whatsapp-outreach+conversation_to_paid_client";
     const f = funnelById(model, id)!;
     expect(f.id).toBe(id);
@@ -250,7 +250,7 @@ describe("every leg a channel, every proactive funnel from Start (owner 2026-10-
     const whatsappSources = funnelsOfPath(model, path)
       .filter((g) => g.legs[1].pipe!.channelSlug === "cold-whatsapp-outreach")
       .map((g) => g.legs[0].pipe!.channelSlug);
-    expect([...new Set(whatsappSources)]).toEqual(["sourcing-crm-contacts"]);
+    expect([...new Set(whatsappSources)].sort()).toEqual(["lead-sourcing", "sourcing-crm-contacts", "sourcing-google-maps"]);
     // No workflow on the WhatsApp pipe yet: offered, not runnable. Runnable the moment one is assigned.
     expect(funnelRunnable(f)).toBe(false);
     const withWorkflow = buildCatalogueModel(inputs({ workflowPipeKeys: new Set(["cold-whatsapp-outreach|start_to_conversation", "sourcing-crm-contacts|start_to_lead_found"]) }));

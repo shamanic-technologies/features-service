@@ -27,7 +27,7 @@
 import { CHANNEL_STEPS } from "./acquisition-channels.js";
 
 /** human-service's `channels[].list` values (GET /orgs/audiences). */
-export type AudienceListKind = "apollo_search" | "apollo_buying_signal" | "linkedin_engagement" | "crm_contacts" | "apify_search";
+export type AudienceListKind = "apollo_search" | "apollo_buying_signal" | "linkedin_engagement" | "crm_contacts" | "apify_search" | "google_maps_search";
 
 export type SourcingFamily = "cold_filters" | "signal" | "own_contacts";
 
@@ -44,6 +44,7 @@ export interface SourcingProvider {
 const APOLLO: SourcingProvider = { name: "Apollo", domain: "apollo.io" };
 const LINKEDIN: SourcingProvider = { name: "LinkedIn", domain: "linkedin.com" };
 const APIFY: SourcingProvider = { name: "Apify", domain: "apify.com" };
+const GOOGLE: SourcingProvider = { name: "Google", domain: "google.com" };
 
 export interface SourcingOrigin {
   slug: string;
@@ -110,6 +111,17 @@ export const SOURCING_ORIGINS: readonly SourcingOrigin[] = [
     audienceLists: ["apify_search"],
     live: false,
     displayOrder: 105,
+  },
+  {
+    // A business found on a Google Maps search (GMAPS-SOURCE-1103): name, phone, website, address; no email, no person.
+    slug: "sourcing-google-maps",
+    name: "Google Maps",
+    description: "Local businesses found on Google Maps, with their phone and website.",
+    family: "cold_filters",
+    provider: GOOGLE,
+    audienceLists: ["google_maps_search"],
+    live: true,
+    displayOrder: 106,
   },
 ];
 
@@ -215,7 +227,19 @@ export const SOURCING_ORIGINS_BY_CHANNEL: Readonly<Record<string, readonly strin
   "sales-cold-email-outreach": [...SEARCH_AND_SIGNAL_ORIGINS, CRM_CONTACTS],
   "feedback-request-cold-email-outreach": SEARCH_AND_SIGNAL_ORIGINS,
   "sales-crm-email-outreach": [CRM_CONTACTS],
-  "cold-whatsapp-outreach": [CRM_CONTACTS],
+  // GOOGLE MAPS (GMAPS-SOURCE-1103): a business carries a phone, no email, so it feeds WhatsApp only; Lead Sourcing may
+  // pick it there (never the CRM origin, see `originsLeadSourcingMayUse`).
+  "cold-whatsapp-outreach": ["sourcing-google-maps", LEAD_SOURCING_CHANNEL.slug, CRM_CONTACTS],
+};
+
+/**
+ * The MESSAGING NETWORK a one-to-one channel writes on (GMAPS-SOURCE-1103), served on `/public/sourcing-origins`
+ * `messagingNetworkByChannel`. A phone number does not say whether it is on WhatsApp: lead-service passes this as
+ * `reachableOn` on each serve, and human-service hands out only people crm-service states are on that network. Only
+ * channels that write on a messaging network are listed; `contactMethodsByChannel` is unchanged.
+ */
+export const MESSAGING_NETWORK_BY_CHANNEL: Readonly<Record<string, "whatsapp">> = {
+  "cold-whatsapp-outreach": "whatsapp",
 };
 
 /** PURE: the outreach channels a sourcing channel feeds (its next leg may only be worked by one of these). */

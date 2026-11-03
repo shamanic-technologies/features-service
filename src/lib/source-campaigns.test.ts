@@ -88,6 +88,7 @@ describe("source campaign identity (the contract campaign-service and billing ke
       "sourcing-apollo-buying-signals",
       "sourcing-linkedin-engagement-signals",
       "sourcing-crm-contacts",
+      "sourcing-google-maps",
     ]);
     const used = { ...sourcing, origins: sourcing.origins.map((o) => (o.slug === "sourcing-apify-search" ? { ...o, used: true } : o)) };
     expect(sourceCampaignOrigins(used).map((o) => o.slug)).toContain("sourcing-apify-search");
@@ -115,7 +116,7 @@ describe("source campaign figures: the origin's, measured; an unused origin is u
 
   it("an unreadable sourcing lists the live source campaigns with null figures and a reason", () => {
     const none = buildSourceCampaigns({ sourcing: null, names: NAMES });
-    expect(none).toHaveLength(4);
+    expect(none).toHaveLength(5);
     for (const r of none) expect(r).toMatchObject({ costUsd: null, leadsFound: null });
   });
 });
@@ -176,7 +177,7 @@ describe("withSourceCampaigns: additive on the sales-paths body", () => {
   it("a body without campaigns (pure build) gains only sourceCampaigns", () => {
     const bare = withSourceCampaigns({ offerId: "o" } as { offerId: string; campaigns?: never[] }, rows, sourceOverlapOf(null));
     expect("campaigns" in bare).toBe(false);
-    expect(bare.sourceCampaigns).toHaveLength(4);
+    expect(bare.sourceCampaigns).toHaveLength(5);
   });
 });
 
