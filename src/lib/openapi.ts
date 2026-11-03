@@ -9539,6 +9539,7 @@ const enginePickRef = z.object({
   channelName: z.string(),
   workflowDynastySlug: z.string(),
   workflowDynastyName: z.string().nullable(),
+  icon: z.string().nullable().optional().describe("SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."), color: z.string().nullable().optional().describe("The mark's colour (hex); null with `icon`."),
 });
 const enginePlace = z.object({
   outcome: z.string().describe("The outcome this candidate place calls (a catalogue step)."),
@@ -9782,6 +9783,7 @@ registry.registerPath({
                 outcomeName: z.string(),
                 workflowDynastySlug: z.string(),
                 workflowName: z.string(),
+                icon: z.string().nullable().describe("SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."), color: z.string().nullable().describe("The mark's colour (hex); null with `icon`."),
                 channelName: z.string().nullable(),
                 sharePct: z.number().nullable().describe("Share of the Engine's draws this workflow took (%), null when not listed."),
                 state: z.enum(["running", "rolled_back"]),
@@ -9877,7 +9879,7 @@ registry.registerPath({
                 people: z.number(),
                 runByUs: z.boolean().describe("False: the client's own team works this step (no workflow of ours, nothing spent by us)."),
                 shareBasis: z.enum(["spend"]),
-                scripts: z.array(z.object({ workflowDynastySlug: z.string(), workflowName: z.string(), sharePct: z.number() })),
+                scripts: z.array(z.object({ workflowDynastySlug: z.string(), workflowName: z.string(), sharePct: z.number(), icon: z.string().nullable().describe("SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."), color: z.string().nullable().describe("The mark's colour (hex); null with `icon`.") })),
                 scriptsUnavailableReason: z.string().nullable(),
               }),
             ),
@@ -9920,13 +9922,13 @@ registry.registerPath({
                 consumer: z.string(),
                 consumerName: z.string(),
                 campaigns: z.number().int(),
-                favourite: z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() }).extend({ chancePct: z.number().nullable() }).nullable(),
+                favourite: z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), icon: z.string().nullable().describe("SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."), color: z.string().nullable().describe("The mark's colour (hex); null with `icon`."), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() }).extend({ chancePct: z.number().nullable() }).nullable(),
                 clearWinner: z.boolean(),
                 daily: z
                   .array(z.object({ day: z.string(), decisions: z.number(), favouriteSharePct: z.number().nullable(), lostUsd: z.number() }))
                   .nullable()
                   .describe("Last 30 days, one row per day with decisions: the fleet decisions that RAN on the place's candidates, the share on TODAY's favourite, and the dollars spent on the other candidates (value lost to weaker picks). Written by every pass; null before the first."),
-                candidates: z.array(z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() })),
+                candidates: z.array(z.object({ candidateId: z.string(), workflowDynastySlug: z.string(), workflowName: z.string(), icon: z.string().nullable().describe("SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."), color: z.string().nullable().describe("The mark's colour (hex); null with `icon`."), channelName: z.string(), sharePct: z.number().nullable(), beliefRatePct: z.number().nullable(), costPerDecisionUsd: z.number().nullable(), fleetDecisions: z.number(), fleetOutcomes: z.number() })),
               }),
             ),
             engines: z.array(z.object({ outcome: z.string(), outcomeName: z.string(), callers: z.array(z.object({ consumer: z.string(), consumerName: z.string(), best: z.string().nullable() })) })),

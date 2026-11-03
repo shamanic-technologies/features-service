@@ -66,6 +66,7 @@ import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
+import { withEnginePickMarks, withFactoryEngineMarks, withResearchPlaceMarks } from "../lib/catalogue-mark-serving.js";
 import { CLEAR_WINNER_PCT, enginesOf, placeDailyOf, researchPlacesOf, strategySplitsOf, type PlaceDay, type StoredEnginePlace } from "../lib/research/engine-places.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
@@ -770,7 +771,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/factory-shadow", apiKeyA
       res.status(404).json({ error: "factory_shadow_not_computed", detail: "no shadow plan stored for this funnel campaign of this brand yet (a pass runs every 3 hours)" });
       return;
     }
-    res.json(row.body);
+    res.json(await withFactoryEngineMarks(row.body));
   } catch (error) {
     console.error("[features-service] factory shadow read failed:", error);
     res.status(500).json({ error: "factory_shadow_unreadable" });
@@ -799,7 +800,7 @@ router.get("/offers/:offerId/engine-picks", apiKeyAuth, async (req, res) => {
     const plans = await readOfferPlans(orgId, brandId, req.params.offerId, new Date(pass.sweptAt));
     const ids = new Set(plans.map((p) => p.campaignId));
     const drives = (await readDrives()).filter((d) => ids.has(d.funnelCampaignId) && d.orgId === orgId);
-    res.json({ offerId: req.params.offerId, brandId, computedAt: pass.sweptAt, picks: enginePicksOf(plans as Parameters<typeof enginePicksOf>[0], drives) });
+    res.json({ offerId: req.params.offerId, brandId, computedAt: pass.sweptAt, picks: await withEnginePickMarks(enginePicksOf(plans as Parameters<typeof enginePicksOf>[0], drives)) });
   } catch (error) {
     console.error("[features-service] engine picks read failed:", error);
     res.status(502).json({ error: "engine_picks_unreadable" });
@@ -833,7 +834,7 @@ router.get("/internal/research/engine-places", apiKeyOnly, async (_req, res) => 
       clearWinnerPct: CLEAR_WINNER_PCT,
       dailyBasis: "picks_that_ran_fleet_ledger_vs_todays_favourite",
       summary: { places: places.length, clearWinners: places.filter((p) => p.clearWinner).length, campaigns: plans.length },
-      places,
+      places: await withResearchPlaceMarks(places),
       engines: enginesOf(places),
       strategySplits,
       replay: replay

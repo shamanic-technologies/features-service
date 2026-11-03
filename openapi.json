@@ -35867,6 +35867,16 @@
                         "workflowDynastyName": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "icon": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                        },
+                        "color": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The mark's colour (hex); null with `icon`."
                         }
                       },
                       "required": [
@@ -35904,6 +35914,16 @@
                         "workflowDynastyName": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "icon": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                        },
+                        "color": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The mark's colour (hex); null with `icon`."
                         }
                       },
                       "required": [
@@ -35936,6 +35956,16 @@
                         "workflowDynastyName": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "icon": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                        },
+                        "color": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "The mark's colour (hex); null with `icon`."
                         }
                       },
                       "required": [
@@ -35988,6 +36018,16 @@
                           "workflowDynastyName": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "icon": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                          },
+                          "color": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The mark's colour (hex); null with `icon`."
                           },
                           "fromStep": {
                             "type": "string",
@@ -78600,6 +78640,16 @@
                           "workflowName": {
                             "type": "string"
                           },
+                          "icon": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."
+                          },
+                          "color": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The mark's colour (hex); null with `icon`."
+                          },
                           "channelName": {
                             "type": "string",
                             "nullable": true
@@ -78638,6 +78688,8 @@
                           "outcomeName",
                           "workflowDynastySlug",
                           "workflowName",
+                          "icon",
+                          "color",
                           "channelName",
                           "sharePct",
                           "state",
@@ -79089,12 +79141,24 @@
                                 },
                                 "sharePct": {
                                   "type": "number"
+                                },
+                                "icon": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."
+                                },
+                                "color": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The mark's colour (hex); null with `icon`."
                                 }
                               },
                               "required": [
                                 "workflowDynastySlug",
                                 "workflowName",
-                                "sharePct"
+                                "sharePct",
+                                "icon",
+                                "color"
                               ]
                             }
                           },
@@ -79266,6 +79330,16 @@
                               "workflowName": {
                                 "type": "string"
                               },
+                              "icon": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."
+                              },
+                              "color": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The mark's colour (hex); null with `icon`."
+                              },
                               "channelName": {
                                 "type": "string"
                               },
@@ -79296,6 +79370,8 @@
                               "candidateId",
                               "workflowDynastySlug",
                               "workflowName",
+                              "icon",
+                              "color",
                               "channelName",
                               "sharePct",
                               "beliefRatePct",
@@ -79351,6 +79427,16 @@
                                 "workflowName": {
                                   "type": "string"
                                 },
+                                "icon": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; null when it has no mark yet."
+                                },
+                                "color": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The mark's colour (hex); null with `icon`."
+                                },
                                 "channelName": {
                                   "type": "string"
                                 },
@@ -79377,6 +79463,8 @@
                                 "candidateId",
                                 "workflowDynastySlug",
                                 "workflowName",
+                                "icon",
+                                "color",
                                 "channelName",
                                 "sharePct",
                                 "beliefRatePct",
@@ -80175,6 +80263,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -80212,6 +80310,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -80244,6 +80352,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -80647,6 +80765,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -80684,6 +80812,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -80716,6 +80854,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -81120,6 +81268,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -81157,6 +81315,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
@@ -81189,6 +81357,16 @@
                                         "workflowDynastyName": {
                                           "type": "string",
                                           "nullable": true
+                                        },
+                                        "icon": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "SCRIPT-MARKS-1103: the workflow dynasty's served mark icon (Phosphor name), the same Research shows for it; served on the per-campaign factory read, null when it has no mark yet."
+                                        },
+                                        "color": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "description": "The mark's colour (hex); null with `icon`."
                                         }
                                       },
                                       "required": [
