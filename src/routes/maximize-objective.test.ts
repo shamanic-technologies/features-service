@@ -239,7 +239,7 @@ describe("a caller says WHAT to maximise: a RETURN, or a CONVERSION RATE", () =>
     expect(byRate.body.leg.basis).not.toBe("best_returning_declared_funnel");
     // Both figures ride the block either way, so nobody has to re-derive the one they did not ask for.
     expect(byRate.body.leg.conversionRatePct).toBeCloseTo(7.5, 6);
-    expect(byReturn.body.leg.returnPerDollar).toBeCloseTo(4000, 6);
+    expect(byReturn.body.leg).not.toHaveProperty("returnPerDollar");
     // Still the same funnel the body was priced through — the two can never disagree.
     expect(byRate.body.funnelKey).toBe(byRate.body.leg.basisFunnelKey);
     expect(byReturn.body.funnelKey).toBe(byReturn.body.leg.basisFunnelKey);

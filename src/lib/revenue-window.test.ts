@@ -69,8 +69,6 @@ describe("buildRevenueWindow", () => {
         scopedTotal: new Map([["2026-10-01", 100.4], ["2026-10-03", 4500.1], ["2026-09-01", 50000]]),
         brandLevelTotal: new Map([["2026-10-03", 585.2], ["2026-10-02", 12.3]]),
       },
-      totalPipelineUsd: 100,
-      pipelineTimeSeries: [],
     });
     expect(w.days).toBe(3);
     expect(w.startDate).toBe("2026-10-01");
@@ -111,51 +109,16 @@ describe("buildRevenueWindow", () => {
       ...base,
       emailsByDay: new Map(),
       spendByDay: { scoped: new Map([["2026-10-03", 3100]]), brandLevel: new Map(), scopedTotal: new Map([["2026-10-03", 3500]]), brandLevelTotal: new Map() },
-      totalPipelineUsd: null,
-      pipelineTimeSeries: [],
     });
     expect(w.emails!.sent).toBe(0);
     expect(w.emails!.deliveryRatePct).toBeNull();
     expect(w.spend!.costPerEmailSentCents).toBeNull();
-    expect(w.expectedPipeline).toBeNull();
-    const none = buildRevenueWindow({ ...base, emailsByDay: null, spendByDay: null, totalPipelineUsd: 1, pipelineTimeSeries: [] });
+    expect(w).not.toHaveProperty("expectedPipeline");
+    const none = buildRevenueWindow({ ...base, emailsByDay: null, spendByDay: null });
     expect(none.emails).toBeNull();
     expect(none.spend).toBeNull();
   });
 
-  it("the expected pipeline curve ends at the headline when every organisation is dated", () => {
-    const w = buildRevenueWindow({
-      ...base,
-      emailsByDay: null,
-      spendByDay: null,
-      totalPipelineUsd: 243.46,
-      pipelineTimeSeries: [
-        { date: "2026-09-01T10:00:00.000Z", cumulativePipelineUsd: 40 },
-        { date: "2026-10-02T08:00:00.000Z", cumulativePipelineUsd: 100 },
-        { date: "2026-10-03T08:21:15.869Z", cumulativePipelineUsd: 200 },
-        { date: "2026-10-03T15:51:54.000Z", cumulativePipelineUsd: 243.46 },
-      ],
-    });
-    expect(w.expectedPipeline!.daily).toEqual([
-      { date: "2026-10-01", cumulativePipelineUsd: 40 },
-      { date: "2026-10-02", cumulativePipelineUsd: 100 },
-      { date: "2026-10-03", cumulativePipelineUsd: 243.46 },
-    ]);
-    expect(w.expectedPipeline!.totalPipelineUsd).toBe(243.46);
-    expect(w.expectedPipeline!.undatedPipelineUsd).toBe(0);
-  });
-
-  it("states the undated pipeline instead of dating it", () => {
-    const w = buildRevenueWindow({
-      ...base,
-      emailsByDay: null,
-      spendByDay: null,
-      totalPipelineUsd: 300,
-      pipelineTimeSeries: [{ date: "2026-10-02T08:00:00.000Z", cumulativePipelineUsd: 100 }],
-    });
-    expect(w.expectedPipeline!.daily.at(-1)!.cumulativePipelineUsd).toBe(100);
-    expect(w.expectedPipeline!.undatedPipelineUsd).toBe(200);
-  });
 });
 
 describe("buildRevenueWindow — queuedEmails (snapshot)", () => {

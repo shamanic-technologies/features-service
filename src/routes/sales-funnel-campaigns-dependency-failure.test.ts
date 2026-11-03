@@ -8,6 +8,14 @@ import { describe, it, expect, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 const computeFeatureRevenue = vi.fn();

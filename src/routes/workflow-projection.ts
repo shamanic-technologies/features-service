@@ -215,8 +215,6 @@ interface GrainBlock {
     costPerSignupUsd: number | null;
     costPerPaidClientUsd: number | null;
     costPerMeetingBookedUsd: number | null;
-    roiMultiple: number | null;
-    cacPct: number | null;
   };
   /**
    * WHICH VERSION OF THE EVIDENCE this block's own fields (`evidence`, `unitCosts`, `legOutcome`,
@@ -361,8 +359,6 @@ interface ResolvedBlock {
   costPerOutcomeUsd: number | null;
   costPerPaidClientUsd: number | null;
   costPerMeetingBookedUsd: number | null;
-  roiMultiple: number | null;
-  cacPct: number | null;
   /**
    * HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME, as a percentage of the people it reached —
    * `100 × resolvedOutcomeCount / observedContacted`, read off the SAME grain the numbers above came
@@ -514,8 +510,6 @@ const UNMEASURED_RESOLVED: ResolvedBlock = {
   costPerOutcomeUsd: null,
   costPerPaidClientUsd: null,
   costPerMeetingBookedUsd: null,
-  roiMultiple: null,
-  cacPct: null,
   conversionRatePct: null,
 };
 
@@ -570,10 +564,6 @@ export interface ProjectionLeg {
     | "best_converting_declared_funnel"
     | "no_return_evidence"
     | "no_conversion_evidence";
-  /** The basis funnel's return per dollar. Null when nothing measurable stated one — 0 would say the
-   *  funnel returns nothing. Stated whether or not the pick was made on it, so the two objectives'
-   *  answers are readable side by side. */
-  returnPerDollar: number | null;
   /** The basis funnel's conversion rate, on the same terms — its best workflow's measured outcomes per
    *  100 people reached. The figure `?maximize=conversionRate` picks on. Null when unmeasured. */
   conversionRatePct: number | null;
@@ -930,7 +920,6 @@ function resolvedOutcomeCountForGoal(
 function buildGrainBlock(
   evidence: WorkflowGrainEvidence,
   econ: ProjectionEconomics | null,
-  ltrUsd: number | null,
   objective: Objective,
   singleStepGoal: SingleStepGoal | null,
   formSubmissionGoal: boolean,
@@ -956,8 +945,6 @@ function buildGrainBlock(
       costPerSignupUsd: null,
       costPerPaidClientUsd: null,
       costPerMeetingBookedUsd: null,
-      roiMultiple: null,
-      cacPct: null,
     };
   } else {
     const unitCosts = { clickUsd: costPerClickUsd, replyUsd: costPerPositiveReplyUsd };
@@ -966,14 +953,10 @@ function buildGrainBlock(
     // blend would print a meeting cost that contradicts the meeting cost one field over.
     const p = projectOutcomeCosts(econ, maskUnitCostsForChannel(unitCosts, meetingChannel));
     const costPerPaidClientUsd = paidClientCostForGoal(econ, unitCosts, objective, singleStepGoal, formSubmissionGoal, meetingChannel);
-    const roiMultiple = ltrUsd != null && costPerPaidClientUsd != null && costPerPaidClientUsd > 0 ? ltrUsd / costPerPaidClientUsd : null;
-    const cacPct = roiMultiple != null && roiMultiple > 0 ? 100 / roiMultiple : null;
     projected = {
       costPerSignupUsd: p.costPerSignupUsd,
       costPerPaidClientUsd,
       costPerMeetingBookedUsd: p.costPerMeetingBookedUsd,
-      roiMultiple,
-      cacPct,
     };
   }
 
@@ -1117,8 +1100,6 @@ function resolvePick(
     costPerOutcomeUsd,
     costPerPaidClientUsd: block.projected.costPerPaidClientUsd,
     costPerMeetingBookedUsd: block.projected.costPerMeetingBookedUsd,
-    roiMultiple: block.projected.roiMultiple,
-    cacPct: block.projected.cacPct,
     // Same grain, same evidence as the costs above — never a blend of a measured rate with a floored
     // cost. Null rather than 0 when the grain reached nobody or nothing resolved an outcome count.
     conversionRatePct: conversionRatePctOf(block),
@@ -1182,8 +1163,8 @@ function channelOutreachPriceUsd(
  * The `resolved` block of an UNPROVEN row: the EXPLORE ALLOWANCE, priced through the goal's own funnel
  * from the channel's outreach price so it is denominated in the same unit every other row reports.
  *
- * It states a COST FLOOR and nothing else. `costPerPaidClientUsd`, `roiMultiple` and `cacPct` stay NULL
- * because a return needs evidence that this workflow converts, and it has none — a return computed off
+ * It states a COST FLOOR and nothing else. `costPerPaidClientUsd` stays NULL
+ * because a paid-client cost needs evidence that this workflow converts, and it has none — a return computed off
  * an exploration floor would print the biggest number on the page. `grain` stays null: no grain measured
  * this, so there is no provenance to label and nothing is borrowed from the workflows that do have one.
  */
@@ -1217,8 +1198,6 @@ function exploreResolved(
         : null,
     costPerPaidClientUsd: null,
     costPerMeetingBookedUsd: null,
-    roiMultiple: null,
-    cacPct: null,
     // An allowance says what a first outreach costs; it says NOTHING about how many of the people it
     // reaches convert, because it has reached none. A 0 there would rank an unproven workflow last on
     // a claim nobody measured.
@@ -1552,7 +1531,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     // reads) — it is economics- AND goal-independent, so it runs off the request path ~once per TTL,
     // keyed on the inputs that shape it (orgId + brand + pricing). The brand's ECONOMICS is read LIVE
     // on every request and the response is projected from it here: a caller that just wrote its sales
-    // economics reads the NEW lifetimeRevenueUsd (hence the new roiMultiple / cacPct) with no wait, no
+    // economics reads the NEW lifetimeRevenueUsd (hence the new paid-client cost) with no wait, no
     // opt-in param, and without re-running the fan-out. See "economics is never cached" below.
     const identity: Identity = { orgId, userId, runId, featureSlug: headerFeatureSlug };
 
@@ -1753,7 +1732,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     let legBlock: ProjectionLeg | undefined;
     let legBasisFunnelKey: SalesFunnelKey | null = null;
     let legBasis: ProjectionLeg["basis"] = "sole_declared_funnel";
-    let legReturnPerDollar: number | null = null;
     let legConversionRatePct: number | null = null;
     if (legKey && declaredFunnels) {
       const ranked = rankDeclaredFunnels({
@@ -1774,7 +1752,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         ranked.recommendation?.funnelKey ??
         [...legCandidates].sort((a, b) => salesFunnelIndex(a) - salesFunnelIndex(b))[0];
       const basisEntry = ranked.ranking.find((r) => r.funnelKey === legBasisFunnelKey) ?? null;
-      legReturnPerDollar = basisEntry?.returnPerDollar ?? null;
       legConversionRatePct = basisEntry?.conversionRatePct ?? null;
       legBasis =
         legCandidates.length === 1
@@ -1885,7 +1862,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
         candidateFunnelKeys: legCandidates,
         basisFunnelKey: legBasisFunnelKey,
         basis: legBasis,
-        returnPerDollar: legReturnPerDollar,
         conversionRatePct: legConversionRatePct,
         evidence: {
           grain: recommendedRow?.resolved.grain ?? null,
@@ -1911,21 +1887,6 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
     if (costBasis === "actual" && vendorEvidence && unpricedEvidence) {
       // The ORDER is the billed one; only the money is read at vendor cost (lib/actual-cost-projection.ts).
       const actual = overlayVendorProjection(response, projectOn(vendorEvidence), projectOn(unpricedEvidence));
-      // The leg's basis-funnel RETURN is a money ratio: re-read on vendor spend, and null when any spend
-      // behind it could not be priced — never the billed ratio under the actual name.
-      if (legBlock && legBasisFunnelKey && declaredFunnels) {
-        const vendorRanked = rankDeclaredFunnels({
-          featureSlug,
-          funnels: declaredFunnelsToRank(declaredFunnels).filter((f) => f.funnelKey === legBasisFunnelKey),
-          evidence: vendorEvidence,
-          maximize,
-          legKey,
-        });
-        legBlock = {
-          ...legBlock,
-          returnPerDollar: actual.unpricedBilledCostUsd > 0 ? null : (vendorRanked.ranking[0]?.returnPerDollar ?? null),
-        };
-      }
       const actualRows = withAudienceAvailability(actual.rows as unknown as ProjectionRow[], audienceAvailability);
       return res.json({
         ...actual,
@@ -2383,7 +2344,7 @@ export async function computeWorkflowProjection(input: {
  * The PURE, economics-DEPENDENT half: derive the goal's 3-grain projection from already-fetched
  * evidence + the brand's economics. No IO, so it runs on EVERY request against LIVE economics — that is
  * what makes a read straight after an offer-terms write reflect the new `lifetimeRevenueUsd` (and
- * therefore the new `roiMultiple` / `cacPct`) without a cache-bypass param and without re-fanning out.
+ * therefore the new `costPerPaidClientUsd`) without a cache-bypass param and without re-fanning out.
  * NEVER cache this output keyed on the evidence inputs alone; economics is not one of them.
  */
 /**
@@ -2513,7 +2474,6 @@ export function projectFromEvidence(input: {
           ...(formSubmissionGoal ? formSubmissionRatesDecimal(economics) : {}),
         }
       : null;
-    const ltrUsd = economics?.lifetimeRevenueUsd ?? null;
 
     // economics echo — the brand's effective economics, shown ONCE (same across grains). Includes the
     // goal's resolved single-step / form-submission rates, mirroring the econ mapping above.
@@ -2548,7 +2508,7 @@ export function projectFromEvidence(input: {
       ev: WorkflowGrainEvidence,
       parentUnitCosts: GrainUnitCosts | null = null,
     ): GrainBlock =>
-      buildGrainBlock(ev, econ, ltrUsd, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts, meetingChannel, legTerms);
+      buildGrainBlock(ev, econ, objective, singleStepGoal, formSubmissionGoal, parentUnitCosts, meetingChannel, legTerms);
     const resolve = (grains: Partial<Record<GrainName, GrainBlock>>): ResolvedBlock =>
       resolvePick(grains, econ, objective, singleStepGoal, formSubmissionGoal, meetingChannel, legTerms);
 

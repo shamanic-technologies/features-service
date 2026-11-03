@@ -358,8 +358,8 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     // (NOT the purchase funnel's 105.60 — that includes the self-serve v2c route, which belongs to the purchase goal.)
     // Coherent: 133.333 ≥ costPerMeetingBooked (40), a paid client is downstream of a booked meeting.
     expect(a.estimatesByGrain.crossOrg.projected.costPerPaidClientUsd).toBeCloseTo(133.3333, 3);
-    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeCloseTo(1000 / 133.3333, 3);
-    expect(a.estimatesByGrain.crossOrg.projected.cacPct).toBeCloseTo(100 / (1000 / 133.3333), 3);
+    expect(a.estimatesByGrain.crossOrg.projected).not.toHaveProperty("roiMultiple");
+    expect(a.estimatesByGrain.crossOrg.projected).not.toHaveProperty("cacPct");
   });
 
   it("SIGNUP goal: costPerPaidClient = costPerSignup / s2pc (coherent, ≥ costPerSignup), NOT the purchase funnel", async () => {
@@ -374,8 +374,8 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(p.costPerSignupUsd).toBeCloseTo(250, 3);
     expect(p.costPerPaidClientUsd).toBeCloseTo(500, 3);
     expect(p.costPerPaidClientUsd).toBeGreaterThanOrEqual(p.costPerSignupUsd);
-    expect(p.roiMultiple).toBeCloseTo(1000 / 500, 3); // 2.0×
-    expect(p.cacPct).toBeCloseTo(100 / (1000 / 500), 3); // 50%
+    expect(p).not.toHaveProperty("roiMultiple"); // 2.0×
+    expect(p).not.toHaveProperty("cacPct"); // 50%
   });
 
   it("economics echoed once (non-null); null at cold start with rows still emitted", async () => {
@@ -391,7 +391,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     const a = rowFor(cold.body, "dyn-a");
     expect(a.estimatesByGrain.crossOrg.unitCosts.costPerClickUsd).toBeCloseTo(10, 6); // unit costs still real
     expect(a.estimatesByGrain.crossOrg.projected.costPerMeetingBookedUsd).toBeNull();
-    expect(a.estimatesByGrain.crossOrg.projected.roiMultiple).toBeNull();
+    expect(a.estimatesByGrain.crossOrg.projected).not.toHaveProperty("roiMultiple");
     expect(cold.body.recommendedWorkflowDynastySlug).toBeNull();
     expect(cold.body.recommendedBudgetUsd).toBeNull();
   });
@@ -557,8 +557,8 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(20, 3);
     // No paid-client rate for whatsapp → null (never a false number), and ROI/CAC follow null.
     expect(a.resolved.costPerPaidClientUsd).toBeNull();
-    expect(a.resolved.roiMultiple).toBeNull();
-    expect(a.resolved.cacPct).toBeNull();
+    expect(a.resolved).not.toHaveProperty("roiMultiple");
+    expect(a.resolved).not.toHaveProperty("cacPct");
     expect(a.estimatesByGrain.brand.projected.costPerPaidClientUsd).toBeNull();
     // recommendedBudget still rides the (non-null) cost-per-outcome = CPC.
     expect(res.body.recommendedWorkflowDynastySlug).not.toBeNull();
@@ -662,7 +662,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     const a = rowFor(res.body, "dyn-a");
     expect(a.resolved.costPerOutcomeUsd).toBeCloseTo(20, 3);
     expect(a.resolved.costPerPaidClientUsd).toBeNull();
-    expect(a.resolved.roiMultiple).toBeNull();
+    expect(a.resolved).not.toHaveProperty("roiMultiple");
   });
 
   it("COMBINED sales goal: cost-per-outcome == cost-per-paid-client == cost-per-sale (best-channel MIN); ROI = CLTV / cost-per-sale", async () => {
@@ -685,10 +685,9 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     // For the combined goal the OUTCOME *is* the paying client → the two are EQUAL (unlike single-step,
     // where they differ by the visit/reply→paid rate).
     expect(a.resolved.costPerPaidClientUsd).toBeCloseTo(a.resolved.costPerOutcomeUsd, 6);
-    // ROI = CLTV / cost-per-sale = 1000 / 400 = 2.5 ; cacPct = 100 / ROI.
-    expect(a.resolved.roiMultiple).toBeCloseTo(1000 / a.resolved.costPerPaidClientUsd, 5);
-    expect(a.resolved.roiMultiple).toBeCloseTo(2.5, 3);
-    expect(a.resolved.cacPct).toBeCloseTo(100 / 2.5, 3);
+    // No return on the row (ROI-CONSISTENCY-1103).
+    expect(a.resolved).not.toHaveProperty("roiMultiple");
+    expect(a.resolved).not.toHaveProperty("cacPct");
   });
 
   it("COMBINED sales on an offer walking neither direct route → both rates 0, the sale cost NULL (never $0, never a 502)", async () => {
@@ -700,7 +699,7 @@ describe("GET /features/:featureSlug/workflow-projection (3-grain ladder)", () =
     const a = rowFor(res.body, "dyn-a");
     expect(a.resolved.costPerOutcomeUsd).toBeNull();
     expect(a.resolved.costPerPaidClientUsd).toBeNull();
-    expect(a.resolved.roiMultiple).toBeNull();
+    expect(a.resolved).not.toHaveProperty("roiMultiple");
   });
 
   it("website_purchase goal (renamed `purchase`): echoes website_purchase/websitePurchase; legacy `purchase` input still accepted", async () => {

@@ -45,28 +45,11 @@ import { fetchFollowupActedLeads } from "../lib/followup-actions-client.js";
 import type { StepEvidence } from "../lib/funnel-steps.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
 import type { ColdLeadsRead } from "../lib/step-outcomes-client.js";
-import { buildOfferPipeline, explainStepValue, offerStepSets, stepConversion } from "../lib/offer-pipeline-explained.js";
+import { buildOfferPipeline, explainStepValue, offerStepSets, servedOfferPipeline, stepConversion } from "../lib/offer-pipeline-explained.js";
 import { contactedPricingOf } from "./contacted-value.js";
-import { offerRevenueJson } from "./offer-economics.js";
 import { getBrandEffectiveRates, type BrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { withExpectedConversions } from "../lib/expected-conversion.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
-
-/**
- * The offer revenue read's `headline.totalPipelineUsd` (the page's Pipeline figure), through its own Gold
- * cell, so the exclusive ladder's total is reconciled against the figure the customer reads. Soft: null
- * (served as `headline_unreadable`) never fails the outcome read.
- */
-async function headlinePipelineSoft(args: Parameters<typeof offerRevenueJson>[0]): Promise<number | null> {
-  try {
-    const body = JSON.parse((await offerRevenueJson(args)).json) as { headline?: { totalPipelineUsd?: unknown } };
-    const v = body.headline?.totalPipelineUsd;
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
-  } catch (err) {
-    console.warn(`[features-service] offer outcomes: offer revenue headline unreadable (exclusive total unreconciled): ${(err as Error).message}`);
-    return null;
-  }
-}
 
 /** The pipeline with every sliced-ladder row's expected % Conversion (`lib/expected-conversion.ts`). */
 async function withExpectedLadder<P extends { exclusiveLadder: Parameters<typeof withExpectedConversions>[0] }>(
@@ -200,15 +183,6 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
         const contactedPricingPromise = contactedPricingOf(brandId, headers);
         // Awaited later and LOUD: never an unhandled rejection while an earlier await throws.
         contactedPricingPromise.catch(() => {});
-        const headlinePromise = headlinePipelineSoft({
-          offerId,
-          brandId,
-          pricing,
-          identity: { orgId: req.orgId },
-          leadDetail: "outcomes",
-          causes,
-          windowDays: undefined,
-        });
         const [people, spends, acted] = await Promise.all([
           groupCampaignIds.length > 0
             ? readOfferPersons({
@@ -287,7 +261,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           outcomes,
           unattributedCampaignIds: partition.unattributedCampaignIds,
           hiddenCampaignIds: partition.hiddenCampaignIds,
-          pipeline: await withExpectedLadder(await expectedRatesPromise, pricedFunnelKeys, buildOfferPipeline({
+          pipeline: servedOfferPipeline(await withExpectedLadder(await expectedRatesPromise, pricedFunnelKeys, buildOfferPipeline({
             persons: people.persons,
             evidence: people.evidence,
             declared,
@@ -296,7 +270,6 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
             sets,
             pricedCauses: causes,
             contactedPricing: await contactedPricingPromise,
-            headlinePipelineUsd: await headlinePromise,
             conversionHistory: withHistory
               ? {
                   dateOf: (p, signal) =>
@@ -306,7 +279,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                   today: new Date().toISOString().slice(0, 10),
                 }
               : null,
-          })),
+          }))),
         };
       },
     });

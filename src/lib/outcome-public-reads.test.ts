@@ -7,8 +7,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { pricePair, type PairResult } from "./channel-funnel-economics.js";
-import { buildFunnelReturnOnSpend } from "./fleet-funnel-return.js";
-import { buildOutcomeReturnOnSpend, channelOutcomeEconomicsOf, MIN_OUTCOMES_TO_RANK, showcaseOutcomesOf } from "./outcome-public-reads.js";
+import { channelOutcomeEconomicsOf, MIN_OUTCOMES_TO_RANK, showcaseOutcomesOf } from "./outcome-public-reads.js";
 import { legKeysOfFunnel } from "./funnel-legs.js";
 import type { PublicChannel } from "./channel-catalogue.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
@@ -44,7 +43,7 @@ const channel = (slug: string, legs: Array<[string | null, string]>): PublicChan
   }) as unknown as PublicChannel;
 
 describe("channelOutcomeEconomicsOf", () => {
-  it("a ONE-path channel reads the byte-same prices, return and commitment as its pair row", () => {
+  it("a ONE-path channel reads the byte-same prices and commitment as its pair row, and no return", () => {
     const pair = price("sales_meetings_from_conversation");
     const out = channelOutcomeEconomicsOf(channel("c", [[null, "conversation"]]), [
       { funnelKey: "sales_meetings_from_conversation", effectiveMinimumCommitmentDays: 30, result: pair },
@@ -54,7 +53,9 @@ describe("channelOutcomeEconomicsOf", () => {
     expect(out.paths[0].legKeys).toEqual(legKeysOfFunnel("sales_meetings_from_conversation"));
     expect(out.paths[0].steps.map((s) => s.costPerOutcomeUsd)).toEqual(pair.economics.steps.map((s) => s.costPerStepUsd));
     expect(out.paths[0].costPerPaidClientUsd).toBe(pair.economics.costPerSaleUsd);
-    expect(out.returnPerDollar).toBe(pair.economics.returnPerDollar);
+    // No return is served (ROI-CONSISTENCY-1103).
+    expect(out).not.toHaveProperty("returnPerDollar");
+    expect(out.paths[0]).not.toHaveProperty("returnPerDollar");
     expect(out.effectiveMinimumCommitmentDays).toBe(30);
     // Each outcome IS its rung on the one path.
     expect(out.outcomes.map((o) => [o.step.key, o.costPerOutcomeUsd])).toEqual([
@@ -72,7 +73,7 @@ describe("channelOutcomeEconomicsOf", () => {
     expect(keys.filter((k) => /funnel/i.test(k))).toEqual([]);
   });
 
-  it("two paths reaching one outcome: the CHEAPEST answers, both are listed, the best return wins", () => {
+  it("two paths reaching one outcome: the CHEAPEST answers, both are listed", () => {
     const conv = price("sales_meetings_from_conversation");
     const web = price("sales_meetings_from_website");
     if (!conv.measured || !web.measured) throw new Error("fixture must price");
@@ -86,7 +87,6 @@ describe("channelOutcomeEconomicsOf", () => {
     expect(a).not.toBe(b);
     expect(booked.costPerOutcomeUsd).toBe(Math.min(a, b));
     expect(booked.paths.map((p) => p.costPerOutcomeUsd)).toEqual([a, b]);
-    expect(out.returnPerDollar).toBe(Math.max(conv.economics.returnPerDollar!, web.economics.returnPerDollar!));
     // The shared leg (attended → paid) is priced on the cheaper of its two paths.
     const shared = out.legs.find((l) => l.legKey === "meeting_attended_to_paid_client")!;
     expect(shared.costPerOutcomeUsd).toBe(Math.min(conv.economics.costPerSaleUsd!, web.economics.costPerSaleUsd!));
@@ -97,7 +97,6 @@ describe("channelOutcomeEconomicsOf", () => {
       { funnelKey: "sales_meetings_from_ads", effectiveMinimumCommitmentDays: 30, result: price("sales_meetings_from_ads") },
     ]);
     expect(out.outcomes.every((o) => o.costPerOutcomeUsd === null && o.unpricedReason === "entry_step_not_measured")).toBe(true);
-    expect(out.returnPerDollar).toBeNull();
     expect(out.evidence).toBeNull();
   });
 });
@@ -132,16 +131,13 @@ describe("channelOutcomeEconomicsOf maturity (CHANNEL-ECON-MATURITY-1031)", () =
       outcomesMeasured: 1,
       outcomesRequired: MIN_OUTCOMES_TO_RANK,
     });
-    expect(one.returnPerDollar).not.toBeNull();
-    expect(one.returnPerDollarMaturity.isMature).toBe(false);
     expect(one.paths[0].costPerPaidClientMaturity.isMature).toBe(false);
     expect(one.legs.every((l) => !l.maturity.isMature)).toBe(true);
 
     expect(reply(many).maturity.isMature).toBe(true);
     expect(reply(many).maturity.notMatureReason).toBeNull();
     expect(reply(many).maturity.outcomesMeasured).toBe(52);
-    expect(many.returnPerDollarMaturity.isMature).toBe(true);
-    expect(many.paths[0].returnPerDollarMaturity.isMature).toBe(true);
+    expect(many.paths[0].costPerPaidClientMaturity.isMature).toBe(true);
     // A null figure (attended rung) is never mature, whatever the evidence.
     const attended = many.outcomes.find((r) => r.step.key === "meeting_attended")!;
     expect(attended.maturity).toMatchObject({ isMature: false, notMatureReason: "no_figure" });
@@ -151,41 +147,15 @@ describe("channelOutcomeEconomicsOf maturity (CHANNEL-ECON-MATURITY-1031)", () =
     const out = channelOutcomeEconomicsOf(channel("ads", [[null, "meeting_booked"]]), [
       { funnelKey: "sales_meetings_from_ads", effectiveMinimumCommitmentDays: 30, result: price("sales_meetings_from_ads") },
     ]);
-    expect(out.returnPerDollarMaturity).toMatchObject({ isMature: false, notMatureReason: "no_figure", outcomesMeasured: null });
-  });
-});
-
-describe("buildOutcomeReturnOnSpend", () => {
-  const brand = (id: string, legs: string[] | undefined, multiple: number, clients: number | null = 2) => ({
-    brandId: id,
-    committedSpendUsd: 1000,
-    expectedPipelineUsd: 1000 * multiple,
-    ...(legs === undefined ? {} : { legKeys: legs }),
-    expectedPaidClients: clients,
-  });
-
-  it("a leg population of one-path brands reads the byte-same median as the funnel row", () => {
-    const rows = [brand("a", ["start_to_conversation"], 1.5), brand("b", ["start_to_conversation"], 2), brand("c", ["start_to_conversation"], 3), brand("d", ["start_to_website_visit"], 9)];
-    const leg = buildOutcomeReturnOnSpend(rows, new Set(["start_to_conversation"]), 100);
-    const funnel = buildFunnelReturnOnSpend(rows.slice(0, 3).map((r) => ({ ...r, funnelKey: "sales_meetings_from_conversation" as const })), 100);
-    expect(leg).toEqual(funnel);
-    expect(leg.medianReturnPerDollar).toBe(2);
-    expect(leg.medianCostPerPaidClientUsd).toBe(500);
-  });
-
-  it("tells a snapshot that predates legs apart from a thin population", () => {
-    expect(buildOutcomeReturnOnSpend([brand("a", undefined, 2)], new Set(["start_to_conversation"]), 100).reason).toBe("legs_not_recorded_yet");
-    expect(buildOutcomeReturnOnSpend([brand("a", ["start_to_conversation"], 2)], new Set(["start_to_conversation"]), 100).reason).toBe("not_enough_brands");
-    expect(buildOutcomeReturnOnSpend(null, new Set(["start_to_conversation"]), 100).reason).toBe("no_snapshot_yet");
+    expect(out.paths[0].costPerPaidClientMaturity).toMatchObject({ isMature: false, notMatureReason: "no_figure", outcomesMeasured: null });
   });
 });
 
 describe("showcaseOutcomesOf", () => {
-  it("merges two paths' identical rungs into one outcome naming both legs, and keeps the brand return", () => {
+  it("merges two paths' identical rungs into one outcome naming both legs, and serves no return", () => {
     const chain = (steps: Array<[string, number]>) => ({
       funnelKey: "x" as SalesFunnelKey,
       funnelName: "x",
-      returnPerDollar: 1,
       steps: [{ key: "contacted", label: "Contacted", peopleReached: 100, costPerReachUsd: 1 }, ...steps.map(([key, n]) => ({ key, label: key, peopleReached: n, costPerReachUsd: 100 / n }))],
     });
     const out = showcaseOutcomesOf(
@@ -198,10 +168,9 @@ describe("showcaseOutcomesOf", () => {
         measured: true,
         unmeasuredReason: null,
       },
-      2.5,
     );
     expect(out.outcomes.map((o) => o.key)).toEqual(["contacted", "conversation", "website_visit", "meeting_booked", "meeting_attended", "paid_client"]);
     expect(out.outcomes.find((o) => o.key === "meeting_booked")!.legKeys).toEqual(["conversation_to_meeting_booked", "website_visit_to_meeting_booked"]);
-    expect(out.returnPerDollar).toBe(2.5);
+    expect(out).not.toHaveProperty("returnPerDollar");
   });
 });

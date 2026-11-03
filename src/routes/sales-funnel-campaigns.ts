@@ -40,6 +40,7 @@ import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { runningFunnelIdOf } from "../lib/running-funnel.js";
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
+import { servedCostEconomics, servedHeadline } from "../lib/retired-returns.js";
 import { computeTakeoverReturn } from "../lib/value-added-io.js";
 import { expectedReturnForFunnelCampaign } from "../lib/expected-return.js";
 import { funnelCampaignActivity, type FunnelCampaignActivityBody } from "./sales-funnel-campaign-activity.js";
@@ -198,7 +199,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
           });
 
       // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the funnel's own sales path priced
-      // on hypotheses, each named (`lib/expected-return.ts`). Additive: `roiMultiple` and `maturity` are unchanged.
+      // on hypotheses, each named (`lib/expected-return.ts`).
       // WHAT IT PRODUCED, step by step in people since inception (Lead found included): the campaign page's own funnel
       // (`funnelCampaignActivity`, one Gold cell for both reads). FAIL-SOFT: unreadable = null + reason, logged, the
       // row's money still served.
@@ -220,22 +221,20 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       return {
         ...funnelCampaignCopyRow(r, copy, runningPathOf(r)),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
-        roiMultiple: money && distinct.length <= 1 ? money.costEconomics.roiMultiple : null,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
         expectedReturn,
         // Its people at each step of its path since inception (`steps[].people`, `rateToNextPct`; Lead found = the
         // leads it found), the campaign page's funnel byte-for-byte.
         funnel: activity.funnel,
         funnelUnavailableReason: activity.funnelUnavailableReason,
-        // The pipeline and WHY it is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting
-        // booking funnel), the block a campaign row serves: a null ROI always reads with its reason.
-        headline: money?.headline ?? null,
-        costEconomics: money?.costEconomics ?? null,
+        // WHY its pipeline is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting booking funnel)
+        // and its cost economics, the blocks a campaign row serves, without the pipeline-based return
+        // (ROI-CONSISTENCY-1103: the value it added stays in process, feeding only its expected return's measured rung).
+        headline: money?.headline ? servedHeadline(money.headline) : null,
+        costEconomics: money?.costEconomics ? servedCostEconomics(money.costEconomics) : null,
         maturity: money?.maturity ?? null,
-        // Where this campaign took its people over (null = it found them) and what it added on top of their value
-        // there (`lib/value-added.ts`); `headline.totalPipelineUsd` is that value added when a step is named.
+        // Where this campaign took its people over (null = it found them).
         takeoverStep,
-        valueAdded: money?.valueAdded ?? null,
       };
     });
 

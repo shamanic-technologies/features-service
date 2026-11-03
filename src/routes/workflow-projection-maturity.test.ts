@@ -464,9 +464,8 @@ describe("a leg-keyed ladder prices a MATURE workflow on its mature evidence (fe
     const res = await get(`leg=${VISIT}`);
     const old = brandRow(res.body, "dyn-old");
     expect(old.maturity.basis).toBe("mature");
-    // The basis funnel's best workflow is the mature leader, and the return stated for it is the one its
-    // row is priced on — not a flash return beside a mature-priced row.
-    expect(res.body.leg.returnPerDollar).toBeCloseTo(old.resolved.roiMultiple, 9);
+    // The basis funnel's best workflow is the mature leader; the leg serves no return (ROI-CONSISTENCY-1103).
+    expect(res.body.leg).not.toHaveProperty("returnPerDollar");
   });
 
   it("a LEG-LESS read is byte-unchanged: no maturity anywhere", async () => {

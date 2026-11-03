@@ -36,9 +36,6 @@ function unmeasuredVersion(row: CatalogTemplate, key: string): CatalogTemplateVe
     thin: true,
     sample: `${n(0)} ${outcomeNoun} · ${n(0)} ${exposure}`,
     charts: [],
-    ...(row.roiDetail.value != null
-      ? { roi: row.roiDetail.display, roiDetail: { ...row.roiDetail, basis: "expected" as const, source: "dynasty" as const, spendCovered: null } }
-      : { roi: row.roi, roiDetail: row.roiDetail }),
   };
 }
 

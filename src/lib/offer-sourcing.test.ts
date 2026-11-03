@@ -128,11 +128,11 @@ describe("computeOfferSourcing", () => {
     // c1 outreach $4 over 3 leads: 2/3 to cold.
     expect(cold.outreachCostUsd).toBeCloseTo(8 / 3, 10);
     expect(cold.endToEndCostUsd).toBeCloseTo(2 + 8 / 3, 10);
-    expect(cold.roi).toBeCloseTo(10 / (2 + 8 / 3), 10);
+    expect(cold).not.toHaveProperty("roi"); // ROI-CONSISTENCY-1103: a source serves its costs, never a return
     const signal = r.origins.find((o) => o.slug === "sourcing-linkedin-engagement-signals")!;
     expect(signal).toMatchObject({ used: true, serveCount: 1, leadsServed: 1, sourcingCostUsd: 0.5, positiveReplies: 1 });
     const crm = r.origins.find((o) => o.slug === "sourcing-crm-contacts")!;
-    expect(crm).toMatchObject({ used: false, serveCount: 0, leadsServed: 0, costPerLeadUsd: null, roi: null, roiUnavailableReason: "nothing_spent" });
+    expect(crm).toMatchObject({ used: false, serveCount: 0, leadsServed: 0, costPerLeadUsd: null });
   });
 
   it("a serve or lead of unknown origin is unattributed, never spread", () => {
@@ -168,9 +168,9 @@ describe("computeOfferSourcing", () => {
     spy.mockRestore();
   });
 
-  it("no value for a positive reply = no ROI, named", () => {
+  it("no value for a positive reply still serves the costs, never a return", () => {
     const none = computeOfferSourcing({ campaigns, serves, totalCentsByCampaign: totals, listOfAudience: lists, unrecordedOriginByCampaign: new Map(), leads, valuePerPositiveReplyUsd: null });
-    expect(none.origins[0]).toMatchObject({ roi: null, roiUnavailableReason: "no_positive_reply_value" });
+    expect(Object.keys(none.origins[0]!).filter((k) => /roi/i.test(k))).toEqual([]);
   });
 });
 

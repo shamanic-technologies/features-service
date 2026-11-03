@@ -174,8 +174,6 @@ describe("workflow-projection: a channel with no history still answers who it co
         costPerOutcomeUsd: null,
         costPerPaidClientUsd: null,
         costPerMeetingBookedUsd: null,
-        roiMultiple: null,
-        cacPct: null,
       });
     }
     // No rank: an unmeasured row can never be recommended.
@@ -246,7 +244,7 @@ describe("workflow-projection: a channel with no history still answers who it co
       expect(row.estimatesByGrain).toEqual({});
       expect(row.resolved.grain).toBeNull();
       expect(row.resolved.costPerOutcomeUsd).toBeGreaterThan(0);
-      expect(row.resolved.roiMultiple).toBeNull();
+      expect(row.resolved).not.toHaveProperty("roiMultiple");
     }
   });
 });

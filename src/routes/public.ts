@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { servedFleetPipelines } from "../lib/fleet-pipelines-served.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { fetchReplyLatencyByCampaignGroups } from "../lib/campaign-next-steps-io.js";
 import type { LatencyMetric } from "../lib/campaign-next-steps.js";
@@ -23,7 +22,6 @@ import {
   fetchPublicCosts,
   fetchPublicEmailStats,
   fetchDynastySpendByDay,
-  fetchDynastyBilledSpendByDay,
   fetchPublicWorkflowEngagementLatency,
   fetchPublicJournalistsStats,
   fetchBrandInfoBatch,
@@ -116,30 +114,23 @@ import {
   StatedAmountConflictError,
 } from "../lib/stated-monthly-amounts-store.js";
 import { BrandOwnershipError, assertBrandHeld } from "../lib/brand-ownership.js";
-import { computeFeatureRevenue, buildCostEconomics, resolveMaturityPlan, type DownstreamHeaders } from "./revenue.js";
-import { matureBasisOf, type CostEconomics } from "../lib/cost-economics.js";
+import { computeFeatureRevenue, type DownstreamHeaders } from "./revenue.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, funnelLeg, matchFunnelLegKey, OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf } from "../lib/funnel-legs.js";
+import { FUNNEL_LEG_KEYS, funnelLeg, OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf } from "../lib/funnel-legs.js";
 import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
 import { fleetPopulationCampaigns } from "../lib/fleet-meeting-population.js";
 import type { MeetingPopulation } from "../lib/meeting-population.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
-import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
-import { buildActualCostHistory, type ActualCostHistory, type VendorSpendDay } from "../lib/actual-cost-history.js";
-import { fetchDynastyVendorSpendByDay } from "../lib/vendor-spend-by-day-client.js";
-import { foldFleetPipelines, type FleetDynastyPipeline, type PairDynastyPipeline } from "../lib/fleet-workflow-return.js";
 import {
-  buildOutcomeReturnOnSpend,
   channelOutcomeEconomicsOf,
   showcaseOutcomesOf,
   showcaseOutcomesPayloadOf,
   type ShowcaseHeroCounts,
   type ChannelOutcomeEconomics,
-  type OutcomeReturnFigures,
   type ShowcaseOutcomesPayload,
 } from "../lib/outcome-public-reads.js";
 import { fetchPricingFunnelsAllOffers } from "../lib/reading-funnels.js";
@@ -154,8 +145,7 @@ import {
   type ShowcaseGroup,
   type ShowcaseVendorCost,
 } from "../lib/showcase-funnels.js";
-import { fetchMatureSpendCents, fetchRunsCostCents } from "../lib/runs-cost-client.js";
-import { vendorReturnMedian } from "../lib/fleet-return-vendor.js";
+import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
 import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib/public-vendor-cost.js";
 import {
   buildShowcaseCandidates,
@@ -163,13 +153,9 @@ import {
   isStaffOnlyOrg,
   pickRecentlyStartedByMeetings,
   pickShowcaseClients,
-  pickHighestReturnByStated,
-  showcaseChainHasOutcome,
-  SHOWCASE_MIN_OUTCOME_PEOPLE,
   SHOWCASE_GROUP_SIZE,
   type ShowcaseGroupPick,
 } from "../lib/showcase-clients.js";
-import { servedReturnOf } from "../lib/served-return.js";
 import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
 import {
   channelStepCatalogue,
@@ -179,26 +165,7 @@ import {
 } from "../lib/channel-catalogue.js";
 import { pricePair, type PairResult } from "../lib/channel-funnel-economics.js";
 import type { ComposedMinimumCommitment } from "../lib/funnel-commercial-terms.js";
-import {
-  buildFleetReturnOnSpend,
-  parseMinSpendUsd,
-  DEFAULT_MIN_SPEND_USD,
-  MIN_RETURN_BRANDS,
-  type BrandReturnRow,
-  type FleetReturnOnSpend,
-} from "../lib/fleet-return-on-spend.js";
-import { buildMatureScopesReturn, combineVerdicts, overMatureScopes, type MatureScopesReturn } from "../lib/fleet-return-maturity.js";
-import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft } from "../lib/fleet-return-store.js";
-import {
-  buildFunnelReturnOnSpend,
-  MIN_FUNNEL_RETURN_BRANDS,
-  type BrandFunnelReturnRow,
-  type FunnelReturnOnSpend,
-} from "../lib/fleet-funnel-return.js";
-import {
-  readFleetFunnelReturnSnapshotsSoft,
-  writeFleetFunnelReturnSnapshotSoft,
-} from "../lib/fleet-funnel-return-store.js";
+import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft, type BrandSnapshotRow } from "../lib/fleet-return-store.js";
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 import { withCampaignNames } from "../lib/sales-path-names.js";
 import { withPipeIdentities } from "../lib/pipe-identities.js";
@@ -368,12 +335,9 @@ function allPublicCaches(): PublicCache[] {
     publicWorkflowLatencyCache,
     pipeFleetReplyLatencyCache,
     goalBucketDatasetCache,
-    revenueCache,
     costProjectionCache,
     costPerOutcomeTrendCache,
     workflowCostPerOutcomeCache,
-    fleetWorkflowPipelineCache,
-    fleetWorkflowSpendCache,
     bestModelCostPerOutcomeTrendCache,
     costPerOutcomeLifetimeCache,
     costPerOutcomeDistributionCache,
@@ -919,1085 +883,146 @@ export async function handleBest(
   res.json(payload);
 }
 
-// ── Public revenue handler ───────────────────────────────────────────────────
+// ── The per-brand fleet snapshot the homepage's client pick ranks ────────────────────────────────
 //
-// Cross-org expected pipeline revenue + CAC + ROI per brand for the public benchmarks
-// tables. Same EXACT engine the in-app dashboard runs (`/features/:slug/revenue`):
-// for each (org, brand) that has leads for the feature we run computeFeatureRevenue,
-// FORWARDING the owning org's x-org-id to the existing /orgs/* reads (those tiers require
-// only x-org-id, so a service can compute on any org's behalf). A brand's number is the
-// SUM across the orgs it appears in — leads are disjoint per org, so this never double-
-// counts at the lead level. CAC/ROI fall out of buildCostEconomics, byte-identical to the
-// dashboard. The compute is heavy (one engine pass per (org, brand)), so the assembled
-// response is cached in-memory for a short TTL — it is the same for every public caller.
+// For every (org, brand) running a cold-email channel: when it was first billed and the furthest rung its
+// funnel reached (one engine pass per pair, minutes across the fleet), written to `fleet_return_snapshots`
+// (historical table name) OFF the request path, so the showcase pick costs one indexed SELECT. It used to
+// carry each brand's pipeline and spend for the public return medians; those reads are deleted
+// (ROI-CONSISTENCY-1103: a return exists only where a value lands).
 
-interface PublicRevenueResult {
-  brand: { id: string; name: string | null; domain: string | null };
-  headline: { totalPipelineUsd: number | null };
-  costEconomics: ReturnType<typeof buildCostEconomics>;
-  timeline?: Array<{ date: string; cumulativePipelineUsd: number }>;
-}
-interface PublicRevenuePayload {
-  /**
-   * ACCOUNTING — this is the CUSTOMERS' money (a cross-org roll-up of the exact engine their own
-   * dashboard runs), so comped spend is absent from every CAC / ROI here. Cross-org does NOT imply
-   * the performance basis: the fleet BENCHMARK surfaces beside it read INCURRED. See lib/cost-basis.ts.
-   */
-  costBasis: "charged";
-  featureSlug: string;
-  groupBy: "brand";
-  results: PublicRevenueResult[];
-}
+/** How many (org, brand) engine passes the warm runs at once: each reads a brand's whole lead population. */
+const FLEET_SNAPSHOT_PAIR_CONCURRENCY = 4;
+/** A snapshot older than this is rebuilt behind the showcase read that found it (still served meanwhile). */
+const FLEET_SNAPSHOT_STALE_MS = 60 * 60 * 1000;
+/**
+ * A single brand's engine pass may not hang the whole warm; a hung fetch never rejects on its own. 300 s: the fleet's
+ * biggest brand (Doc Dinners, 2026-10-19) finishes in over 2 minutes under paced lead reads.
+ */
+const FLEET_SNAPSHOT_BRAND_TIMEOUT_MS = 300_000;
+/** How much longer a pass still running at the timeout is awaited, after every other pass finished. */
+const FLEET_SNAPSHOT_LATE_WAIT_MS = 600_000;
+/** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
+const fleetSnapshotWarmInFlight = new Map<string, Promise<void>>();
+/** The floor the first-billed-day read looks back from: earlier than this fleet's first billed dollar by years. */
+const FIRST_BILLED_FLOOR_ISO = "2020-01-01T00:00:00.000Z";
 
-/** How many (org, brand) revenue computes the cross-org roll-up runs at once. See the fan-out below. */
-const PUBLIC_REVENUE_PAIR_CONCURRENCY = 4;
-
-const revenueCache: PublicCache = new Map();
-
-/** Test seam — reset the in-memory public-revenue cache. */
-export function __resetPublicRevenueCache(): void {
-  clearPublicCache(revenueCache);
+/** Test seam — await any in-flight fleet snapshot warm(s) so a follow-up read observes the snapshot. */
+export async function __awaitFleetSnapshotWarm(): Promise<void> {
+  await Promise.allSettled([...fleetSnapshotWarmInFlight.values()]);
 }
 
-/** Slim feature-wide rollup of expected pipeline — sum of every brand's non-null totalPipelineUsd
- *  (null when no brand has usable economics). Lets the landing show one number without the ~1.9 MB
- *  per-brand timeline arrays. Derived from the SAME computed/cached payload as the full response. */
-function revenueRollup(payload: PublicRevenuePayload): { featureSlug: string; totalPipelineUsd: number | null } {
-  const vals = payload.results
-    .map((r) => r.headline.totalPipelineUsd)
-    .filter((v): v is number => v !== null);
-  return {
-    featureSlug: payload.featureSlug,
-    totalPipelineUsd: vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : null,
-  };
-}
-
-/** The mature cohort behind one body's ratios, as the ingredients the fleet aggregates compose. */
-function matureIngredients(costEconomics: CostEconomics): {
-  maturityDays: number;
-  matureCommittedCostUsd: number;
-  maturePipeline: number | null;
-} {
-  const basis = matureBasisOf(costEconomics);
-  return { maturityDays: basis.days, matureCommittedCostUsd: basis.committedCents / 100, maturePipeline: basis.pipelineUsd };
-}
-
-/** One (org, brand) engine pass, or null when the membership is stale (the brand moved orgs). */
-export async function computePairRevenue(
-  featureSlug: string,
-  funnel: ReturnType<typeof getFunnel>,
-  orgId: string,
-  brandId: string,
-  // The SALES FUNNEL to price the pipeline through, when the caller wants one funnel's answer rather
-  // than the brand's whole declared set. Threaded to `computeFeatureRevenue`'s own `requestedFunnel` parameter —
-  // one implementation, which cannot come to price a funnel two ways. Omitted → today's whole-brand answer.
-  requestedFunnel?: SalesFunnelKey,
-) {
+/**
+ * One (org, brand) pair: the furthest RUNG its funnel reached (`furthestRungReached`, off the engine pass's own
+ * `funnelSteps`) and the first UTC day it was billed on the channel. Null when the membership is stale (the brand
+ * moved orgs). The first-billed day is SOFT: a blip leaves the brand undated (not a recency candidate), never dated
+ * with a stand-in.
+ */
+async function computePairSnapshot(featureSlug: string, funnel: ReturnType<typeof getFunnel>, orgId: string, brandId: string): Promise<{ brandId: string; outcomeCount: number | null; startedOn: string | null } | null> {
   const headers: DownstreamHeaders = { orgId, featureSlug };
+  let outcomeCount: number | null;
   try {
-    const body = await computeFeatureRevenue(
-      featureSlug,
-      brandId,
-      undefined,
-      funnel,
-      headers,
-      undefined,
-      undefined,
-      false,
-      // NET — what the brand ACTUALLY PAID, after whatever per-org usage discount it carries. This is
-      // a statement about a CLIENT'S OWN RETURN, so it must be the money that left the client's
-      // account, not the list price we would have charged without their discount. Every consumer-facing
-      // dashboard surface reads `pricing=net`, so GROSS here published a number no client ever saw:
-      // measured in prod 2026-09-10, one brand read 9.386x gross against 18.324x net, another 1.828x
-      // against 3.481x. A brand with no discount has a frozen net equal to its gross per cost row, so
-      // it is byte-unchanged — the change moves only the discounted brands, and moves them ONTO their
-      // own dashboard's figure. Reading runs' FROZEN net twin costs ZERO extra IO (same cost read, a
-      // different field) and fails LOUD if the twin is absent — never a silent fall back to gross,
-      // which would put two numbers under one word again.
-      "net",
-      requestedFunnel,
-    );
-    return {
-      brandId,
-      pipeline: body.headline.totalPipelineUsd,
-      committedCostUsd: body.costEconomics.committedCostUsd,
-      actualCostUsd: body.costEconomics.actualCostUsd,
-      // THE MATURE COHORT the pair's ratios divide (`lib/roi-maturity.ts`) — the spend of runs old
-      // enough to have produced their outcomes and the pipeline of the leads they reached. The fleet
-      // medians are the same statistic every client reads on its own dashboard, so they compose from
-      // these ingredients, never from the whole-history ones above. Off the wire by design.
-      ...matureIngredients(body.costEconomics),
-      // Committed spend ÷ expected paying clients — null when the brand states no lifetime revenue per
-      // client. The COUNT of those clients is what composes across orgs (a ratio does not), so the
-      // fleet warm stores the count and divides once, at the brand grain.
-      costPerAcquisitionUsd: body.costEconomics.costPerAcquisitionUsd,
-      // HAS THIS BRAND PRODUCED ANYTHING AT ALL — the furthest RUNG of the funnel this pass walked,
-      // off the `funnelSteps` block it already carries (zero extra IO). A rung is a step the funnel
-      // converts TO; the outreach base is not one, and neither is a signal the funnel has no step for.
-      // It used to be clicks + positive replies whatever the funnel, which admitted a client selling
-      // the reply funnel on the strength of clicks its chain has no rung for (Living Vital, 2026-09-24:
-      // 183 contacted, 0 on every rung). Read ONLY as the recency pick's `> 0` prefilter, never served.
-      // NULL is "no rung could be counted" — including a read priced on several funnels at once, whose
-      // per-funnel passes answer instead — kept apart from a measured 0.
-      outcomeCount: furthestRungReached(body.funnelSteps),
-      // THE SCOPE'S VERDICT (`lib/scope-maturity.ts`, features-service#1196) — the one this brand's own
-      // dashboard states — and per leg: the fleet medians' `maturity` blocks keep only mature brands.
-      // `pipeline` / `committedCostUsd` above are the whole-history (flash) twins of the mature ingredients.
-      isMature: body.maturity?.isMature ?? null,
-      legMaturity: body.maturity
-        ? Object.fromEntries(
-            body.maturity.legs.filter((l) => l.legKey !== null).map((l) => [l.legKey as string, l.isMature] as const),
-          )
-        : null,
-      timeSeries: body.timeSeries,
-    };
+    const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, undefined, false, "net");
+    outcomeCount = furthestRungReached(body.funnelSteps);
   } catch (error) {
     if (error instanceof BrandOwnershipError) {
-      console.log(
-        `[features-service] skipping stale feature membership for public revenue: featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`,
-      );
+      console.log(`[features-service] fleet snapshot: skipping stale feature membership featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`);
       return null;
     }
     throw error;
   }
-}
-
-export async function handlePublicRevenue(
-  featureSlug: string | undefined,
-  groupBy: string | undefined,
-  res: import("express").Response,
-  rollup = false,
-): Promise<void> {
-  if (!featureSlug) {
-    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
-    return;
-  }
-  // brand grouping only for now — per-workflow revenue (workflow-scoped cost + leads filter)
-  // ships as a follow-up once lead-service exposes the workflowSlug lead filter.
-  if (groupBy !== "brand") {
-    res.status(400).json({ error: "Query parameter 'groupBy' is required and must be 'brand'" });
-    return;
-  }
-
-  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-  if (!feature) {
-    res.status(404).json({ error: "Feature not found" });
-    return;
-  }
-
-  const cacheKey = `${featureSlug}:${groupBy}`;
-  const payload = await servedPublicCached<PublicRevenuePayload>({
-    cache: revenueCache,
-    key: cacheKey,
-    windows: LIFETIME_AGGREGATE_WINDOWS,
-    label: "public revenue",
-    compute: async () => {
-    const funnel = getFunnel(featureSlug);
-    const memberships = await fetchFeatureMemberships(featureSlug);
-
-    // One revenue compute per DISTINCT (org, brand) pair (workflow collapsed for the brand table).
-    const pairKey = (orgId: string, brandId: string) => `${orgId}::${brandId}`;
-    const pairs = [
-      ...new Map(memberships.map((m) => [pairKey(m.orgId, m.brandId), { orgId: m.orgId, brandId: m.brandId }])).values(),
-    ];
-
-    // BOUNDED, not `Promise.all`. Each pair is a full revenue compute, and every one of them reads
-    // that brand's WHOLE lead population — so an unbounded fan-out puts one heavy downstream read per
-    // (org, brand) on lead-service simultaneously. Ten of those landing together is what exhausted its
-    // connection pool on 2026-09-07, and the same shape killed this read outright on 2026-09-08
-    // (`TypeError: terminated / SocketError: other side closed`, a 500 at 161s). The lead read carries
-    // its own process-wide cap (leads-client), so this bound is about the OTHER legs of each compute
-    // (runs, brand, email-gateway) fanning out just as wide. Same numbers, same failure-loudness: a
-    // rejection still propagates.
-    //
-    // Capping makes this read FINISH; it does not make it fast, and it cannot be — the work is minutes
-    // of engine passes. The answer a landing needs off this data therefore lives on
-    // /public/stats/return-on-spend, served from a persisted snapshot instead.
-    const computed = await mapWithConcurrency(pairs, PUBLIC_REVENUE_PAIR_CONCURRENCY, ({ orgId, brandId }) =>
-      computePairRevenue(featureSlug, funnel, orgId, brandId),
-    );
-
-    // Aggregate per brand: pipeline = sum of the orgs' non-null pipelines (null iff EVERY org's is
-    // null — i.e. no saved economics anywhere); cost always sums. Leads are disjoint per org, so the
-    // sum does not double-count.
-    const byBrand = new Map<string, { pipelineSum: number; hasPipeline: boolean; committedCostCents: number; actualCostCents: number; maturityDays: number; maturePipelineSum: number; hasMaturePipeline: boolean; matureCostCents: number; timelineDeltas: Map<string, number> }>();
-    for (const c of computed) {
-      if (c === null) continue;
-      const agg = byBrand.get(c.brandId) ?? { pipelineSum: 0, hasPipeline: false, committedCostCents: 0, actualCostCents: 0, maturityDays: 0, maturePipelineSum: 0, hasMaturePipeline: false, matureCostCents: 0, timelineDeltas: new Map<string, number>() };
-      if (c.pipeline !== null) {
-        agg.pipelineSum += c.pipeline;
-        agg.hasPipeline = true;
-      }
-      // The ratios compose from each org's MATURE cohort (lib/roi-maturity.ts), summed like the rest.
-      if (c.maturePipeline !== null) {
-        agg.maturePipelineSum += c.maturePipeline;
-        agg.hasMaturePipeline = true;
-      }
-      agg.matureCostCents += Math.round(c.matureCommittedCostUsd * 100);
-      agg.maturityDays = Math.max(agg.maturityDays, c.maturityDays);
-      agg.committedCostCents += Math.round(c.committedCostUsd * 100);
-      agg.actualCostCents += Math.round(c.actualCostUsd * 100);
-      let previous = 0;
-      for (const point of c.timeSeries) {
-        const delta = point.cumulativePipelineUsd - previous;
-        previous = point.cumulativePipelineUsd;
-        if (delta <= 0) continue;
-        agg.timelineDeltas.set(point.date, (agg.timelineDeltas.get(point.date) ?? 0) + delta);
-      }
-      byBrand.set(c.brandId, agg);
-    }
-
-    const brandIds = [...byBrand.keys()];
-    const brandInfo = await fetchBrandInfoBatch(brandIds);
-
-    const results: PublicRevenueResult[] = brandIds.map((brandId) => {
-      const agg = byBrand.get(brandId)!;
-      const totalPipelineUsd = agg.hasPipeline ? agg.pipelineSum : null;
-      const info = brandInfo.get(brandId);
-      let cumulativePipelineUsd = 0;
-      const timeline = [...agg.timelineDeltas.entries()]
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, delta]) => {
-          cumulativePipelineUsd += delta;
-          return { date, cumulativePipelineUsd };
-        });
-      return {
-        brand: { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null },
-        headline: { totalPipelineUsd },
-        costEconomics: buildCostEconomics({
-          committedCostInUsdCents: agg.committedCostCents,
-          actualCostInUsdCents: agg.actualCostCents,
-          totalPipelineUsd,
-          ...(agg.maturityDays > 0
-            ? {
-                maturity: {
-                  days: agg.maturityDays,
-                  committedCostInUsdCents: agg.matureCostCents,
-                  totalPipelineUsd: agg.hasMaturePipeline ? agg.maturePipelineSum : null,
-                },
-              }
-            : {}),
-        }),
-        ...(timeline.length > 0 ? { timeline } : {}),
-      };
-    });
-
-    // Default sort: highest pipeline first (null pipeline last), then highest cost (deterministic).
-    results.sort((a, b) => {
-      const ap = a.headline.totalPipelineUsd;
-      const bp = b.headline.totalPipelineUsd;
-      if (ap === null && bp === null) return b.costEconomics.committedCostUsd - a.costEconomics.committedCostUsd;
-      if (ap === null) return 1;
-      if (bp === null) return -1;
-      if (bp !== ap) return bp - ap;
-      return b.costEconomics.committedCostUsd - a.costEconomics.committedCostUsd;
-    });
-
-    const body: PublicRevenuePayload = { costBasis: "charged", featureSlug, groupBy: "brand", results };
-    return body;
-    },
-  });
-  // The rollup is a pure projection of the SAME cached payload — never a second compute.
-  res.json(rollup ? revenueRollup(payload) : payload);
-}
-
-// ── Public FLEET RETURN-ON-SPEND handler ─────────────────────────────────────
-//
-// THE MEDIAN RETURN ON SPEND OUR CLIENTS GET, over the brands that actually spent — the third live
-// figure on the public competitor-comparison band, beside the reach and the median cost of a hot lead
-// it already states. The arithmetic and the doctrine live in `lib/fleet-return-on-spend.ts`; what lives
-// here is the reason it is served from a SNAPSHOT and never computed on the request path.
-//
-// The figure rests on the per-brand engine pass above. That pass reads a brand's whole lead population
-// and, across the fleet, takes MINUTES — measured in production 2026-09-08 at 161s before it 500'd on a
-// downstream socket. The consumer is a statically-rendered public page that gives the whole band 8
-// seconds and DROPS the stat rather than block a build, so a read that can ever take minutes is the same
-// as no read at all. An in-memory SWR cache does not fix that: a deploy, a restart or a quiet night
-// empties it and the next reader pays the full build synchronously.
-//
-// So the heavy pass runs OFF the request path (a single-flight background warm, on boot and whenever a
-// read finds the snapshot stale) and writes its per-brand rows to `fleet_return_snapshots`. The public
-// read is one indexed SELECT plus arithmetic, and it NEVER awaits the warm — a request that arrives
-// before the first warm has finished answers `measured: false, reason: "no_snapshot_yet"`, which is a
-// real answer the consumer already knows how to drop.
-//
-// The SPEND FLOOR is applied HERE, over stored ingredients, so `?minSpendUsd=` is answerable at any
-// value from one snapshot without recomputing anything.
-
-/** A read older than this kicks a background refresh (it is still SERVED — nobody waits on the warm). */
-const FLEET_RETURN_STALE_MS = 60 * 60 * 1000;
-/**
- * A single brand's engine pass may not hang the whole warm; a hung fetch never rejects on its own.
- * 300 s, not 120 s: the fleet's biggest brand (Doc Dinners, 2026-10-19) finishes in over 2 minutes
- * under paced lead reads, timed out every hour, and so vanished from every snapshot and from the
- * homepage hero (SHOWCASE-MEETINGS-1019). Off the request path, so nobody waits on it.
- */
-const FLEET_RETURN_BRAND_TIMEOUT_MS = 300_000;
-/** How much longer a pass still running at the timeout is awaited, after every other pass finished. */
-const FLEET_RETURN_LATE_WAIT_MS = 600_000;
-
-/** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
-const fleetReturnWarmInFlight = new Map<string, Promise<void>>();
-
-/**
- * The floor the first-billed-day read looks back from — earlier than this fleet's first billed dollar
- * by years, so "first ever" is genuinely first ever and not "first since the window opened".
- */
-const FIRST_BILLED_FLOOR_ISO = "2020-01-01T00:00:00.000Z";
-
-/** Test seam — await any in-flight fleet-return warm(s) so a follow-up read observes the snapshot. */
-export async function __awaitFleetReturnWarm(): Promise<void> {
-  await Promise.allSettled([...fleetReturnWarmInFlight.values()]);
-}
-
-/** What one (org, brand) pass contributes to both snapshots. */
-type PairReturn = NonNullable<Awaited<ReturnType<typeof computePairRevenue>>>;
-
-/**
- * Every pass one (org, brand) owes the warm: the CHANNEL-wide answer, plus one answer per SALES FUNNEL
- * the brand declared it sells.
- *
- * The declared set is read once here and the passes run SEQUENTIALLY, so the peak number of concurrent
- * engine passes is unchanged from before this pair grew a second question — each pass reads that
- * brand's whole lead population, and lead-service is the resource that went down under exactly this
- * kind of burst.
- *
- * A brand declaring exactly ONE funnel — every brand in production today — pays NO extra pass at all:
- * with one declared funnel the channel-wide read already prices on that funnel (`priceOnDeclaredFunnel`
- * narrows to the whole declared set, which is that one key), so the two reads are byte-identical and
- * the funnel row REUSES the channel pass rather than repeating it.
- */
-async function computePairReturns(
-  featureSlug: string,
-  funnel: ReturnType<typeof getFunnel>,
-  orgId: string,
-  brandId: string,
-): Promise<{
-  channel: PairReturn | null;
-  startedOn: string | null;
-  legKeys: string[] | null;
-  byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }>;
-  vendor: PairVendorSpend | null;
-}> {
-  const channel = await computePairRevenue(featureSlug, funnel, orgId, brandId);
-  if (channel === null) return { channel: null, startedOn: null, legKeys: null, byFunnel: [], vendor: null };
-
-  // THE SAME SPEND AT REAL VENDOR COST (PUBLIC-VENDOR-COST-1031: the public ROI index divides the client's pipeline by
-  // what producing it really cost). SOFT: an unreadable vendor spend leaves the brand without one (`vendor: null`), and
-  // the public vendor median then says `vendor_cost_unknown` rather than a median over the others.
-  let vendor: PairVendorSpend | null = null;
-  try {
-    vendor = await pairVendorSpend(featureSlug, orgId, brandId);
-  } catch (err) {
-    console.error(`[features-service] fleet-return warm: vendor spend unreadable for brand ${brandId} (org ${orgId}):`, err);
-  }
-
-  // THE LEGS this pair's campaigns on the channel are bought for — the population key of the
-  // outcome-keyed realized return (wave C4). One campaign-service list read beside an engine pass that
-  // already took seconds. SOFT, like the first-billed day: no channel-wide or funnel median reads it,
-  // so a blip leaves the brand out of the leg populations (null) and in every other one.
-  let legKeys: string[] | null = null;
-  try {
-    const rows = await fetchBrandCampaignRows(brandId, featureSlug, { orgId });
-    legKeys = [
-      ...new Set(rows.map((r) => (r.legKey ? matchFunnelLegKey(r.legKey) : null)).filter((k): k is string => k !== null)),
-    ].sort();
-  } catch (err) {
-    console.error(
-      `[features-service] fleet-return warm: campaign legs unreadable for brand ${brandId} (org ${orgId}) — it joins no leg population:`,
-      err,
-    );
-  }
-
-  // WHEN THIS CLIENT BEGAN — the first UTC day the pair was ever billed on this channel. One cheap
-  // dated-cost read beside an engine pass that already took seconds, and the only notion of a
-  // beginning this service can answer honestly (see lib/showcase-clients.ts).
-  //
-  // SOFT, and deliberately so: no MEDIAN figure depends on this date, so a blip here must not drop the
-  // brand from the population it does belong to. Null degrades the brand out of the RECENCY pick alone
-  // — never dated with a stand-in, which would silently reorder the one ranking it decides.
   let startedOn: string | null = null;
   try {
     startedOn = await fetchBrandFirstBilledDay(orgId, brandId, featureSlug, FIRST_BILLED_FLOOR_ISO);
   } catch (err) {
-    console.error(
-      `[features-service] fleet-return warm: first-billed day unreadable for brand ${brandId} (org ${orgId}) — it is not a recency candidate:`,
-      err,
-    );
+    console.error(`[features-service] fleet snapshot: first-billed day unreadable for brand ${brandId} (org ${orgId}): it is not a recency candidate:`, err);
   }
-
-  // SOFT: a brand whose declaration cannot be read contributes to the channel median (which needs no
-  // declaration) and to no funnel — never to a funnel we guessed it sells.
-  const declared = await fetchDeclaredFunnelsSoft(brandId, orgId);
-  const keys = [...new Set(declared.map((d) => d.funnelKey))];
-  if (keys.length === 0) return { channel, startedOn, legKeys, byFunnel: [], vendor };
-  if (keys.length === 1) return { channel, startedOn, legKeys, byFunnel: [{ funnelKey: keys[0], result: channel }], vendor };
-
-  const byFunnel: Array<{ funnelKey: SalesFunnelKey; result: PairReturn }> = [];
-  for (const funnelKey of keys) {
-    const result = await computePairRevenue(featureSlug, funnel, orgId, brandId, funnelKey);
-    if (result !== null) byFunnel.push({ funnelKey, result });
-  }
-  return { channel, startedOn, legKeys, byFunnel, vendor };
-}
-
-/** One (org, brand)'s channel spend at real vendor cost and the billed spend no vendor cost prices, both halves (USD). */
-interface PairVendorSpend {
-  flashUsd: number;
-  matureUsd: number;
-  unpricedFlashUsd: number;
-  unpricedMatureUsd: number;
+  return { brandId, outcomeCount, startedOn };
 }
 
 /**
- * The engine's own two spend reads (`computeFeatureRevenue`: the committed scope, and the MATURE cohort cut on the same
- * plan), on the vendor basis and its unpriced twin.
+ * Recompute one channel's per-brand rows and persist them. Runs OFF the request path. PER-BRAND RESILIENT: one
+ * brand's failed or hung pass is logged loud and contributes no row, rather than aborting the warm.
  */
-export async function pairVendorSpend(featureSlug: string, orgId: string, brandId: string): Promise<PairVendorSpend> {
-  const headers: DownstreamHeaders = { orgId, featureSlug };
-  const { plan } = await resolveMaturityPlan(brandId, featureSlug, undefined, headers);
-  const [vf, uf] = await Promise.all([
-    fetchRunsCostCents(brandId, undefined, featureSlug, headers, "vendor"),
-    fetchRunsCostCents(brandId, undefined, featureSlug, headers, "vendorUnpriced"),
-  ]);
-  const [vm, um] = plan.cutoffIso
-    ? await Promise.all([
-        fetchMatureSpendCents(brandId, undefined, featureSlug, headers, "vendor", plan).then((r) => r.total),
-        fetchMatureSpendCents(brandId, undefined, featureSlug, headers, "vendorUnpriced", plan).then((r) => r.total),
-      ])
-    : [vf, uf];
-  return { flashUsd: vf.committedCents / 100, matureUsd: vm.committedCents / 100, unpricedFlashUsd: uf.committedCents / 100, unpricedMatureUsd: um.committedCents / 100 };
-}
-
-/**
- * Recompute one channel's per-brand rows — BOTH the channel-wide answer and the per-(brand, funnel)
- * one — and persist them. Runs OFF the request path.
- *
- * ONE WARM, TWO SNAPSHOTS, on purpose: both answers are read off the same per-(org, brand) engine
- * passes, so a second warm asking the same brands the same question would double the load on
- * lead-service to learn nothing new.
- *
- * PER-BRAND RESILIENT: one brand's failed or hung pass is logged loud and contributes NO row, rather
- * than aborting a warm that had already computed the other twenty-six. That is the documented shape for
- * an off-request-path fan-out here, and it is not a swallowed error — the omission is visible on the
- * wire, because `brandCount` says how many brands the median was actually taken over.
- */
-export async function warmFleetReturnSnapshot(featureSlug: string): Promise<void> {
-  const existing = fleetReturnWarmInFlight.get(featureSlug);
+export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void> {
+  const existing = fleetSnapshotWarmInFlight.get(featureSlug);
   if (existing) return existing;
 
   const run = (async () => {
     const funnel = getFunnel(featureSlug);
     const memberships = await fetchFeatureMemberships(featureSlug);
-    const pairs = [
-      ...new Map(
-        memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }]),
-      ).values(),
-    ];
+    const pairs = [...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values()];
 
-    // A pass still running at the timeout is NOT dropped (PUBLIC-VENDOR-COST-1031-HISTORY, 2026-10-31: under box load the
-    // biggest client's pass ran past 300 s and the public ROI median lost it): its own promise, still running, is awaited
-    // AFTER the others for up to FLEET_RETURN_LATE_WAIT_MS more. No second pass is started (the first keeps the load).
-    const late: Array<{ index: number; orgId: string; brandId: string; pass: ReturnType<typeof computePairReturns> }> = [];
-    const computed = await mapWithConcurrency(pairs.map((p, index) => ({ ...p, index })), PUBLIC_REVENUE_PAIR_CONCURRENCY, async ({ orgId, brandId, index }) => {
-      const pass = computePairReturns(featureSlug, funnel, orgId, brandId);
+    // A pass still running at the timeout is NOT dropped: its own promise is awaited AFTER the others for up to
+    // FLEET_SNAPSHOT_LATE_WAIT_MS more. No second pass is started (the first keeps the load).
+    const late: Array<{ index: number; orgId: string; brandId: string; pass: ReturnType<typeof computePairSnapshot> }> = [];
+    const computed = await mapWithConcurrency(pairs.map((p, index) => ({ ...p, index })), FLEET_SNAPSHOT_PAIR_CONCURRENCY, async ({ orgId, brandId, index }) => {
+      const pass = computePairSnapshot(featureSlug, funnel, orgId, brandId);
       try {
-        return await withTimeout(pass, FLEET_RETURN_BRAND_TIMEOUT_MS, `fleet-return warm ${featureSlug} brand ${brandId}`);
+        return await withTimeout(pass, FLEET_SNAPSHOT_BRAND_TIMEOUT_MS, `fleet snapshot warm ${featureSlug} brand ${brandId}`);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("Timed out after")) {
-          console.warn(`[features-service] fleet-return warm: brand ${brandId} (org ${orgId}) still running past ${FLEET_RETURN_BRAND_TIMEOUT_MS} ms, awaited after the others`);
+          console.warn(`[features-service] fleet snapshot warm: brand ${brandId} (org ${orgId}) still running past ${FLEET_SNAPSHOT_BRAND_TIMEOUT_MS} ms, awaited after the others`);
           late.push({ index, orgId, brandId, pass });
           return null;
         }
-        console.error(
-          `[features-service] fleet-return warm: brand ${brandId} (org ${orgId}) failed and contributes no data point:`,
-          err,
-        );
+        console.error(`[features-service] fleet snapshot warm: brand ${brandId} (org ${orgId}) failed and contributes no row:`, err);
         return null;
       }
     });
     for (const l of late) {
       try {
-        computed[l.index] = await withTimeout(l.pass, FLEET_RETURN_LATE_WAIT_MS, `fleet-return warm ${featureSlug} brand ${l.brandId} (late)`);
-        console.log(`[features-service] fleet-return warm: brand ${l.brandId} (org ${l.orgId}) finished late and is counted`);
+        computed[l.index] = await withTimeout(l.pass, FLEET_SNAPSHOT_LATE_WAIT_MS, `fleet snapshot warm ${featureSlug} brand ${l.brandId} (late)`);
       } catch (err) {
-        console.error(`[features-service] fleet-return warm: brand ${l.brandId} (org ${l.orgId}) failed and contributes no data point:`, err);
+        console.error(`[features-service] fleet snapshot warm: brand ${l.brandId} (org ${l.orgId}) failed and contributes no row:`, err);
       }
     }
 
-    // A brand claimed by several orgs is ONE brand to the fleet: its spend sums and its pipeline sums
-    // (leads are disjoint per org, so nothing is double-counted), exactly as the per-brand revenue read
-    // above aggregates it. A pipeline stays null only when EVERY org's is null — no usable economics
-    // anywhere — and null is never coerced to 0.
-    const byBrand = new Map<
-      string,
-      {
-        spend: number;
-        pipeline: number;
-        hasPipeline: boolean;
-        startedOn: string | null;
-        outcomes: number;
-        hasOutcomes: boolean;
-        legKeys: Set<string>;
-        hasLegs: boolean;
-        clients: number;
-        hasClients: boolean;
-        flashSpend: number;
-        flashPipeline: number;
-        hasFlashPipeline: boolean;
-        verdicts: Array<boolean | null>;
-        legVerdicts: Map<string, Array<boolean | null>> | null;
-        /** Σ the claiming orgs' vendor spend; null as soon as one org's could not be read. */
-        vendor: PairVendorSpend | null;
-      }
-    >();
-    // The same aggregation one grain finer, keyed (brand, funnel). PAYING CLIENTS rather than a cost
-    // per client, because a COUNT composes across the orgs claiming one brand and a ratio does not:
-    // spend ÷ Σ clients is the brand's cost per client, whereas averaging two orgs' ratios is not.
-    const byBrandFunnel = new Map<
-      string,
-      {
-        brandId: string;
-        funnelKey: SalesFunnelKey;
-        spend: number;
-        pipeline: number;
-        hasPipeline: boolean;
-        clients: number;
-        hasClients: boolean;
-        flashSpend: number;
-        flashPipeline: number;
-        hasFlashPipeline: boolean;
-        verdicts: Array<boolean | null>;
-      }
-    >();
+    // A brand claimed by several orgs is ONE brand: ONE beginning (the earliest; `YYYY-MM-DD` sorts lexically) and its
+    // rung counts summed (leads are disjoint per org; an upper bound, read only as a `> 0` prefilter).
+    const byBrand = new Map<string, { startedOn: string | null; outcomes: number; hasOutcomes: boolean }>();
     for (const c of computed) {
-      if (c === null || c.channel === null) continue;
-      const agg =
-        byBrand.get(c.channel.brandId) ??
-        {
-          spend: 0,
-          pipeline: 0,
-          hasPipeline: false,
-          startedOn: null,
-          outcomes: 0,
-          hasOutcomes: false,
-          legKeys: new Set<string>(),
-          hasLegs: false,
-          clients: 0,
-          hasClients: false,
-          flashSpend: 0,
-          flashPipeline: 0,
-          hasFlashPipeline: false,
-          verdicts: [],
-          legVerdicts: null,
-          vendor: { flashUsd: 0, matureUsd: 0, unpricedFlashUsd: 0, unpricedMatureUsd: 0 },
-        };
-      agg.vendor =
-        agg.vendor && c.vendor
-          ? {
-              flashUsd: agg.vendor.flashUsd + c.vendor.flashUsd,
-              matureUsd: agg.vendor.matureUsd + c.vendor.matureUsd,
-              unpricedFlashUsd: agg.vendor.unpricedFlashUsd + c.vendor.unpricedFlashUsd,
-              unpricedMatureUsd: agg.vendor.unpricedMatureUsd + c.vendor.unpricedMatureUsd,
-            }
-          : null;
-      // The legs are the UNION over the orgs claiming the brand; one org's unreadable campaign list
-      // does not erase what another org's read stated.
-      if (c.legKeys !== null) {
-        for (const k of c.legKeys) agg.legKeys.add(k);
-        agg.hasLegs = true;
-      }
-      // Paying clients on the channel pass, recovered exactly as the per-funnel rows below recover
-      // theirs, so a brand selling one path carries the byte-same count under both keys.
-      if (c.channel.costPerAcquisitionUsd !== null && c.channel.costPerAcquisitionUsd > 0) {
-        agg.clients += c.channel.matureCommittedCostUsd / c.channel.costPerAcquisitionUsd;
-        agg.hasClients = true;
-      }
-      // The MATURE cohort (lib/roi-maturity.ts): a return median is the statistic each client reads on
-      // its own dashboard, and that one divides mature pipeline by mature spend — so does the floor.
-      agg.spend += c.channel.matureCommittedCostUsd;
-      if (c.channel.maturePipeline !== null) {
-        agg.pipeline += c.channel.maturePipeline;
-        agg.hasPipeline = true;
-      }
-      // The FLASH twins and the verdicts (features-service#1196): one brand claimed by several orgs is
-      // mature only when every org's scope is — a young part is a young whole (`combineVerdicts`).
-      agg.flashSpend += c.channel.committedCostUsd;
-      if (c.channel.pipeline !== null) {
-        agg.flashPipeline += c.channel.pipeline;
-        agg.hasFlashPipeline = true;
-      }
-      agg.verdicts.push(c.channel.isMature);
-      if (c.channel.legMaturity !== null) {
-        agg.legVerdicts ??= new Map();
-        for (const [legKey, verdict] of Object.entries(c.channel.legMaturity)) {
-          agg.legVerdicts.set(legKey, [...(agg.legVerdicts.get(legKey) ?? []), verdict]);
-        }
-      }
-      // A brand claimed by several orgs has ONE beginning: the EARLIEST of theirs. `YYYY-MM-DD` sorts
-      // lexically, so this is a string comparison with no parsing and no timezone to get wrong.
-      if (c.startedOn !== null && (agg.startedOn === null || c.startedOn < agg.startedOn)) {
-        agg.startedOn = c.startedOn;
-      }
-      // The furthest rung this pair reached on ANY funnel it walked: the channel pass walks the one
-      // funnel a single-declaration brand sells, and a brand declaring several is walked once per
-      // funnel instead (the channel pass then walks none). Leads are disjoint per org, so summing the
-      // orgs' figures counts nobody twice; it stays an upper bound, which a `> 0` prefilter tolerates.
-      const rung = [c.channel.outcomeCount, ...c.byFunnel.map((f) => f.result.outcomeCount)].reduce<number | null>(
-        (max, v) => (v === null ? max : max === null || v > max ? v : max),
-        null,
-      );
-      if (rung !== null) {
-        agg.outcomes += rung;
+      if (c === null) continue;
+      const agg = byBrand.get(c.brandId) ?? { startedOn: null, outcomes: 0, hasOutcomes: false };
+      if (c.startedOn !== null && (agg.startedOn === null || c.startedOn < agg.startedOn)) agg.startedOn = c.startedOn;
+      if (c.outcomeCount !== null) {
+        agg.outcomes += c.outcomeCount;
         agg.hasOutcomes = true;
       }
-      byBrand.set(c.channel.brandId, agg);
-
-      for (const { funnelKey, result } of c.byFunnel) {
-        const key = `${result.brandId}::${funnelKey}`;
-        const f =
-          byBrandFunnel.get(key) ??
-          {
-            brandId: result.brandId,
-            funnelKey,
-            spend: 0,
-            pipeline: 0,
-            hasPipeline: false,
-            clients: 0,
-            hasClients: false,
-            flashSpend: 0,
-            flashPipeline: 0,
-            hasFlashPipeline: false,
-            verdicts: [],
-          };
-        f.spend += result.matureCommittedCostUsd;
-        f.flashSpend += result.committedCostUsd;
-        if (result.pipeline !== null) {
-          f.flashPipeline += result.pipeline;
-          f.hasFlashPipeline = true;
-        }
-        f.verdicts.push(result.isMature);
-        if (result.maturePipeline !== null) {
-          f.pipeline += result.maturePipeline;
-          f.hasPipeline = true;
-        }
-        // clients = spend ÷ cost-per-client, recovered from the figure the engine already stated — both
-        // on the mature cohort, which is the one the cost per client divides. Null there is "this brand
-        // states no lifetime revenue per client", never a zero count.
-        if (result.costPerAcquisitionUsd !== null && result.costPerAcquisitionUsd > 0) {
-          f.clients += result.matureCommittedCostUsd / result.costPerAcquisitionUsd;
-          f.hasClients = true;
-        }
-        byBrandFunnel.set(key, f);
-      }
+      byBrand.set(c.brandId, agg);
     }
-
-    const rows: BrandReturnRow[] = [...byBrand.entries()].map(([brandId, agg]) => ({
-      brandId,
-      committedSpendUsd: agg.spend,
-      expectedPipelineUsd: agg.hasPipeline ? agg.pipeline : null,
-      // Both are read ONLY by the homepage client picks (lib/showcase-clients.ts); no median or
-      // quantile on this snapshot touches either, which is why an unreadable one degrades the brand out
-      // of one ranking rather than out of the population.
-      startedOn: agg.startedOn,
-      outcomeCount: agg.hasOutcomes ? agg.outcomes : null,
-      legKeys: agg.hasLegs ? [...agg.legKeys].sort() : null,
-      expectedPaidClients: agg.hasClients ? agg.clients : null,
-      isMature: combineVerdicts(agg.verdicts) ?? null,
-      flashCommittedSpendUsd: agg.flashSpend,
-      flashExpectedPipelineUsd: agg.hasFlashPipeline ? agg.flashPipeline : null,
-      vendorSpend: agg.vendor,
-      legMaturity: agg.legVerdicts
-        ? Object.fromEntries([...agg.legVerdicts].map(([legKey, vs]) => [legKey, combineVerdicts(vs) ?? null] as const))
-        : null,
-    }));
-    const funnelRows: BrandFunnelReturnRow[] = [...byBrandFunnel.values()].map((f) => ({
-      brandId: f.brandId,
-      funnelKey: f.funnelKey,
-      committedSpendUsd: f.spend,
-      expectedPipelineUsd: f.hasPipeline ? f.pipeline : null,
-      expectedPaidClients: f.hasClients ? f.clients : null,
-      isMature: combineVerdicts(f.verdicts) ?? null,
-      flashCommittedSpendUsd: f.flashSpend,
-      flashExpectedPipelineUsd: f.hasFlashPipeline ? f.flashPipeline : null,
-    }));
-
-    const now = new Date();
-    await writeFleetReturnSnapshotSoft(featureSlug, rows, now);
-    await writeFleetFunnelReturnSnapshotSoft(featureSlug, funnelRows, now);
-    console.log(
-      `[features-service] fleet-return warm complete for ${featureSlug}: ${rows.length} brand(s) and ${funnelRows.length} (brand, funnel) row(s) of ${pairs.length} membership pair(s)`,
-    );
+    const rows: BrandSnapshotRow[] = [...byBrand].map(([brandId, a]) => ({ brandId, startedOn: a.startedOn, outcomeCount: a.hasOutcomes ? a.outcomes : null }));
+    await writeFleetReturnSnapshotSoft(featureSlug, rows, new Date());
+    console.log(`[features-service] fleet snapshot warm complete for ${featureSlug}: ${rows.length} brand(s) of ${pairs.length} membership pair(s)`);
   })()
     .catch((err) => {
-      console.error(`[features-service] fleet-return warm failed for ${featureSlug}:`, err);
+      console.error(`[features-service] fleet snapshot warm failed for ${featureSlug}:`, err);
     })
     .finally(() => {
-      fleetReturnWarmInFlight.delete(featureSlug);
+      fleetSnapshotWarmInFlight.delete(featureSlug);
     });
 
-  fleetReturnWarmInFlight.set(featureSlug, run);
+  fleetSnapshotWarmInFlight.set(featureSlug, run);
   return run;
 }
 
 /**
- * Warm every cold-email channel's snapshot, fire-and-forget. Called AFTER `app.listen()` so a deploy
- * fills the snapshot without ever blocking the port bind (the boot-window rule: this fan-out is O(brands)
- * and takes minutes).
+ * Warm every cold-email channel's snapshot, fire-and-forget. Called AFTER `app.listen()` so a deploy fills the
+ * snapshot without ever blocking the port bind (this fan-out is O(brands) and takes minutes).
  */
-export function warmFleetReturnSnapshotsOnBoot(): void {
+export function warmFleetBrandSnapshotsOnBoot(): void {
   void (async () => {
     try {
       const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
       const slugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
-      // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap, and
-      // running several at once would put every channel's engine passes on the siblings at the same time.
-      for (const slug of slugs) await warmFleetReturnSnapshot(slug);
-      // The homepage's client PICKS are derived from the rows this warm just wrote, so refreshing the
-      // evidence without refreshing the picks would leave the page naming the previous deploy's
-      // clients for a whole stale window — a smaller version of the frozen list the picks replace.
+      // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap.
+      for (const slug of slugs) await warmFleetBrandSnapshot(slug);
+      // The homepage's client PICKS are derived from the rows this warm just wrote.
       warmShowcaseFunnelsOnBoot();
-      // The fleet per-workflow return curves (`lib/fleet-workflow-return.ts`) are the same O(pairs)
-      // engine passes; warmed AFTER the return snapshots so the two fan-outs never overlap.
-      for (const slug of slugs) await warmFleetWorkflowPipelines(slug);
     } catch (err) {
-      console.error("[features-service] fleet-return boot warm failed:", err);
+      console.error("[features-service] fleet snapshot boot warm failed:", err);
     }
   })();
-}
-
-export interface FleetReturnPayload extends FleetReturnOnSpend {
-  /**
-   * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend is absent),
-   * on the COMMITTED basis every money figure in this service rides. ORTHOGONAL to gross-vs-net
-   * pricing, which is the OTHER axis and is also settled here: the figures are read NET (what each
-   * brand actually paid after its per-org usage discount), the same basis the client's own dashboard
-   * reads — so the fleet median and any one client's number are the same statistic at two grains.
-   * See lib/cost-basis.ts and lib/pricing.ts.
-   */
-  costBasis: "charged";
-  featureSlug: string;
-  /** Each data point is one brand's realized return on its own spend. */
-  unit: "brand";
-  /** When the snapshot the figures were taken from was computed. Null when there is no snapshot yet. */
-  computedAt: string | null;
-  /** The same median over MATURE brands only, on both versions (`lib/fleet-return-maturity.ts`). */
-  maturity: MatureScopesReturn;
-}
-
-export async function handleFleetReturnOnSpend(
-  featureSlug: string | undefined,
-  minSpendUsdParam: string | undefined,
-  res: import("express").Response,
-): Promise<void> {
-  if (!featureSlug) {
-    res.status(400).json({ error: "Query parameter 'featureSlug' is required" });
-    return;
-  }
-  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
-  if (minSpendUsd === null) {
-    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
-    return;
-  }
-
-  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-  if (!feature) {
-    res.status(404).json({ error: "Feature not found" });
-    return;
-  }
-
-  res.json(await readFleetReturnOnSpend(featureSlug, minSpendUsd));
-}
-
-/** The `/public/stats/return-on-spend` body for an EXISTING feature (validation stays in the handler). */
-export async function readFleetReturnOnSpend(featureSlug: string, minSpendUsd: number): Promise<FleetReturnPayload> {
-  const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
-  return fleetReturnPayloadOf(featureSlug, snapshot, minSpendUsd);
-}
-
-/**
- * The PUBLIC ROI median on real VENDOR cost (PUBLIC-VENDOR-COST-1031): the same snapshot, the same population (mature
- * brands past the spend floor, the floor read on what they were billed), each brand's pipeline divided by what its spend
- * really cost. A brand of that population whose vendor spend is unknown (unreadable, or billed spend with no vendor cost
- * past the tolerance) is left out of the median and COUNTED in `vendorCostUnknownBrands` (distribute.you, same day: the
- * median runs over the clients whose vendor cost is known, stated, never the whole index nulled).
- */
-export async function readFleetVendorReturn(
-  featureSlug: string,
-  minSpendUsd: number,
-): Promise<{ measured: boolean; reason: string | null; brandCount: number; minSpendUsd: number; medianReturnPerDollar: number | null; vendorCostUnknownBrands: number }> {
-  const snapshot = await readFleetReturnSnapshotSoft(featureSlug);
-  if (!snapshot) return { ...fleetReturnPayloadOf(featureSlug, null, minSpendUsd), vendorCostUnknownBrands: 0 };
-  // Kick the stale-snapshot warm exactly as the billed read does; the median itself is the shared pure rule.
-  fleetReturnPayloadOf(featureSlug, snapshot, minSpendUsd);
-  return { ...vendorReturnMedian(snapshot.brands, minSpendUsd), minSpendUsd };
-}
-
-function fleetReturnPayloadOf(featureSlug: string, snapshot: Awaited<ReturnType<typeof readFleetReturnSnapshotSoft>>, minSpendUsd: number): FleetReturnPayload {
-
-  // Kick the warm when there is nothing, or when what there is has aged out. Deliberately NOT awaited:
-  // the whole point of the snapshot is that no caller ever pays for the compute.
-  if (snapshot === null || Date.now() - snapshot.computedAt.getTime() > FLEET_RETURN_STALE_MS) {
-    void warmFleetReturnSnapshot(featureSlug);
-  }
-
-  return {
-    costBasis: "charged",
-    featureSlug,
-    unit: "brand",
-    computedAt: snapshot?.computedAt.toISOString() ?? null,
-    // Over MATURE scopes only (owner, features-service#1196): the median the landing prints equals
-    // `maturity.mature`, and a young brand is in neither.
-    ...overMatureScopes(snapshot?.brands ?? null, (r) => r.isMature, (pop) => buildFleetReturnOnSpend(pop, minSpendUsd)),
-    maturity: buildMatureScopesReturn(snapshot?.brands ?? null, minSpendUsd, MIN_RETURN_BRANDS),
-  };
-}
-
-// ── Public FLEET (channel × sales funnel) RETURN-ON-SPEND handler ────────────
-//
-// WHAT A DOLLAR THROUGH ONE SALES FUNNEL CAME BACK AS FOR OUR OTHER CLIENTS, per acquisition channel.
-// The doctrine and the arithmetic live in `lib/fleet-funnel-return.ts`; what lives here is the
-// enumeration and why the answer is served from the same snapshot the channel-wide figure is.
-//
-// A customer looking at a funnel they have NOT declared asks exactly this, and until now the only
-// per-pair figure was `/public/channel-funnel-economics` — a forward projection off pooled MEANS, which
-// on the conversation-to-meeting funnel reads under 1x while the per-brand medians sit near 2x because
-// one brand carries the average. That read STAYS (its per-step prices have their own consumers) and this
-// one is beside it, answering a different question with a different statistic.
-//
-// EVERY PAIR IN THE CATALOGUE IS LISTED, measured or not — the same enumeration
-// `/public/channel-funnel-economics` prints, so the two reads can never disagree about which pairs
-// exist. A pair we cannot state says which kind of unmeasurable it is; it is never absent (absence
-// would read as "this channel does not sell this funnel") and never a 0.
-//
-// NOTHING IS POOLED ACROSS CHANNELS OR FUNNELS, and no read ever widens its population to make a number
-// appear: a pair below the brand bar answers `not_enough_brands` and the pairs beside it survive.
-
-interface ChannelFunnelReturnRow extends FunnelReturnOnSpend {
-  channelSlug: string;
-  channelName: string;
-  funnelKey: SalesFunnelKey;
-  funnelName: string;
-  /** The funnel's steps in order, so a row renders without the consumer knowing the catalogue. */
-  funnelSteps: readonly string[];
-  /** When the snapshot these figures were taken from was computed. Null when there is none yet. */
-  computedAt: string | null;
-  /** The same median over MATURE brands only, on both versions (`lib/fleet-return-maturity.ts`). */
-  maturity: MatureScopesReturn;
-}
-
-interface FleetFunnelReturnPayload {
-  /**
-   * ACCOUNTING — this is the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on
-   * the COMMITTED basis every money figure in this service rides. ORTHOGONAL to gross-vs-net pricing:
-   * the figures are read NET (what each brand actually paid after its per-org usage discount), the
-   * same basis the ROI each client reads on their own dashboard rides — so a pair median and one
-   * client's own number are the same statistic at two grains. See lib/cost-basis.ts and lib/pricing.ts.
-   */
-  costBasis: "charged";
-  /** Each data point is one brand's realized return on its own spend, through one funnel. */
-  unit: "brand";
-  /** The channel this read was narrowed to, or null for the whole catalogue. */
-  channelSlug: string | null;
-  /** The spend floor every pair's population was restricted to, echoed once. */
-  minSpendUsd: number;
-  pairs: ChannelFunnelReturnRow[];
-}
-
-export async function handleFleetFunnelReturn(
-  channelSlug: string | undefined,
-  minSpendUsdParam: string | undefined,
-  res: import("express").Response,
-): Promise<void> {
-  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
-  if (minSpendUsd === null) {
-    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
-    return;
-  }
-
-  const allChannels = await loadPublishedChannels();
-  if (channelSlug && !allChannels.some((c) => c.slug === channelSlug)) {
-    // An unknown channel is a 404 naming what was asked for — never an empty pair list, which a
-    // consumer would read as "this channel sells through nothing".
-    res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
-    return;
-  }
-  const channels = channelSlug ? allChannels.filter((c) => c.slug === channelSlug) : allChannels;
-
-  // ONE query for every channel in scope: the catalogue is roughly forty channels and a SELECT each
-  // would put forty round-trips on a request whose whole job is arithmetic over rows a warm already
-  // computed. The snapshot read is soft — a blip degrades every pair to `no_snapshot_yet`, which is an
-  // answer the consumer already knows how to drop, rather than 500ing the page.
-  const snapshots = await readFleetFunnelReturnSnapshotsSoft(channels.map((c) => c.slug));
-
-  // Kick a warm for the channels whose snapshot is absent or aged out — and ONLY for the channels the
-  // boot warm covers, because a channel nobody runs has no memberships to walk and firing forty
-  // fan-outs off one public read is the burst these snapshots exist to avoid. NEVER awaited: the whole
-  // point of the snapshot is that no caller pays for the compute.
-  const warmable = coldEmailOutreachSlugs(channels.map((c) => c.slug));
-  for (const slug of warmable) {
-    const snap = snapshots.get(slug);
-    if (!snap || Date.now() - snap.computedAt.getTime() > FLEET_RETURN_STALE_MS) {
-      void warmFleetReturnSnapshot(slug);
-    }
-  }
-
-  const pairs: ChannelFunnelReturnRow[] = [];
-  for (const channel of channels) {
-    const snap = snapshots.get(channel.slug);
-    for (const funnel of channel.salesFunnels) {
-      pairs.push({
-        channelSlug: channel.slug,
-        channelName: channel.name,
-        funnelKey: funnel.key,
-        funnelName: funnel.name,
-        funnelSteps: funnel.steps,
-        computedAt: snap?.computedAt.toISOString() ?? null,
-        ...overMatureScopes(
-          snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
-          (r) => r.isMature,
-          (pop) => buildFunnelReturnOnSpend(pop, minSpendUsd),
-        ),
-        maturity: buildMatureScopesReturn(
-          snap ? snap.rows.filter((r) => r.funnelKey === funnel.key) : null,
-          minSpendUsd,
-          MIN_FUNNEL_RETURN_BRANDS,
-        ),
-      });
-    }
-  }
-
-  const payload: FleetFunnelReturnPayload = {
-    costBasis: "charged",
-    unit: "brand",
-    channelSlug: channelSlug ?? null,
-    minSpendUsd,
-    pairs,
-  };
-  res.json(payload);
-}
-
-// ── Public FLEET (channel × leg / outcome) RETURN-ON-SPEND handler (wave C4) ──
-//
-// The funnel-keyed median above, re-keyed on the fleet's own vocabulary. The population of a LEG row is
-// the brands whose campaigns on the channel are bought for that leg; of an OUTCOME row, the brands with
-// a leg landing on that step. Each brand's figure is its CHANNEL-WIDE realized return off the channel
-// snapshot — for a brand selling one path the byte-same row the funnel read reuses. REALIZED, and never
-// relabelled as the PROJECTED `returnPerDollar` of /public/channel-outcome-economics.
-
-interface ChannelLegReturnRow extends OutcomeReturnFigures {
-  legKey: string;
-  fromStep: { key: string; label: string; description: string; shortDescription: string } | null;
-  toStep: { key: string; label: string; description: string; shortDescription: string };
-  /** The same median over the brands MATURE ON THIS LEG, on both versions. */
-  maturity: MatureScopesReturn;
-}
-
-interface ChannelOutcomeReturnRow extends OutcomeReturnFigures {
-  step: { key: string; label: string; description: string; shortDescription: string };
-  /** The legs of this channel landing on the step, whose brands make up the population. */
-  legKeys: string[];
-  /** The same median over the brands mature on every one of these legs they perform, on both versions. */
-  maturity: MatureScopesReturn;
-}
-
-/**
- * The MATURE-scopes median on a set of legs: the brands performing one of them, each judged on the legs of
- * the set it performs (the multi-leg rule — `combineVerdicts`). A row predating the per-leg verdicts is
- * `undefined` (not recorded), one whose scope could not be cut is null.
- */
-function legMatureScopesReturn(rows: readonly BrandReturnRow[] | null, legKeys: ReadonlySet<string>, minSpendUsd: number): MatureScopesReturn {
-  const population = rows === null ? null : rows.filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)));
-  return buildMatureScopesReturn(population, minSpendUsd, MIN_FUNNEL_RETURN_BRANDS, (r) => legVerdict(r, legKeys));
-}
-
-/** A brand's verdict on the legs of `legKeys` it performs (the multi-leg rule); undefined = not recorded. */
-function legVerdict(r: BrandReturnRow, legKeys: ReadonlySet<string>): boolean | null | undefined {
-  if (r.legMaturity === undefined) return undefined;
-  if (r.legMaturity === null) return null;
-  const performed = [...legKeys].filter((k) => (r.legKeys ?? []).includes(k));
-  return combineVerdicts(performed.map((k) => r.legMaturity![k] ?? null)) ?? null;
-}
-
-/** The legacy leg / outcome median over the brands MATURE on those legs (the same population as `maturity`). */
-function legReturnOverMatureScopes(rows: readonly BrandReturnRow[] | null, legKeys: ReadonlySet<string>, minSpendUsd: number) {
-  if (rows !== null && rows.length > 0 && rows.every((r) => r.legKeys === undefined)) {
-    return buildOutcomeReturnOnSpend(rows, legKeys, minSpendUsd); // legs_not_recorded_yet: say THAT first
-  }
-  const population = rows === null ? null : rows.filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)));
-  return overMatureScopes(population, (r) => legVerdict(r, legKeys), (pop) => buildOutcomeReturnOnSpend(pop, legKeys, minSpendUsd));
-}
-
-interface ChannelOutcomeReturnEntry {
-  channelSlug: string;
-  channelName: string;
-  computedAt: string | null;
-  legs: ChannelLegReturnRow[];
-  outcomes: ChannelOutcomeReturnRow[];
-}
-
-export async function handleFleetOutcomeReturn(
-  channelSlug: string | undefined,
-  minSpendUsdParam: string | undefined,
-  res: import("express").Response,
-): Promise<void> {
-  const minSpendUsd = parseMinSpendUsd(minSpendUsdParam);
-  if (minSpendUsd === null) {
-    res.status(400).json({ error: "Query parameter 'minSpendUsd' must be a number >= 0" });
-    return;
-  }
-  const allChannels = await loadPublishedChannels();
-  if (channelSlug && !allChannels.some((c) => c.slug === channelSlug)) {
-    res.status(404).json({ error: `Acquisition channel not found: "${channelSlug}"` });
-    return;
-  }
-  const channels = channelSlug ? allChannels.filter((c) => c.slug === channelSlug) : allChannels;
-
-  // Channel snapshots, one soft read each — only the channels the boot warm covers ever have one; the
-  // rest answer `no_snapshot_yet` without a query. Same warm-kick rule as the funnel read: NEVER awaited.
-  const warmable = new Set(coldEmailOutreachSlugs(channels.map((c) => c.slug)));
-  const snapshots = new Map(
-    await Promise.all(
-      [...warmable].map(async (slug) => [slug, await readFleetReturnSnapshotSoft(slug)] as const),
-    ),
-  );
-  for (const slug of warmable) {
-    const snap = snapshots.get(slug);
-    if (!snap || Date.now() - snap.computedAt.getTime() > FLEET_RETURN_STALE_MS) void warmFleetReturnSnapshot(slug);
-  }
-
-  const entries: ChannelOutcomeReturnEntry[] = channels.map((channel) => {
-    const snap = snapshots.get(channel.slug) ?? null;
-    const rows = snap?.brands ?? null;
-    const legs = channel.stepTransitions.map((t) => ({
-      legKey: t.legKey,
-      fromStep: t.from,
-      toStep: t.to,
-      ...legReturnOverMatureScopes(rows, new Set([t.legKey]), minSpendUsd),
-      maturity: legMatureScopesReturn(rows, new Set([t.legKey]), minSpendUsd),
-    }));
-    const byStep = new Map<string, { step: ChannelOutcomeReturnRow["step"]; legKeys: string[] }>();
-    for (const t of channel.stepTransitions) {
-      const e = byStep.get(t.to.key) ?? { step: t.to, legKeys: [] };
-      e.legKeys.push(t.legKey);
-      byStep.set(t.to.key, e);
-    }
-    const outcomes = [...byStep.values()].map((e) => ({
-      step: e.step,
-      legKeys: e.legKeys,
-      ...legReturnOverMatureScopes(rows, new Set(e.legKeys), minSpendUsd),
-      maturity: legMatureScopesReturn(rows, new Set(e.legKeys), minSpendUsd),
-    }));
-    return {
-      channelSlug: channel.slug,
-      channelName: channel.name,
-      computedAt: snap?.computedAt.toISOString() ?? null,
-      legs,
-      outcomes,
-    };
-  });
-
-  res.json({ costBasis: "charged", unit: "brand", channelSlug: channelSlug ?? null, minSpendUsd, channels: entries });
 }
 
 // ── Public workflow engagement latency handler ───────────────────────────────
@@ -2620,9 +1645,8 @@ export async function handleWorkflowCostPerOutcome(
     const [workflows, costGroups, billedCostGroups, emailStats, perBrandEconomics] = await Promise.all([
       fetchPublicWorkflows(featureSlug, "all"),
       fetchPublicCosts(featureSlug, "workflowSlug"),
-      // The BILLED twin (charged, net) of the same groups — the basis of the workflow page's return
-      // chart (`/public/stats/workflow-return-history`), stated beside the benchmark spend so the chart's
-      // last point and this row reconcile. Nothing divides by it here.
+      // The BILLED twin (charged, net) of the same groups: what clients were charged, stated beside the
+      // benchmark spend. Nothing divides by it here.
       fetchPublicCosts(featureSlug, "workflowSlug", "net", "charged"),
       fetchPublicEmailStats(featureSlug, "workflowSlug"),
       getFunnelBucketDatasetCached(featureSlug).then((dataset) => dataset.map((b) => b.stated.overall)),
@@ -3801,9 +2825,6 @@ export function __resetShowcaseFunnelsCache(): void {
  *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
 const SHOWCASE_BRAND_CONCURRENCY = 2;
 
-/** The most candidates one refresh will walk PER GROUP while confirming the row on their own chains. */
-const SHOWCASE_MAX_WALKS_PER_GROUP = 20;
-
 /** The recent group walks deeper: it looks for 3 clients with a booked meeting, rarer than any rung
  *  (prod 2026-10-19: 20 dated clients with a rung past the base). It stops once 3 are found. */
 const SHOWCASE_MAX_RECENT_WALKS = 30;
@@ -3816,7 +2837,7 @@ async function computeShowcaseBrand(
 ): Promise<WalkedShowcaseBrand> {
   const brand = { id: brandId, name: info?.name ?? null, domain: info?.domain ?? null };
   if (!orgId) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" }, brandReturnPerDollar: null, heroCounts: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_lead_membership" }, heroCounts: null };
   }
 
   const headers: DownstreamHeaders = { orgId };
@@ -3824,14 +2845,14 @@ async function computeShowcaseBrand(
   const rows = await fetchBrandCampaignRows(brandId, undefined, { orgId });
   const channels = buildBrandChannels(rows);
   if (channels.length === 0) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" }, brandReturnPerDollar: null, heroCounts: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "brand_has_no_channels" }, heroCounts: null };
   }
   // Which paths it sells through = the reading paths of the LEGS its campaigns perform, every offer —
   // the same set every pricing read resolves (wave C3: the funnel a campaign row stated is retired).
   // An unreadable leg economics read fails loud and lands on this brand's `read_failed`.
   const soldFunnels = brandReadingFunnels(await fetchPricingFunnelsAllOffers(brandId, orgId));
   if (soldFunnels.length === 0) {
-    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" }, brandReturnPerDollar: null, heroCounts: null };
+    return { entry: { brand, funnels: [], measured: false, unmeasuredReason: "no_funnel_sold" }, heroCounts: null };
   }
 
   const featureSlugs = brandFeatureSlugs(channels);
@@ -3854,10 +2875,6 @@ async function computeShowcaseBrand(
     : [];
 
   const funnels: ShowcaseFunnel[] = [];
-  // The per-OUTCOME twin's return (wave C4): the brand's own ROI across every path it sells. With ONE
-  // path that IS the funnel-narrowed read's return, so it is taken off that pass at no cost; only a
-  // brand selling several pays one extra, un-narrowed pass — off the request path, in this warm.
-  let brandReturnPerDollar: number | null = null;
   // The hero's two counts (positive replies, meetings booked) are PERSON flags of the brand's whole
   // lead population, the same on every funnel-narrowed pass: taken off the first one that walked.
   let heroCounts: ShowcaseHeroCounts | null = null;
@@ -3897,13 +2914,11 @@ async function computeShowcaseBrand(
       // COUNT ONLY OUR WINS (owner 2026-10-29, SHOWCASE-OUR-WINS-1029): every person count this card
       // prints (each rung, positive replies, meetings booked) keeps only the outcomes our outreach
       // caused, per lead-service's stored verdict. Doc Dinners' CRM imported 149 meetings, 7 of them
-      // after our email to that person. The return beside them is untouched (the client's own figure).
+      // after our email to that person.
       true,
     );
-    // The money half rides the SAME body: the funnel-narrowed read's own `costEconomics.roiMultiple`
-    // is the return this client reads on their own dashboard, and each rung already carries what it
-    // cost. Nothing extra is fetched for either.
-    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps, body.costEconomics));
+    // The money half rides the SAME body: each rung already carries what it cost.
+    if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps));
     if (heroCounts === null && body.funnelSteps) {
       heroCounts = {
         positiveReplies: body.recipientsRepliesPositive.total,
@@ -3912,14 +2927,6 @@ async function computeShowcaseBrand(
         committedSpentCents: body.funnelSteps.committedSpentCents,
       };
     }
-    // The return the client's dashboard Today page states: the HIGHER half of the served pair
-    // (`servedReturnOf`, owner 2026-10-08), never the mature legacy field alone.
-    if (soldFunnels.length === 1) brandReturnPerDollar = servedReturnOf(body.costEconomics.maturity).roiMultiple;
-  }
-  if (soldFunnels.length > 1) {
-    const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
-    const whole = await computeFeatureRevenue(featureSlugs, brandId, undefined, funnel, headers, undefined, brandPriced, true, "vendor");
-    brandReturnPerDollar = servedReturnOf(whole.costEconomics.maturity).roiMultiple;
   }
 
   // Billed spend with no known vendor cost must never make the card read cheap (`lib/public-vendor-cost.ts`): past the
@@ -3946,7 +2953,6 @@ async function computeShowcaseBrand(
       unmeasuredReason: funnels.length > 0 ? null : "read_failed",
       vendorCost,
     },
-    brandReturnPerDollar: coverage.servable ? brandReturnPerDollar : null,
     heroCounts: heroCounts && !coverage.servable ? { ...heroCounts, committedSpentCents: null } : heroCounts,
   };
 }
@@ -3964,14 +2970,13 @@ async function brandVendorCoverage(brandId: string, featureSlugs: string[], head
 
 /** PURE. A walked chain with every money figure withheld (its counts kept). */
 function withoutMoney(f: ShowcaseFunnel): ShowcaseFunnel {
-  return { ...f, returnPerDollar: null, steps: f.steps.map((st) => ({ ...st, costPerReachUsd: null })) };
+  return { ...f, steps: f.steps.map((st) => ({ ...st, costPerReachUsd: null })) };
 }
 
-/** One walked showcase brand: its funnel-keyed entry, the brand-wide return its per-outcome twin states,
- *  and its positive-reply / meeting-booked person counts (the hero card's two figures). */
+/** One walked showcase brand: its funnel-keyed entry and its positive-reply / meeting-booked person counts
+ *  (the hero card's two figures). */
 interface WalkedShowcaseBrand {
   entry: ShowcaseBrandFunnels;
-  brandReturnPerDollar: number | null;
   heroCounts: ShowcaseHeroCounts | null;
 }
 
@@ -4006,14 +3011,10 @@ export function warmShowcaseFunnelsOnBoot(): void {
 }
 
 /**
- * The whole payload: the two PICKED groups and the deduped union of the clients they name, one
- * brand's failure isolated.
+ * The whole payload: the PICKED group and the clients it names, one brand's failure isolated.
  *
- * THE PICK COSTS ONE INDEXED SELECT PER CHANNEL, which is the whole reason this read can be made at
- * all. Ranking clients by return means knowing every brand's return, and deriving that live is one
- * engine pass per (org, brand) — minutes, against a consumer that gives this eight seconds and drops
- * the section rather than block a build. Those passes already happened, off the request path, in the
- * fleet-return warm; this reads the rows they wrote. See `lib/showcase-clients.ts` for both rankings.
+ * THE PICK COSTS ONE INDEXED SELECT PER CHANNEL: the per-brand engine passes already happened, off the request
+ * path, in the fleet snapshot warm; this reads the rows they wrote. See `lib/showcase-clients.ts`.
  */
 /** The candidate brands every claiming org of which is a staff test org (all members staff). */
 async function staffOnlyBrandIds(
@@ -4048,13 +3049,17 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   }
 
   // The snapshots to rank over: every cold-email channel's, so a client that runs two of them is ONE
-  // client with one beginning and one summed return, rather than two rows competing with each other.
+  // client with one beginning, rather than two rows competing with each other.
   // A channel with NO snapshot contributes nothing; only when NONE has one is there nothing to rank,
   // which is the `no_snapshot_yet` silence and a different statement from "nobody qualifies".
   const channelSlugs = coldEmailOutreachSlugs(allSlugs);
-  const snapshots = (await Promise.all(channelSlugs.map((slug) => readFleetReturnSnapshotSoft(slug)))).filter(
-    (snap): snap is NonNullable<typeof snap> => snap !== null,
-  );
+  const read = await Promise.all(channelSlugs.map((slug) => readFleetReturnSnapshotSoft(slug)));
+  // An absent or aged-out snapshot is rebuilt behind this read (never awaited: the warm takes minutes).
+  channelSlugs.forEach((slug, i) => {
+    const snap = read[i];
+    if (!snap || Date.now() - snap.computedAt.getTime() > FLEET_SNAPSHOT_STALE_MS) void warmFleetBrandSnapshot(slug);
+  });
+  const snapshots = read.filter((snap): snap is NonNullable<typeof snap> => snap !== null);
   const allCandidates = snapshots.length === 0 ? null : buildShowcaseCandidates(snapshots.map((snap) => snap.brands));
   // The homepage never names a STAFF TEST client: a brand every claiming org of which has only staff
   // members (owner 2026-10-19, Reed of "STAFF TEST - Email Sending E2E" stood on the hero). A failed
@@ -4064,21 +3069,14 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     console.log(`[features-service] showcase: ${staffOnlyBrands.size} staff test client(s) left out: ${[...staffOnlyBrands].join(", ")}`);
   }
   const candidates = allCandidates === null ? null : allCandidates.filter((c) => !staffOnlyBrands.has(c.brandId));
-  const picks = pickShowcaseClients(candidates, DEFAULT_MIN_SPEND_USD, SHOWCASE_GROUP_SIZE, SHOWCASE_MIN_OUTCOME_PEOPLE);
+  const picks = pickShowcaseClients(candidates, SHOWCASE_GROUP_SIZE);
 
-  // BOTH rows are CONFIRMED on each candidate's own walked chain — the one the homepage draws — before
-  // a client is named, so no card ever leads with a contacted count and fewer than
-  // `SHOWCASE_MIN_OUTCOME_PEOPLE` on every rung after it. The walk is bounded: the snapshot prefilter
-  // already reads rungs, so a rejection is rare, and a cap keeps a stale snapshot from turning one
-  // refresh into a fleet-wide fan-out.
+  // The row is CONFIRMED on each candidate's own walked chain — the one the homepage draws — before a
+  // client is named. The walk is bounded so a stale snapshot never turns one refresh into a fleet-wide
+  // fan-out.
   const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_RECENT_WALKS);
-  const returnWalkable = picks.highestReturn.rankedBrandIds.slice(0, SHOWCASE_MAX_WALKS_PER_GROUP);
-  const infoIds = [...new Set([...returnWalkable, ...recentWalkable])];
-  const brandInfo = infoIds.length > 0 ? await fetchBrandInfoBatch(infoIds) : new Map();
+  const brandInfo = recentWalkable.length > 0 ? await fetchBrandInfoBatch(recentWalkable) : new Map();
 
-  // A client picked by BOTH questions is walked ONCE and its identical entry appears in both groups —
-  // the funnel walk is the expensive half and a client does not have two funnels because two rankings
-  // liked it.
   const walkedFull = new Map<string, WalkedShowcaseBrand>();
   const walked = new Map<string, ShowcaseBrandFunnels>();
   const walkAll = async (ids: string[]): Promise<void> => {
@@ -4106,7 +3104,6 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
               measured: false,
               unmeasuredReason: "read_failed",
             },
-            brandReturnPerDollar: null,
             heroCounts: null,
           };
         }
@@ -4131,7 +3128,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
       await walkAll(batch);
       for (const id of batch) {
         const full = walkedFull.get(id);
-        const outcomes = full ? showcaseOutcomesOf(full.entry, null, full.heroCounts).outcomes : [];
+        const outcomes = full ? showcaseOutcomesOf(full.entry, full.heroCounts).outcomes : [];
         const countOf = (key: string) => outcomes.find((o) => o.key === key)?.peopleReached ?? null;
         counted.push({ brandId: id, meetingsBooked: countOf("meeting_booked"), positiveReplies: countOf("conversation") });
       }
@@ -4154,39 +3151,6 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
         };
   };
 
-  // The proof section (SHOWCASE-RETURN-SAME-BASIS-1019): every return candidate is walked and the row
-  // is ranked on the return each card prints, the one the client's Today page states. The snapshot
-  // ratio is the channel's pipeline, not that figure, so it only orders the walk and caps it.
-  const confirmReturn = async (pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
-    await walkAll(walkable);
-    const verdict = pickHighestReturnByStated(
-      walkable.map((id) => {
-        const full = walkedFull.get(id);
-        return {
-          brandId: id,
-          statedReturn: full?.brandReturnPerDollar ?? null,
-          showsOutcome: full ? showcaseChainHasOutcome(full.entry.funnels, SHOWCASE_MIN_OUTCOME_PEOPLE) : false,
-        };
-      }),
-      pick.requestedCount,
-    );
-    if (verdict.rejectedNoOutcome + verdict.rejectedNoReturn > 0) {
-      console.log(
-        `[features-service] showcase highestReturn: ${verdict.rejectedNoOutcome} candidate(s) showed fewer than ${SHOWCASE_MIN_OUTCOME_PEOPLE} people on every rung past the outreach base, ${verdict.rejectedNoReturn} had no return on their dashboard; not named`,
-      );
-    }
-    const qualifying = Math.max(0, pick.qualifyingCount - verdict.rejectedNoOutcome - verdict.rejectedNoReturn);
-    return verdict.brandIds.length > 0
-      ? { ...pick, brandIds: verdict.brandIds, qualifyingCount: qualifying }
-      : {
-          ...pick,
-          brandIds: [],
-          measured: false,
-          unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
-          qualifyingCount: qualifying,
-        };
-  };
-  const returnPick = await confirmReturn(picks.highestReturn, returnWalkable);
   const recentPick = await confirmRecent(picks.recentlyStarted, recentWalkable);
   // EVERY walk failed to read (prod 2026-10-29: lead-service restarting during the boot warm) is NOT
   // "nobody qualifies": throw, so the prior showcase stays served and the next read retries, rather than
@@ -4196,8 +3160,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     throw new Error(`showcase: all ${walkedEntries.length} walked candidate(s) failed to read; keeping the prior showcase`);
   }
 
-  const named = [...new Set([...recentPick.brandIds, ...returnPick.brandIds])];
-  const brands = named
+  const brands = recentPick.brandIds
     .map((id) => walked.get(id))
     .filter((entry): entry is ShowcaseBrandFunnels => entry !== undefined);
 
@@ -4217,16 +3180,11 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   const funnelsPayload: ShowcaseFunnelsPayload = {
     costBasis: "vendor",
     brands,
-    groups: {
-      recentlyStarted: groupOf(recentPick),
-      highestReturn: groupOf(returnPick),
-    },
-    minSpendUsd: picks.minSpendUsd,
+    groups: { recentlyStarted: groupOf(recentPick) },
   };
-  const brandReturns = new Map([...walkedFull].map(([id, w]) => [id, w.brandReturnPerDollar]));
   const heroCounts = new Map<string, ShowcaseHeroCounts>();
   for (const [id, w] of walkedFull) if (w.heroCounts) heroCounts.set(id, w.heroCounts);
-  return { funnels: funnelsPayload, outcomes: showcaseOutcomesPayloadOf(funnelsPayload, brandReturns, heroCounts) };
+  return { funnels: funnelsPayload, outcomes: showcaseOutcomesPayloadOf(funnelsPayload, heroCounts) };
 }
 
 async function readShowcasePayloads(): Promise<ShowcasePayloads> {
@@ -4277,21 +3235,6 @@ router.get("/public/channel-funnel-economics", async (req, res) => {
   }
 });
 
-// ── GET /public/stats/funnel-return-on-spend ─────────────────────────────────
-
-router.get("/public/stats/funnel-return-on-spend", async (req, res) => {
-  try {
-    await handleFleetFunnelReturn(
-      req.query.channelSlug as string | undefined,
-      req.query.minSpendUsd as string | undefined,
-      res,
-    );
-  } catch (error) {
-    console.error("[features-service] Public funnel return-on-spend error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 // ── GET /public/channel-outcome-economics (wave C4) ───────────────────────────
 
 router.get("/public/channel-outcome-economics", async (req, res) => {
@@ -4299,21 +3242,6 @@ router.get("/public/channel-outcome-economics", async (req, res) => {
     await handleChannelOutcomeEconomics(req.query.channelSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public channel-outcome economics error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ── GET /public/stats/outcome-return-on-spend (wave C4) ──────────────────────
-
-router.get("/public/stats/outcome-return-on-spend", async (req, res) => {
-  try {
-    await handleFleetOutcomeReturn(
-      req.query.channelSlug as string | undefined,
-      req.query.minSpendUsd as string | undefined,
-      res,
-    );
-  } catch (error) {
-    console.error("[features-service] Public outcome return-on-spend error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -4360,37 +3288,6 @@ router.get("/public/stats/best", async (req, res) => {
     await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats best error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ── GET /public/stats/revenue ────────────────────────────────────────────────
-
-router.get("/public/stats/revenue", async (req, res) => {
-  try {
-    await handlePublicRevenue(
-      req.query.featureSlug as string | undefined,
-      req.query.groupBy as string | undefined,
-      res,
-      req.query.rollup === "true",
-    );
-  } catch (error) {
-    console.error("[features-service] Public stats revenue error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// ── GET /public/stats/return-on-spend ────────────────────────────────────────
-
-router.get("/public/stats/return-on-spend", async (req, res) => {
-  try {
-    await handleFleetReturnOnSpend(
-      req.query.featureSlug as string | undefined,
-      req.query.minSpendUsd as string | undefined,
-      res,
-    );
-  } catch (error) {
-    console.error("[features-service] Public stats return-on-spend error:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -4544,22 +3441,8 @@ router.delete("/internal/stated-monthly-amounts/:id", apiKeyOnly, async (req, re
   }
 });
 
-// ── GET /public/stats/workflow-return-history (+ staff actual-cost twin) ─────
-//
-// ONE workflow dynasty across EVERY org of a feature, day by day: cumulative spend, cumulative value
-// (the per-brand revenue engine's pipeline, summed across (org, brand) pairs), and their ratio.
-// `lib/fleet-workflow-return.ts` states the design. Two bases, like the per-brand pair:
-//   - BILLED (this public read): what clients were charged, net of their discount.
-//   - ACTUAL (`/internal/stats/workflow-return-history/actual-cost`, service-auth, staff-gated at the
-//     gateway): vendor cost before our markup — our margin, so never on a public path.
+// ── One leg's fleet campaigns ─────────────────────────────────────────────────────────────────────
 
-/** Bounded like the cross-org revenue read: each pair reads a brand's whole lead population. */
-const FLEET_WORKFLOW_PAIR_CONCURRENCY = 4;
-
-/** The value leg for EVERY dynasty of a feature, keyed by featureSlug — one O(pairs) fan-out serves all. */
-const fleetWorkflowPipelineCache: PublicCache = new Map();
-/** One dynasty's dated spend, keyed `${basis}:${featureSlug}:${dynasty}` (+ `:leg=<legKey>`) — one runs read each. */
-const fleetWorkflowSpendCache: PublicCache = new Map();
 /** The campaigns performing one leg of a feature, fleet-wide, keyed `${featureSlug}:${legKey}`. */
 const fleetLegCampaignsCache: PublicCache = new Map();
 
@@ -4584,302 +3467,10 @@ export async function getFleetLegCampaigns(featureSlug: string, legKey: string):
   return (await getFleetLegPopulation(featureSlug, legKey)).campaigns;
 }
 
-interface FleetWorkflowPipelines {
-  byDynasty: Map<string, FleetDynastyPipeline>;
-  /** (org, brand) pairs whose value leg was computed. */
-  pairsPriced: number;
-  /** Pairs whose compute FAILED (logged loud) — the value leg is a partial sum when this is > 0. */
-  pairsFailed: number;
-}
-
-async function computeFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promise<FleetWorkflowPipelines> {
-  const funnel = getFunnel(featureSlug);
-  if (!funnel) return { byDynasty: new Map(), pairsPriced: 0, pairsFailed: 0 };
-  // LEG scope: the pairs are those holding a campaign performing the leg, each narrowed to exactly
-  // those campaigns — so a pair's leads and spend on OTHER legs never reach the curve. Without a leg,
-  // every pair lead-service lists, brand-wide (unchanged).
-  let pairs: Array<{ orgId: string; brandId: string; campaignScope?: string[] }>;
-  if (legKey) {
-    const byPair = new Map<string, { orgId: string; brandId: string; campaignScope: string[] }>();
-    for (const c of await getFleetLegCampaigns(featureSlug, legKey)) {
-      if (!c.brandId) continue; // a row naming no brand has no lead population to price
-      const key = `${c.orgId}::${c.brandId}`;
-      const pair = byPair.get(key) ?? { orgId: c.orgId, brandId: c.brandId, campaignScope: [] };
-      pair.campaignScope.push(c.campaignId);
-      byPair.set(key, pair);
-    }
-    pairs = [...byPair.values()];
-  } else {
-    const memberships = await fetchFeatureMemberships(featureSlug);
-    pairs = [
-      ...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values(),
-    ];
-  }
-  let pairsFailed = 0;
-  const failedPairs: typeof pairs = [];
-  const pricePair = async ({ orgId, brandId, campaignScope }: (typeof pairs)[number], lastTry: boolean): Promise<PairDynastyPipeline[] | null | "failed"> => {
-    const headers: DownstreamHeaders = { orgId, featureSlug };
-    try {
-      // The pair's OWN pricing — its funnels on its offer's terms — exactly as its own
-      // `/revenue?groupBy=workflow` read resolves it, so a pair contributes the byte-same pipeline. The
-      // ownership check rides beside it (a stale membership is skipped below).
-      const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId), assertBrandHeld(brandId, headers)]);
-      const groups = await computeWorkflowRevenueGroups({
-        featureSlug,
-        brandId,
-        funnel,
-        headers,
-        pricing: "net",
-        priced: priceOnDeclaredFunnel(declared),
-        withPipelineTimeSeries: true,
-        // The curve reads the pipeline series and nothing else: the maturity pairs would cost one
-        // spend-split read per (org, brand) pair of the fleet for figures this fold never states.
-        withMaturity: false,
-        ...(campaignScope ? { campaignScope } : {}),
-      });
-      return groups.map(
-        (g): PairDynastyPipeline => ({
-          workflowDynastySlug: g.workflowDynastySlug,
-          pipelineTimeSeries: g.pipelineTimeSeries ?? [],
-          totalPipelineUsd: g.headline.totalPipelineUsd,
-        }),
-      );
-    } catch (error) {
-      if (error instanceof BrandOwnershipError) return null; // stale membership: the brand moved orgs
-      console.error(
-        `[features-service] fleet workflow return: pair compute failed (featureSlug=${featureSlug}, leg=${legKey ?? "all"}, orgId=${orgId}, brandId=${brandId})${lastTry ? " again: the value leg is a partial sum" : ", retried once after the others"}:`,
-        error,
-      );
-      return "failed";
-    }
-  };
-  const first = await mapWithConcurrency(pairs, FLEET_WORKFLOW_PAIR_CONCURRENCY, async (pair) => {
-    const r = await pricePair(pair, false);
-    if (r === "failed") failedPairs.push(pair);
-    return r;
-  });
-  // A failed pair (a sibling timing out under a deploy wave) is asked once more, alone, after the others.
-  const retried = await mapWithConcurrency(failedPairs, 1, async (pair) => {
-    const r = await pricePair(pair, true);
-    if (r === "failed") pairsFailed += 1;
-    return r;
-  });
-  const priced = [...first, ...retried].filter((c): c is PairDynastyPipeline[] => c !== null && c !== "failed");
-  return { byDynasty: foldFleetPipelines(priced), pairsPriced: priced.length, pairsFailed };
-}
-
-/**
- * The last COMPLETE value leg per key (no pair failed). A partial sum never replaces it (RESEARCH-PERFORMANCE-1023: a
- * ranking built on a partial sum read Ballad 0.09x for 3.47x, and every template / combination return the Research
- * build read off it): a refresh still partial after its retry serves the last complete one, loud. A key never complete
- * serves its partial sum, `pairsFailed` stated.
- */
-const lastCompleteFleetPipelines = new Map<string, FleetWorkflowPipelines>();
-
-
-
-function getFleetWorkflowPipelines(featureSlug: string, legKey?: string): Promise<FleetWorkflowPipelines> {
-  return servedPublicCached({
-    cache: fleetWorkflowPipelineCache,
-    // The unscoped key is unchanged, so a read naming no leg lands on the cell it always did.
-    key: legKey ? `${featureSlug}:leg=${legKey}` : featureSlug,
-    windows: LIFETIME_AGGREGATE_WINDOWS,
-    label: "fleet workflow pipelines",
-    compute: async () => {
-      const key = legKey ? `${featureSlug}:leg=${legKey}` : featureSlug;
-      const computed = await computeFleetWorkflowPipelines(featureSlug, legKey);
-      if (computed.pairsFailed === 0) lastCompleteFleetPipelines.set(key, computed);
-      else if (lastCompleteFleetPipelines.has(key)) console.error(`[features-service] fleet workflow pipelines ${key}: ${computed.pairsFailed} pair(s) still failed after a retry; serving the last complete value leg.`);
-      return servedFleetPipelines(computed, lastCompleteFleetPipelines.get(key));
-    },
-  });
-}
-
-/**
- * Boot warm (fire-and-forget, after listen): a cold value leg is minutes of engine passes. The fleet
- * curve first, then one per leg the feature's campaigns perform (the workflow page reads it per crew).
- */
-async function warmFleetWorkflowPipelines(featureSlug: string): Promise<void> {
-  try {
-    await getFleetWorkflowPipelines(featureSlug);
-  } catch (err) {
-    console.error(`[features-service] fleet workflow pipelines warm failed (${featureSlug}):`, err);
-  }
-  for (const legKey of FUNNEL_LEG_KEYS) {
-    try {
-      if ((await getFleetLegCampaigns(featureSlug, legKey)).length === 0) continue;
-      await getFleetWorkflowPipelines(featureSlug, legKey);
-    } catch (err) {
-      console.error(`[features-service] fleet workflow pipelines warm failed (${featureSlug}, leg=${legKey}):`, err);
-    }
-  }
-}
-
-interface WorkflowReturnHistoryBase {
-  featureSlug: string;
-  workflowDynastySlug: string;
-  workflowDynastyName: string | null;
-  /** Every org and brand that ran the feature — an aggregate; no org is named. */
-  scope: "fleet";
-  /**
-   * Present ONLY when the caller named a leg (`?leg=`): the curve then counts, on BOTH legs, only the
-   * campaigns performing that leg. Absent on the fleet-wide read, which is byte-unchanged.
-   */
-  legKey?: string;
-  /** Sum of the pairs' headline pipelines for this dynasty. Null when no pair could price it. */
-  totalPipelineUsd: number | null;
-  valueCoverage: { pairsPriced: number; pairsFailed: number };
-}
-
-export interface WorkflowReturnHistoryPayload extends WorkflowReturnHistoryBase {
-  costBasis: "billed";
-  pricing: "net";
-  /** Cumulative billed spend at the last point — the row's `billedSpentUsd` on workflow-cost-per-outcome. */
-  totalSpendUsd: number;
-  roiHistory: RoiHistory;
-}
-
-export interface WorkflowActualCostHistoryPayload extends WorkflowReturnHistoryBase {
-  costBasis: "actual";
-  actualCostHistory: ActualCostHistory;
-}
-
-/** Test seam: drop both fleet workflow-return caches. */
-export function __resetWorkflowReturnHistoryCache(): void {
-  clearPublicCache(fleetWorkflowPipelineCache);
-  lastCompleteFleetPipelines.clear();
-  clearPublicCache(fleetWorkflowSpendCache);
+/** Test seam: drop the leg-campaign cache. */
+export function __resetFleetWorkflowPipelinesCache(): void {
   clearPublicCache(fleetLegCampaignsCache);
 }
-
-export async function handleWorkflowReturnHistory(
-  featureSlug: string | undefined,
-  workflowDynastySlug: string | undefined,
-  basis: "billed" | "actual",
-  res: import("express").Response,
-  legParam?: string,
-): Promise<void> {
-  if (!featureSlug || !workflowDynastySlug) {
-    res.status(400).json({ error: "Query parameters 'featureSlug' and 'workflowDynastySlug' are required" });
-    return;
-  }
-  // `?leg=` restricts BOTH legs of the curve to the campaigns performing that leg. Empty = not named.
-  let legKey: string | undefined;
-  if (legParam != null && legParam !== "") {
-    const matched = await resolvePipeLegKey(featureSlug, legParam);
-    if (!matched) {
-      res.status(400).json({ error: `leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}, or a leg of the channel's own`, reason: "leg_unrecognised" });
-      return;
-    }
-    legKey = matched;
-  }
-  const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-  if (!feature) {
-    res.status(404).json({ error: "Feature not found" });
-    return;
-  }
-  const workflows = await fetchPublicWorkflows(featureSlug, "all");
-  const member = workflows.find((w) => w.workflowDynastySlug === workflowDynastySlug);
-  if (!member) {
-    res.status(404).json({ error: "No workflow of this feature carries that dynasty", reason: "workflow_not_found" });
-    return;
-  }
-
-  const spendKey = `${basis}:${featureSlug}:${workflowDynastySlug}${legKey ? `:leg=${legKey}` : ""}`;
-  const [pipelines, spend] = await Promise.all([
-    getFleetWorkflowPipelines(featureSlug, legKey),
-    servedPublicCached<Map<string, number> | Map<string, VendorSpendDay>>({
-      cache: fleetWorkflowSpendCache,
-      key: spendKey,
-      windows: LIFETIME_AGGREGATE_WINDOWS,
-      label: "fleet workflow spend",
-      compute: async () => {
-        // The spend leg narrows by the SAME campaigns the value leg does, so the ratio divides one population.
-        const campaignIds = legKey ? (await getFleetLegCampaigns(featureSlug, legKey)).map((c) => c.campaignId) : undefined;
-        return basis === "billed"
-          ? fetchDynastyBilledSpendByDay(featureSlug, workflowDynastySlug, campaignIds)
-          : fetchDynastyVendorSpendByDay(featureSlug, workflowDynastySlug, campaignIds);
-      },
-    }),
-  ]);
-  const value = pipelines.byDynasty.get(workflowDynastySlug) ?? { pipelineTimeSeries: [], totalPipelineUsd: null };
-  const base: WorkflowReturnHistoryBase = {
-    featureSlug,
-    workflowDynastySlug,
-    workflowDynastyName: member.workflowDynastyName ?? null,
-    scope: "fleet",
-    ...(legKey ? { legKey } : {}),
-    totalPipelineUsd: value.totalPipelineUsd,
-    valueCoverage: { pairsPriced: pipelines.pairsPriced, pairsFailed: pipelines.pairsFailed },
-  };
-
-  if (basis === "billed") {
-    const byDay = spend as Map<string, number>;
-    let totalSpendUsd = 0;
-    for (const usd of byDay.values()) totalSpendUsd += usd;
-    const payload: WorkflowReturnHistoryPayload = {
-      ...base,
-      costBasis: "billed",
-      pricing: "net",
-      totalSpendUsd,
-      roiHistory: buildRoiHistory(byDay, value.pipelineTimeSeries, value.totalPipelineUsd),
-    };
-    res.json(payload);
-    return;
-  }
-
-  const vendorByDay = spend as Map<string, VendorSpendDay>;
-  const vendorUsd = new Map<string, number>();
-  const unpriced = new Map<string, number>();
-  const names = new Set<string>();
-  for (const [day, v] of vendorByDay) {
-    vendorUsd.set(day, v.vendorUsd);
-    if (v.unpricedBilledUsd > 0) unpriced.set(day, v.unpricedBilledUsd);
-    for (const n of v.unpricedCostNames) names.add(n);
-  }
-  const payload: WorkflowActualCostHistoryPayload = {
-    ...base,
-    costBasis: "actual",
-    actualCostHistory: buildActualCostHistory(
-      buildRoiHistory(vendorUsd, value.pipelineTimeSeries, value.totalPipelineUsd),
-      unpriced,
-      [...names].sort(),
-    ),
-  };
-  res.json(payload);
-}
-
-router.get("/public/stats/workflow-return-history", async (req, res) => {
-  try {
-    await handleWorkflowReturnHistory(
-      req.query.featureSlug as string | undefined,
-      req.query.workflowDynastySlug as string | undefined,
-      "billed",
-      res,
-      req.query.leg as string | undefined,
-    );
-  } catch (error) {
-    console.error("[features-service] Public workflow-return-history error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// STAFF ONLY: vendor cost is our margin. Service-auth here; the api-service gateway mounts it behind
-// requireStaff and never on a customer route.
-router.get("/internal/stats/workflow-return-history/actual-cost", apiKeyOnly, async (req, res) => {
-  try {
-    await handleWorkflowReturnHistory(
-      req.query.featureSlug as string | undefined,
-      req.query.workflowDynastySlug as string | undefined,
-      "actual",
-      res,
-      req.query.leg as string | undefined,
-    );
-  } catch (error) {
-    console.error("[features-service] workflow-return-history actual-cost error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 // ── GET /public/stats/cost-projection ────────────────────────────────────────
 
@@ -5193,16 +3784,14 @@ router.get("/public/stats/outcome-prices", (_req, res) => {
 
 const LEG_RANKING_FRESH_MS = 15 * 60_000;
 const LEG_RANKING_WARM_TIMEOUT_MS = 10 * 60_000;
-const LEG_RANKING_SPEND_CONCURRENCY = 4;
 
 export interface LegWorkflowRankingPayload {
   featureSlug: string;
   legKey: string;
   grain: "fleet";
-  /** The cost per outcome, outcomes, spend and rate are on the incurred fleet basis (outcome-prices'). */
+  /** The cost per outcome, outcomes, spend and rate are on the incurred fleet basis (outcome-prices'). A workflow
+   *  serves no return (ROI-CONSISTENCY-1103). */
   costBasis: "incurred";
-  /** The return divides the fleet pipeline by what clients were billed, net (workflow-return-history's). */
-  roiBasis: "billed";
   computedAt: string | null;
   maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null; measured: boolean };
   /** On a pipe landing on a meeting step: the brands counted / left out (`lib/meeting-population.ts`); else null. */
@@ -5459,40 +4048,24 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
     console.error(`[features-service] leg workflow ranking: net evidence unreadable (${featureSlug}, ${legKey}); its net figures and last runs read not measured:`, error);
     return null;
   });
-  const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
+  const [maturity, assignmentRows, workflows] = await Promise.all([
     fleetPipeFigures(featureSlug, legKey),
     fetchLegAssignments(featureSlug, legKey),
     fetchPublicWorkflows(featureSlug, "all"),
-    getFleetWorkflowPipelines(featureSlug, legKey),
-    getFleetLegCampaigns(featureSlug, legKey),
   ]);
   const byDynasty = new Map(maturity.byDynasty);
-  const campaignIds = campaigns.map((c) => c.campaignId);
-  const spent = [...byDynasty].filter(([, f]) => (f.flash?.spentUsd ?? 0) > 0).map(([slug]) => slug);
-  const billedSpendUsd = new Map<string, number>();
-  await mapWithConcurrency(spent, LEG_RANKING_SPEND_CONCURRENCY, async (slug) => {
-    try {
-      const byDay = await fetchDynastyBilledSpendByDay(featureSlug, slug, campaignIds, "own");
-      billedSpendUsd.set(slug, [...byDay.values()].reduce((a, b) => a + b, 0));
-    } catch (error) {
-      console.error(`[features-service] leg workflow ranking: billed spend read failed (${featureSlug}, ${legKey}, ${slug}); its return is unstated:`, error);
-    }
-  });
   const assignments = new Map<string, "active" | "deprecated">();
   for (const [slug, row] of assignmentRows) {
     if (row.state === "active" || row.state === "deprecated") assignments.set(slug, row.state);
   }
   const names = new Map<string, string | null>();
   for (const w of workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName ?? null);
-  const pipelineUsd = new Map<string, number | null>();
-  for (const [slug, p] of pipelines.byDynasty) pipelineUsd.set(slug, p.totalPipelineUsd);
   const rule = legMaturity(legKey);
   return {
     featureSlug,
     legKey,
     grain: "fleet",
     costBasis: "incurred",
-    roiBasis: "billed",
     computedAt: new Date().toISOString(),
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
     meetingPopulation: maturity.meetingPopulation,
@@ -5501,16 +4074,15 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
       names,
       assignments,
       executable: executableDynasties(workflows),
-      pipelineUsd,
-      billedSpendUsd,
       ...(await netP.then((net) => ({ netSpend: net?.netSpend ?? null, lastRunAt: net?.lastRunAt ?? null }))),
       defaultConversionPct: legDefaultConversionPct(legKey),
     }),
   };
 }
 
-/** The persisted copy of one leg's ranking (`lib/fleet-cell-store.ts`). */
-const legRankingCellKey = (key: string): string => `leg-workflow-ranking:${key}`;
+/** The persisted copy of one leg's ranking (`lib/fleet-cell-store.ts`). `-v2`: the builds stored before
+ *  ROI-CONSISTENCY-1103 carry the deleted per-workflow return, never served again. */
+const legRankingCellKey = (key: string): string => `leg-workflow-ranking-v2:${key}`;
 
 /** Rebuild one leg's ranking in the background when absent or past its fresh window (single-flight). */
 export function warmLegWorkflowRanking(featureSlug: string, rawLegKey: string): Promise<void> {
@@ -5624,7 +4196,6 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
     legKey,
     grain: "fleet",
     costBasis: "incurred",
-    roiBasis: "billed",
     computedAt: null,
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: null, measured: false },
     pricing,

@@ -301,7 +301,7 @@ export function rankingOn(inputs: HistoryInputs, legKey: string, dayIndex: numbe
   const assignments = assignmentsOn(inputs.assignmentChanges, legKey, day, dynasties, inputs.merges);
   const names = new Map<string, string | null>();
   for (const w of inputs.workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName);
-  return rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynastiesOn(day, inputs.workflows), pipelineUsd: new Map(), billedSpendUsd: new Map() });
+  return rankLegWorkflows({ byDynasty, names, assignments, executable: executableDynastiesOn(day, inputs.workflows) });
 }
 
 /** One recomputed point, on its day. */

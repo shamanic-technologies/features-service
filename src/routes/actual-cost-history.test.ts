@@ -312,45 +312,14 @@ afterEach(() => vi.restoreAllMocks());
 
 const ACTUAL = `/internal/features/${SALES}/revenue/actual-cost?brandId=${BRAND}`;
 
-describe("GET /internal/features/:slug/revenue/actual-cost — the return curve at vendor cost", () => {
-  it("draws the SAME value leg as the billed curve, over the vendor cost, which reads lower by the markup", async () => {
-    const seen = recordingFetch();
-    const billed = await request(app).get(`/features/${SALES}/revenue?brandId=${BRAND}&workflow=dawn`).set(AUTH);
-    const actual = await request(app).get(`${ACTUAL}&workflow=dawn`).set(AUTH);
-
-    expect(actual.status).toBe(200);
-    expect(actual.body.costBasis).toBe("actual");
-    expect(actual.body.workflow.workflowDynastySlug).toBe("dawn");
-    const a = actual.body.actualCostHistory;
-    const b = billed.body.roiHistory;
-    // Billed: 4000 + 1000 + 8000 committed cents on dawn = $130. Vendor: a fifth = $26.
-    expect(b.daily.at(-1).cumulativeSpendUsd).toBeCloseTo(130, 6);
-    expect(a.daily.at(-1).cumulativeSpendUsd).toBeCloseTo(26, 6);
-    expect(a.daily.map((p: { cumulativePipelineUsd: number }) => p.cumulativePipelineUsd)).toEqual(
-      b.daily.map((p: { cumulativePipelineUsd: number }) => p.cumulativePipelineUsd),
-    );
-    expect(a.daily.at(-1).roiMultiple).toBeCloseTo(b.daily.at(-1).roiMultiple * 5, 6);
-    expect(a.unpricedBilledCostUsd).toBe(0);
-    expect(a.unpricedFromDate).toBeNull();
-    // The vendor read is the SERVICE-AUTH route, narrowed by the same dynasty.
-    const vendorCall = seen.find((u) => u.includes("/internal/stats/costs/timeseries/vendor"));
-    expect(vendorCall).toContain("workflowDynastySlug=dawn");
-    expect(vendorCall).toContain("orgId=0e9a0000-0000-4000-8000-000000000001");
+describe("GET /internal/features/:slug/revenue/actual-cost — groups only", () => {
+  it("refuses the un-grouped read: its return curve is deleted (ROI-CONSISTENCY-1103)", async () => {
+    mockFetch();
+    const res = await request(app).get(ACTUAL).set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("group_by_required");
   });
 
-  it("an unpriced day reads NULL spend and return, and names the billed amount — never the billed figure", async () => {
-    mockFetch({ unpricedDays: ["2026-02-01"] });
-    const res = await request(app).get(`${ACTUAL}&workflow=dawn`).set(AUTH);
-    const a = res.body.actualCostHistory;
-    expect(a.unpricedFromDate).toBe("2026-02-01");
-    expect(a.unpricedBilledCostUsd).toBeCloseTo(130, 6);
-    expect(a.daily.length).toBeGreaterThan(0);
-    expect(a.daily.every((p: { cumulativeSpendUsd: number | null }) => p.cumulativeSpendUsd === null)).toBe(true);
-    expect(a.daily.every((p: { roiMultiple: number | null }) => p.roiMultiple === null)).toBe(true);
-    expect(a.unpricedCostNames).toEqual(["instantly-account-email-sent"]);
-    expect(a.daily.at(-1).cumulativeUnpricedBilledCostUsd).toBeCloseTo(130, 6);
-    expect(a.daily.at(-1).cumulativePricedVendorCostUsd).toBe(0);
-  });
 
   it("refuses any other grouping, a lens or a pricing selector on this basis", async () => {
     mockFetch();
@@ -387,7 +356,7 @@ describe("GET /internal/features/:slug/revenue/actual-cost?groupBy= — the per-
   };
   const byWorkflow = (groups: Group[], slug: string) => groups.find((g) => g.workflowDynastySlug === slug)!;
 
-  it("each workflow's spend reads a FIFTH of the billed one and its ROI five times it, from the service-auth vendor read", async () => {
+  it("each workflow's spend reads a FIFTH of the billed one, from the service-auth vendor read, and serves no return", async () => {
     const seen = recordingFetch();
     const billed = await request(app).get(`/features/${SALES}/revenue?brandId=${BRAND}&groupBy=workflow`).set(AUTH);
     const actual = await request(app).get(`${ACTUAL}&groupBy=workflow`).set(AUTH);
@@ -399,7 +368,7 @@ describe("GET /internal/features/:slug/revenue/actual-cost?groupBy= — the per-
     // Billed dawn: 4000 + 1000 + 8000 committed cents = $130. Vendor: $26.
     expect(b.costEconomics.committedCostUsd).toBeCloseTo(130, 6);
     expect(a.costEconomics.committedCostUsd).toBeCloseTo(26, 6);
-    expect(a.costEconomics.roiMultiple).toBeCloseTo(b.costEconomics.roiMultiple! * 5, 6);
+    expect(a.costEconomics).not.toHaveProperty("roiMultiple");
     expect(a.outcomes!.committedSpentCents).toBe(2600);
     expect(a.vendorCost).toEqual({ pricedVendorCostUsd: 26, unpricedBilledCostUsd: 0, vendorCostKnown: true });
     // The billed body carries none of it.
@@ -414,8 +383,6 @@ describe("GET /internal/features/:slug/revenue/actual-cost?groupBy= — the per-
     const res = await request(app).get(`${ACTUAL}&groupBy=workflow`).set(AUTH);
     const retired = byWorkflow(res.body.groups, "retired-v1");
     expect(retired.costEconomics.committedCostUsd).toBeNull();
-    expect(retired.costEconomics.roiMultiple).toBeNull();
-    expect(retired.costEconomics.costOfAcquisitionPct).toBeNull();
     expect(retired.outcomes!.committedSpentCents).toBeNull();
     expect(retired.outcomes!.cpprCents).toBeNull();
     expect(retired.vendorCost).toEqual({ pricedVendorCostUsd: 0, unpricedBilledCostUsd: 7, vendorCostKnown: false });

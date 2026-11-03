@@ -4,17 +4,19 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { parseRow } from "./fleet-return-store.js";
 
-const base = { brandId: "b1", committedSpendUsd: 120, expectedPipelineUsd: 300, isMature: true };
-
-describe("fleet-return snapshot rows (PUBLIC-VENDOR-COST-1031)", () => {
-  it("keeps the vendor ingredients the warm wrote (the public vendor ROI median reads them)", () => {
-    const vendorSpend = { flashUsd: 80, matureUsd: 50, unpricedFlashUsd: 0, unpricedMatureUsd: 0 };
-    expect(parseRow({ ...base, vendorSpend })).toMatchObject({ vendorSpend });
-    expect(parseRow({ ...base, vendorSpend: null })).toMatchObject({ vendorSpend: null });
-    expect(parseRow(base)).not.toHaveProperty("vendorSpend");
+describe("fleet snapshot rows (ROI-CONSISTENCY-1103: only the showcase pick's fields)", () => {
+  it("keeps when the brand began and how far its funnel reached; a stored return ingredient is ignored", () => {
+    const stored = { brandId: "b1", committedSpendUsd: 120, expectedPipelineUsd: 300, isMature: true, startedOn: "2026-08-01", outcomeCount: 4, vendorSpend: { flashUsd: 80 } };
+    expect(parseRow(stored)).toEqual({ brandId: "b1", startedOn: "2026-08-01", outcomeCount: 4 });
   });
 
-  it("a malformed vendor block makes the row malformed", () => {
-    expect(parseRow({ ...base, vendorSpend: { flashUsd: 80 } })).toBeNull();
+  it("absent fields read as null, never 0", () => {
+    expect(parseRow({ brandId: "b1" })).toEqual({ brandId: "b1", startedOn: null, outcomeCount: null });
+  });
+
+  it("a present-but-wrong-typed field makes the row malformed", () => {
+    expect(parseRow({ brandId: "b1", outcomeCount: "4" })).toBeNull();
+    expect(parseRow({ brandId: "b1", startedOn: 20260801 })).toBeNull();
+    expect(parseRow({ outcomeCount: 4 })).toBeNull();
   });
 });

@@ -11,7 +11,6 @@ import { MONTHS, modelKey, n, pctText, templateLabel, usd } from "./format.js";
 import { monthsChart, type PipeTerms, type ResearchBucket } from "./studies.js";
 import type { ResearchChart, ResearchPipeId } from "./types.js";
 import { modelRowAliases, type DynastyWriter, type ModelAliasReason, type ModelIdRow, type WriterReason } from "./writers.js";
-import type { VersionShare } from "./generations.js";
 import { NO_LLM_DYNASTIES, type LlmDynastyIndex, type LlmDynastyReason } from "../llm-dynasties.js";
 import { runCostOf, tokensText, unavailableRunCost, type CatalogRunCost, type GenerationCostInput, type RunCostUnavailableReason } from "./run-cost.js";
 import { NO_TEMPLATE_DYNASTIES, type TemplateDynastyIndex, type TemplateDynastyReason, type TemplateDynastyStatusSource, type TemplateStatus } from "./template-dynasties.js";
@@ -37,37 +36,6 @@ export interface CatalogFigures {
   thin: boolean;
   sample: string;
   charts: ResearchChart[];
-}
-
-/**
- * A page's return (TPL-DYNASTY-ROWS-1021-FS), on the leg workflow ranking's basis: a workflow's `roiMultiple` (its fleet
- * pipeline on the leg ÷ what clients were billed for it, lifetime). A template's (dynasty or version) is its OWN
- * (TPL-ROI-OWN-1022): the pipeline its own outcomes carry (each workflow's pipeline shared on the outcomes it produced)
- * ÷ what its own people were billed (each workflow's billed spend shared on what they cost), `source: own_outcomes`. A
- * template that wrote all of a workflow reads that workflow's return exactly; within one workflow, a cheaper outcome
- * reads a higher return. MEASURED only once it has an outcome of its own: a template with none never borrows a measured
- * figure. Never blank: with nothing measured, the figure it is EXPECTED to read is served, `basis: expected`, its source
- * named, and an expected return is never 0 (a pipe whose returns are all 0 serves its 0 measured, never expected); null
- * only with `unavailableReason`.
- */
-export interface CatalogRoi {
-  /** The multiple (3.2 = $3.20 of pipeline per $1 billed). */
-  value: number | null;
-  /** "3.20x". */
-  display: string | null;
-  basis: "measured" | "expected" | null;
-  /**
-   * measured: `workflow` (the ranking row), `own_outcomes` (a template or a model: its own outcomes' pipeline ÷ its own
-   * billed spend). expected: `pipe_templates` (a template: every template of the pipe pooled, own pipeline ÷ own billed),
-   * `pipe_models` (a model: every model of the pipe pooled, the same way), `writes_with_now` (the workflows writing with it
-   * now that produced an outcome), `dynasty` (a version reads its dynasty's),
-   * `pipe_best_workflow` (the workflow the pipe puts its money on, else its best measured return), `pipe_workflows` (a
-   * workflow with no outcome yet: every workflow of the pipe pooled, the ranking row's `figures.roi`).
-   */
-  source: "workflow" | "own_outcomes" | "pipe_templates" | "pipe_models" | "pipe_workflows" | "writes_with_now" | "dynasty" | "pipe_best_workflow" | null;
-  /** On `own_outcomes`: the share of its spend whose workflow states its pipeline and billed spend (1 = all of it). */
-  spendCovered: number | null;
-  unavailableReason: "no_return_on_pipe" | null;
 }
 
 /** What a workflow's runnable version writes with NOW (its DAG), whether or not it sent anything yet. */
@@ -107,13 +75,10 @@ export interface CatalogWorkflow extends CatalogFigures {
   name: string | null;
   /** A run may still pick it on this pipe (assigned active AND executable). */
   runnable: boolean;
-  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
-  roi: string | null;
-  roiDetail: CatalogRoi;
   /**
-   * The leg workflow ranking row's `figures` (RESEARCH-WF-FIGURES-1022), byte-same as the Workflows list prints: ROI,
+   * The leg workflow ranking row's `figures` (RESEARCH-WF-FIGURES-1022), byte-same as the Workflows list prints:
    * $/outcome, % conversion and $ spent, each measured or expected, gross pricing. Copied from the CURRENT ranking at
-   * every read, so the page and the list never print two returns. Null when the ranking lists no such row.
+   * every read. Null when the ranking lists no such row. No page serves a return (ROI-CONSISTENCY-1103).
    */
   figures: LegWorkflowFigures | null;
   /** What most of its people's sequences were written with (= `wroteWithMost`, kept for the readers typed on it). */
@@ -149,9 +114,6 @@ export interface CatalogTemplateVersion extends CatalogFigures {
   hasText: boolean;
   /** content-generation-service's status of this version (null = not stated). */
   status: TemplateStatus | null;
-  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
-  roi: string | null;
-  roiDetail: CatalogRoi;
 }
 
 /** Why a template page is a version on its own. */
@@ -180,9 +142,6 @@ export interface CatalogTemplate extends CatalogFigures {
   status: TemplateStatus | null;
   statusSource: TemplateDynastyStatusSource | null;
   statusUnavailableReason: "no_dynasty" | "status_not_stated" | null;
-  /** The return printed (`3.20x`), null with none: `roiDetail.display`, kept a string for the readers typed on it. */
-  roi: string | null;
-  roiDetail: CatalogRoi;
   /** Every version of the dynasty, oldest first (empty on a version on its own). */
   versions: CatalogTemplateVersion[];
   workflows: Array<{ key: string; label: string }>;
@@ -215,9 +174,6 @@ export interface CatalogModelVersion extends CatalogFigures {
   /** The dynasty's head (what its slug runs now). */
   head: boolean;
   servedToday: boolean;
-  /** Its OWN return (MODEL-ROI-1023, the template version rule): measured with an outcome of its own, else its dynasty's, expected. */
-  roi: string | null;
-  roiDetail: CatalogRoi;
   /** What one writing run of this model costs on the pipe (MODEL-RUN-COST-1024): its runs only; the versions' runs add up to the page's. */
   runCost: CatalogRunCost;
 }
@@ -233,13 +189,6 @@ export interface CatalogModel extends CatalogFigures {
   dynasty: CatalogLlmDynasty | null;
   /** Null on a dynasty; why this page is one model on its own otherwise. */
   standaloneReason: CatalogModelStandaloneReason | null;
-  /**
-   * Its OWN return (MODEL-ROI-1023, TPL-ROI-OWN-1022's rule): the pipeline its own outcomes carry ÷ what its own people
-   * were billed, measured once it has an outcome of its own; else expected (every model of the pipe pooled, then the
-   * workflows writing with it now, then the pipe's money workflow); null only with `unavailableReason`.
-   */
-  roi: string | null;
-  roiDetail: CatalogRoi;
   /** Every model of the dynasty, newest first, each with its share of the page's figures (zero until it writes); on a model on its own, that model. */
   models: CatalogModelVersion[];
   /** chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). */
@@ -387,104 +336,11 @@ export interface PipeCatalogInput {
   /** Per model, its share of its dynasty bar on the bar's basis (generationBuckets `llmModels`). */
   modelVersions?: ReadonlyArray<ResearchBucket & { dynastyKey: string }>;
   /**
-   * The leg workflow ranking's return per workflow dynasty (`roiMultiple`, null = unstated) and the dynasty the pipe puts
-   * its money on. Absent = no ranking read: every return then reads `no_return_on_pipe`.
-   */
-  workflowReturns?: {
-    roiOf: ReadonlyMap<string, number | null>;
-    moneyGoesHere: string | null;
-    /** The two terms of each dynasty's return (the ranking's `pipelineUsd` / `billedSpendUsd`); absent or null = unknown. */
-    pipelineOf?: ReadonlyMap<string, number | null>;
-    billedOf?: ReadonlyMap<string, number | null>;
-  };
-  /** Template bar key (dynasty, else version) → workflow VERSION slug → what its people cost and produced (generationBuckets). */
-  templateFiguresByVersion?: ReadonlyMap<string, ReadonlyMap<string, VersionShare>>;
-  /** Template version id → workflow VERSION slug → what its people cost and produced. */
-  templateVersionFiguresByVersion?: ReadonlyMap<string, ReadonlyMap<string, VersionShare>>;
-  /** Model bar key (LLM dynasty slug, else model key) → workflow VERSION slug → what its people cost and produced (generationBuckets). */
-  modelFiguresByVersion?: ReadonlyMap<string, ReadonlyMap<string, VersionShare>>;
-  /** Model key (a per-model bar's key) → workflow VERSION slug → what its people cost and produced. */
-  modelVersionFiguresByVersion?: ReadonlyMap<string, ReadonlyMap<string, VersionShare>>;
-  /** Workflow VERSION slug → everything it cost and produced (generationBuckets `workflowVersionTotals`). */
-  workflowVersionTotals?: ReadonlyMap<string, VersionShare>;
-  /**
    * A pipe whose writer records POSTS (THREADS-IDEAS-AB): the leg writer ranking's rows in rank order, each with its post
    * figures. The template and model pages then stand in that order (the order the pipe picks by, ranked on signups) and
    * each template page carries its `postFigures`. Absent = a sequence pipe (`postFigures` null).
    */
   postWriters?: { templates: ReadonlyArray<{ key: string; postFigures: PostFigures | null }>; models: ReadonlyArray<{ key: string }> };
-}
-
-const roiText = (v: number) => `${v.toFixed(2)}x`;
-const roiFields = (r: CatalogRoi) => ({ roi: r.display, roiDetail: r });
-const NO_ROI: CatalogRoi = { value: null, display: null, basis: null, source: null, spendCovered: null, unavailableReason: "no_return_on_pipe" };
-const roiOfValue = (value: number, basis: "measured" | "expected", source: CatalogRoi["source"], spendCovered: number | null = null): CatalogRoi => ({
-  value,
-  display: roiText(value),
-  basis,
-  source,
-  spendCovered,
-  unavailableReason: null,
-});
-
-/**
- * PURE (TPL-ROI-OWN-1022). A template's OWN return: the pipeline its own outcomes carry ÷ what its own people were billed.
- * Per workflow dynasty it wrote for, its share of the dynasty's pipeline = its outcomes there ÷ the dynasty's outcomes, its
- * share of the dynasty's billed spend = its spend there ÷ the dynasty's spend (all to date, the ranking's lifetime basis).
- * Null (not earned) until it has an outcome of its own (printed count ≥ 1) on a workflow stating both terms.
- */
-export function ownTemplateRoi(
-  figuresByVersion: ReadonlyMap<string, VersionShare> | undefined,
-  dynastyOf: (slug: string) => string,
-  versionTotals: ReadonlyMap<string, VersionShare> | undefined,
-  pipelineOf: ReadonlyMap<string, number | null> | undefined,
-  billedOf: ReadonlyMap<string, number | null> | undefined,
-): { value: number; spendCovered: number } | null {
-  if (!figuresByVersion || !versionTotals || !pipelineOf || !billedOf) return null;
-  const dynTotals = new Map<string, VersionShare>();
-  for (const [slug, f] of versionTotals) {
-    const d = dynastyOf(slug);
-    const t = dynTotals.get(d) ?? { spentUsd: 0, outcomes: 0 };
-    t.spentUsd += f.spentUsd;
-    t.outcomes += f.outcomes;
-    dynTotals.set(d, t);
-  }
-  const own = new Map<string, VersionShare>();
-  for (const [slug, f] of figuresByVersion) {
-    const d = dynastyOf(slug);
-    const t = own.get(d) ?? { spentUsd: 0, outcomes: 0 };
-    t.spentUsd += f.spentUsd;
-    t.outcomes += f.outcomes;
-    own.set(d, t);
-  }
-  let spend = 0;
-  let covered = 0;
-  let outcomes = 0;
-  let pipeline = 0;
-  let billed = 0;
-  for (const [d, f] of own) {
-    spend += Math.max(0, f.spentUsd);
-    const total = dynTotals.get(d);
-    const p = pipelineOf.get(d);
-    const b = billedOf.get(d);
-    if (!total || p == null || b == null) continue;
-    covered += Math.max(0, f.spentUsd);
-    outcomes += f.outcomes;
-    if (total.outcomes > 0) pipeline += (p * f.outcomes) / total.outcomes;
-    if (total.spentUsd > 0) billed += (b * f.spentUsd) / total.spentUsd;
-  }
-  if (Math.round(outcomes) < 1 || !(billed > 0)) return null;
-  return { value: pipeline / billed, spendCovered: spend > 0 ? covered / spend : 1 };
-}
-
-/** PURE. The pipe's expected return when nothing narrower states one: the money workflow's, else its best measured. */
-function pipeExpectedRoi(w: PipeCatalogInput["workflowReturns"]): CatalogRoi {
-  if (!w) return NO_ROI;
-  // An expected return of 0 reads "worthless" on a page that never earned one: only a positive return is expected.
-  const money = w.moneyGoesHere ? w.roiOf.get(w.moneyGoesHere) : null;
-  if (money != null && money > 0) return roiOfValue(money, "expected", "pipe_best_workflow");
-  const best = [...w.roiOf.values()].filter((v): v is number => v != null && v > 0).sort((a, b) => b - a)[0];
-  return best != null ? roiOfValue(best, "expected", "pipe_best_workflow") : NO_ROI;
 }
 
 /** PURE. One pipe's catalogue. */
@@ -588,12 +444,6 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     const d = p.dynastyOf(slug);
     return wfKeys.has(d) ? { key: d, label: wfLabel.get(d)! } : null;
   };
-  const roiOf = p.workflowReturns?.roiOf ?? new Map<string, number | null>();
-  const pipeRoi = pipeExpectedRoi(p.workflowReturns);
-  const workflowRoi = (dynasty: string): CatalogRoi => {
-    const v = roiOf.get(dynasty);
-    return v != null ? roiOfValue(v, "measured", "workflow") : pipeRoi;
-  };
   const workflows: CatalogWorkflow[] = wfRows.map((r, i) => {
     const { main, last } = fallbacks.get(r.key)!;
     const most = { model: modelRef(main.model), template: tplRef(main.template) };
@@ -629,7 +479,6 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       label: r.label,
       name: p.nameOf(r.key) ?? pageNames.get(r.key) ?? null,
       runnable: runnableKeys.has(r.key),
-      ...roiFields(workflowRoi(r.key)),
       figures: null,
       model: most.model,
       template: most.template,
@@ -645,45 +494,8 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
         .map((x) => ({ when: whenText(x.startedAt), version: versionText(x.workflowSlug), status: x.status, duration: durationText(x.startedAt, x.completedAt), cost: x.costUsd && x.costUsd > 0 ? usd(x.costUsd) : null })),
     };
   });
-  // What a template is expected to return before it earned one of its own: the workflows writing with it now, those
-  // whose return rests on an outcome (a workflow with none states no evidence about a template), positive only.
-  const outcomesOf = new Map(wfRows.map((r) => [r.key, r.figures.outcomes]));
-  const nowRoiOf = (key: string, part: "template" | "model" = "template"): CatalogRoi | null => {
-    const vs = workflows
-      .filter((w) => w.writesWithNow?.[part]?.key === key && w.roiDetail.basis === "measured" && w.roiDetail.value != null && w.roiDetail.value > 0 && (outcomesOf.get(w.key) ?? 0) > 0)
-      .map((w) => w.roiDetail.value!);
-    return vs.length ? roiOfValue(vs.reduce((a, b) => a + b, 0) / vs.length, "expected", "writes_with_now") : null;
-  };
-  const ownRoi = (figs: ReadonlyMap<string, VersionShare> | undefined) =>
-    ownTemplateRoi(figs, p.dynastyOf, p.workflowVersionTotals, p.workflowReturns?.pipelineOf, p.workflowReturns?.billedOf);
-  // What a template (a model) on this pipe returns, every template (model) pooled (each one's own pipeline ÷ own billed
-  // spend, the ones that earned nothing included): the honest expectation for one that has not earned one of its own. A
-  // workflow's return carries its contacted people's value, which no writer without an outcome has shown it earns.
-  const pooledRoi = (bars: ReadonlyMap<string, ReadonlyMap<string, VersionShare>> | undefined, source: "pipe_templates" | "pipe_models") => {
-    const pooled = new Map<string, VersionShare>();
-    for (const figs of bars?.values() ?? []) {
-      for (const [slug, f] of figs) {
-        const t = pooled.get(slug) ?? { spentUsd: 0, outcomes: 0 };
-        t.spentUsd += f.spentUsd;
-        t.outcomes += f.outcomes;
-        pooled.set(slug, t);
-      }
-    }
-    const m = ownRoi(pooled);
-    return m && m.value > 0 ? roiOfValue(m.value, "expected", source) : null;
-  };
-  const pooledTemplateRoi = pooledRoi(p.templateFiguresByVersion, "pipe_templates");
-  const templateRoi = (key: string): CatalogRoi => {
-    const m = ownRoi(p.templateFiguresByVersion?.get(key));
-    return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (pooledTemplateRoi ?? nowRoiOf(key) ?? pipeRoi);
-  };
   const templates: CatalogTemplate[] = tplRows.map((r, i) => {
     const d = dyn.dynastyOf(r.key);
-    const roi = templateRoi(r.key);
-    const versionRoi = (v: string): CatalogRoi => {
-      const m = ownRoi(p.templateVersionFiguresByVersion?.get(v));
-      return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : roi.value != null ? { ...roi, basis: "expected", source: "dynasty", spendCovered: null } : roi;
-    };
     return {
     key: r.key,
     label: r.label,
@@ -695,7 +507,6 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     status: d?.status ?? null,
     statusSource: d?.statusSource ?? null,
     statusUnavailableReason: !d ? "no_dynasty" : d.status === null ? "status_not_stated" : null,
-    ...roiFields(roi),
     versions: d
       ? d.versions.map((v) => ({
           key: v,
@@ -703,7 +514,6 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
           head: v === d.head,
           hasText: p.templateTexts.has(v),
           status: d.versionStatuses?.[v] ?? null,
-          ...roiFields(versionRoi(v)),
           ...figures(p.terms, versionBars.get(v) ?? emptyBucket(v, templateLabel(v)), null),
         }))
       : [],
@@ -726,12 +536,6 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   const versionBarsOf = new Map<string, Array<ResearchBucket & { dynastyKey: string }>>();
   for (const v of p.modelVersions ?? []) pushTo(versionBarsOf, v.dynastyKey, v);
   const servedList = typeof p.servedModels === "object" ? p.servedModels : [];
-  // A model's return is its OWN (MODEL-ROI-1023): the template rule, on the model bars' per-workflow-version shares.
-  const pooledModelRoi = pooledRoi(p.modelFiguresByVersion, "pipe_models");
-  const modelRoi = (key: string): CatalogRoi => {
-    const m = ownRoi(p.modelFiguresByVersion?.get(key));
-    return m ? roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered) : (pooledModelRoi ?? nowRoiOf(key, "model") ?? pipeRoi);
-  };
   const costs = p.generationCosts ?? "run_costs_unreadable";
   // The pipe's run-cost rows grouped by model page ONCE, in row order (each page's list is what a filter per page gave):
   // filtering every row for every page, twice, was most of a Research build's CPU (BOX-OVERLOAD-1026).
@@ -761,20 +565,14 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
     }
     return versions.map((v) => ({ ...v, runCost: runCostOf(byVersion.get(v.key) ?? []) }));
   };
-  const modelVersionsOf = (key: string, label: string, pageRoi: CatalogRoi): Array<Omit<CatalogModelVersion, "runCost">> => {
+  const modelVersionsOf = (key: string, label: string): Array<Omit<CatalogModelVersion, "runCost">> => {
     const d = llmDyn.bySlug(key);
     const bars = versionBarsOf.get(key) ?? [];
-    // A version's own return once it has an outcome of its own, else its dynasty's, expected (the template version rule).
-    const versionRoi = (barKey: string | null): CatalogRoi => {
-      const m = barKey === null ? null : ownRoi(p.modelVersionFiguresByVersion?.get(barKey));
-      if (m) return roiOfValue(m.value, "measured", "own_outcomes", m.spendCovered);
-      return pageRoi.value != null ? { ...pageRoi, basis: "expected", source: "dynasty", spendCovered: null } : pageRoi;
-    };
     const idsOf = (k: string) => servedList.filter((m) => modelKey(m.displayName) === k || modelKey(m.modelId) === k).map((m) => m.modelId);
     if (!d) {
       const bar = bars[0] ?? emptyBucket(key, label);
-      // A model on its own IS its one version: same figures, same return.
-      return [{ key, label, modelIds: idsOf(key), head: true, servedToday: idsOf(key).length > 0, ...roiFields(pageRoi), ...figures(p.terms, bar, null) }];
+      // A model on its own IS its one version: same figures.
+      return [{ key, label, modelIds: idsOf(key), head: true, servedToday: idsOf(key).length > 0, ...figures(p.terms, bar, null) }];
     }
     // Every version newest first (chat-service's order), its bar if it wrote; a bar naming no listed version is appended.
     const used = new Set<string>();
@@ -790,21 +588,19 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
       }
       const bar = bars.find((b) => b.key === k || b.key === modelKey(m.modelId));
       if (bar) used.add(bar.key);
-      out.push({ key: k, label: m.displayName, modelIds: [m.modelId], head: m.modelId === d.headModelId, servedToday: m.servedToday, ...roiFields(versionRoi(bar?.key ?? null)), ...figures(p.terms, bar ?? emptyBucket(k, m.displayName), null) });
+      out.push({ key: k, label: m.displayName, modelIds: [m.modelId], head: m.modelId === d.headModelId, servedToday: m.servedToday, ...figures(p.terms, bar ?? emptyBucket(k, m.displayName), null) });
     }
-    for (const b of bars) if (!used.has(b.key)) out.push({ key: b.key, label: b.label, modelIds: idsOf(b.key), head: false, servedToday: false, ...roiFields(versionRoi(b.key)), ...figures(p.terms, b, null) });
+    for (const b of bars) if (!used.has(b.key)) out.push({ key: b.key, label: b.label, modelIds: idsOf(b.key), head: false, servedToday: false, ...figures(p.terms, b, null) });
     return out;
   };
   const models: CatalogModel[] = mdRows.map((r) => {
     const d = llmDyn.bySlug(r.key);
-    const roi = modelRoi(r.key);
     return {
     key: r.key,
     label: r.label,
     dynasty: d ? { slug: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModelId: d.headModelId, servedToday: d.servedToday, legacyAliases: [...d.legacyAliases] } : null,
     standaloneReason: d ? null : (llmDyn.unavailableReason ?? "no_dynasty_in_chat_service"),
-    ...roiFields(roi),
-    models: withVersionRunCosts(r.key, modelVersionsOf(r.key, r.label, roi)),
+    models: withVersionRunCosts(r.key, modelVersionsOf(r.key, r.label)),
     runCost: pageRunCost(r.key),
     ...modelRowAliases(r.key, p.servedModels ?? "model_ids_unreadable", pageKeyOfServed),
     ...figures(p.terms, r, writerRank.get(r) ?? null),
@@ -818,18 +614,10 @@ export function pipeCatalog(p: PipeCatalogInput): { workflows: CatalogWorkflow[]
   return { workflows, templates, models };
 }
 
-/** PURE. A ranking row's ROI figure as a catalogue return. */
-export function catalogRoiOfFigure(f: LegWorkflowFigures["roi"]): CatalogRoi {
-  if (f.value == null) return { ...NO_ROI, unavailableReason: "no_return_on_pipe" };
-  const source: CatalogRoi["source"] = f.basis === "measured" ? "workflow" : f.source === "pipe_best_workflow" ? "pipe_best_workflow" : "pipe_workflows";
-  return roiOfValue(f.value, f.basis === "measured" ? "measured" : "expected", source);
-}
-
 /**
- * PURE (RESEARCH-WF-FIGURES-1022). Every workflow page takes its ranking row's `figures` and its return from them, so the
- * Workflows list and the workflow page print ONE figure (before: the page held the ranking of its own build, up to 15 min
- * older, and a measured 30x on a workflow with no outcome). A row without `figures` (a ranking persisted before them)
- * leaves the page as built.
+ * PURE (RESEARCH-WF-FIGURES-1022). Every workflow page takes its ranking row's `figures`, so the Workflows list and the
+ * workflow page print ONE figure (before: the page held the ranking of its own build, up to 15 min older). A row without
+ * `figures` (a ranking persisted before them) leaves the page as built.
  */
 export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(
   pipe: T,
@@ -844,7 +632,7 @@ export function withWorkflowFigures<T extends { workflows: CatalogWorkflow[] }>(
     ...pipe,
     workflows: pipe.workflows.map((w) => {
       const f = bySlug.get(w.key);
-      return f ? { ...w, ...roiFields(catalogRoiOfFigure(f.roi)), figures: f } : w;
+      return f ? { ...w, figures: f } : w;
     }),
   };
 }

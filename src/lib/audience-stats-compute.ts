@@ -16,7 +16,6 @@ import {
   priceObservedUnits,
   projectBrandParents,
   returnPerDollar,
-  costOfAcquisitionPct,
   type BrandProjectedParentsUsd,
   type FunnelPricingReason,
 } from "./audience-stats-brand-projection.js";
@@ -172,25 +171,12 @@ export interface AudienceStatsRow {
     maturity?: MaturityPair<AudienceMetricRatios>;
   };
   /**
-   * WHAT THIS AUDIENCE RETURNS PER DOLLAR — the figure the brand Overview's Top-audiences card leads
-   * with, because cost per outcome alone ranks audiences by CHEAPNESS: an audience that converts to
-   * nothing outranks an expensive one that pays.
-   *
-   * PROJECTED, not realized, and the field names say so. It prices THIS audience's own observed unit
-   * costs (its send-tag spend against its send-tag clicks/replies, on the workflow the Strategy page
-   * renders it under) through the brand's OWN declared economics — the same economics behind the
-   * brand-level figure, resolved once for the whole payload. `returnPerDollar = lifetimeRevenueUsd /
-   * costPerPaidClientUsd`, the identical definition the funnel ranking ranks a brand's
-   * funnels on, so an audience's return and the brand's return are one statistic at two grains.
-   *
-   * COHERENT WITH THE BRAND BY CONSTRUCTION: an audience with no MEASURED grain of its own carries no
-   * evidence to price and inherits `envelope.brandProjection` verbatim — the same brand-level
-   * fallback every derived cost column already takes — rather than being blanked or invented.
-   *
-   * All three fields are null (never 0) when the brand states no lifetime revenue, when the funnel has
-   * no path to a paying client, or at cold start. A consumer renders a dash and says it could not be
-   * measured; a 0 would read as "this audience returns nothing" / "winning a customer costs nothing",
-   * which are different claims.
+   * WHAT WINNING ONE PAYING CLIENT FROM THIS AUDIENCE COSTS, PROJECTED: its own observed unit costs
+   * through the brand's OWN declared economics, priced through its best-returning declared funnel on the
+   * brand-level read. An audience serves this COST, never a return (ROI-CONSISTENCY-1103, owner
+   * 2026-11-03: a return exists only where a value lands). An audience with no MEASURED grain inherits
+   * `envelope.brandProjection` verbatim. Null (never 0) with no economics, no path to a paying client,
+   * or at cold start.
    */
   projection: {
     /**
@@ -207,19 +193,11 @@ export interface AudienceStatsRow {
      * can therefore never pair a return with an LTR this projection did not use.
      */
     lifetimeRevenueUsd?: number | null;
-    /** Projected cost to win ONE paying client from this audience. Denominator of the return. */
+    /** Projected cost to win ONE paying client from this audience. An audience serves its cost, never a
+     *  return (ROI-CONSISTENCY-1103): the return lives on the campaign's `expectedReturn`. */
     costPerPaidClientUsd: number | null;
-    /** Dollars of lifetime revenue per dollar spent. Higher is better; > 1 means it pays for itself. */
-    returnPerDollar: number | null;
     /**
-     * That same cost as a SHARE of what the customer is worth, percent = 100 × costPerPaidClientUsd /
-     * lifetimeRevenueUsd = 100 / returnPerDollar. Below 100 means the audience pays for itself. Served
-     * rather than left to the consumer precisely BECAUSE it is the reciprocal: a browser dividing one
-     * of our fields into another is how two surfaces come to print two numbers for one statistic.
-     */
-    costOfAcquisitionPct: number | null;
-    /**
-     * The three figures on both bases, priced from this audience's OBSERVED unit costs (never the
+     * The cost on both bases, priced from this audience's OBSERVED unit costs (never the
      * cascade) through the byte-same funnel the fields above use — the best-returning declared funnel
      * on the brand-level read. Absent when the maturity inputs could not be read.
      */
@@ -233,11 +211,17 @@ export interface AudienceStatsRow {
   maturity?: ScopeMaturity | null;
 }
 
-/** An audience row's projection figures, as one figure `MaturityPair` carries. */
+/** An audience row's projection figures, as one figure `MaturityPair` carries. `returnPerDollar` is INTERNAL: it
+ *  picks the best-returning funnel and feeds the scope's `expectedReturn` measured rung, and is stripped before
+ *  serving (`servedProjectionPair`, ROI-CONSISTENCY-1103). */
 export interface ProjectionRatios {
   costPerPaidClientUsd: number | null;
   returnPerDollar: number | null;
-  costOfAcquisitionPct: number | null;
+}
+
+/** What a `MaturityPair` of a projection SERVES: the cost only. */
+export interface ServedProjectionRatios {
+  costPerPaidClientUsd: number | null;
 }
 
 /**
@@ -325,9 +309,6 @@ export interface AudienceStatsEnvelope {
     basisFunnelKey?: SalesFunnelKey | null;
     lifetimeRevenueUsd: number | null;
     costPerPaidClientUsd: number | null;
-    returnPerDollar: number | null;
-    /** 100 / returnPerDollar — the brand-level twin of a row's `costOfAcquisitionPct`. */
-    costOfAcquisitionPct: number | null;
     /**
      * The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from
      * the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same
@@ -573,8 +554,8 @@ interface ResolvedProjection {
    * audiences can legitimately be priced through two funnels with two different lifetime revenues. */
   lifetimeRevenueUsd: number | null;
   costPerPaidClientUsd: number | null;
+  /** Internal: picks the best-returning funnel and the brand-level order; never served. */
   returnPerDollar: number | null;
-  costOfAcquisitionPct: number | null;
 }
 
 /**
@@ -590,7 +571,6 @@ function projectionForGrain(parents: BrandProjectedParentsUsd, audienceId: strin
     lifetimeRevenueUsd: parents.lifetimeRevenueUsd,
     costPerPaidClientUsd,
     returnPerDollar: returnPerDollar(parents.lifetimeRevenueUsd, costPerPaidClientUsd),
-    costOfAcquisitionPct: costOfAcquisitionPct(parents.lifetimeRevenueUsd, costPerPaidClientUsd),
   };
 }
 
@@ -649,7 +629,6 @@ function combineDeclaredFunnels(priced: PricedFunnel[], audienceId: string | nul
         lifetimeRevenueUsd: null,
         costPerPaidClientUsd: null,
         returnPerDollar: null,
-        costOfAcquisitionPct: null,
       };
 }
 
@@ -788,13 +767,18 @@ function parseStatuses(raw: string | undefined): { ok: true; statuses: AudienceS
   return { ok: true, statuses: [...seen] };
 }
 
-function compareByMetric(metric: SortMetric, a: AudienceStatsRow, b: AudienceStatsRow): number {
+function compareByMetric(
+  metric: SortMetric,
+  a: AudienceStatsRow,
+  b: AudienceStatsRow,
+  returnOf: (audienceId: string) => number | null,
+): number {
   // BRAND LEVEL: best RETURN first (descending), unmeasurable rows last. Ascending cost would rank an
   // audience that converts to nothing above an expensive one that pays — the whole reason the brand-level
   // read leads with return.
   if (metric === "returnPerDollar") {
-    const ar = a.projection.returnPerDollar;
-    const br = b.projection.returnPerDollar;
+    const ar = returnOf(a.audienceId);
+    const br = returnOf(b.audienceId);
     if (ar === null && br === null) return a.audienceId.localeCompare(b.audienceId);
     if (ar === null) return 1;
     if (br === null) return -1;
@@ -1381,7 +1365,6 @@ export async function computeAudienceStats(
       const ratios: ProjectionRatios = {
         costPerPaidClientUsd: cost,
         returnPerDollar: returnPerDollar(parents.lifetimeRevenueUsd, cost),
-        costOfAcquisitionPct: costOfAcquisitionPct(parents.lifetimeRevenueUsd, cost),
       };
       const earlier = (a: SalesFunnelKey | null, b: SalesFunnelKey | null) =>
         a != null && b != null && salesFunnelIndex(a) < salesFunnelIndex(b);
@@ -1397,7 +1380,7 @@ export async function computeAudienceStats(
         }
       }
     }
-    return (best ?? cheapest)?.ratios ?? { costPerPaidClientUsd: null, returnPerDollar: null, costOfAcquisitionPct: null };
+    return (best ?? cheapest)?.ratios ?? { costPerPaidClientUsd: null, returnPerDollar: null };
   };
   const projectionPair = (bases: ScopeBases): MaturityPair<ProjectionRatios> =>
     maturityPair(
@@ -1405,6 +1388,13 @@ export async function computeAudienceStats(
       bases.matureSpendUsd != null && bases.maturePersons != null ? priceProjection(bases.matureSpendUsd, bases.maturePersons) : null,
       bases.isMature,
     );
+  // The return each row was priced on: it orders the brand-level read (best return first) and is never served.
+  const returnByAudience = new Map<string, number | null>();
+  const servedProjection = (audienceId: string | null) => {
+    const { returnPerDollar: perDollar, ...served } = resolveProjection(audienceId);
+    if (audienceId !== null) returnByAudience.set(audienceId, perDollar);
+    return served;
+  };
 
   const audienceMap = new Map(audiences.map((audience) => [audience.id, audience]));
   const ids = new Set([...costs.keys(), ...membership.keys(), ...engagement.keys()]);
@@ -1503,7 +1493,7 @@ export async function computeAudienceStats(
       // SAME inheritance the derived cost columns take, so the two families can never disagree about
       // which evidence priced the row.
       projection: {
-        ...resolveProjection(audienceId),
+        ...servedProjection(audienceId),
         ...(group ? { maturity: projectionPair(group.bases) } : {}),
       },
     });
@@ -1513,12 +1503,12 @@ export async function computeAudienceStats(
   // A brand has no goal, so the brand-level read ranks on the only thing that matters at that grain:
   // what each audience RETURNS per dollar. A single-funnel read keeps its funnel's cost order verbatim.
   const sortMetric: SortMetric = normalizedGoal === null ? "returnPerDollar" : sortMetricForGoal(normalizedGoal);
-  rows.sort((a, b) => compareByMetric(sortMetric, a, b));
+  rows.sort((a, b) => compareByMetric(sortMetric, a, b, (id) => returnByAudience.get(id) ?? null));
   const audiencesOut = parsedLimit !== undefined ? rows.slice(0, parsedLimit) : rows;
 
   const scopeGroup = maturityInputs ? groupMaturity(() => true, maturityInputs.persons)! : null;
   const brandCombined = {
-    ...resolveProjection(null),
+    ...servedProjection(null),
     ...(scopeGroup ? { maturity: projectionPair(scopeGroup.bases) } : {}),
   };
 

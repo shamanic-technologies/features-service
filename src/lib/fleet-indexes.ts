@@ -16,14 +16,15 @@
  *   the cheapest runnable workflow with a meeting, else the pipe as a whole (every workflow pooled: a campaign run by
  *   several workflows cannot say which booked), always `noise` with the meetings it rests on.
  *
- * Two indexes are CLIENT figures, not pipe figures (owner 2026-10-19): the median client's cost per engaged lead (the
+ * One index is a CLIENT figure, not a pipe figure (owner 2026-10-19): the median client's cost per engaged lead (the
  * landing hero's figure: per brand total spend (`/public/stats/ranked?groupBy=brand`) ÷ (persons who replied positively +
  * persons whose click was judged HUMAN, the fleet person cell: owner 2026-10-19, a scanner's click is not a visit), brands
  * with both; ≥ 2 brands). Only a send through our own transport can have its click judged, so a brand's human clicks are
  * read over its whole reach at the rate measured on those sends (× contacted ÷ screened contacted): the byte-same
  * screenable-share correction the Cost Per Click Index applies to spend (`lib/screened-visits.ts`). Without it, lifetime
- * spend over clicks judgeable only since recently read $105.61 against $10.48 (2026-10-19). and the median client's return on spend (`/public/stats/return-on-spend`, ≥ $100 spent, MATURE
- * brands, ≥ 5 brands). Their status counts the CLIENTS behind the median (`outcomes` = clients), the same bars.
+ * spend over clicks judgeable only since recently read $105.61 against $10.48 (2026-10-19). Its status counts the CLIENTS
+ * behind the median (`outcomes` = clients), the same bars. The client ROI index (`cold-email-roi`) is deleted
+ * (ROI-CONSISTENCY-1103): no longer recorded nor served, its stored rows kept.
  *
  * Each value carries a `status` saying how far to trust it, from the outcomes behind it (the weakest link of a
  * chain): `noise` under `SIGNAL_MIN_OUTCOMES` (the maturity bar, `lib/maturity.ts`) or with no mature workflow,
@@ -36,8 +37,7 @@ import type { IndexRow, PooledPipe } from "./fleet-index-vendor.js";
 import { VENDOR_COST_UNKNOWN } from "./public-vendor-cost.js";
 
 export type FleetIndexStatus = "robust" | "signal" | "noise";
-/** `multiple`: dollars back per dollar spent (3.6 reads "3.6x"). */
-export type FleetIndexUnit = "usd" | "percent" | "multiple";
+export type FleetIndexUnit = "usd" | "percent";
 
 export const SIGNAL_MIN_OUTCOMES = 10;
 export const ROBUST_MIN_OUTCOMES = 30;
@@ -46,7 +46,7 @@ export const SCEO_FEATURE_SLUG = "sales-cold-email-outreach";
 export const SCEO_WEBSITE_VISIT_LEG = "lead_found_to_website_visit";
 export const SCEO_POSITIVE_REPLY_LEG = "lead_found_to_conversation";
 
-export type FleetIndexOutcome = "website_visit" | "positive_reply" | "meeting_booked" | "engaged_lead" | "revenue";
+export type FleetIndexOutcome = "website_visit" | "positive_reply" | "meeting_booked" | "engaged_lead";
 
 export interface FleetIndexDefinition {
   slug: string;
@@ -55,7 +55,7 @@ export interface FleetIndexDefinition {
   channelSlug: string;
   channelName: string;
   outcome: FleetIndexOutcome;
-  metric: "cost_per_outcome" | "conversion_rate" | "return_on_spend";
+  metric: "cost_per_outcome" | "conversion_rate";
   unit: FleetIndexUnit;
   /** What one unit of the value is, in words ("per website visit", "of people emailed"). */
   valuePer: string;
@@ -135,16 +135,6 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     unit: "usd",
     valuePer: "per engaged lead, median of our clients",
     method: "Each client's cold email cost, at real vendor cost with no markup, divided by its engaged leads (people who replied positively, or visited its website from our email, link scanners left out), then the median across our clients.",
-  },
-  {
-    slug: "cold-email-roi",
-    name: "Cold Email ROI Index",
-    ...CHANNEL,
-    outcome: "revenue",
-    metric: "return_on_spend",
-    unit: "multiple",
-    valuePer: "back per dollar spent, median of our clients",
-    method: "Each client's expected revenue from its cold email leads divided by our real vendor cost for that outreach, with no markup, then the median across our clients who spent at least $100. Revenue is valued on what each client told us a customer is worth.",
   },
 ];
 
@@ -262,8 +252,6 @@ export interface FleetIndexInputs {
   meetingExpected?: ExpectedMeetingPrice | null;
   /** One entry per client brand (`/public/stats/ranked?groupBy=brand`); null = unreadable, nothing recorded. */
   brandEngagement?: BrandEngagement[] | null;
-  /** `/public/stats/return-on-spend` at the $100 floor; null = unreadable or no snapshot yet, nothing recorded. */
-  clientReturn?: ClientReturnInput | null;
 }
 
 /** A client brand's lifetime cold email spend and engaged persons. */
@@ -283,17 +271,6 @@ export interface BrandEngagement {
 /** PURE. A brand's visits over its whole reach: human clicks at the rate measured on its judgeable sends; none judgeable = 0. */
 export function brandVisits(b: BrandEngagement): number {
   return b.screenedContacted > 0 ? (b.humanClicks * b.contacted) / b.screenedContacted : 0;
-}
-
-/** The fleet return median as `/public/stats/return-on-spend` states it. */
-export interface ClientReturnInput {
-  measured: boolean;
-  reason: string | null;
-  brandCount: number;
-  minSpendUsd: number;
-  medianReturnPerDollar: number | null;
-  /** Vendor basis only: clients of the population left out of the median because their vendor cost is unknown. */
-  vendorCostUnknownBrands?: number;
 }
 
 /** A median over a single brand is that brand's own price, not a fleet figure (the landing's bar). */
@@ -332,13 +309,6 @@ export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndex
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
   return clientPoint(def, value, priced.length, null, inputs);
-}
-
-/** PURE. The median client's return on spend, as `/public/stats/return-on-spend` states it. */
-export function clientReturnPoint(r: ClientReturnInput): FleetIndexPoint {
-  const inputs = { population: "mature_clients_past_spend_floor", clients: r.brandCount, minSpendUsd: r.minSpendUsd, ...(r.vendorCostUnknownBrands ? { clientsVendorCostUnknown: r.vendorCostUnknownBrands } : {}) };
-  const value = r.measured ? r.medianReturnPerDollar : null;
-  return clientPoint(CLIENT_ROI, value, r.brandCount, r.reason ?? "not_measured", inputs);
 }
 
 /** The row a client's money goes to today: best mature workflow that can still run. */
@@ -549,7 +519,6 @@ const COST_PER_INTEREST = fleetIndexBySlug("cold-email-cost-per-positive-reply")
 const COST_PER_MEETING = fleetIndexBySlug("cold-email-cost-per-meeting")!;
 const INTEREST_RATE = fleetIndexBySlug("cold-email-positive-reply-rate")!;
 const COST_PER_ENGAGED_LEAD = fleetIndexBySlug("cold-email-cost-per-engaged-lead")!;
-const CLIENT_ROI = fleetIndexBySlug("cold-email-roi")!;
 
 /** PURE. Today's point of every index whose inputs were readable (an unreadable input records nothing). */
 export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoint[] {
@@ -566,7 +535,6 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
       points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
     }
     if (def.outcome === "engaged_lead" && inputs.brandEngagement) points.push(engagedLeadPoint(inputs.brandEngagement));
-    if (def.outcome === "revenue" && inputs.clientReturn) points.push(clientReturnPoint(inputs.clientReturn));
   }
   return points;
 }

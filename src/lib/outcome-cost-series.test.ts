@@ -4,7 +4,6 @@ import {
   contactedOutcomeDays,
   expectedStepCosts,
   monthsBetween,
-  roiOf,
   stepValues,
   OUTCOME_COST_STEPS,
   type OutcomeCostStep,
@@ -118,14 +117,10 @@ describe("buildOutcomeCostSeries", () => {
     expect(empty.every((s) => s.months.length === 0 && s.sinceInception.costPerOutcomeUsd === null && s.sinceInception.spendUsd === 0)).toBe(true);
   });
 
-  it("ROI = value ÷ cost: measured over the since-inception cost, expected over the expected cost, never a guess", () => {
-    // conversation: $840 worth ÷ $60 measured; no expected cost.
+  it("serves the step's value beside its cost, never a return (ROI-CONSISTENCY-1103)", () => {
     expect(reply.value).toEqual({ valuePerOutcomeUsd: 840, unavailableReason: null });
-    expect(reply.roi).toEqual({ measured: 14, expected: null });
-    // meeting_booked: nothing measured yet, $840 ÷ $420 expected.
-    expect(meeting.roi).toEqual({ measured: null, expected: 2 });
-    // A step nobody values carries no ROI.
-    expect(series.find((s) => s.stepKey === "signup")!.roi).toEqual({ measured: null, expected: null });
+    expect(series.every((s) => !("roi" in s))).toBe(true);
+    expect(meeting.expected.costPerOutcomeUsd).toBe(420);
   });
 
   it("monthsBetween crosses years", () => {
@@ -152,12 +147,6 @@ describe("stepValues: one outcome is worth the lifetime revenue ÷ the outcomes 
     expect(stepValues(null, "expected_model_computing").get("paid_client")!.unavailableReason).toBe("expected_model_computing");
   });
 
-  it("roiOf never divides by a missing or zero cost", () => {
-    expect(roiOf(100, 40)).toBe(2.5);
-    expect(roiOf(100, 0)).toBeNull();
-    expect(roiOf(null, 40)).toBeNull();
-    expect(roiOf(100, null)).toBeNull();
-  });
 });
 
 describe("expectedStepCosts: a step's expected cost carries the lower steps it needed", () => {

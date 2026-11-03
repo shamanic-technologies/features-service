@@ -40,11 +40,6 @@
  *     and channels: email-gateway's `broadcast.emailStats.queued`, relayed from the sender's own queue
  *     (live sequences only). A SNAPSHOT, not a window figure: the same number whatever ?windowDays=.
  *     Null with `queuedEmailsUnavailableReason`, never a zero standing for unknown.
- *   - expectedPipeline — the body's headline pipeline, DATED: the engine's own cumulative series
- *     (each organisation steps in at its most advanced dated event), read at the end of each day. Same
- *     basis as `headline.totalPipelineUsd` (the expected pipeline, flash), so its last point IS the
- *     headline whenever every organisation is dated; `undatedPipelineUsd` states the rest otherwise.
- *     Not `roiHistory`'s pipeline leg, which is the REALIZED, mature cohort's.
  *
  * Every total is the sum of its own `daily` values (spend summed in whole cents per day first).
  * Fail-soft per part: a part whose read failed is null with a loud log, never a zero.
@@ -156,11 +151,6 @@ export interface RevenueWindow {
   } | null;
   recipientsRepliesPositive: WindowCountSeries;
   recipientsClicked: WindowCountSeries;
-  expectedPipeline: {
-    totalPipelineUsd: number;
-    undatedPipelineUsd: number;
-    daily: Array<{ date: string; cumulativePipelineUsd: number }>;
-  } | null;
   /** Emails queued and not yet sent RIGHT NOW (snapshot, no day). Null with `queuedEmailsUnavailableReason`, never 0 for unknown. */
   queuedEmails: number | null;
   queuedEmailsUnavailableReason: QueuedEmailsUnavailableReason | null;
@@ -294,8 +284,6 @@ export function buildRevenueWindow(input: {
   spendByDay: WindowSpendByDay | null;
   recipientsRepliesPositive: SignalSeries;
   recipientsClicked: SignalSeries;
-  totalPipelineUsd: number | null;
-  pipelineTimeSeries: TimeSeriesPoint[];
   sinceInception?: boolean;
   queuedEmails?: QueuedEmailsRead;
   /** The campaign grain: the totals the same body's `spend` block serves (see header). */
@@ -369,25 +357,6 @@ export function buildRevenueWindow(input: {
     return { total: running, daily };
   };
 
-  let expectedPipeline: RevenueWindow["expectedPipeline"] = null;
-  if (input.totalPipelineUsd !== null) {
-    // The engine's series is cumulative and ascending; a day's value is the last point on or before it.
-    const points = [...input.pipelineTimeSeries].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-    let i = 0;
-    let cumulative = 0;
-    const daily = dates.map((date) => {
-      while (i < points.length && points[i].date.slice(0, 10) <= date) cumulative = points[i++].cumulativePipelineUsd;
-      return { date, cumulativePipelineUsd: cumulative };
-    });
-    const dated = points.length ? points[points.length - 1].cumulativePipelineUsd : 0;
-    expectedPipeline = {
-      totalPipelineUsd: input.totalPipelineUsd,
-      // Clamped: the dated curve is a subset of the headline, so a negative remainder is float drift.
-      undatedPipelineUsd: Math.max(0, input.totalPipelineUsd - dated),
-      daily,
-    };
-  }
-
   return {
     days: dates.length,
     sinceInception: input.sinceInception ?? false,
@@ -397,7 +366,6 @@ export function buildRevenueWindow(input: {
     spend,
     recipientsRepliesPositive: inWindow(input.recipientsRepliesPositive),
     recipientsClicked: inWindow(input.recipientsClicked),
-    expectedPipeline,
     queuedEmails: input.queuedEmails?.queued ?? null,
     queuedEmailsUnavailableReason: !input.queuedEmails
       ? "stats_unreadable"
@@ -418,7 +386,6 @@ export async function computeRevenueWindow(input: {
   /** The campaign grain: spend of the scope's campaigns only (see fetchWindowActualSpendByDay). */
   campaignOnly?: boolean;
   body: {
-    headline: { totalPipelineUsd: number | null };
     timeSeries: TimeSeriesPoint[];
     recipientsRepliesPositive: SignalSeries;
     recipientsClicked: SignalSeries;
@@ -476,8 +443,6 @@ export async function computeRevenueWindow(input: {
     spendByDay,
     recipientsRepliesPositive: input.body.recipientsRepliesPositive,
     recipientsClicked: input.body.recipientsClicked,
-    totalPipelineUsd: input.body.headline.totalPipelineUsd,
-    pipelineTimeSeries: input.body.timeSeries,
     queuedEmails,
     spendTotals: input.campaignOnly ? (input.body.spend ?? null) : undefined,
   });

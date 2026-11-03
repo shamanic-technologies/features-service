@@ -74,10 +74,8 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
     throw error;
   }
   const body = JSON.parse(json) as {
-    headline?: { totalPipelineUsd?: unknown };
     costEconomics?: {
       committedCostUsd?: unknown;
-      maturity?: OfferReturnRead["pair"];
       realizedReturn?: { roiMultiple?: unknown; closedWonCount?: unknown; closedWonRevenueUsd?: unknown; spentUsd?: unknown } | null;
     };
     expectedReturn?: { roiMultiple?: unknown; basis?: unknown; unavailableReason?: unknown } | null;
@@ -87,8 +85,6 @@ export async function readOfferReturn(orgId: string, brandId: string, offerId: s
   if (!body.costEconomics) throw new Error(`offer ${offerId} revenue body carries no costEconomics`);
   return {
     offerId,
-    pair: body.costEconomics.maturity ?? null,
-    pipelineUsd: num(body.headline?.totalPipelineUsd),
     committedCostUsd: num(body.costEconomics.committedCostUsd),
     // The SAME dated series the dashboard draws, from the same body: never recounted here.
     outcomeSeries: {

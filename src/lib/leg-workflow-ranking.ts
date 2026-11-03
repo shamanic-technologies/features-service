@@ -48,11 +48,6 @@ export interface LegWorkflowRankingRow {
   outcomes: number;
   contacted: number;
   spentUsd: number;
-  /** Lifetime on the leg: pipeline ÷ billed spend. Null when either is absent. */
-  roiMultiple: number | null;
-  /** The two terms of `roiMultiple`: the fleet pipeline (USD) and what clients were billed (USD) on the leg, lifetime. Null = unknown. */
-  pipelineUsd: number | null;
-  billedSpendUsd: number | null;
   /** Rank 1 when it is selectable: the first workflow the fleet order puts forward. */
   goesFirst: boolean;
   /** The best mature workflow (rule 1). Exactly one row, or none when nothing selectable is mature. */
@@ -63,7 +58,7 @@ export interface LegWorkflowRankingRow {
   place: LegWorkflowPlace;
   /**
    * THE figures the Workflows list and the workflow page print (RESEARCH-WF-FIGURES-1022, `lib/leg-workflow-figures.ts`):
-   * one ROI, $/outcome, % conversion and $ spent, each measured or expected, on the read's `pricing` (gross by default).
+   * one $/outcome, % conversion and $ spent, each measured or expected, on the read's `pricing` (gross by default).
    */
   figures?: LegWorkflowFigures;
   /** When a run of this workflow last started on the pipe, any org (ISO). Null = never ran, or `lastRunUnavailableReason`. */
@@ -96,10 +91,6 @@ export interface RankLegWorkflowsInput {
   assignments: ReadonlyMap<string, "active" | "deprecated">;
   /** Dynasties workflow-service can run (`executableDynasties`). Assigned active but absent here → not selectable. */
   executable: ReadonlySet<string>;
-  /** Fleet pipeline (USD) per dynasty on the leg. Absent → unknown. */
-  pipelineUsd: ReadonlyMap<string, number | null>;
-  /** Billed spend (USD) per dynasty on the leg. Absent → unknown. */
-  billedSpendUsd: ReadonlyMap<string, number>;
   /** NET spend per dynasty on the leg, per half (flash; mature null = not cut). Null/absent = not measured on the pipe. */
   netSpend?: ReadonlyMap<string, { flash: number; mature: number | null }> | null;
   /** Newest run start per dynasty on the pipe (fleet). Null/absent = not read on this pipe. */
@@ -124,8 +115,6 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
     const half = (mature ? f.mature : f.flash) ?? EMPTY;
     if (assignment === "unassigned" && (f.flash?.spentUsd ?? 0) <= 0) continue;
     figuresOf.set(slug, f);
-    const pipeline = input.pipelineUsd.get(slug) ?? null;
-    const billed = input.billedSpendUsd.get(slug) ?? null;
     rows.push({
       workflowDynastySlug: slug,
       workflowDynastyName: input.names.get(slug) ?? null,
@@ -139,9 +128,6 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       outcomes: half.outcomes,
       contacted: half.contacted,
       spentUsd: half.spentUsd,
-      roiMultiple: pipeline != null && billed != null && billed > 0 ? pipeline / billed : null,
-      pipelineUsd: pipeline,
-      billedSpendUsd: billed,
     });
   }
 
@@ -167,9 +153,6 @@ export function rankLegWorkflows(input: RankLegWorkflowsInput): LegWorkflowRanki
       isMature: r.isMature,
       figures: figuresOf.get(r.workflowDynastySlug)!,
       spend: spendOf(r),
-      pipelineUsd: r.pipelineUsd,
-      billedSpendUsd: r.billedSpendUsd,
-      moneyGoesHere: r.workflowDynastySlug === best,
     }));
   const defaultConversion = input.defaultConversionPct ?? null;
   const gross = legWorkflowFigures(

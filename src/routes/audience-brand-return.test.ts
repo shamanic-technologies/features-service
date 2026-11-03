@@ -251,21 +251,16 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     vi.clearAllMocks();
   });
 
-  it("answers return, cost per paying client and %CAC per audience WITHOUT naming a funnel or a goal", async () => {
+  it("answers the cost per paying client per audience WITHOUT naming a funnel or a goal, and no return (ROI-CONSISTENCY-1103)", async () => {
     const body = await brandLevelRead();
 
     expect(body.goal).toBeNull();
     expect(body.sortMetric).toBe("returnPerDollar");
     for (const row of body.audiences) {
-      expect(typeof row.projection.returnPerDollar).toBe("number");
       expect(typeof row.projection.costPerPaidClientUsd).toBe("number");
-      expect(typeof row.projection.costOfAcquisitionPct).toBe("number");
-      // The three units are ONE statement — the share is the reciprocal of the return, always.
-      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(100 / row.projection.returnPerDollar, 10);
-      expect(row.projection.costPerPaidClientUsd).toBeCloseTo(
-        row.projection.lifetimeRevenueUsd / row.projection.returnPerDollar,
-        10,
-      );
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
+      expect(row.projection).not.toHaveProperty("costOfAcquisitionPct");
+      for (const half of [row.projection.maturity?.flash, row.projection.maturity?.mature]) if (half) expect(Object.keys(half)).toEqual(["costPerPaidClientUsd"]);
     }
   });
 
@@ -287,11 +282,9 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     const purchases = await funnelRead("website_purchases");
 
     expect(body.brandProjection.basisFunnelKey).toBe("sales_meetings_from_conversation");
-    expect(body.brandProjection.returnPerDollar).toBeCloseTo(conversation.brandProjection.returnPerDollar, 10);
+    expect(body.brandProjection).not.toHaveProperty("returnPerDollar");
     expect(body.brandProjection.costPerPaidClientUsd).toBeCloseTo(conversation.brandProjection.costPerPaidClientUsd, 10);
-    // The MAXIMUM over the funnels the brand reads — by definition.
-    const best = Math.max(conversation.brandProjection.returnPerDollar, purchases.brandProjection.returnPerDollar);
-    expect(body.brandProjection.returnPerDollar).toBeCloseTo(best, 10);
+    expect(purchases.brandProjection).not.toHaveProperty("returnPerDollar");
   });
 
   it("reconciles with the per-funnel figures: each audience's return is its return on the funnel it was combined through", async () => {
@@ -306,14 +299,8 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
       expect(basis).toBeTruthy();
       const twin = rowFor(perFunnel[basis], row.audienceId);
       expect(row.projection.costPerPaidClientUsd).toBeCloseTo(twin.projection.costPerPaidClientUsd, 10);
-      expect(row.projection.returnPerDollar).toBeCloseTo(twin.projection.returnPerDollar, 10);
-      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(twin.projection.costOfAcquisitionPct, 10);
-      // ...and it is the BEST of the brand's funnels for that audience, not merely one of them.
-      for (const key of Object.keys(perFunnel)) {
-        expect(row.projection.returnPerDollar).toBeGreaterThanOrEqual(
-          rowFor(perFunnel[key], row.audienceId).projection.returnPerDollar,
-        );
-      }
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
+      expect(row.projection).not.toHaveProperty("costOfAcquisitionPct");
     }
   });
 
@@ -326,7 +313,8 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     expect(rowFor(body, "audience-b").projection.basisFunnelKey).toBe("website_purchases");
     expect(body.brandProjection.basisFunnelKey).toBe("sales_meetings_from_conversation");
 
-    const returns = body.audiences.map((r: any) => r.projection.returnPerDollar);
+    // The order reads the projected return (never served): the row's own lifetime revenue over its paid-client cost.
+    const returns = body.audiences.map((r: any) => r.projection.lifetimeRevenueUsd / r.projection.costPerPaidClientUsd);
     expect(returns).toEqual([...returns].sort((a: number, b: number) => b - a));
     expect(body.audiences[0].audienceId).toBe("audience-b");
   });
@@ -343,11 +331,11 @@ describe("brand-level per-audience return: /audience-stats with no funnel and no
     economics = { ...economics, lifetimeRevenueUsd: 0 };
     const body = await brandLevelRead();
 
-    expect(body.brandProjection.returnPerDollar).toBeNull();
-    expect(body.brandProjection.costOfAcquisitionPct).toBeNull();
+    expect(body.brandProjection).not.toHaveProperty("returnPerDollar");
+    expect(body.brandProjection).not.toHaveProperty("costOfAcquisitionPct");
     for (const row of body.audiences) {
-      expect(row.projection.returnPerDollar).toBeNull();
-      expect(row.projection.costOfAcquisitionPct).toBeNull();
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
+      expect(row.projection).not.toHaveProperty("costOfAcquisitionPct");
     }
   });
 

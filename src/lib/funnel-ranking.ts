@@ -313,8 +313,11 @@ function scoreFunnel(input: {
   // objectives need DIFFERENT ingredients. Under `conversionRate` a paying client's price is not one of
   // them: the rate is measured off the funnel's own outcomes, so a brand that has declared no lifetime
   // revenue still gets a ranking — which is the point, since a rate question is not a money question.
-  const returnPerDollar = isPositiveFinite(best.resolved.costPerPaidClientUsd) && isPositiveFinite(best.resolved.roiMultiple)
-    ? best.resolved.roiMultiple
+  // lifetimeRevenueUsd / costPerPaidClientUsd: the funnel's own terms over its best workflow's paid-client
+  // cost, computed HERE only to pick the basis funnel (the projection serves no return, ROI-CONSISTENCY-1103).
+  const ltrOverCost = isPositiveFinite(best.resolved.costPerPaidClientUsd) ? economics.lifetimeRevenueUsd / best.resolved.costPerPaidClientUsd : null;
+  const returnPerDollar = isPositiveFinite(best.resolved.costPerPaidClientUsd) && isPositiveFinite(ltrOverCost)
+    ? ltrOverCost
     : null;
   if (maximize !== "conversionRate") {
     // No path to a paying client → no return to compare. Any funnel with an undeclared or zero leg
@@ -323,7 +326,7 @@ function scoreFunnel(input: {
     if (!isPositiveFinite(best.resolved.costPerPaidClientUsd)) return unrankable("no_paid_client_path", withRow);
     // roiMultiple = lifetimeRevenueUsd / costPerPaidClientUsd — non-positive/absent when the brand
     // states no lifetime revenue, so there is a paid-client cost but no return to rank on.
-    if (!isPositiveFinite(best.resolved.roiMultiple)) return unrankable("no_return_defined", withRow);
+    if (!isPositiveFinite(ltrOverCost)) return unrankable("no_return_defined", withRow);
   }
 
   return {

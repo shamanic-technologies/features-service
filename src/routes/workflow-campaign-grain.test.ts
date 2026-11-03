@@ -17,6 +17,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -373,7 +381,6 @@ describe("?workflow= — one workflow of the scope, on the un-grouped body", () 
     expect(drilled.body.funnelSteps.contactedRecipients).toBe(6);
     expect(drilled.body.funnelSteps.steps[0].recipientsReached).toBe(5);
     expect(drilled.body.recipientsContacted.total).toBe(6);
-    expect(drilled.body.roiHistory).not.toBeNull();
     // The echo names the subject rather than leaving a consumer to infer it from a number.
     expect(drilled.body.workflow).toEqual({
       workflowDynastySlug: "dawn",
@@ -456,7 +463,7 @@ describe("?workflow= — one workflow of the scope, on the un-grouped body", () 
     expect(body.workflow).toEqual({ workflowDynastySlug: "retired-v1", workflowDynastyName: null, workflowSlugs: [] });
     // The dated-spend leg is the ONE that must ask the producer to resolve the dynasty, so it is the
     // one that degrades — a null curve beside correct money, never a 502.
-    expect(body.roiHistory).toBeNull();
+    expect(body.costPerOutcomeHistory).toBeNull();
 
     const spendCalls = seen.filter((u) => u.includes("/stats/costs") && u.includes("groupBy=costName"));
     expect(spendCalls.length).toBeGreaterThan(0);

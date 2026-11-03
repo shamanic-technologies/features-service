@@ -285,7 +285,7 @@ describe("GET /internal/features/:slug/workflow-projection/actual-cost — the l
     const lyo = brandRow(res.body, "dyn-lyo");
     expect(lyo.resolved.costPerOutcomeUsd).toBeNull();
     expect(lyo.resolved.costPerClickUsd).toBeNull();
-    expect(lyo.resolved.roiMultiple).toBeNull();
+    expect(lyo.resolved).not.toHaveProperty("roiMultiple");
     expect(lyo.resolved.vendorCostKnown).toBe(false);
     expect(lyo.estimatesByGrain.brand.evidence.spentUsd).toBeNull();
     expect(lyo.estimatesByGrain.brand.vendorCost).toEqual({ pricedVendorCostUsd: 0, unpricedBilledCostUsd: 30, vendorCostKnown: false });

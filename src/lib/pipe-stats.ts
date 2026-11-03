@@ -102,7 +102,6 @@ export interface PipeStatsPoint {
   /** volume key -> cumulative count that day (null = unmeasured). */
   volumes: Record<string, number | null>;
   costPerOutcomeUsd: number | null;
-  roi: number | null;
   /** conversion rate key -> cumulative rate that day, percent (null with no input yet or an unmeasured volume). */
   conversionRates: Record<string, number | null>;
 }
@@ -131,8 +130,6 @@ export interface PipeStatsFigures {
   costPerOutcomeUsd: number | null;
   costPerOutcomeUnavailableReason: "no_outcome_yet" | "outcome_not_measured" | "no_spend_recorded" | null;
   valuePerOutcomeUsd: number | null;
-  roi: number | null;
-  roiUnavailableReason: "step_unvalued" | "no_cost_per_outcome" | null;
   conversionRates: PipeStatsConversionRate[];
   history: PipeStatsPoint[];
   /** The same counts by calendar month and quarter, not cumulative, plus a since-inception row (`lib/pipe-periods.ts`). */
@@ -148,19 +145,15 @@ function nextDay(day: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function ratios(spend: number, outcomes: number | null, valuePerOutcome: number | null) {
+function ratios(spend: number, outcomes: number | null) {
   let cost: number | null = null;
   let costReason: PipeStatsFigures["costPerOutcomeUnavailableReason"] = null;
   if (outcomes === null) costReason = "outcome_not_measured";
   else if (outcomes === 0) costReason = "no_outcome_yet";
   else if (spend <= 0) costReason = "no_spend_recorded";
   else cost = spend / outcomes;
-  let roi: number | null = null;
-  let roiReason: PipeStatsFigures["roiUnavailableReason"] = null;
-  if (valuePerOutcome === null) roiReason = "step_unvalued";
-  else if (cost === null) roiReason = "no_cost_per_outcome";
-  else roi = (valuePerOutcome * outcomes!) / spend;
-  return { cost: cost === null ? null : round2(cost), costReason, roi: roi === null ? null : round2(roi), roiReason };
+  // A pipe serves its cost per outcome, never a return (ROI-CONSISTENCY-1103).
+  return { cost: cost === null ? null : round2(cost), costReason };
 }
 
 /** PURE: which volume pairs are rated: every consecutive pair, then first -> last when that is not one of them. */
@@ -212,10 +205,10 @@ export function buildPipeStats(input: {
         cum.set(v.key, n);
         volumes[v.key] = last ? n + v.undated : n;
       }
-      const r = ratios(spend, volumes[input.outcomeKey] ?? null, input.valuePerOutcomeUsd);
+      const r = ratios(spend, volumes[input.outcomeKey] ?? null);
       const conversionRates: Record<string, number | null> = {};
       for (const p of pairs) conversionRates[p.key] = rateOf(volumes[p.toKey] ?? null, volumes[p.fromKey] ?? null).ratePct;
-      history.push({ date: day, spendUsd: round2(spend), volumes, costPerOutcomeUsd: r.cost, roi: r.roi, conversionRates });
+      history.push({ date: day, spendUsd: round2(spend), volumes, costPerOutcomeUsd: r.cost, conversionRates });
     }
   }
   // Spend or counts dated after today (clock skew) still belong to the snapshot.
@@ -224,7 +217,7 @@ export function buildPipeStats(input: {
     input.volumes.map((v) => [v.key, v.daily === null ? null : [...v.daily.values()].reduce((a, b) => a + b, 0) + v.undated]),
   );
   const outcomes = totals.get(input.outcomeKey) ?? null;
-  const r = ratios(spend, outcomes, input.valuePerOutcomeUsd);
+  const r = ratios(spend, outcomes);
   return {
     firstActivityDay: first,
     volumes: input.volumes.map((v) => ({ key: v.key, label: v.label, role: v.role, datedBy: v.datedBy, total: totals.get(v.key) ?? null, undated: v.undated })),
@@ -233,8 +226,6 @@ export function buildPipeStats(input: {
     costPerOutcomeUsd: r.cost,
     costPerOutcomeUnavailableReason: r.costReason,
     valuePerOutcomeUsd: input.valuePerOutcomeUsd === null ? null : round2(input.valuePerOutcomeUsd),
-    roi: r.roi,
-    roiUnavailableReason: r.roiReason,
     conversionRates: pairs.map((p) => {
       const numerator = totals.get(p.toKey) ?? null;
       const denominator = totals.get(p.fromKey) ?? null;

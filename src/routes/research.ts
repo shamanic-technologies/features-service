@@ -32,7 +32,7 @@ import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG
 import type { CostGroup, WorkflowMetadata } from "../lib/public-stats-clients.js";
 import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.js";
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
-import { generationBuckets, generationStudies, type ModelName, type VersionShare } from "../lib/research/generations.js";
+import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
 import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
 import { readLiveTemplateDynasties, readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
 import { withLiveTemplateStatus } from "../lib/research/live-template-status.js";
@@ -314,11 +314,6 @@ interface CatalogGen {
   llmLabelOf: (key: string) => string;
   mainOf: (dynasty: string) => { model: string | null; template: string | null };
   templateVersions: ResearchBucket[];
-  templateFiguresByVersion: Map<string, Map<string, VersionShare>>;
-  templateVersionFiguresByVersion: Map<string, Map<string, VersionShare>>;
-  modelFiguresByVersion: Map<string, Map<string, VersionShare>>;
-  modelVersionFiguresByVersion: Map<string, Map<string, VersionShare>>;
-  workflowVersionTotals: Map<string, VersionShare>;
 }
 
 const NO_GEN: CatalogGen = {
@@ -330,11 +325,6 @@ const NO_GEN: CatalogGen = {
   llmLabelOf: (key) => key,
   mainOf: () => ({ model: null, template: null }),
   templateVersions: [],
-  templateFiguresByVersion: new Map(),
-  templateVersionFiguresByVersion: new Map(),
-  modelFiguresByVersion: new Map(),
-  modelVersionFiguresByVersion: new Map(),
-  workflowVersionTotals: new Map(),
 };
 
 /**
@@ -402,11 +392,6 @@ async function generationInputs(
       llmLabelOf: g.llmLabelOf,
       mainOf: mainsByDynasty(r.persons, r.input.dynastyOf, r.split.screened, dyn.keyOf, g.llmKeyOf),
       templateVersions: g.tplVersions,
-      templateFiguresByVersion: g.tplFiguresByVersion,
-      templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
-      modelFiguresByVersion: g.llmFiguresByVersion,
-      modelVersionFiguresByVersion: g.llmModelFiguresByVersion,
-      workflowVersionTotals: g.workflowVersionTotals,
     };
   };
   return {
@@ -991,20 +976,6 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       writerOf,
       lastWriterOf,
       servedModels,
-      workflowReturns: ranking
-        ? {
-            roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
-            moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
-            // A ranking cell persisted before TPL-ROI-OWN-1022 carries no terms: unknown until its next rebuild.
-            pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
-            billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
-          }
-        : undefined,
-      templateFiguresByVersion: g.templateFiguresByVersion,
-      templateVersionFiguresByVersion: g.templateVersionFiguresByVersion,
-      modelFiguresByVersion: g.modelFiguresByVersion,
-      modelVersionFiguresByVersion: g.modelVersionFiguresByVersion,
-      workflowVersionTotals: g.workflowVersionTotals,
     });
   // The Performance tab (RESEARCH-PERFORMANCE-1023): every (workflow, template, LLM) combination of each pipe, same evidence.
   const performanceOf = (pipe: typeof POSITIVE_REPLY_PIPE | typeof WEBSITE_VISIT_PIPE, r: ColdEmailPipeRead, g: CatalogGen, ranking: readonly LegWorkflowRankingRow[] | null, pipeCatalogue: ResearchCatalog[string], aliasStatus: AliasStatus): PipePerformance => {
@@ -1028,14 +999,6 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       llmDynasties: dynasties.llm,
       llmKeyOf: g.llmKeyOf,
       llmLabelOf: g.llmLabelOf,
-      workflowReturns: ranking
-        ? {
-            roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
-            moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
-            pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
-            billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
-          }
-        : undefined,
       ...partsOf(pipeCatalogue, aliasStatus),
       unpricedBilledUsd: r.unpricedUsd,
       now,
@@ -1246,11 +1209,6 @@ async function otherPipeSection(
         llmLabelOf: g.llmLabelOf,
         mainOf: mainsByDynasty(persons, input.dynastyOf, split.screened, tplDyn.keyOf, g.llmKeyOf),
         templateVersions: g.tplVersions,
-        templateFiguresByVersion: g.tplFiguresByVersion,
-        templateVersionFiguresByVersion: g.tplVersionFiguresByVersion,
-        modelFiguresByVersion: g.llmFiguresByVersion,
-        modelVersionFiguresByVersion: g.llmModelFiguresByVersion,
-        workflowVersionTotals: g.workflowVersionTotals,
       }
     : NO_GEN;
   const writerOf = typeof writers === "string" ? writers : (d: string) => writers.now.get(d) ?? null;
@@ -1266,14 +1224,6 @@ async function otherPipeSection(
         return new Map<string, string>();
       })
     : new Map<string, string>();
-  const returns = ranking
-    ? {
-        roiOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.roiMultiple])),
-        moneyGoesHere: ranking.find((x) => x.moneyGoesHere)?.workflowDynastySlug ?? null,
-        pipelineOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.pipelineUsd ?? null])),
-        billedOf: new Map(ranking.map((x) => [x.workflowDynastySlug, x.billedSpendUsd ?? null])),
-      }
-    : undefined;
   const bars = workflowBuckets(input);
   const catalog = withWorkflowFigures(
     pipeCatalog({
@@ -1297,12 +1247,6 @@ async function otherPipeSection(
       writerOf,
       lastWriterOf,
       servedModels: shared.servedModels,
-      workflowReturns: returns,
-      templateFiguresByVersion: gen.templateFiguresByVersion,
-      templateVersionFiguresByVersion: gen.templateVersionFiguresByVersion,
-      modelFiguresByVersion: gen.modelFiguresByVersion,
-      modelVersionFiguresByVersion: gen.modelVersionFiguresByVersion,
-      workflowVersionTotals: gen.workflowVersionTotals,
       postWriters,
     }),
     ranking,
@@ -1328,7 +1272,6 @@ async function otherPipeSection(
           llmDynasties: shared.llm,
           llmKeyOf: gen.llmKeyOf,
           llmLabelOf: gen.llmLabelOf,
-          workflowReturns: returns,
           ...partsOf(catalog, aliasStatus!),
           unpricedBilledUsd: read.unpricedUsd,
           now,

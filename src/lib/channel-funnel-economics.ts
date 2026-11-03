@@ -1,6 +1,6 @@
 /**
- * WHAT A (SALES FUNNEL, ACQUISITION CHANNEL) PAIR HAS ACTUALLY RETURNED — priced per STEP, per SALE,
- * and as a return per dollar, publicly, with no customer identity.
+ * WHAT A (SALES FUNNEL, ACQUISITION CHANNEL) PAIR COSTS — priced per STEP and per SALE, publicly, with
+ * no customer identity. No return is served (ROI-CONSISTENCY-1103: a return exists only where a value lands).
  *
  * A customer buys a PAIR, not a channel and not a funnel: the same funnel costs a very different amount
  * through a phone channel than through paid search, so a brand-level or channel-level aggregate cannot
@@ -27,10 +27,6 @@
  *      `clickUsd / visitToMeetingPct` against the identical evidence. Blending them would benchmark a
  *      reply-bought meeting against clicks the funnel never buys.
  *   3. The funnel's own rates carry the masked unit cost down to a SALE.
- *
- * Return is `lifetimeRevenueUsd / costPerSaleUsd` — the identical definition every per-brand
- * return in this service uses, so a public row and a customer's own figure are one statistic at two
- * scopes.
  */
 
 import { projectOutcomeCosts, type ProjectionEconomics, type ProjectionUnitCosts } from "./funnel-registry.js";
@@ -77,10 +73,7 @@ export interface PairEconomics {
   costPerSaleUsd: number | null;
   /** Present exactly when `costPerSaleUsd` is null. */
   costPerSaleUnpricedReason: StepUnpricedReason | null;
-  /** `lifetimeRevenueUsd / costPerSaleUsd` — what a dollar through this pair returns. */
-  returnPerDollar: number | null;
-  /** The lifetime revenue the return is computed against. Surfaced so a consumer can never pair a
-   *  return with a revenue figure this projection did not use. */
+  /** The fleet's stated lifetime revenue per paying client the pair's brands declared (the median). */
   lifetimeRevenueUsd: number | null;
   /** The evidence the prices ride on, so the row can say how much it is standing on. */
   evidence: {
@@ -261,20 +254,12 @@ export function pricePair(input: PricePairInput): PairResult {
     ];
   }
 
-  // A return needs BOTH a price for the sale and a stated lifetime revenue. Missing either leaves it
-  // null — never 0, which would say a dollar through this pair comes back as nothing.
-  const returnPerDollar =
-    costPerSaleUsd != null && costPerSaleUsd > 0 && lifetimeRevenueUsd != null && lifetimeRevenueUsd > 0
-      ? lifetimeRevenueUsd / costPerSaleUsd
-      : null;
-
   return {
     measured: true,
     economics: {
       steps,
       costPerSaleUsd,
       costPerSaleUnpricedReason: costPerSaleUsd == null ? "rate_is_zero" : null,
-      returnPerDollar,
       lifetimeRevenueUsd,
       evidence,
     },

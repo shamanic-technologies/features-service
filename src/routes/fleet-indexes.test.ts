@@ -16,7 +16,6 @@ const ranking = vi.hoisted(() => ({
   readPublicRanked: vi.fn(async (): Promise<unknown> => {
     throw new Error("ranked read not under test");
   }),
-  readFleetReturnOnSpend: vi.fn(async (): Promise<unknown> => ({ measured: false, reason: "no_snapshot_yet", brandCount: 0, minSpendUsd: 100, medianReturnPerDollar: null })),
   // MEETING-INDEX-EXPECTED-1025: no expected meeting price unless a test says otherwise.
   readOutcomePricesMeetingBooked: vi.fn(async (): Promise<unknown> => null),
 }));
@@ -68,7 +67,7 @@ describe("GET /public/indexes", () => {
     expect(res.status).toBe(200);
     expect(res.body.statusRule).toEqual({ signalMinOutcomes: 10, robustMinOutcomes: 30 });
     const bySlug = new Map(res.body.indexes.map((i: { slug: string }) => [i.slug, i]));
-    expect(bySlug.size).toBe(8);
+    expect(bySlug.size).toBe(7);
     expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 4.35, unit: "usd", valuePer: "per website visit", status: "signal", day: "2026-10-18" });
     expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_recorded_yet", day: null });
     // A visitor reads the REAL VENDOR COST series (PUBLIC-VENDOR-COST-1031), never the billed one.
@@ -115,7 +114,6 @@ describe("GET /public/indexes/:slug", () => {
       ["cold-email-cost-per-meeting", "Cold Email Cost Per Meeting Index"],
       ["cold-email-meeting-rate", "Cold Email Meeting Rate Index"],
       ["cold-email-cost-per-engaged-lead", "Cold Email Cost Per Engaged Lead Index"],
-      ["cold-email-roi", "Cold Email ROI Index"],
     ]);
     expect(JSON.stringify(list.body.indexes)).not.toMatch(/Distribute\.you/);
     expect(JSON.stringify(list.body.indexes)).not.toMatch(/interest/i);
@@ -199,19 +197,18 @@ describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
       ["b", { contacted: 100, positiveReplies: 0, screenedContacted: 100, humanClicks: 4 }],
       ["c", { contacted: 10, positiveReplies: 1, screenedContacted: 0, humanClicks: 0 }],
     ]));
-    ranking.readFleetReturnOnSpend.mockResolvedValueOnce({ measured: true, reason: null, brandCount: 12, minSpendUsd: 100, medianReturnPerDollar: 3.6 });
     const n = await recordFleetIndexesNow(new Date("2026-10-19T13:00:00Z"));
-    expect(n).toBe(2);
+    expect(n).toBe(1);
     expect(ranking.readPublicRanked).toHaveBeenCalledWith("sales-cold-email-outreach", "emailsSent", "brand", 200);
-    expect(ranking.readFleetReturnOnSpend).toHaveBeenCalledWith("sales-cold-email-outreach", 100);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
     // a: $50 / 10 = $5, b: $60 / 4 = $15, c has no spend (out) -> median of [5, 15] = 10
     expect(bySlug.get("cold-email-cost-per-engaged-lead")).toMatchObject({ value: 10, outcomes: 2, status: "noise", inputs: { clients: 2, engagedLeads: 14, clicks: "judged_human_over_reach" } });
-    expect(bySlug.get("cold-email-roi")).toMatchObject({ value: 3.6, outcomes: 12, status: "signal", unavailableReason: null });
+    // The client ROI index is deleted (ROI-CONSISTENCY-1103): never recorded.
+    expect(bySlug.has("cold-email-roi")).toBe(false);
   });
 
-  it("too few clients = a null value with its reason; a return not computed yet records nothing", async () => {
+  it("too few clients = a null value with its reason", async () => {
     ranking.readPublicRanked.mockResolvedValueOnce({ costBasis: "incurred", objective: "emailsSent", sortDirection: "desc", results: [{ stats: { recipientsClicked: 3, totalCostInUsdCents: 900 } }] });
     const n = await recordFleetIndexesNow(new Date("2026-10-19T13:00:00Z"));
     expect(n).toBe(1);
@@ -219,10 +216,4 @@ describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
     expect(points[0]).toMatchObject({ indexSlug: "cold-email-cost-per-engaged-lead", value: null, unavailableReason: "not_enough_clients" });
   });
 
-  it("a return median below the brand bar is recorded as not measured, never a 0", async () => {
-    ranking.readFleetReturnOnSpend.mockResolvedValueOnce({ measured: false, reason: "not_enough_brands", brandCount: 3, minSpendUsd: 100, medianReturnPerDollar: null });
-    await recordFleetIndexesNow(new Date("2026-10-19T13:00:00Z"));
-    const [points] = store.recordFleetIndexPoints.mock.calls[0];
-    expect(points.find((p: { indexSlug: string }) => p.indexSlug === "cold-email-roi")).toMatchObject({ value: null, status: "noise", outcomes: 3, unavailableReason: "not_enough_brands" });
-  });
 });

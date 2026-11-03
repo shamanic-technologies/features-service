@@ -6,10 +6,10 @@
  *   node --max-old-space-size=1024 dist/scripts/backfill-fleet-indexes.js --apply    # writes it
  *   ... --vendor [--apply]   # the PUBLIC series at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031):
  *                            # the billed picks of each day, their money on the vendor twin of the same rows
- *   ... --vendor-clients [--apply]   # the two CLIENT-median public indexes (ROI, cost per engaged lead) at real vendor
- *                            # cost, every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY, `lib/client-index-history.ts`):
+ *   ... --vendor-clients [--apply]   # the CLIENT-median public index (cost per engaged lead) at real vendor cost,
+ *                            # every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY, `lib/client-index-history.ts`):
  *                            # each (org, brand) replayed as of each day; written only when the replay of today
- *                            # reproduces the live point
+ *                            # reproduces the live point (the client ROI index is deleted, ROI-CONSISTENCY-1103)
  *
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
@@ -24,11 +24,8 @@ import { MEETING_COST_OUTCOME_PRICES_SLUG } from "../lib/research/meeting-cost-m
 import { readFleetIndexRows, writeRecomputedFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { matchChannelLegKey } from "../lib/funnel-legs.js";
 import { readMembershipPairs, readPairDatedSpend, readPairPersons } from "../lib/fleet-index-history-io.js";
-import { addPairBrandEngagement, brandReturnRowsOn, CLIENT_RETURN_MIN_SPEND_USD, emptyBrandEngagementHistory, engagedLeadPointOn, replayPairReturn, roiPointOn, type PairReturnDay, type PairSpendDay } from "../lib/client-index-history.js";
-import { withEngineCapture, type EngineCapture } from "../lib/engine-capture.js";
+import { addPairBrandEngagement, emptyBrandEngagementHistory, engagedLeadPointOn, type PairSpendDay } from "../lib/client-index-history.js";
 import { engagedLeadPoint } from "../lib/fleet-indexes.js";
-import { getFunnel } from "../lib/funnel-registry.js";
-import { computePairRevenue, pairVendorSpend, readFleetVendorReturn } from "../routes/public.js";
 import { readVendorBrandEngagement } from "../routes/fleet-indexes.js";
 
 const log = (line: string) => console.log(`[fleet-index-backfill] ${line}`);
@@ -195,7 +192,7 @@ async function withPairRetry<T>(label: string, fn: () => Promise<T>): Promise<T>
 /** The largest gap the as-of-today replay may show against the live point before the run refuses to write (%). */
 const REPLAY_TOLERANCE_PCT = 0.5;
 
-/** The two client-median public indexes at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY). */
+/** The client-median public index (cost per engaged lead) at real vendor cost, every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY). */
 async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
   const today = now.toISOString().slice(0, 10);
   const pairs = await readMembershipPairs(SCEO_FEATURE_SLUG);
@@ -222,85 +219,40 @@ async function clientIndexHistory(now: Date, apply: boolean): Promise<void> {
   log(`spend ${first} .. ${today}: billed $${usd(tot.b)} (billed read) / $${usd(tot.v)} (vendor read) | net $${usd(tot.net)} | vendor $${usd(tot.vendor)} | unpriced $${usd(tot.unpriced)}; ${byDay.size} days, ${off.length} day(s) where the two reads differ by >= 1 cent${off.length ? `: ${off.slice(0, 10).map(([d, x]) => `${d} ${usd(x.b)}/${usd(x.v)}`).join(", ")}` : ""}`);
 
   const engagement = emptyBrandEngagementHistory(days, today);
-  const pairDays: Array<{ brandId: string; days: PairReturnDay[] }> = [];
-  // Each pair's LIVE pass (the warm's own computation, run now), the ROI gate's reference.
-  const livePairs: Array<{ brandId: string; days: PairReturnDay[] }> = [];
   let n = 0;
   for (const p of pairs) {
     n += 1;
     // Every read of the pair, retried together (a sibling restarted or dropped a socket mid-walk under load); nothing is
     // added to the history before all of them answered, so a retry never counts a pair twice.
-    const { persons, timelines, captures, live } = await withPairRetry(`${p.orgId}:${p.brandId}`, async () => {
-      const read = await readPairPersons(p.orgId, p.brandId);
-      const caught: EngineCapture[] = [];
-      const pass = await withEngineCapture((c) => caught.push(c), () => computePairRevenue(SCEO_FEATURE_SLUG, getFunnel(SCEO_FEATURE_SLUG), p.orgId, p.brandId));
-      return { ...read, captures: caught, live: pass };
-    });
+    const { persons, timelines } = await withPairRetry(`${p.orgId}:${p.brandId}`, () => readPairPersons(p.orgId, p.brandId));
     addPairBrandEngagement(engagement, p.brandId, persons, timelines);
-    if (live === null) {
-      log(`pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: stale membership, skipped (the live warm skips it too)`);
-      continue;
-    }
-    if (captures.length > 1) throw new Error(`pair ${p.orgId}:${p.brandId}: ${captures.length} engine passes captured, expected at most one`);
-    const replay = replayPairReturn(captures[0] ?? null, spendOf.get(`${p.orgId}:${p.brandId}`) ?? [], days, today);
-    pairDays.push({ brandId: p.brandId, days: replay });
-    const t = replay[replay.length - 1]!;
-    const lv = await withPairRetry(`${p.orgId}:${p.brandId} vendor`, () => pairVendorSpend(SCEO_FEATURE_SLUG, p.orgId, p.brandId));
-    livePairs.push({
-      brandId: p.brandId,
-      days: [{ maturePipelineUsd: live.maturePipeline, matureNetUsd: live.matureCommittedCostUsd, matureVendorUsd: lv.matureUsd, matureUnpricedUsd: lv.unpricedMatureUsd, isMature: live.isMature }],
-    });
-    log(
-      `pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: ${persons.length} persons | today replay/live: pipeline ${t.maturePipelineUsd?.toFixed(2) ?? "null"}/${live.maturePipeline?.toFixed(2) ?? "null"}` +
-        ` net $${t.matureNetUsd.toFixed(2)}/$${live.matureCommittedCostUsd.toFixed(2)} vendor $${t.matureVendorUsd.toFixed(2)}/$${lv.matureUsd.toFixed(2)}` +
-        ` unpriced $${t.matureUnpricedUsd.toFixed(2)}/$${lv.unpricedMatureUsd.toFixed(2)} mature ${t.isMature}/${live.isMature}`,
-    );
+    log(`pair ${n}/${pairs.length} ${p.orgId}:${p.brandId}: ${persons.length} persons`);
   }
 
-  const roiSlug = "cold-email-roi";
   const engagedSlug = "cold-email-cost-per-engaged-lead";
   const all: DatedIndexPoint[] = [];
   const spendByBrand = new Map<string, PairSpendDay[]>();
   for (const p of pairs) spendByBrand.set(p.brandId, [...(spendByBrand.get(p.brandId) ?? []), ...(spendOf.get(`${p.orgId}:${p.brandId}`) ?? [])]);
   for (let i = 0; i < days.length; i++) {
     const day = days[i]!;
-    for (const point of [roiPointOn(brandReturnRowsOn(pairDays, i)), engagedLeadPointOn(engagement, spendByBrand, i).point]) {
-      all.push({ day, point: { ...point, inputs: { ...point.inputs, asOfDay: day, costBasis: "vendor" } } });
-    }
+    const point = engagedLeadPointOn(engagement, spendByBrand, i).point;
+    all.push({ day, point: { ...point, inputs: { ...point.inputs, asOfDay: day, costBasis: "vendor" } } });
   }
-  const series = (slug: string) => {
-    const s = all.filter((p) => p.point.indexSlug === slug);
-    const start = s.findIndex((p) => p.point.value !== null);
-    return start >= 0 ? s.slice(start) : [];
-  };
-  const points = [...series(roiSlug), ...series(engagedSlug)];
+  const start = all.findIndex((p) => p.point.value !== null);
+  const points = start >= 0 ? all.slice(start) : [];
 
-  // The gate: the replay of TODAY against the live point computed now, the same live reads the recorder makes.
-  const [liveEngagement, liveReturn] = await Promise.all([readVendorBrandEngagement(), readFleetVendorReturn(SCEO_FEATURE_SLUG, CLIENT_RETURN_MIN_SPEND_USD)]);
+  // The gate: the replay of TODAY against the live point computed now, the same live read the recorder makes.
+  const liveEngagement = await readVendorBrandEngagement();
   const liveEngaged = liveEngagement ? engagedLeadPoint(liveEngagement).value : null;
-  const replayToday = (slug: string) => all.find((p) => p.day === today && p.point.indexSlug === slug)?.point ?? null;
-  // The ROI's live reference is the warm's computation on every pair, run now (`livePairs`): the stored snapshot drops a
-  // pair whose pass timed out (2026-10-31: the biggest client), so it is printed beside, never the gate.
-  const liveRoi = roiPointOn(brandReturnRowsOn(livePairs, 0));
-  const checks = [
-    { slug: engagedSlug, replay: replayToday(engagedSlug), live: liveEngaged },
-    { slug: roiSlug, replay: replayToday(roiSlug), live: liveRoi.value },
-  ];
-  let reproduced = true;
-  for (const c of checks) {
-    const gap = gapPct(c.replay?.value ?? null, c.live);
-    if (!(gap <= REPLAY_TOLERANCE_PCT)) reproduced = false;
-    log(`check ${c.slug} today: replay ${c.replay?.value ?? `null(${c.replay?.unavailableReason})`} ${JSON.stringify(c.replay?.inputs)} / live ${c.live} (gap ${gap.toFixed(3)}%)`);
-  }
-  log(`live ROI from the passes run now: ${liveRoi.value} ${JSON.stringify(liveRoi.inputs)}; stored snapshot read: ${liveReturn.medianReturnPerDollar} (brandCount ${liveReturn.brandCount}, vendorCostUnknownBrands ${liveReturn.vendorCostUnknownBrands}, reason ${liveReturn.reason})`);
-  for (const slug of [roiSlug, engagedSlug]) {
-    const s = series(slug);
-    const sample = s.filter((_, i) => i % 7 === 0 || i === s.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}/${p.point.outcomes}`);
-    log(`${slug}: ${s.length} days from ${s[0]?.day ?? "-"}; ${sample.join(" ")}`);
-  }
+  const replay = all.find((p) => p.day === today)?.point ?? null;
+  const gap = gapPct(replay?.value ?? null, liveEngaged);
+  const reproduced = gap <= REPLAY_TOLERANCE_PCT;
+  log(`check ${engagedSlug} today: replay ${replay?.value ?? `null(${replay?.unavailableReason})`} ${JSON.stringify(replay?.inputs)} / live ${liveEngaged} (gap ${gap.toFixed(3)}%)`);
+  const sample = points.filter((_, i) => i % 7 === 0 || i === points.length - 1).map((p) => `${p.day}=${p.point.value === null ? `null(${p.point.unavailableReason})` : p.point.value.toFixed(3)}/${p.point.outcomes}`);
+  log(`${engagedSlug}: ${points.length} days from ${points[0]?.day ?? "-"}; ${sample.join(" ")}`);
 
   // Today is the recorder's: only past days are written, never over a recorded one.
-  const stored = await readFleetIndexRows([roiSlug, engagedSlug], "vendor");
+  const stored = await readFleetIndexRows([engagedSlug], "vendor");
   const plan = planRecomputedWrites(points.filter((p) => p.day < today), stored);
   log(`client plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
   if (!reproduced) {
