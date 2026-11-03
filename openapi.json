@@ -27318,29 +27318,17 @@
                     "committedSpendUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "NET COMMITTED acquisition spend, USD (billed + open holds, after the org's discount = what the client PAID, every channel the brand runs, sourcing included) — the single basis roiMultiple / cacPct / currentCacUsd are computed on. Read from the SAME body GET /brands/{brandId}/revenue?pricing=net serves, so the board's ROI equals the brand page's (SHOCKWAVE-ROI-NET-1016; before, the board divided one channel's pipeline by GROSS spend). null when not computed (no own economics, or the revenue read failed: see unreadParts)."
+                      "description": "NET COMMITTED acquisition spend, USD (billed + open holds, after the org's discount = what the client PAID, every channel the brand runs, sourcing included) Read from the SAME body GET /brands/{brandId}/revenue?pricing=net serves, so the board's ROI equals the brand page's (SHOCKWAVE-ROI-NET-1016; before, the board divided one channel's pipeline by GROSS spend). null when not computed (no own economics, or the revenue read failed: see unreadParts)."
                     },
                     "realizedSpendUsd": {
                       "type": "number",
                       "nullable": true,
                       "description": "Billed-only acquisition spend, USD, NET. TRANSITIONAL — reported for the staff console's migration, divided by nowhere. null when not computed (no own economics)."
-                    },
-                    "currentCacUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Realized cost to acquire one paying customer, USD = (cacPct/100) × LTR. null when incomputable."
-                    },
-                    "cacPct": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable."
                     }
                   },
                   "required": [
                     "committedSpendUsd",
-                    "realizedSpendUsd",
-                    "currentCacUsd",
-                    "cacPct"
+                    "realizedSpendUsd"
                   ]
                 },
                 "audiences": {
@@ -45898,7 +45886,7 @@
     "/internal/stats/customer-health": {
       "get": {
         "summary": "Fleet-wide customer-success health board (internal, api-key; staff-gated at api-service)",
-        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per customer (org × brand) on EVERY GTM channel (since CUSTOMER-HEALTH-ALL-GTM-1023; each pair read under its outbound channel first, sourcing last), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; realized CAC / %CAC (cacPct = spend/pipeline = CAC/LTR — coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND audience not near-exhausted; yellow = active but audience near-exhausted. Served from the LAST BUILD at once (never built on the request path; rebuilt in the view refresher when older than 15 min; freshness states its age); 503 customer_health_not_computed_yet only before the first build after a deploy that changes this shape. orgs[] = one row per org with billing's customerStatus. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
+        "description": "Cross-org, fleet-wide 'Customer Success' health board — one ready-composed row per customer (org × brand) on EVERY GTM channel (since CUSTOMER-HEALTH-ALL-GTM-1023; each pair read under its outbound channel first, sourcing last), currently-active first, with a green/yellow/red health badge. Every metric is computed + owned here; the admin dashboard renders only (no browser math, no per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand LTR); full conversion economics + LTR; an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). Health: red = not active; green = active AND audience not near-exhausted; yellow = active but audience near-exhausted. Served from the LAST BUILD at once (never built on the request path; rebuilt in the view refresher when older than 15 min; freshness states its age); 503 customer_health_not_computed_yet only before the first build after a deploy that changes this shape. orgs[] = one row per org with billing's customerStatus. Under notTrackedYet (all three now TRACKED upstream, null only on a fail-soft producer degrade): dashboardReturnFrequency = per-org PostHog return signal (sessions 7d/30d + last-seen); budgetChangeHistory = billing-service forward-only daily-budget change timeline; pauseHistory = campaign-service forward-only pause on/off timeline. Empty array = tracked-but-nothing-yet; never fabricated.",
         "tags": [
           "Internal"
         ],
