@@ -41,7 +41,7 @@ const LEG_LIST_FIELDS = new Set(["legKeys", "pricedThroughLegKeys", "returnPathL
 /** A chain of leg keys joined by `+`. */
 const CHAIN_FIELDS = new Set(["pathKey"]);
 /** A combination key, or a list of them. */
-const COMBINATION_FIELDS = new Set(["combinationKey", "roiCombinationKey", "combinationKeys"]);
+const COMBINATION_FIELDS = new Set(["combinationKey", "combinationKeys"]);
 /** A campaign key, or a list of them. */
 const CAMPAIGN_KEY_FIELDS = new Set(["campaignKey", "sourceCampaignKey", "sourceCampaignKeys"]);
 /** The fields a sales-path row's chain lives in: their channel is the combination's entry channel. */

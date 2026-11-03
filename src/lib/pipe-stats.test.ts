@@ -28,24 +28,27 @@ describe("buildPipeStats", () => {
     expect(s.firstActivityDay).toBe("2026-09-30");
     expect(s.history.map((p) => p.date)).toEqual(["2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]);
     // Learning while no outcome: null, never a floor, never the spend.
-    expect(s.history[0]).toMatchObject({ spendUsd: 3, costPerOutcomeUsd: null, roi: null, volumes: { handed: 0, outcomes: 0 } });
-    expect(s.history[3]).toMatchObject({ spendUsd: 5.01, costPerOutcomeUsd: 5.01, roi: 49.95, volumes: { handed: 6, outcomes: 1 } });
+    expect(s.history[0]).toMatchObject({ spendUsd: 3, costPerOutcomeUsd: null, volumes: { handed: 0, outcomes: 0 } });
+    expect(s.history[3]).toMatchObject({ spendUsd: 5.01, costPerOutcomeUsd: 5.01, volumes: { handed: 6, outcomes: 1 } });
+    // ROI-CONSISTENCY-1103: a pipe serves its cost per outcome, never a return.
+    expect(s.history.every((p) => !("roi" in p))).toBe(true);
+    expect(s).not.toHaveProperty("roi");
     // The undated outcome enters on the last point only.
     const last = s.history.at(-1)!;
     expect(last.volumes).toEqual({ handed: 6, outcomes: 2 });
     expect(s.volumes.find((v) => v.key === "outcomes")).toMatchObject({ total: 2, undated: 1 });
-    expect(s).toMatchObject({ spendUsd: last.spendUsd, costPerOutcomeUsd: last.costPerOutcomeUsd, roi: last.roi });
+    expect(s).toMatchObject({ spendUsd: last.spendUsd, costPerOutcomeUsd: last.costPerOutcomeUsd });
     expect(s.costPerOutcomeUsd).toBe(2.5);
   });
 
   it("names why a figure is missing: no outcome, unmeasured outcome, unvalued step; nothing at all = empty history", () => {
     const none = buildPipeStats({ volumes: [vol("outcomes", "outcome", {})], outcomeKey: "outcomes", spendByDay: new Map(), valuePerOutcomeUsd: 10, today: "2026-10-04" });
-    expect(none).toMatchObject({ history: [], spendUsd: 0, costPerOutcomeUsd: null, costPerOutcomeUnavailableReason: "no_outcome_yet", roiUnavailableReason: "no_cost_per_outcome" });
+    expect(none).toMatchObject({ history: [], spendUsd: 0, costPerOutcomeUsd: null, costPerOutcomeUnavailableReason: "no_outcome_yet" });
     const unmeasured = buildPipeStats({ volumes: [vol("outcomes", "outcome", null)], outcomeKey: "outcomes", spendByDay: new Map([["2026-10-04", 1]]), valuePerOutcomeUsd: 10, today: "2026-10-04" });
     expect(unmeasured).toMatchObject({ costPerOutcomeUnavailableReason: "outcome_not_measured", volumes: [{ total: null }] });
     expect(unmeasured.history[0]!.volumes.outcomes).toBeNull();
     const unvalued = buildPipeStats({ volumes: [vol("outcomes", "outcome", { "2026-10-04": 2 })], outcomeKey: "outcomes", spendByDay: new Map([["2026-10-04", 4]]), valuePerOutcomeUsd: null, today: "2026-10-04" });
-    expect(unvalued).toMatchObject({ costPerOutcomeUsd: 2, roi: null, roiUnavailableReason: "step_unvalued" });
+    expect(unvalued).toMatchObject({ costPerOutcomeUsd: 2, valuePerOutcomeUsd: null });
   });
 });
 

@@ -126,10 +126,7 @@ export interface RecapBrand {
 /** One offer's served return, as `/offers/:offerId/revenue?pricing=net` serves it (the dashboard's read). */
 export interface OfferReturnRead {
   offerId: string;
-  /** `costEconomics.maturity` (null = no pair served). */
-  pair: MaturityPair<{ roiMultiple: number | null }> | null;
-  /** `headline.totalPipelineUsd` and `costEconomics.committedCostUsd`: what the flash return divides. */
-  pipelineUsd: number | null;
+  /** `costEconomics.committedCostUsd`. */
   committedCostUsd: number | null;
   /** The dashboard's dated outcome series on the same body (absent/null = not served: unknown, never 0). */
   outcomeSeries?: { positiveReplies: OutcomeSeries | null; meetingsBooked: OutcomeSeries | null };

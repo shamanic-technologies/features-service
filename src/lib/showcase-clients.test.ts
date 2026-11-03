@@ -1,14 +1,8 @@
 /**
- * THE TWO HOMEPAGE PICKS, over ONE set of candidates built to make the rankings DISAGREE.
+ * THE HOMEPAGE PICK (recently started clients), over candidates built so the gates each exclude a
+ * client the order would otherwise name. The best-return group is deleted (ROI-CONSISTENCY-1103).
  *
- * Every case asserts a DIVERGENCE rather than "a list came back": the recency order and the return
- * order name the same clients in opposite sequences, the floor and the outcome gate each exclude a
- * client the other would have kept, and the two silences answer different reasons. A suite that only
- * checked "three brand ids came out" would pass on an implementation that ranked one way twice — which
- * is the thing this exists not to do.
- *
- * The numbers are production's, read 2026-09-22 off the cold-email snapshot, so the sub-floor case is
- * the shape the unfiltered ranking really leads with rather than one invented to be convenient.
+ * The numbers are production's shape, read 2026-09-22 off the cold-email snapshot.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -17,287 +11,104 @@ import {
   pickRecentlyStartedByMeetings,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
-  SHOWCASE_MIN_OUTCOME_PEOPLE,
   type ShowcaseCandidate,
-  candidateStatedReturn,
-  pickHighestReturnByStated,
   furthestRungReached,
-  showcaseChainHasOutcome,
 } from "./showcase-clients.js";
-import type { BrandReturnRow } from "./fleet-return-on-spend.js";
-import { servedReturnOf } from "./served-return.js";
 
 const DOC = "brand-doc";
 const OPS = "brand-ops";
 const SHOCK = "brand-shock";
-/**
- * 21.5x on $4.12 — the top of production's UNFILTERED ranking, and what the floor exists to drop.
- * It has never been billed a first day we can read, so it is no recency candidate either.
- */
+/** Never billed a first day we can read: no recency candidate. */
 const TINY = "brand-tiny";
 /** Began yesterday and has produced nothing — what the outcome gate exists to drop. */
 const SILENT = "brand-silent";
 
 const CANDIDATES: ShowcaseCandidate[] = [
-  { brandId: DOC, committedSpendUsd: 5046.42, expectedPipelineUsd: 8250, startedOn: "2026-03-01", outcomeCount: 40 },
-  { brandId: OPS, committedSpendUsd: 354.96, expectedPipelineUsd: 19750, startedOn: "2026-06-01", outcomeCount: 12 },
-  { brandId: SHOCK, committedSpendUsd: 497.65, expectedPipelineUsd: 1800, startedOn: "2026-08-01", outcomeCount: 6 },
-  { brandId: TINY, committedSpendUsd: 4.12, expectedPipelineUsd: 88.74, startedOn: null, outcomeCount: 5 },
-  { brandId: SILENT, committedSpendUsd: 900, expectedPipelineUsd: 1200, startedOn: "2026-09-15", outcomeCount: 0 },
+  { brandId: DOC, startedOn: "2026-03-01", outcomeCount: 40 },
+  { brandId: OPS, startedOn: "2026-06-01", outcomeCount: 12 },
+  { brandId: SHOCK, startedOn: "2026-08-01", outcomeCount: 6 },
+  { brandId: TINY, startedOn: null, outcomeCount: 5 },
+  { brandId: SILENT, startedOn: "2026-09-15", outcomeCount: 0 },
 ];
 
-const FLOOR = 100;
 const ids = (g: { brandIds: string[] }) => g.brandIds;
 
 describe("pickShowcaseClients", () => {
-  it("orders recency NEWEST-first and return BEST-first, and the two orders DISAGREE", () => {
-    const picks = pickShowcaseClients(CANDIDATES, FLOOR);
-
+  it("orders recency NEWEST-first and serves no return group", () => {
+    const picks = pickShowcaseClients(CANDIDATES);
     expect(ids(picks.recentlyStarted)).toEqual([SHOCK, OPS, DOC]);
-    // The SAME three clients, in a different sequence: 55.6x / 3.6x / 1.63x. First of one is second of
-    // the other, so one list served twice cannot satisfy both.
-    expect(ids(picks.highestReturn)).toEqual([OPS, SHOCK, DOC]);
-    expect(ids(picks.recentlyStarted)).not.toEqual(ids(picks.highestReturn));
-  });
-
-  it("the SPEND FLOOR drops the 22x that rests on $4, and it CHANGES who is named", () => {
-    const floored = pickShowcaseClients(CANDIDATES, FLOOR);
-    expect(ids(floored.highestReturn)).toEqual([OPS, SHOCK, DOC]);
-    expect(ids(floored.highestReturn)).not.toContain(TINY);
-
-    // Drop the floor and the $4 client takes SECOND place, pushing a client with real money behind
-    // its number off the list entirely. That displacement is production's shape (2026-09-22: 21.5x on
-    // $4.12 sat third, ahead of 17.7x on $247) and it is the divergence that proves the floor is doing
-    // the work rather than the ordering happening to agree.
-    const unfiltered = pickShowcaseClients(CANDIDATES, 0);
-    expect(ids(unfiltered.highestReturn)).toEqual([OPS, TINY, SHOCK]);
-    expect(ids(unfiltered.highestReturn)).not.toContain(DOC);
-  });
-
-  it("the floor is INCLUSIVE and is echoed back", () => {
-    const exactly = [{ ...CANDIDATES[2], committedSpendUsd: FLOOR, expectedPipelineUsd: 200 }];
-    const picks = pickShowcaseClients(exactly, FLOOR);
-    expect(ids(picks.highestReturn)).toEqual([SHOCK]);
-    expect(picks.minSpendUsd).toBe(FLOOR);
+    expect(picks).not.toHaveProperty("highestReturn");
+    expect(picks).not.toHaveProperty("minSpendUsd");
   });
 
   it("the OUTCOME gate drops the newest client, because it has produced nothing", () => {
-    const picks = pickShowcaseClients(CANDIDATES, FLOOR);
-    // SILENT began 2026-09-15 — later than every client named — and is absent.
+    const picks = pickShowcaseClients(CANDIDATES);
     expect(ids(picks.recentlyStarted)).not.toContain(SILENT);
-    expect(picks.recentlyStarted.brandIds[0]).toBe(SHOCK);
-
-    // Give it the MINIMUM and nothing else, and it leads. The gate is the only thing keeping it out.
-    const withMin = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: SHOWCASE_MIN_OUTCOME_PEOPLE } : c));
-    expect(pickShowcaseClients(withMin, FLOOR).recentlyStarted.brandIds[0]).toBe(SILENT);
-  });
-
-  it("ONE positive reply is an anecdote for the return group, yet enough to be put forward for the hero row", () => {
-    // Production 2026-10-10: legistai.com and obra.cam led the row on a single positive reply each.
-    // The hero row's floor was lifted by the owner on 2026-10-19 (1 meeting, else 1 positive reply),
-    // decided after the walk; the snapshot only prefilters it on any rung reached.
-    for (const n of [1, 4]) {
-      const anecdote = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: n } : c));
-      const picks = pickShowcaseClients(anecdote, FLOOR);
-      expect(picks.recentlyStarted.rankedBrandIds).toContain(SILENT);
-      expect(picks.highestReturn.rankedBrandIds).not.toContain(SILENT);
-    }
-    // The same client at 5 is named by BOTH questions it answers (it clears the spend floor too).
-    const proven = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: 5 } : c));
-    expect(pickShowcaseClients(proven, FLOOR).recentlyStarted.rankedBrandIds).toContain(SILENT);
-    expect(pickShowcaseClients(proven, FLOOR).highestReturn.rankedBrandIds).toContain(SILENT);
+    // Give it ONE person on a rung and it leads: the hero row is decided after the walk (owner 2026-10-19).
+    const withOne = CANDIDATES.map((c) => (c.brandId === SILENT ? { ...c, outcomeCount: 1 } : c));
+    expect(pickShowcaseClients(withOne).recentlyStarted.brandIds[0]).toBe(SILENT);
   });
 
   it("an UNMEASURED outcome count is not an outcome — we cannot claim what we did not count", () => {
     const unknown = CANDIDATES.map((c) => (c.brandId === SHOCK ? { ...c, outcomeCount: null } : c));
-    expect(ids(pickShowcaseClients(unknown, FLOOR).recentlyStarted)).toEqual([OPS, DOC]);
+    expect(ids(pickShowcaseClients(unknown).recentlyStarted)).toEqual([OPS, DOC]);
   });
 
   it("a client we cannot DATE is no recency candidate, and is never dated with a stand-in", () => {
-    // The sub-floor client is already undated and already absent from the recency list; null one of
-    // the clients that DOES lead it, and it leaves too.
     const undated = CANDIDATES.map((c) => (c.brandId === SHOCK ? { ...c, startedOn: null } : c));
-    const picks = pickShowcaseClients(undated, FLOOR);
-    expect(ids(picks.recentlyStarted)).toEqual([OPS, DOC]);
-    // It still returns perfectly well — the missing date costs it ONE ranking, not the population.
-    expect(ids(picks.highestReturn)).toContain(SHOCK);
-  });
-
-  it("a client whose pipeline we could not price is in NO return ranking, and is not a 0", () => {
-    const unpriced = CANDIDATES.map((c) => (c.brandId === OPS ? { ...c, expectedPipelineUsd: null } : c));
-    const picks = pickShowcaseClients(unpriced, FLOOR);
-    // SILENT clears the floor but shows no outcome, so the return row is short rather than padded.
-    expect(ids(picks.highestReturn)).toEqual([SHOCK, DOC]);
-    // A 0 would have ranked it LAST — a measurement nobody made. It is absent instead.
-    expect(ids(picks.highestReturn)).not.toContain(OPS);
-    // And it is still a recency candidate: the two rankings gate on different things.
-    expect(ids(picks.recentlyStarted)).toContain(OPS);
+    expect(ids(pickShowcaseClients(undated).recentlyStarted)).toEqual([OPS, DOC]);
   });
 
   it("cuts to the requested count while STATING how many qualified", () => {
-    const picks = pickShowcaseClients(CANDIDATES, FLOOR, 2);
-    expect(ids(picks.highestReturn)).toEqual([OPS, SHOCK]);
-    expect(picks.highestReturn.requestedCount).toBe(2);
-    // Three clients passed the floor AND the outcome minimum (SILENT shows nothing); the cut is a
-    // display decision, not a narrowing of the population.
-    expect(picks.highestReturn.qualifyingCount).toBe(3);
+    const picks = pickShowcaseClients(CANDIDATES, 2);
+    expect(ids(picks.recentlyStarted)).toEqual([SHOCK, OPS]);
+    expect(picks.recentlyStarted.requestedCount).toBe(2);
+    expect(picks.recentlyStarted.qualifyingCount).toBe(3);
   });
 
   it("a SHORT group is a stated fact, not an empty one", () => {
-    const picks = pickShowcaseClients([CANDIDATES[0], CANDIDATES[3]], FLOOR);
-    expect(ids(picks.highestReturn)).toEqual([DOC]);
-    expect(picks.highestReturn.measured).toBe(true);
-    expect(picks.highestReturn.qualifyingCount).toBe(1);
-    expect(picks.highestReturn.requestedCount).toBe(SHOWCASE_GROUP_SIZE);
+    const picks = pickShowcaseClients([CANDIDATES[0], CANDIDATES[3]]);
+    expect(ids(picks.recentlyStarted)).toEqual([DOC]);
+    expect(picks.recentlyStarted.measured).toBe(true);
+    expect(picks.recentlyStarted.qualifyingCount).toBe(1);
+    expect(picks.recentlyStarted.requestedCount).toBe(SHOWCASE_GROUP_SIZE);
   });
 
   it("the two silences are DIFFERENT statements", () => {
-    // No snapshot at all — there was nothing to rank.
-    const cold = pickShowcaseClients(null, FLOOR);
-    expect(cold.recentlyStarted).toMatchObject({ measured: false, unmeasuredReason: "no_snapshot_yet", brandIds: [] });
-    expect(cold.highestReturn.unmeasuredReason).toBe("no_snapshot_yet");
-
-    // A snapshot exists and nobody passes — something to say, and a different thing.
-    const thin = pickShowcaseClients([CANDIDATES[3]], FLOOR);
-    expect(thin.highestReturn.unmeasuredReason).toBe("no_qualifying_clients");
-    expect(thin.highestReturn.qualifyingCount).toBe(0);
-    // It fails the recency gate too, for its OWN reason — we cannot date it — so both groups answer
-    // the same word here off two different gates.
+    expect(pickShowcaseClients(null).recentlyStarted).toMatchObject({ measured: false, unmeasuredReason: "no_snapshot_yet", brandIds: [] });
+    const thin = pickShowcaseClients([CANDIDATES[3]]);
     expect(ids(thin.recentlyStarted)).toEqual([]);
     expect(thin.recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
   });
 
-  it("both orders are TOTAL, so identical evidence always names the same clients in the same order", () => {
+  it("the order is TOTAL, so identical evidence always names the same clients in the same order", () => {
     const tied: ShowcaseCandidate[] = [
-      { brandId: "b", committedSpendUsd: 200, expectedPipelineUsd: 400, startedOn: "2026-05-01", outcomeCount: 5 },
-      { brandId: "a", committedSpendUsd: 500, expectedPipelineUsd: 1000, startedOn: "2026-05-01", outcomeCount: 5 },
+      { brandId: "b", startedOn: "2026-05-01", outcomeCount: 5 },
+      { brandId: "a", startedOn: "2026-05-01", outcomeCount: 5 },
     ];
-    // Same ratio, same day — the brand id breaks both ties, so neither list can wobble between reads.
-    expect(ids(pickShowcaseClients(tied, FLOOR).highestReturn)).toEqual(["a", "b"]);
-    expect(ids(pickShowcaseClients(tied, FLOOR).recentlyStarted)).toEqual(["a", "b"]);
-    expect(ids(pickShowcaseClients([...tied].reverse(), FLOOR).highestReturn)).toEqual(["a", "b"]);
-  });
-
-  it("a client may legitimately be in BOTH groups", () => {
-    const one = [CANDIDATES[1]];
-    const picks = pickShowcaseClients(one, FLOOR);
-    expect(ids(picks.recentlyStarted)).toEqual([OPS]);
-    expect(ids(picks.highestReturn)).toEqual([OPS]);
-  });
-});
-
-describe("highestReturn ranks on the return the client's dashboard states (SHOWCASE-RETURN-SAME-BASIS-1019)", () => {
-  // Doc Dinners, prod 2026-10-19: mature 0.74x, flash 2.21x. Its Today page states the higher half.
-  const DOC_DINNERS: ShowcaseCandidate = {
-    brandId: "brand-doc-dinners",
-    committedSpendUsd: 1000,
-    expectedPipelineUsd: 740,
-    flashCommittedSpendUsd: 2000,
-    flashExpectedPipelineUsd: 4420,
-    isMature: true,
-    startedOn: "2026-03-01",
-    outcomeCount: 40,
-  };
-  const STEADY: ShowcaseCandidate = {
-    brandId: "brand-steady",
-    committedSpendUsd: 1000,
-    expectedPipelineUsd: 1500,
-    flashCommittedSpendUsd: 1200,
-    flashExpectedPipelineUsd: 1440,
-    isMature: true,
-    startedOn: "2026-04-01",
-    outcomeCount: 20,
-  };
-
-  it("a client with mature 0.74x / flash 2.21x is ranked and served at 2.21x, ahead of a 1.5x mature client", () => {
-    // The walked pick: each card's return is what servedReturnOf states over the client's served pair.
-    const docServed = servedReturnOf({ flash: { roiMultiple: 2.21 }, mature: { roiMultiple: 0.74 }, isMature: true }).roiMultiple;
-    const steadyServed = servedReturnOf({ flash: { roiMultiple: 1.2 }, mature: { roiMultiple: 1.5 }, isMature: true }).roiMultiple;
-    expect(docServed).toBe(2.21);
-    const walked = pickHighestReturnByStated([
-      { brandId: STEADY.brandId, statedReturn: steadyServed, showsOutcome: true },
-      { brandId: DOC_DINNERS.brandId, statedReturn: docServed, showsOutcome: true },
-      { brandId: "brand-learning", statedReturn: null, showsOutcome: true },
-      { brandId: "brand-visits-only", statedReturn: 9, showsOutcome: false },
-    ]);
-    expect(walked).toEqual({ brandIds: [DOC_DINNERS.brandId, STEADY.brandId], qualifying: 2, rejectedNoOutcome: 1, rejectedNoReturn: 1 });
-    // The snapshot walk order follows the same rule.
-    expect(candidateStatedReturn(DOC_DINNERS)).toBeCloseTo(2.21, 10);
-    expect(candidateStatedReturn(STEADY)).toBeCloseTo(1.5, 10);
-    // On the mature half alone Doc Dinners (0.74x) would sit BELOW Steady (1.5x).
-    expect(ids(pickShowcaseClients([STEADY, DOC_DINNERS], FLOOR).highestReturn)).toEqual([DOC_DINNERS.brandId, STEADY.brandId]);
-  });
-
-  it("a not-mature client's snapshot return counts only above 1x, else it is walked last (dashboard: Learning)", () => {
-    const young = { ...DOC_DINNERS, brandId: "brand-young", isMature: false };
-    expect(candidateStatedReturn(young)).toBeCloseTo(2.21, 10);
-    const thin = { ...young, brandId: "brand-thin", flashExpectedPipelineUsd: 1800 };
-    expect(candidateStatedReturn(thin)).toBeNull();
-    expect(ids(pickShowcaseClients([thin, STEADY], FLOOR).highestReturn)).toEqual([STEADY.brandId, thin.brandId]);
-  });
-
-  it("a snapshot row without flash twins ranks on its mature half, as before", () => {
-    expect(candidateStatedReturn({ brandId: "b", committedSpendUsd: 200, expectedPipelineUsd: 300, startedOn: null, outcomeCount: 9 })).toBeCloseTo(1.5, 10);
-  });
-
-  it("buildShowcaseCandidates carries the flash twins and the combined verdict across channels", () => {
-    const [c] = buildShowcaseCandidates([
-      [{ brandId: "x", committedSpendUsd: 100, expectedPipelineUsd: 50, flashCommittedSpendUsd: 300, flashExpectedPipelineUsd: 600, isMature: true }],
-      [{ brandId: "x", committedSpendUsd: 100, expectedPipelineUsd: 50, flashCommittedSpendUsd: 100, flashExpectedPipelineUsd: null, isMature: false }],
-    ]);
-    expect(c).toMatchObject({ flashCommittedSpendUsd: 400, flashExpectedPipelineUsd: 600, isMature: false });
+    expect(ids(pickShowcaseClients(tied).recentlyStarted)).toEqual(["a", "b"]);
+    expect(ids(pickShowcaseClients([...tied].reverse()).recentlyStarted)).toEqual(["a", "b"]);
   });
 });
 
 describe("buildShowcaseCandidates", () => {
-  const row = (over: Partial<BrandReturnRow> & { brandId: string }): BrandReturnRow => ({
-    committedSpendUsd: 0,
-    expectedPipelineUsd: null,
-    ...over,
-  });
-
-  it("a client on TWO channels is ONE client: money sums, and its beginning is the EARLIER", () => {
+  it("a client on TWO channels is ONE client: its beginning is the EARLIER, its rungs sum", () => {
     const [c] = buildShowcaseCandidates([
-      [row({ brandId: DOC, committedSpendUsd: 300, expectedPipelineUsd: 900, startedOn: "2026-06-01", outcomeCount: 2 })],
-      [row({ brandId: DOC, committedSpendUsd: 200, expectedPipelineUsd: 100, startedOn: "2026-02-01", outcomeCount: 5 })],
+      [{ brandId: DOC, startedOn: "2026-06-01", outcomeCount: 2 }],
+      [{ brandId: DOC, startedOn: "2026-02-01", outcomeCount: 5 }],
     ]);
-    expect(c.committedSpendUsd).toBe(500);
-    expect(c.expectedPipelineUsd).toBe(1000);
-    // One client, one beginning — the earliest of the channels it runs, not whichever was read first.
-    expect(c.startedOn).toBe("2026-02-01");
-    expect(c.outcomeCount).toBe(7);
+    expect(c).toEqual({ brandId: DOC, startedOn: "2026-02-01", outcomeCount: 7 });
   });
 
-  it("a pipeline stays NULL only when NO channel priced one, and is never coerced to 0", () => {
-    const [none] = buildShowcaseCandidates([
-      [row({ brandId: DOC, committedSpendUsd: 100 })],
-      [row({ brandId: DOC, committedSpendUsd: 100 })],
-    ]);
-    expect(none.expectedPipelineUsd).toBeNull();
-
-    const [some] = buildShowcaseCandidates([
-      [row({ brandId: DOC, committedSpendUsd: 100 })],
-      [row({ brandId: DOC, committedSpendUsd: 100, expectedPipelineUsd: 250 })],
-    ]);
-    // Only the priced channel contributes — the unpriced one is absent from the sum, not a zero in it.
-    expect(some.expectedPipelineUsd).toBe(250);
-  });
-
-  it("a snapshot written before the pick fields existed narrows to nulls rather than to zeros", () => {
-    const [legacy] = buildShowcaseCandidates([[row({ brandId: DOC, committedSpendUsd: 400, expectedPipelineUsd: 800 })]]);
-    // Absent and explicit-null are the same statement, and neither is a 0 that would claim the client
-    // began at the epoch or produced nothing.
+  it("a row with no pick fields narrows to nulls rather than to zeros, and is named by nobody", () => {
+    const [legacy] = buildShowcaseCandidates([[{ brandId: DOC }]]);
     expect(legacy.startedOn).toBeNull();
     expect(legacy.outcomeCount).toBeNull();
-    // With no rung counted it can show no outcome, so neither question names it (owner 2026-10-10: a
-    // client the homepage names never leads with fewer than 5 of an outcome — an uncounted rung is not 5).
-    const picks = pickShowcaseClients([legacy], FLOOR);
-    expect(picks.highestReturn.unmeasuredReason).toBe("no_qualifying_clients");
-    expect(picks.recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
+    expect(pickShowcaseClients([legacy]).recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
   });
 
   it("a MEASURED 0 outcome count survives the fold and is not an absence", () => {
-    const [c] = buildShowcaseCandidates([[row({ brandId: DOC, committedSpendUsd: 400, outcomeCount: 0 })]]);
+    const [c] = buildShowcaseCandidates([[{ brandId: DOC, outcomeCount: 0 }]]);
     expect(c.outcomeCount).toBe(0);
   });
 });
@@ -327,56 +138,6 @@ describe("furthestRungReached", () => {
     expect(furthestRungReached(breakdown([null, null]))).toBeNull();
     expect(furthestRungReached(null)).toBeNull();
     expect(furthestRungReached(undefined)).toBeNull();
-  });
-});
-
-describe("showcaseChainHasOutcome", () => {
-  const chain = (...steps: Array<[string, number | null]>) => [
-    { steps: steps.map(([key, peopleReached]) => ({ key, peopleReached })) },
-  ];
-
-  it("a chain with a contacted count and 0 on every rung has produced NOTHING", () => {
-    expect(
-      showcaseChainHasOutcome(
-        chain(["contacted", 183], ["start_to_conversation", 0], ["conversation_to_meeting_booked", 0]),
-      ),
-    ).toBe(false);
-  });
-
-  it("ONE measured person on one rung is an anecdote; 5 is an outcome", () => {
-    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 1]))).toBe(false);
-    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 4]))).toBe(false);
-    expect(showcaseChainHasOutcome(chain(["contacted", 876], ["start_to_conversation", 5]))).toBe(true);
-    // The base never counts, however large.
-    expect(showcaseChainHasOutcome(chain(["contacted", 5000], ["start_to_conversation", 0]))).toBe(false);
-    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 51], ["website_visit_to_signup", 5]))).toBe(true);
-  });
-
-  it("website visits never qualify a client, in either group (SHOWCASE-NO-VISITS-1019)", () => {
-    // Pocket CMO in prod 2026-10-19: 54 visits, nothing else past the base. The card never draws a visit.
-    expect(showcaseChainHasOutcome(chain(["contacted", 1146], ["start_to_website_visit", 54], ["website_visit_to_signup", 0]))).toBe(false);
-    expect(
-      pickRecentlyStartedByMeetings([{ brandId: "pocket", meetingsBooked: 0, positiveReplies: 0 }]).brandIds,
-    ).toEqual([]);
-    // A drawn outcome beside the visits still qualifies.
-    expect(showcaseChainHasOutcome(chain(["contacted", 900], ["start_to_website_visit", 54], ["start_to_conversation", 20]))).toBe(true);
-  });
-
-  it("an UNMEASURED rung never qualifies a client", () => {
-    expect(showcaseChainHasOutcome(chain(["contacted", 500], ["start_to_website_visit", null]))).toBe(false);
-  });
-
-  it("no chain at all is nothing produced", () => {
-    expect(showcaseChainHasOutcome([])).toBe(false);
-  });
-
-  it("any ONE of several funnels showing a rung is enough", () => {
-    expect(
-      showcaseChainHasOutcome([
-        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "start_to_conversation", peopleReached: 0 }] },
-        { steps: [{ key: "contacted", peopleReached: 10 }, { key: "website_visit_to_form_submitted", peopleReached: 7 }] },
-      ]),
-    ).toBe(true);
   });
 });
 

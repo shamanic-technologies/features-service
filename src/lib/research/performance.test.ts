@@ -82,8 +82,6 @@ const input = (over: Partial<PipePerformanceInput> = {}): PipePerformanceInput =
   llmDynasties: llm,
   llmKeyOf: (id) => llm.dynastyOfName(id)?.slug ?? id,
   llmLabelOf: (k) => llm.bySlug(k)?.name ?? k,
-  // azalea: $1,200 pipeline on $400 billed (3x); keel: $0 on $50
-  workflowReturns: { roiOf: new Map([["azalea", 3], ["keel", 0]]), moneyGoesHere: "azalea", pipelineOf: new Map([["azalea", 1200], ["keel", 0]]), billedOf: new Map([["azalea", 400], ["keel", 50]]) },
   unpricedBilledUsd: 0,
   now: new Date("2026-10-23T12:00:00Z"),
   ...over,
@@ -134,10 +132,10 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(dagOnly.rows.find((r) => r.key === "azalea|aurora|gemini-flash")!.writerSource).toBe("workflow_definition");
   });
 
-  it("ROI: own outcomes' pipeline over own billed", () => {
-    // 4 of azalea's 6 outcomes = $800 pipeline; $100 of azalea's $400 = $100 billed: 8x
-    expect(row("azalea|borealis|claude-opus").roi).toMatchObject({ value: 8, basis: "measured", source: "own" });
+  it("a combination serves its own cost, never a return (ROI-CONSISTENCY-1103)", () => {
+    expect(row("azalea|borealis|claude-opus")).not.toHaveProperty("roi");
     expect(row("azalea|borealis|claude-opus").costPerOutcomeUsd).toMatchObject({ value: 25, basis: "measured" });
+    expect(out.totals).not.toHaveProperty("roi");
   });
 
   it("rows stand on the figure the table shows: cost per outcome ascending, else $ spent (PERF-COST-ORDER-1024)", () => {
@@ -188,7 +186,6 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(fresh.spentUsd.value).toBe(0);
     expect(fresh.untested).toBe(true);
     expect(fresh.costPerOutcomeUsd).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
-    expect(fresh.roi).toMatchObject({ value: null, unavailableReason: "no_outcome_yet" });
     expect(fresh.conversionRatePct).toMatchObject({ value: null, unavailableReason: "nobody_emailed_yet" });
     expect(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.written).toBe(true);
     // the totals and the series never move
@@ -241,7 +238,6 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     const r = row("azalea|borealis|gemini-flash");
     expect(r.outcomes.value).toBe(0);
     expect(r.conversionRatePct).toMatchObject({ value: 0, basis: "measured", source: "own" });
-    expect(r.roi).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
     expect(r.costPerOutcomeUsd).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
     expect("estimate" in r).toBe(false);
     // a spend-only row (nobody emailed) states it, never borrows a rate
@@ -254,7 +250,6 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     const last = pts[pts.length - 1]!;
     expect(last.spentUsd).toBe(out.totals!.spentUsd.value);
     expect(last.outcomes).toBe(out.totals!.outcomes.value);
-    expect(last.roi).toBe(out.totals!.roi.value);
     expect(last.costPerOutcomeUsd).toBe(out.totals!.costPerOutcomeUsd.value);
     expect(last.conversionRatePct).toBe(out.totals!.conversionRatePct.value);
   });

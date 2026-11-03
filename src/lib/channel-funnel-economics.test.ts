@@ -99,7 +99,7 @@ describe("a measured pair prices every step of its own funnel", () => {
     expect(result.measured).toBe(true);
     if (!result.measured) throw new Error("unreachable");
 
-    const { steps, costPerSaleUsd, returnPerDollar } = result.economics;
+    const { steps, costPerSaleUsd } = result.economics;
     expect(steps.map((s) => s.step)).toEqual(["Positive reply", "Meeting booked", "Meeting attended", "Paid client"]);
 
     // A conversation costs what the channel paid for one: $10.
@@ -110,8 +110,8 @@ describe("a measured pair prices every step of its own funnel", () => {
     // A paid client costs replyUsd / (r2m x m2c) = 10 / 0.2 = $50.
     expect(steps[3].costPerStepUsd).toBeCloseTo(50, 10);
     expect(costPerSaleUsd).toBeCloseTo(50, 10);
-    // Return = lifetime revenue / cost per sale = 5000 / 50.
-    expect(returnPerDollar).toBeCloseTo(100, 10);
+    // No return is served (ROI-CONSISTENCY-1103).
+    expect(result.economics).not.toHaveProperty("returnPerDollar");
   });
 
   it("says out loud that a meeting ATTENDED has no price of its own, rather than reading as free", () => {
@@ -173,10 +173,9 @@ describe("a measured pair prices every step of its own funnel", () => {
     }
   });
 
-  it("no lifetime revenue leaves the RETURN null, never 0 — the step prices still stand", () => {
+  it("no lifetime revenue leaves the revenue null — the step prices still stand", () => {
     const result = pricePair(input({ lifetimeRevenueUsd: null }));
     if (!result.measured) throw new Error("unreachable");
-    expect(result.economics.returnPerDollar).toBeNull();
     expect(result.economics.lifetimeRevenueUsd).toBeNull();
     expect(result.economics.costPerSaleUsd).toBeCloseTo(50, 10);
   });
@@ -188,7 +187,6 @@ describe("a measured pair prices every step of its own funnel", () => {
     expect(result.economics.steps[1].costPerStepUsd).toBeCloseTo(20, 10);
     expect(result.economics.costPerSaleUsd).toBeNull();
     expect(result.economics.costPerSaleUnpricedReason).toBe("rate_is_zero");
-    expect(result.economics.returnPerDollar).toBeNull();
   });
 
   it("carries the evidence it stands on, so a row can say how much that is", () => {
@@ -245,7 +243,6 @@ describe("the funnels brand-service added when the ad channels opened", () => {
     expect(web.economics.steps[0].costPerStepUsd).toBe(2);
     expect(web.economics.costPerSaleUsd).toBeCloseTo(200, 6);
     expect(web.economics.costPerSaleUsd).not.toBeCloseTo(50, 6);
-    expect(web.economics.returnPerDollar).toBeCloseTo(5000 / 200, 6);
 
     // Positive reply → paid client: $10 a conversation at a 5% direct close = $200. The meeting route
     // (r2m 50% × m2c 40% = 20%) would have read $50.
@@ -301,7 +298,6 @@ describe("the funnels brand-service added when the ad channels opened", () => {
       const result = pricePair(input({ funnelKey: key as never }));
       if (!result.measured) throw new Error(`${key} unexpectedly unmeasured`);
       expect(result.economics.costPerSaleUsd, key).toBeCloseTo(costPerSaleUsd, 6);
-      expect(result.economics.returnPerDollar, key).toBeCloseTo(5000 / costPerSaleUsd, 6);
       expect(result.economics.steps[0].costPerStepUsd, key).toBe(key === "sales_meetings_from_conversation" ? 10 : 2);
     }
   });

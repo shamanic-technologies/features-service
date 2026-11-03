@@ -116,7 +116,7 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(meeting.legs[0].countBasis).toBe("acted_leads");
     expect(meeting.spentUsd).toBe(10);
     expect(meeting.costPerOutcomeUsd).toBe(10);
-    expect(meeting.roiMultiple).toBeCloseTo(20); // 20% x $1,000 over $10
+    expect(meeting).not.toHaveProperty("roiMultiple"); // no return below a Target (ROI-CONSISTENCY-1103)
     expect(fetchFollowupActedLeads).toHaveBeenCalledWith("brand-1", ["a1"]);
     // ONE spend read for the whole offer, every campaign cut at its OWN leg's cutoff: the two delayed
     // legs wait, the AI leg is zero-delay.
@@ -128,7 +128,7 @@ describe("GET /offers/:offerId/outcomes", () => {
     ]);
     // The pair beside the legacy figures: observed, on both bases (every lead was served long ago, so
     // both halves agree), and the verdict on the reply leg's count of 1.
-    expect(reply.maturity.flash).toEqual({ costPerOutcomeUsd: 45, roiMultiple: expect.any(Number) });
+    expect(reply.maturity.flash).toEqual({ costPerOutcomeUsd: 45 });
     expect(reply.maturity.mature).toEqual(reply.maturity.flash);
     expect(reply.maturity.isMature).toBe(true);
   });
@@ -150,25 +150,19 @@ describe("GET /offers/:offerId/outcomes", () => {
     expect(res.body.reason).toBe("offer_has_no_channels");
   });
 
-  it("serves the pipeline sliced one row per person, its total reconciled to the offer revenue headline", async () => {
-    vi.mocked(offerRevenueJson).mockResolvedValue(new SnapshotJson(JSON.stringify({ headline: { totalPipelineUsd: 300 } })));
+  it("serves the pipeline sliced one row per person, its rows reconciled to the engine, and no pipeline dollars", async () => {
     const res = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&pricing=net").set(AUTH);
     expect(res.status).toBe(200);
-    // The headline is read through the offer revenue read's own door, same pricing and causes.
-    expect(vi.mocked(offerRevenueJson).mock.calls.at(-1)![0]).toEqual(expect.objectContaining({ offerId: "offer-1", brandId: "brand-1", pricing: "net", leadDetail: "outcomes" }));
+    // The offer revenue read is no longer asked: there is no page Pipeline figure to reconcile against.
+    expect(vi.mocked(offerRevenueJson)).not.toHaveBeenCalled();
     const x = res.body.pipeline.exclusiveLadder;
     const row = (k: string) => x.rows.find((r: { step: { key: string } }) => r.step.key === k);
     // L1 booked (and replied): on Meeting booked only. L2 replied: on Positive reply.
     expect(row("meeting_booked").people.ours.leads.map((l: { leadId: string }) => l.leadId)).toEqual(["L1"]);
     expect(row("conversation").people.ours.leads.map((l: { leadId: string }) => l.leadId)).toEqual(["L2"]);
-    expect(row("meeting_booked").pipelineUsd).toBeCloseTo(200);
-    expect(row("conversation").pipelineUsd).toBeCloseTo(100);
-    expect(x.total).toEqual(expect.objectContaining({ pipelineUsd: 300, headlinePipelineUsd: 300, gapUsd: 0, gapReason: null }));
-    // A headline that cannot be read never fails the outcome read: the gap says so.
-    vi.mocked(offerRevenueJson).mockRejectedValue(new Error("boom"));
-    const soft = await request(app).get("/offers/offer-1/outcomes?brandId=brand-1&pricing=gross").set(AUTH);
-    expect(soft.status).toBe(200);
-    expect(soft.body.pipeline.exclusiveLadder.total.gapReason).toBe("headline_unreadable");
+    expect(x.total).toEqual(expect.objectContaining({ gapUsd: 0, gapReason: null }));
+    // A pipeline in dollars is the Deals board's alone (ROI-CONSISTENCY-1103).
+    expect(JSON.stringify(x)).not.toMatch(/pipelineUsd/i);
   });
 
   it("refuses a conversionHistory it does not know", async () => {

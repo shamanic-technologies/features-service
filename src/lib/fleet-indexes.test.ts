@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestMeetingPipePick, clientReturnPoint, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, ledgerMeetingIndexPoint, meetingCostIndexPoint, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { bestMeetingPipePick, computeFleetIndexPoints, engagedLeadPoint, brandVisits, FLEET_INDEXES, indexStatus, ledgerMeetingIndexPoint, meetingCostIndexPoint, weakestStatus, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 
 function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
@@ -17,9 +17,6 @@ function row(over: Partial<LegWorkflowRankingRow>): LegWorkflowRankingRow {
     outcomes: 15,
     contacted: 720,
     spentUsd: 60,
-    roiMultiple: null,
-    pipelineUsd: null,
-    billedSpendUsd: null,
     goesFirst: true,
     moneyGoesHere: true,
     explorePriceUsd: null,
@@ -183,7 +180,7 @@ describe("fleet indexes", () => {
 
   it("every index has a unique slug and states its unit", () => {
     expect(new Set(FLEET_INDEXES.map((d) => d.slug)).size).toBe(FLEET_INDEXES.length);
-    const unitOf = { cost_per_outcome: "usd", conversion_rate: "percent", return_on_spend: "multiple" } as const;
+    const unitOf = { cost_per_outcome: "usd", conversion_rate: "percent" } as const;
     for (const d of FLEET_INDEXES) expect(d.unit).toBe(unitOf[d.metric]);
   });
 });
@@ -225,8 +222,7 @@ describe("client indexes (owner 2026-10-19, INDEX-ENGAGED-ROI-1019)", () => {
     expect(engagedLeadPoint([{ contacted: 100, positiveReplies: 1, screenedContacted: 100, humanClicks: 0, spendCents: 500 }])).toMatchObject({ value: null, unavailableReason: "not_enough_clients" });
   });
 
-  it("the ROI index is the served median; status counts the clients behind it", () => {
-    expect(clientReturnPoint({ measured: true, reason: null, brandCount: 31, minSpendUsd: 100, medianReturnPerDollar: 4.1 })).toMatchObject({ value: 4.1, status: "robust", outcomes: 31 });
-    expect(clientReturnPoint({ measured: false, reason: "not_enough_brands", brandCount: 4, minSpendUsd: 100, medianReturnPerDollar: null })).toMatchObject({ value: null, unavailableReason: "not_enough_brands" });
+  it("the client ROI index is deleted (ROI-CONSISTENCY-1103): never recorded nor served", () => {
+    expect(FLEET_INDEXES.map((d) => d.slug)).not.toContain("cold-email-roi");
   });
 });

@@ -143,12 +143,6 @@ export function stepValues(path: SalesPath | null, unavailableReason: string | n
   return out;
 }
 
-/** PURE. value ÷ cost, 2 decimals; null when either side is missing or the cost is not positive. */
-export function roiOf(valueUsd: number | null, costUsd: number | null): number | null {
-  if (valueUsd === null || costUsd === null || !(costUsd > 0)) return null;
-  return round2(valueUsd / costUsd);
-}
-
 export interface OutcomeCostMonth {
   /** `YYYY-MM` (UTC). */
   month: string;
@@ -182,12 +176,6 @@ export interface OutcomeCostStepSeries {
   expected: StepExpectedCost;
   /** What one outcome of the step is worth (expected path), served beside its cost so a reader never divides. */
   value: StepValue;
-  /**
-   * Return of one outcome: value.valuePerOutcomeUsd ÷ a cost per outcome. `measured` over sinceInception's cost (null at 0
-   * outcomes or when the step is not valued), `expected` over expected's cost. A reader shows `measured`, else `expected`
-   * marked expected.
-   */
-  roi: { measured: number | null; expected: number | null };
   months: OutcomeCostMonth[];
 }
 
@@ -274,7 +262,6 @@ export function buildOutcomeCostSeries(input: {
     const end = series.at(-1);
     const expected = expectedOf(stepKey);
     const value = valueOf(stepKey);
-    const measuredCost = end?.cumulativeCostPerOutcomeUsd ?? null;
     return {
       stepKey,
       learningOutcomesRequired: bar,
@@ -287,7 +274,6 @@ export function buildOutcomeCostSeries(input: {
       },
       expected,
       value,
-      roi: { measured: roiOf(value.valuePerOutcomeUsd, measuredCost), expected: roiOf(value.valuePerOutcomeUsd, expected.costPerOutcomeUsd) },
       months: series,
     };
   });

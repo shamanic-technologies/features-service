@@ -202,7 +202,8 @@ describe("assembleOfferOutcomes", () => {
     expect(reply.costPerOutcomeUsd).toBeCloseTo(30);
     // L3's reply is not ours (unpriced): counted, not valued.
     expect(reply.valueUsd).toBe(200);
-    expect(reply.roiMultiple).toBeCloseTo(200 / 90);
+    // No return below a Target (ROI-CONSISTENCY-1103).
+    expect(reply).not.toHaveProperty("roiMultiple");
   });
 
   it("an INTERNAL leg counts the leads its workers ANSWERED, and prices its spend on them alone", () => {
@@ -214,13 +215,11 @@ describe("assembleOfferOutcomes", () => {
     expect(meeting.recipientsReached).toBe(1); // L1 — not the 3 meetings of the offer
     expect(meeting.costPerOutcomeUsd).toBe(10);
     expect(meeting.valueUsd).toBe(200);
-    expect(meeting.roiMultiple).toBeCloseTo(20);
     expect(meeting.unmeasuredReason).toBeNull();
-    // Answered nobody who booked: a measured 0, no cost per outcome, a 0 return — never the offer's 3.
+    // Answered nobody who booked: a measured 0, no cost per outcome — never the offer's 3.
     const none = build(spend, new Map([["a1", new Set(["L2"])]])).find((r) => r.step.key === "meeting_booked")!;
     expect(none.recipientsReached).toBe(0);
     expect(none.costPerOutcomeUsd).toBeNull();
-    expect(none.roiMultiple).toBe(0);
     // A campaign the read did not answer degrades to the unattributed basis.
     const unanswered = build(spend, new Map()).find((r) => r.step.key === "meeting_booked")!;
     expect(unanswered.legs[0].countBasis).toBe("offer_leads_at_step");
@@ -236,24 +235,22 @@ describe("assembleOfferOutcomes", () => {
     expect(meeting.spentUsd).toBe(10);
     // $10 of AI spend over 3 meetings it may not have booked is not a cost per meeting.
     expect(meeting.costPerOutcomeUsd).toBeNull();
-    expect(meeting.roiMultiple).toBeNull();
     expect(meeting.unmeasuredReason).toBe("not_attributable");
     expect(meeting.legs[0].costPerOutcomeUsd).toBeNull();
     expect(meeting.valueUsd).toBe(400); // L1 + L5 priced; L3 is not ours
   });
 
-  it("the ROI rides the mature cohort; an all-young leg reads `maturing`, never 0", () => {
+  it("an all-young leg reads `maturing`, never a 0", () => {
     const cutoff = "2026-09-11T00:00:00.000Z";
     const rows = build(new Map([[cold, whole(6000, 0, cutoff)], [fb, whole(3000, 0, cutoff)], [ai, whole(1000)]]));
     const reply = rows.find((r) => r.step.key === "conversation")!;
-    expect(reply.roiMultiple).toBeNull();
     expect(reply.unmeasuredReason).toBe("maturing");
     expect(reply.spentUsd).toBe(90); // spend keeps the whole history
 
     const mixed = build(new Map([[cold, whole(6000, 4000, cutoff)], [fb, whole(3000)], [ai, whole(1000)]]));
     const r2 = mixed.find((r) => r.step.key === "conversation")!;
-    // Mature priced: L1 (served before cutoff) via cold, L2 via feedback (zero-delay group) → 2 × $100 / $70.
-    expect(r2.roiMultiple).toBeCloseTo(200 / 70);
+    expect(r2.unmeasuredReason).toBeNull();
+    expect(r2.maturity.mature).not.toBeNull();
   });
 
   it("the mature cohort is cut on the SERVE clock (lib/maturity.ts), never on the contact date", () => {
@@ -261,8 +258,9 @@ describe("assembleOfferOutcomes", () => {
     // Both reply legs wait: only L1 was served before the cutoff (it was CONTACTED after it).
     const rows = build(new Map([[cold, whole(6000, 4000, cutoff)], [fb, whole(3000, 2000, cutoff)], [ai, whole(1000)]]));
     const reply = rows.find((r) => r.step.key === "conversation")!;
-    // L1 alone: $100 over the $60 of mature spend. A contact clock reads L1 young too, and states a 0 return.
-    expect(reply.roiMultiple).toBeCloseTo(100 / 60);
+    // L1 (served before the cutoff, contacted after it) is IN the mature cohort beside L3: $60 over 2.
+    // A contact clock reads L1 young and would state $60 over 1.
+    expect(reply.maturity.mature?.costPerOutcomeUsd).toBeCloseTo(30);
     expect(reply.unmeasuredReason).toBeNull();
     // The count keeps the whole history: L1, L2 and L3 reached the step.
     expect(reply.recipientsReached).toBe(3);

@@ -15,7 +15,7 @@
  * So every figure a leg-keyed answer states as a cost-per-outcome, an outcome count, or a conversion
  * rate is denominated in the leg's `toStep`. The funnel is still resolved — it decides WHICH rates
  * price the walk from the observed signal to that step — but it no longer decides which step is being
- * bought. `costPerPaidClientUsd`, `costPerMeetingBookedUsd`, `roiMultiple` and `cacPct` keep their own
+ * bought. `costPerPaidClientUsd` and `costPerMeetingBookedUsd` keep their own
  * names and their own meanings: a paid-client cost is a paid-client cost whatever leg was named.
  *
  * ── WHAT A GRAIN CAN ACTUALLY OBSERVE ────────────────────────────────────────────────────────────

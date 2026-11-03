@@ -180,10 +180,6 @@ export interface SpendChartExpected {
   conversionBasis: string | null;
   conversionSource: string | null;
   conversionUnavailableReason: string | null;
-  /** The scope's expected return (measured once mature, else its sales path model). */
-  roiMultiple: number | null;
-  roiBasis: string | null;
-  roiUnavailableReason: string | null;
 }
 
 export interface SpendChartPoint {

@@ -1,110 +1,62 @@
 /**
- * Persistence for the FLEET RETURN-ON-SPEND snapshot (`fleet_return_snapshots`) — see the table's own
- * doc in `db/schema.ts` for why this answer is written down rather than merely cached.
+ * Persistence for the per-brand fleet snapshot (`fleet_return_snapshots`, historical table name): the rows the
+ * homepage's recently-started client pick ranks (`lib/showcase-clients.ts`). It used to hold each brand's
+ * pipeline and spend for the public return medians; those are deleted (ROI-CONSISTENCY-1103) and a row now
+ * holds only when the brand began and how far its funnel reached. A row stored before carries more fields,
+ * ignored on read.
  *
- * Both functions are FAIL-SOFT (log loud, never throw). The public read that consumes them is a
- * marketing surface whose consumer already drops the stat when it cannot be stated: a read blip must
- * answer "we could not state this" and let the two figures beside it survive, never 502 a landing
- * build. The WRITE is equally soft — it happens inside a background warm nobody is waiting on, and its
- * only failure consequence is that the next warm rewrites the row.
- *
- * The stored payload is validated on the way OUT, not trusted: a jsonb column has no shape guarantee
- * across a schema change, and a malformed cell must read as "no snapshot" rather than crash a public
- * handler or, worse, produce a median over rows whose numbers are undefined.
+ * Both functions are FAIL-SOFT (log loud, never throw): the read feeds a marketing surface whose consumer
+ * drops the section when it cannot be stated, and the write happens inside a background warm nobody waits on.
+ * The stored payload is validated on the way OUT: a malformed cell reads as "no snapshot".
  */
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { fleetReturnSnapshots } from "../db/schema.js";
-import type { BrandReturnRow } from "./fleet-return-on-spend.js";
+
+/** One brand's stored ingredients on one channel. */
+export interface BrandSnapshotRow {
+  brandId: string;
+  /**
+   * The first UTC day (`YYYY-MM-DD`) this brand was ever billed for this channel (a brand claimed by several orgs
+   * takes the earliest). NULL = no such day (never billed, the read degraded): never a substituted date.
+   */
+  startedOn?: string | null;
+  /**
+   * People on the furthest RUNG the brand's funnel reached on the channel (`furthestRungReached`), never the
+   * outreach base. `0` is measured; NULL = could not be counted.
+   */
+  outcomeCount?: number | null;
+}
 
 export interface FleetReturnSnapshotRead {
-  brands: BrandReturnRow[];
+  brands: BrandSnapshotRow[];
   computedAt: Date;
 }
 
-/** Narrow one stored jsonb entry to a `BrandReturnRow`, or null when it is not one. */
-export function parseRow(raw: unknown): BrandReturnRow | null {
+/** Narrow one stored jsonb entry to a `BrandSnapshotRow`, or null when it is not one. */
+export function parseRow(raw: unknown): BrandSnapshotRow | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.brandId !== "string") return null;
-  if (typeof r.committedSpendUsd !== "number" || !Number.isFinite(r.committedSpendUsd)) return null;
-  const pipeline = r.expectedPipelineUsd;
-  if (pipeline !== null && (typeof pipeline !== "number" || !Number.isFinite(pipeline))) return null;
-  // Both picks-only fields are OPTIONAL on the stored shape and ABSENT on every row written before
-  // they existed. Absent and explicit-null are the same statement here ("we have no such figure"), so
-  // a legacy snapshot narrows cleanly instead of reading as malformed — which would blank the whole
-  // channel's median over a field the median does not use. A present-but-wrong-typed value IS
-  // malformed, exactly as the two fields above are.
+  // Absent and explicit-null are the same statement ("we have no such figure"); a present-but-wrong-typed value is
+  // malformed.
   const startedOn = r.startedOn;
   if (startedOn !== undefined && startedOn !== null && typeof startedOn !== "string") return null;
   const outcomeCount = r.outcomeCount;
-  if (
-    outcomeCount !== undefined &&
-    outcomeCount !== null &&
-    (typeof outcomeCount !== "number" || !Number.isFinite(outcomeCount))
-  ) {
+  if (outcomeCount !== undefined && outcomeCount !== null && (typeof outcomeCount !== "number" || !Number.isFinite(outcomeCount))) {
     return null;
-  }
-  const legKeys = r.legKeys;
-  if (
-    legKeys !== undefined &&
-    legKeys !== null &&
-    (!Array.isArray(legKeys) || !legKeys.every((k) => typeof k === "string"))
-  ) {
-    return null;
-  }
-  const clients = r.expectedPaidClients;
-  if (clients !== undefined && clients !== null && (typeof clients !== "number" || !Number.isFinite(clients))) {
-    return null;
-  }
-  const isMature = r.isMature;
-  if (isMature !== undefined && isMature !== null && typeof isMature !== "boolean") return null;
-  const flashSpend = r.flashCommittedSpendUsd;
-  if (flashSpend !== undefined && (typeof flashSpend !== "number" || !Number.isFinite(flashSpend))) return null;
-  const flashPipeline = r.flashExpectedPipelineUsd;
-  if (flashPipeline !== undefined && flashPipeline !== null && (typeof flashPipeline !== "number" || !Number.isFinite(flashPipeline))) {
-    return null;
-  }
-  const legMaturity = r.legMaturity;
-  if (
-    legMaturity !== undefined &&
-    legMaturity !== null &&
-    (typeof legMaturity !== "object" ||
-      Array.isArray(legMaturity) ||
-      !Object.values(legMaturity as Record<string, unknown>).every((v) => v === null || typeof v === "boolean"))
-  ) {
-    return null;
-  }
-  // The vendor ingredients (PUBLIC-VENDOR-COST-1031): four finite numbers, or a recorded null; anything else is malformed.
-  const vendorSpend = r.vendorSpend;
-  if (vendorSpend !== undefined && vendorSpend !== null) {
-    const v = vendorSpend as Record<string, unknown>;
-    if (typeof v !== "object" || !["flashUsd", "matureUsd", "unpricedFlashUsd", "unpricedMatureUsd"].every((k) => typeof v[k] === "number" && Number.isFinite(v[k]))) return null;
   }
   return {
     brandId: r.brandId,
-    committedSpendUsd: r.committedSpendUsd,
-    expectedPipelineUsd: pipeline as number | null,
     startedOn: (startedOn as string | undefined) ?? null,
     outcomeCount: (outcomeCount as number | undefined) ?? null,
-    // ABSENT stays absent (the snapshot predates the field) — distinct from a recorded null, which is
-    // what lets the outcome read say "legs not recorded yet" instead of "not enough brands".
-    ...(legKeys !== undefined ? { legKeys: legKeys as string[] | null } : {}),
-    ...(clients !== undefined ? { expectedPaidClients: clients as number | null } : {}),
-    // ABSENT stays absent on every maturity field (a snapshot written before them), so the read can say
-    // "not recorded yet" rather than "not mature".
-    ...(isMature !== undefined ? { isMature: isMature as boolean | null } : {}),
-    ...(flashSpend !== undefined ? { flashCommittedSpendUsd: flashSpend as number } : {}),
-    ...(flashPipeline !== undefined ? { flashExpectedPipelineUsd: flashPipeline as number | null } : {}),
-    ...(legMaturity !== undefined ? { legMaturity: legMaturity as Record<string, boolean | null> | null } : {}),
-    ...(vendorSpend !== undefined ? { vendorSpend: vendorSpend as BrandReturnRow["vendorSpend"] } : {}),
   };
 }
 
 /**
  * Read one channel's stored per-brand rows. Returns null when there is no snapshot, when the stored
  * cell is not the array shape this module writes, or when the read itself failed — all three are the
- * same statement to the caller ("nothing to take a median over"), and the last two log loud.
+ * same statement to the caller ("nothing to rank"), and the last two log loud.
  */
 export async function readFleetReturnSnapshotSoft(featureSlug: string): Promise<FleetReturnSnapshotRead | null> {
   try {
@@ -118,7 +70,7 @@ export async function readFleetReturnSnapshotSoft(featureSlug: string): Promise<
       );
       return null;
     }
-    const brands: BrandReturnRow[] = [];
+    const brands: BrandSnapshotRow[] = [];
     for (const raw of row.brands) {
       const parsed = parseRow(raw);
       if (parsed === null) {
@@ -138,12 +90,11 @@ export async function readFleetReturnSnapshotSoft(featureSlug: string): Promise<
 
 /**
  * Overwrite one channel's snapshot with the rows a warm just computed (idempotent on `feature_slug`).
- * The row is replaced WHOLE — a brand that has left the channel must leave the population too, and
- * merging would keep it in the median forever.
+ * The row is replaced WHOLE — a brand that has left the channel must leave the population too.
  */
 export async function writeFleetReturnSnapshotSoft(
   featureSlug: string,
-  brands: BrandReturnRow[],
+  brands: BrandSnapshotRow[],
   now: Date,
 ): Promise<void> {
   try {

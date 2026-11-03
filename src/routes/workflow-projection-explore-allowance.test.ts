@@ -184,8 +184,8 @@ describe("workflow-projection: an unproven workflow is reachable inside an estab
         // no evidence that it converts.
         expect(row.resolved.costPerPaidClientUsd).toBeNull();
         expect(row.resolved.costPerMeetingBookedUsd).toBeNull();
-        expect(row.resolved.roiMultiple).toBeNull();
-        expect(row.resolved.cacPct).toBeNull();
+        expect(row.resolved).not.toHaveProperty("roiMultiple");
+        expect(row.resolved).not.toHaveProperty("cacPct");
       }
     }
   });

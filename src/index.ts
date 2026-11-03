@@ -28,7 +28,7 @@ import dealsValueRoutes from "./routes/deals-value.js";
 import offerLeadValuesRoutes from "./routes/offer-lead-values.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes, { warmFleetReturnSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices, warmLegWorkflowRanking } from "./routes/public.js";
+import publicRoutes, { warmFleetBrandSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices, warmLegWorkflowRanking } from "./routes/public.js";
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import channelDeclarationsRoutes from "./routes/channel-declarations.js";
@@ -206,7 +206,7 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startViewKeeper();
         // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
         // awaiting it before the port bind would fail the deploy health check and roll the service back.
-        warmFleetReturnSnapshotsOnBoot();
+        warmFleetBrandSnapshotsOnBoot();
         // Same reason, same shape: the homepage gives its showcase read 8 seconds and drops the
         // section rather than block a build, so the cell must never be cold when it asks.
         warmShowcaseFunnelsOnBoot();

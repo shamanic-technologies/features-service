@@ -344,9 +344,7 @@ export interface WorkflowCostRow {
   /**
    * The same workflow's cross-org spend on the BILLED basis — what clients were CHARGED (comped spend
    * absent), NET of their discount — beside `spentUsd` (INCURRED, the benchmark basis every cost per
-   * outcome here divides). It is the basis of `/public/stats/workflow-return-history`, whose last
-   * `cumulativeSpendUsd` equals it, so the workflow page's return chart and this row reconcile. Null
-   * only when the caller did not read the billed total.
+   * outcome here divides). Null only when the caller did not read the billed total.
    */
   billedSpentUsd: number | null;
   observedClicks: number;

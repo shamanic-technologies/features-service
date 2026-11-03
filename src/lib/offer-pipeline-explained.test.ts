@@ -4,7 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildPricingFunnels } from "./reading-funnels.js";
 import { stepValues } from "./offer-outcomes.js";
-import { STEP_PEOPLE_LIMIT, buildOfferPipeline, buildOfferPipelineAndFamilies, explainStepValue, offerStepSets, previousStepsOf, stepConversion } from "./offer-pipeline-explained.js";
+import { STEP_PEOPLE_LIMIT, buildOfferPipeline, buildOfferPipelineAndFamilies, explainStepValue, offerStepSets, previousStepsOf, servedOfferPipeline, stepConversion } from "./offer-pipeline-explained.js";
 import { ALL_STEP_EVIDENCE } from "./funnel-steps.js";
 import { DISPLAY_ONLY_SALES_FUNNELS, SALES_FUNNELS, type SalesFunnelKey } from "./sales-funnels.js";
 import { funnelStepKeys } from "./acquisition-channels.js";
@@ -399,7 +399,7 @@ describe("exclusiveLadder", () => {
     );
     return computeRevenue(paths, [...persons], priced.economics.economics!.lifetimeRevenueUsd!, [], contactedPricing).headline.totalPipelineUsd;
   };
-  const run = (headlinePipelineUsd: number | null) =>
+  const run = (_unused?: null) =>
     buildOfferPipeline({
       persons,
       evidence: ALL_STEP_EVIDENCE,
@@ -408,7 +408,6 @@ describe("exclusiveLadder", () => {
       cold: null,
       sets: offerStepSets(persons, ALL_STEP_EVIDENCE),
       contactedPricing,
-      headlinePipelineUsd,
     }).exclusiveLadder;
   const listed = (x: ReturnType<typeof run>) => [
     ...x.rows.flatMap((r) => (r.people ? [...r.people.ours.leads, ...r.people.lost.leads, ...r.people.notOurs.leads] : [])),
@@ -470,13 +469,13 @@ describe("exclusiveLadder", () => {
     expect(c.people.limit).toBe(STEP_PEOPLE_LIMIT);
   });
 
-  it("reconciles the total against the offer revenue headline, and names a gap", () => {
+  it("reconciles the rows against the engine's own total (gap 0), and serves none of the pipeline dollars", () => {
     const total = engineTotal();
-    expect(run(total).total).toEqual(expect.objectContaining({ headlinePipelineUsd: total, gapUsd: 0, gapReason: null }));
-    const off = run(total + 10).total;
-    expect(off.gapReason).toBe("population_differs");
-    expect(off.gapUsd).toBeCloseTo(10, 9);
-    expect(run(null).total.gapReason).toBe("headline_unreadable");
+    expect(run().total).toEqual(expect.objectContaining({ pipelineUsd: total, gapUsd: 0, gapReason: null }));
+    expect(run().total).not.toHaveProperty("headlinePipelineUsd");
+    const served = servedOfferPipeline({ exclusiveLadder: run() as unknown }).exclusiveLadder as Record<string, unknown>;
+    expect(JSON.stringify(served)).not.toMatch(/pipelineUsd|noRowPipelineUsd/i);
+    expect((served.total as Record<string, unknown>).gapUsd).toBe(0);
   });
 
   it("serves each row's hot leads: the hotLeads verdict sliced, adding up to hotLeads.totalCount", () => {
@@ -488,7 +487,6 @@ describe("exclusiveLadder", () => {
       cold: null,
       sets: offerStepSets(persons, ALL_STEP_EVIDENCE),
       contactedPricing,
-      headlinePipelineUsd: null,
     });
     const x = full.exclusiveLadder;
     const hotIds = new Set(full.hotLeads!.leads.map((l) => l.leadId));

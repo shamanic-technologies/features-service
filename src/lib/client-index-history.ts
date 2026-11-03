@@ -1,34 +1,18 @@
 /**
- * THE TWO CLIENT-MEDIAN PUBLIC INDEXES, RECOMPUTED FOR PAST DAYS AT REAL VENDOR COST (PUBLIC-VENDOR-COST-1031-HISTORY,
- * owner 2026-10-31 « afficher le cost réel, si on enlève notre markup depuis le début »). PURE; the reads are the run's
- * (`scripts/backfill-fleet-indexes.ts --vendor-clients`).
+ * THE CLIENT-MEDIAN PUBLIC INDEX (cost per engaged lead), RECOMPUTED FOR PAST DAYS AT REAL VENDOR COST
+ * (PUBLIC-VENDOR-COST-1031-HISTORY, owner 2026-10-31 « afficher le cost réel, si on enlève notre markup depuis le début »).
+ * PURE; the reads are the run's (`scripts/backfill-fleet-indexes.ts --vendor-clients`).
  *
- * Every other public index was rebuilt from its first day by `fleet-index-history.ts`; these two are CLIENT figures (a
- * median over clients), so their past needs every client's inputs AS OF each day:
- *   - COST PER ENGAGED LEAD (`engagedLeadPoint`): per brand, the persons it reached, replied positively, were emailed
- *     through our sender and clicked as a judged human, each person cut at the end of the day (`asOfPerson`) then
- *     credited (`creditPerson`), the live cell's own rule; spend = the brand's runs at real vendor cost up to that day
- *     (the live read's rows: brand, the channel and its sourcing origins, every org), with its unpriced and billed twins.
- *   - ROI (`clientReturnPoint` over `vendorReturnMedian`): each (org, brand) engine pass, captured once on today's live
- *     inputs (`lib/engine-capture.ts`: persons, paths, pricing), replayed as of the day: the persons cut at the end of
- *     the day (`engineAsOf`), the mature cohort cut at that day's cutoff, the contacted value's expiry read from that day;
- *     the mature spend = runs started before that cutoff (+ the campaigns that wait for nothing), on the net billed basis
- *     (the $100 floor) and at vendor cost (the divisor); the brand's verdict as of the day (`buildScopeMaturity`).
- * Today's rules (pricing terms, ladders, statements, disqualification marks) stand on every day, like the other indexes'
- * history. Evidence with no date is in no past day; the replay of TODAY prices the live inputs untouched, so it is the
- * live figure by construction (the run prints both).
+ * Every other public index was rebuilt from its first day by `fleet-index-history.ts`; this one is a CLIENT figure (a
+ * median over clients), so its past needs every client's inputs AS OF each day: per brand, the persons it reached,
+ * replied positively, were emailed through our sender and clicked as a judged human, each person cut at the end of the
+ * day (`asOfPerson`) then credited (`creditPerson`), the live cell's own rule; spend = the brand's runs at real vendor
+ * cost up to that day (the live read's rows: brand, the channel and its sourcing origins, every org), with its unpriced
+ * and billed twins. The client ROI index's replay is deleted (ROI-CONSISTENCY-1103).
  */
-import { clientReturnPoint, engagedLeadPoint, type BrandEngagement, type FleetIndexPoint } from "./fleet-indexes.js";
-import type { EngineCapture } from "./engine-capture.js";
-import { vendorReturnMedian } from "./fleet-return-vendor.js";
-import type { BrandReturnRow } from "./fleet-return-on-spend.js";
-import { combineVerdicts } from "./fleet-return-maturity.js";
-import { legCutoffIso, maturityCutoffIso } from "./maturity.js";
-import { serveDatesStated } from "./mature-evidence.js";
+import { engagedLeadPoint, type BrandEngagement, type FleetIndexPoint } from "./fleet-indexes.js";
 import { vendorCoverage } from "./public-vendor-cost.js";
-import { computeRevenue, contactedExpiryCutoffIso, type EnginePerson } from "./revenue-engine.js";
-import { matureCohortPersons } from "./roi-maturity.js";
-import { buildScopeMaturity, campaignKey, type SpendSplit } from "./scope-maturity.js";
+import type { EnginePerson } from "./revenue-engine.js";
 import { asOfPerson, creditedSignal, creditPerson, type PersonTimeline } from "./serving-row-credit.js";
 
 const DAY_MS = 86_400_000;
@@ -39,65 +23,11 @@ const msOf = (iso: string | null | undefined): number | null => {
   return Number.isFinite(t) ? t : null;
 };
 
-/** The engine signals the engine dates (`signalDates`): each stands from its own date; undated = in no past day. */
-const DATED_SIGNALS: ReadonlySet<string> = new Set([
-  "contacted",
-  "open",
-  "clicked",
-  "positiveReply",
-  "meeting",
-  "meetingAttended",
-  "closeWin",
-  "signup",
-  "formSubmission",
-]);
-
-/**
- * PURE. An engine person as of `endMs`: in scope from its entry (serve, else first send) on; each dated signal from its
- * date, an undated one in no past day; a flag the engine never dates (bounced, unsubscribed, delivered) stands from the
- * entry. A last send after the day stands on the first send (the last one by then is not on the row). Null = not in
- * scope yet, or never dated.
- */
-export function engineAsOf(person: EnginePerson, endMs: number): EnginePerson | null {
-  const served = msOf(person.servedAt ?? null);
-  const firstSend = msOf(person.signalDates?.contacted ?? null);
-  const entries = [served, firstSend].filter((t): t is number => t !== null);
-  if (entries.length === 0) return null;
-  const entry = Math.min(...entries);
-  if (entry > endMs) return null;
-  const servedAt = served !== null && served <= endMs ? person.servedAt! : new Date(entry).toISOString();
-  const signals: Record<string, boolean> = {};
-  const signalDates: Record<string, string | null> = { ...(person.signalDates ?? {}) };
-  for (const [key, on] of Object.entries(person.signals)) {
-    if (!on) {
-      signals[key] = false;
-      continue;
-    }
-    if (!DATED_SIGNALS.has(key)) {
-      signals[key] = true;
-      continue;
-    }
-    const at = msOf(person.signalDates?.[key] ?? null);
-    signals[key] = at !== null && at <= endMs;
-    if (!signals[key]) signalDates[key] = null;
-  }
-  const lastSent = msOf(person.signalDates?.lastSent ?? null);
-  if (lastSent !== null && lastSent > endMs) signalDates.lastSent = firstSend !== null && firstSend <= endMs ? person.signalDates!.contacted! : null;
-  const crm = msOf(person.crmPositiveReplyAt ?? null);
-  return {
-    ...person,
-    servedAt,
-    signals,
-    signalDates,
-    crmPositiveReplyAt: crm !== null && crm <= endMs ? (person.crmPositiveReplyAt ?? null) : null,
-  };
-}
-
 /** One (campaign, run-start UTC day) of a pair's channel spend on the four bases, cents. */
 export interface PairSpendDay {
   campaignId: string | null;
   day: string;
-  /** Net billed, committed (the ROI floor's basis: what the client paid). */
+  /** Net billed, committed (what the client paid; printed by the run's population check). */
   netCents: number;
   /** Billed, comped rows included (the engaged lead read's coverage basis). */
   grossIncurredCents: number;
@@ -107,107 +37,6 @@ export interface PairSpendDay {
   /** The population check: each read's own charged gross total of the same rows (vendor read, billed read). */
   checkVendorReadCents: number;
   checkBilledReadCents: number;
-}
-
-/** One (org, brand) pass as of one day: the ingredients one brand row of the return median composes. */
-export interface PairReturnDay {
-  maturePipelineUsd: number | null;
-  matureNetUsd: number;
-  matureVendorUsd: number;
-  matureUnpricedUsd: number;
-  isMature: boolean | null;
-}
-
-/**
- * PURE. A pair's ROI ingredients on each of `days` (the last may be today: `todayDay`, priced on the captured inputs
- * untouched). `capture` null = the live pass priced nothing (no economics): no pipeline, no verdict.
- */
-export function replayPairReturn(capture: EngineCapture | null, spend: readonly PairSpendDay[], days: readonly string[], todayDay: string): PairReturnDay[] {
-  const legOf = new Map((capture?.campaigns ?? []).map((c) => [c.id, c.legKey] as const));
-  return days.map((day) => {
-    const endMs = endOfDayMs(day);
-    const isToday = day === todayDay;
-    const now = isToday ? null : new Date(`${day}T12:00:00.000Z`);
-    const plan = capture && !isToday && capture.plan.cutoffIso ? { ...capture.plan, cutoffIso: maturityCutoffIso(capture.plan.days, now!) } : capture?.plan;
-    const matureCut = Boolean(capture?.matureCut && plan?.cutoffIso);
-    const cutoffDay = matureCut ? plan!.cutoffIso!.slice(0, 10) : null;
-    let net = 0;
-    let vendor = 0;
-    let unpriced = 0;
-    for (const s of spend) {
-      if (s.day > day) continue;
-      const waits = cutoffDay !== null && s.campaignId !== null && plan!.delayedCampaignIds.has(s.campaignId);
-      if (cutoffDay !== null && s.day >= cutoffDay && waits) continue;
-      net += s.netCents;
-      vendor += s.vendorCents;
-      unpriced += s.unpricedCents;
-    }
-    const base = { matureNetUsd: net / 100, matureVendorUsd: vendor / 100, matureUnpricedUsd: unpriced / 100 };
-    if (!capture) return { ...base, maturePipelineUsd: null, isMature: null };
-    const persons = isToday ? capture.persons : capture.persons.map((p) => engineAsOf(p, endMs)).filter((p): p is EnginePerson => p !== null);
-    const contacted = capture.contacted && !isToday ? { ...capture.contacted, lastSentOnOrAfter: contactedExpiryCutoffIso(new Date(endMs)) } : capture.contacted;
-    const maturePersons = matureCut ? matureCohortPersons(persons, plan!) : persons;
-    const maturePipelineUsd = computeRevenue(capture.paths, maturePersons, capture.closeValueUsd, capture.milestones, contacted).headline.totalPipelineUsd;
-    // The verdict as of the day: the scope's legs on the persons and the net spend split by then (`fetchSpendSplit`'s
-    // per-leg cut, read at that day's clock).
-    let isMature: boolean | null = null;
-    if (capture.campaigns !== null && !capture.plan.unknown) {
-      const split = new Map<string, { flash: number; mature: number }>();
-      for (const s of spend) {
-        if (s.day > day) continue;
-        const key = campaignKey(s.campaignId);
-        const cutoff = legCutoffIso(s.campaignId ? legOf.get(s.campaignId) : null, now ?? new Date());
-        const entry = split.get(key) ?? { flash: 0, mature: 0 };
-        entry.flash += s.netCents;
-        if (!cutoff || s.day < cutoff.slice(0, 10)) entry.mature += s.netCents;
-        split.set(key, entry);
-      }
-      const spendSplit = new Map<string, SpendSplit>([...split].map(([k, v]) => [k, { flash: v.flash.toFixed(10), mature: v.mature.toFixed(10) }]));
-      isMature = buildScopeMaturity({
-        campaigns: capture.campaigns,
-        persons,
-        spend: spendSplit,
-        serveDatesStated: serveDatesStated(persons),
-        ...(now ? { now } : {}),
-      }).isMature;
-    }
-    return { ...base, maturePipelineUsd, isMature };
-  });
-}
-
-/** One brand's pairs, day by day, composed as the fleet-return warm composes them (pipelines and spend summed). */
-export function brandReturnRowsOn(pairs: ReadonlyArray<{ brandId: string; days: readonly PairReturnDay[] }>, dayIndex: number): BrandReturnRow[] {
-  const byBrand = new Map<string, { pipeline: number; hasPipeline: boolean; net: number; vendor: number; unpriced: number; verdicts: Array<boolean | null> }>();
-  for (const p of pairs) {
-    const d = p.days[dayIndex];
-    if (!d) continue;
-    const agg = byBrand.get(p.brandId) ?? { pipeline: 0, hasPipeline: false, net: 0, vendor: 0, unpriced: 0, verdicts: [] };
-    if (d.maturePipelineUsd !== null) {
-      agg.pipeline += d.maturePipelineUsd;
-      agg.hasPipeline = true;
-    }
-    agg.net += d.matureNetUsd;
-    agg.vendor += d.matureVendorUsd;
-    agg.unpriced += d.matureUnpricedUsd;
-    agg.verdicts.push(d.isMature);
-    byBrand.set(p.brandId, agg);
-  }
-  return [...byBrand].map(([brandId, a]) => ({
-    brandId,
-    committedSpendUsd: a.net,
-    expectedPipelineUsd: a.hasPipeline ? a.pipeline : null,
-    isMature: combineVerdicts(a.verdicts) ?? null,
-    vendorSpend: { flashUsd: a.vendor, matureUsd: a.vendor, unpricedFlashUsd: a.unpriced, unpricedMatureUsd: a.unpriced },
-  }));
-}
-
-/** The owner's ROI bar (« la médiane des clients ayant dépensé au moins $100 »), the live index's. */
-export const CLIENT_RETURN_MIN_SPEND_USD = 100;
-
-/** PURE. The ROI index point of one day from its brand rows (the live `readFleetVendorReturn` rule). */
-export function roiPointOn(rows: readonly BrandReturnRow[]): FleetIndexPoint {
-  const r = vendorReturnMedian(rows, CLIENT_RETURN_MIN_SPEND_USD);
-  return clientReturnPoint({ ...r, minSpendUsd: CLIENT_RETURN_MIN_SPEND_USD });
 }
 
 // ── COST PER ENGAGED LEAD ─────────────────────────────────────────────────────────────────────────

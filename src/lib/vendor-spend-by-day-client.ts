@@ -1,7 +1,7 @@
 /**
  * ONE SCOPE'S dated spend on the VENDOR basis — what running it really cost us, before our markup.
- * The staff-only twin of `fetchBrandCommittedSpendByDay` (lib/actual-cost-history.ts says why it is
- * never reachable from a customer read).
+ * The staff-only twin of `fetchBrandCommittedSpendByDay` (never reachable from a customer read: the
+ * vendor figure is our margin).
  *
  * Reads runs-service `GET /internal/stats/costs/timeseries/vendor` — SERVICE-AUTH, and deliberately
  * not the no-auth public timeseries the billed curve reads, because the vendor figure is our margin.
@@ -22,6 +22,9 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import type { CampaignFilter } from "./campaign-scope.js";
+import type { FeatureScope } from "./feature-scope.js";
+import type { Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignScopeIds } from "./campaign-scope.js";
 import { pipeRunsScope } from "./pipe-spend-attribution.js";
@@ -29,7 +32,33 @@ import { featureSlugsParam, runsFeatureSlugsParam } from "./feature-scope.js";
 import { sumOverMembers } from "./dynasty-merges.js";
 import { fetchDynastyMerges } from "./public-stats-clients.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST, SPEND_BY_DAY_MEMBER_CONCURRENCY } from "./brand-spend-by-day-client.js";
-import type { DatedSpendReader, VendorSpendDay } from "./actual-cost-history.js";
+
+/**
+ * The dated-spend source `computeFeatureRevenue` draws the return curve's spend leg from. Default:
+ * the billed committed spend (`fetchBrandCommittedSpendByDay`). Same signature, so a vendor-basis
+ * reader drops in without the compute knowing which basis it is drawing.
+ *
+ * @returns Map<YYYY-MM-DD, spend in USD that day>. An absent day is zero spend.
+ */
+export type DatedSpendReader = (
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureScope: FeatureScope,
+  headers: { orgId: string },
+  pricing: Pricing,
+  workflowDynastySlug?: string,
+  startedAfter?: string,
+) => Promise<Map<string, number>>;
+
+/** One day of a scope's dated spend on the VENDOR basis. */
+export interface VendorSpendDay {
+  /** Vendor cost of the rows whose vendor cost is known, in USD. */
+  vendorUsd: number;
+  /** BILLED spend of the rows whose vendor cost is NOT known, in USD. 0 when every row is priced. */
+  unpricedBilledUsd: number;
+  /** The cost names behind `unpricedBilledUsd`, as runs-service states them. */
+  unpricedCostNames: string[];
+}
 
 /** The committed + comped rows' vendor cost, and the billed amount of those we could not price. */
 const VENDOR_FIELDS = ["vendorTotalCostInUsdCents", "vendorRefundedCostInUsdCents"] as const;
@@ -139,59 +168,6 @@ async function fetchBrandVendorSpendByDayFor(
   const byDay = new Map<string, VendorSpendDay>();
   for (const part of parts) {
     for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
-  }
-  return byDay;
-}
-
-/**
- * The FLEET twin: one workflow dynasty's dated vendor spend across EVERY org and brand of a feature —
- * the spend leg of the staff-only fleet per-workflow curve (`lib/fleet-workflow-return.ts`). Same
- * producer route and same fields as the per-brand read above, with no org / brand filter.
- */
-export async function fetchDynastyVendorSpendByDay(
-  featureSlug: string,
-  workflowDynastySlug: string,
-  // LEG scope, as on the billed twin: absent → the whole fleet (byte-identical), empty → nothing spent.
-  campaignIds?: string[],
-): Promise<Map<string, VendorSpendDay>> {
-  // runs-service resolves the dynasty itself and cannot see a merge (lib/dynasty-merges.ts): one read per member, summed.
-  return sumOverMembers(workflowDynastySlug, await fetchDynastyMerges(featureSlug), async (member) => {
-    if (campaignIds === undefined) return fetchDynastyVendorChunk(featureSlug, member, undefined);
-    const byDay = new Map<string, VendorSpendDay>();
-    for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-      const part = await fetchDynastyVendorChunk(featureSlug, member, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST));
-      for (const [day, v] of part) byDay.set(day, merge(byDay.get(day), v));
-    }
-    return byDay;
-  }, merge);
-}
-
-async function fetchDynastyVendorChunk(
-  featureSlug: string,
-  workflowDynastySlug: string,
-  campaignIds: string[] | undefined,
-): Promise<Map<string, VendorSpendDay>> {
-  const url = process.env.RUNS_SERVICE_URL;
-  const apiKey = process.env.RUNS_SERVICE_API_KEY;
-  if (!url || !apiKey) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
-  const params = new URLSearchParams({ interval: "day", featureSlugs: runsFeatureSlugsParam(featureSlug), workflowDynastySlug });
-  if (campaignIds) params.set("campaignIds", campaignIds.join(","));
-  const response = await fetchWithRetry(`${url}/internal/stats/costs/timeseries/vendor?${params}`, {
-    headers: { "x-api-key": apiKey },
-  });
-  if (!response.ok) {
-    throw new Error(`runs-service /internal/stats/costs/timeseries/vendor failed (${response.status}): ${await response.text()}`);
-  }
-  const data = (await response.json()) as { buckets?: Array<Record<string, unknown>> };
-  if (!Array.isArray(data.buckets)) throw new Error("runs-service vendor timeseries returned no buckets array");
-  const byDay = new Map<string, VendorSpendDay>();
-  for (const bucket of data.buckets) {
-    if (typeof bucket.period !== "string") throw new Error("runs-service vendor timeseries bucket missing period");
-    const day = bucket.period.slice(0, 10);
-    const vendor = VENDOR_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
-    const unpriced = UNPRICED_FIELDS.reduce((s, f) => s + cents(bucket, f), 0) / 100;
-    const names = Array.isArray(bucket.unpricedCostNames) ? bucket.unpricedCostNames.filter((n): n is string => typeof n === "string") : [];
-    byDay.set(day, merge(byDay.get(day), { vendorUsd: vendor, unpricedBilledUsd: unpriced, unpricedCostNames: names }));
   }
   return byDay;
 }

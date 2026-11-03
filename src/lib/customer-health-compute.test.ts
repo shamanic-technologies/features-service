@@ -105,7 +105,7 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
       positiveReplies: 0,
     },
     metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null, cpsaleCents: null },
-    projection: { costPerPaidClientUsd: null, returnPerDollar: null, costOfAcquisitionPct: null },
+    projection: { costPerPaidClientUsd: null },
   };
 }
 
@@ -121,8 +121,6 @@ function audienceEnvelope(brandId: string, rows: AudienceStatsRow[]): AudienceSt
     brandProjection: {
       lifetimeRevenueUsd: null,
       costPerPaidClientUsd: null,
-      returnPerDollar: null,
-      costOfAcquisitionPct: null,
     },
   };
 }
@@ -155,8 +153,6 @@ function wfRow(slug: string, name: string | null, cost: number | null, grain: "c
       costPerPaidClientUsd: cost,
       costPerMeetingBookedUsd: null,
       conversionRatePct: null,
-      roiMultiple: null,
-      cacPct: null,
     },
   };
 }
@@ -180,7 +176,7 @@ function makeDeps(fixtures: {
     economics: SalesEconomics | null;
     funnels: SalesFunnelKey[];
     counts?: ConversionCounts;
-    revenue?: { committedCostUsd?: number; actualCostUsd: number; expectedPipelineUsd: number | null; roiMultiple: number | null; cacPct: number | null };
+    revenue?: { committedCostUsd?: number; actualCostUsd: number; cacPct: number | null };
     audiences?: AudienceStatsRow[];
     /** human-service's pool per active audience: [sizeCount, availableToContactCount]. null = unreadable. Absent = no active audiences. */
     pool?: Record<string, [number, number]> | null;
@@ -309,7 +305,7 @@ describe("buildCustomerHealthBoard", () => {
           economics: econ(100),
           funnels: ["website_purchases"],
           counts: { signup: 5, meeting_booked: 0, form_submission: 0, sale: 0 },
-          revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 },
+          revenue: { actualCostUsd: 50, cacPct: 50 },
           audiences: [audienceRow("aud1", 100, 20, 500), audienceRow("aud2", 50, 40, 800)],
           pool: { aud1: [100, 80], aud2: [50, 10] },
           workflow: [wfRow("wf-x", "Workflow X", 5, "brand"), wfRow("wf-y", "Workflow Y", 9, "crossOrg")],
@@ -325,11 +321,12 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.lastActiveDay).toBe("2026-07-14");
     expect(row.retentionWeeks).toBe(4);
 
-    // economics coherence: breakeven = LTR = 100; currentCac = cacPct/100 * LTR = 50; roi passthrough
+    // economics coherence: breakeven = LTR = 100; currentCac = cacPct/100 * LTR = 50; no return served (ROI-CONSISTENCY-1103)
     expect(row.breakevenCacUsd).toBe(100);
     expect(row.ltrUsd).toBe(100);
     expect(row.currentEconomics.currentCacUsd).toBe(50);
-    expect(row.currentEconomics.roiMultiple).toBe(2);
+    expect(row.currentEconomics).not.toHaveProperty("roiMultiple");
+    expect(row.currentEconomics).not.toHaveProperty("expectedPipelineUsd");
     expect(row.currentEconomics.cacPct).toBe(50);
     expect(row.currentEconomics.realizedSpendUsd).toBe(50);
 
@@ -349,7 +346,7 @@ describe("buildCustomerHealthBoard", () => {
 
     // health
     expect(row.health.badge).toBe("green");
-    expect(row.health.inputs.roiHealthy).toBe(true);
+    expect(row.health.inputs).not.toHaveProperty("roiHealthy");
     expect(row.health.inputs.audienceNearExhausted).toBe(false);
     expect(row.health.inputs.audienceNearExhaustedThresholdPct).toBe(AUDIENCE_NEAR_EXHAUSTED_PCT);
 
@@ -369,7 +366,7 @@ describe("buildCustomerHealthBoard", () => {
         blv: {
           economics: econ(100),
           funnels: ["website_purchases"],
-          revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 },
+          revenue: { actualCostUsd: 50, cacPct: 50 },
           audiences: [audienceRow("swiss", 248, 248, 500)],
           pool: { swiss: [609, 361] },
         },
@@ -391,7 +388,7 @@ describe("buildCustomerHealthBoard", () => {
         bsw: {
           economics: econ(100),
           funnels: ["website_purchases"],
-          revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 },
+          revenue: { actualCostUsd: 50, cacPct: 50 },
           audiences: [audienceRow("a", 40, 12, 500)],
           pool: { a: [116, 0], b: [66, 0] },
         },
@@ -411,7 +408,7 @@ describe("buildCustomerHealthBoard", () => {
         bu: {
           economics: econ(100),
           funnels: ["website_purchases"],
-          revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 },
+          revenue: { actualCostUsd: 50, cacPct: 50 },
           audiences: [audienceRow("a", 10, 10, 500)],
           pool: null,
         },
@@ -423,7 +420,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.health.inputs.audienceNearExhausted).toBe(false);
   });
 
-  it("YELLOW when active but ROI<1 OR audience near-exhausted; RED when paused/inactive; ordering active-first then recency", async () => {
+  it("YELLOW only when active with the audience near-exhausted (no return enters the badge); RED when paused/inactive; ordering active-first then recency", async () => {
     const deps = makeDeps({
       accounts: [
         account({ orgId: "b", brandId: "bb", status: "active", runningDailyBudgetUsd: 50 }),
@@ -434,25 +431,25 @@ describe("buildCustomerHealthBoard", () => {
       ],
       recencies: [recency("b", "2026-07-10"), recency("c", "2026-07-12"), recency("d", "2026-07-05")],
       perBrand: {
-        // active, ROI<1 → yellow
+        // active, audience fine → green whatever the cost (ROI-CONSISTENCY-1103: no return in the badge)
         bb: {
           economics: econ(100),
           funnels: ["website_purchases"],
-          revenue: { actualCostUsd: 200, expectedPipelineUsd: 100, roiMultiple: 0.5, cacPct: 200 },
+          revenue: { actualCostUsd: 200, cacPct: 200 },
           audiences: [audienceRow("x", 100, 10, 300)],
           workflow: [wfRow("wf", "WF", 3, "crossOrg")],
         },
-        // active, ROI ok but audience near-exhausted (pctUsed 90) → yellow
+        // active, audience near-exhausted (pctUsed 90) → yellow
         bc: {
           economics: econ(100),
           funnels: ["website_purchases"],
-          revenue: { actualCostUsd: 50, expectedPipelineUsd: 200, roiMultiple: 4, cacPct: 25 },
+          revenue: { actualCostUsd: 50, cacPct: 25 },
           audiences: [audienceRow("y", 100, 90, 300)],
           pool: { y: [100, 10] },
           workflow: [],
         },
         // paused → red
-        bd: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+        bd: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, audiences: [] },
         // inactive, no economics → red
         be: { economics: null, funnels: [] },
       },
@@ -462,14 +459,13 @@ describe("buildCustomerHealthBoard", () => {
     expect(board.customers.map((c) => c.brandId)).toEqual(["bc", "bb", "bd", "be"]);
 
     const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
-    expect(byId.bb.health.badge).toBe("yellow"); // ROI<1
-    expect(byId.bb.health.inputs.roiHealthy).toBe(false);
+    expect(byId.bb.health.badge).toBe("green"); // a high cost is no longer a yellow
     expect(byId.bc.health.badge).toBe("yellow"); // audience near-exhausted
     expect(byId.bc.health.inputs.audienceNearExhausted).toBe(true);
     expect(byId.bd.health.badge).toBe("red"); // paused
     expect(byId.be.health.badge).toBe("red"); // inactive
 
-    expect(board.stats).toMatchObject({ totalCustomers: 4, activeCount: 2, pausedCount: 1, inactiveCount: 1, yellowCount: 2, redCount: 2, greenCount: 0 });
+    expect(board.stats).toMatchObject({ totalCustomers: 4, activeCount: 2, pausedCount: 1, inactiveCount: 1, yellowCount: 1, redCount: 2, greenCount: 1 });
   });
 
   it("no priced economics (the offer states no lifetime revenue) → all economics-derived fields null (never an averaged ROI); revenue engine not called", async () => {
@@ -486,7 +482,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.breakevenCacUsd).toBeNull();
     expect(row.ltrUsd).toBeNull();
     expect(row.economics).toBeNull();
-    expect(row.currentEconomics).toEqual({ committedSpendUsd: null, realizedSpendUsd: null, expectedPipelineUsd: null, currentCacUsd: null, roiMultiple: null, cacPct: null });
+    expect(row.currentEconomics).toEqual({ committedSpendUsd: null, realizedSpendUsd: null, currentCacUsd: null, cacPct: null });
     // The website-purchase funnel converts on the CLIENT's site, so it DOES need a tracker there — and
     // with no observed conversions the tracker reads not-firing (0), never null.
     expect(row.conversionTracker.needed).toBe(true);
@@ -496,8 +492,8 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.audiences.totalSize).toBe(100);
     // a declared funnel IS present, so bestAudience is picked
     expect(row.bestAudience?.audienceId).toBe("z");
-    // ROI unknown + active → yellow (not green)
-    expect(row.health.badge).toBe("yellow");
+    // Active with a healthy audience → green: no return enters the badge (ROI-CONSISTENCY-1103).
+    expect(row.health.badge).toBe("green");
   });
 
   it("prices each row on its OWN org's offer terms — a brand id is shared across every org claiming the domain", async () => {
@@ -543,7 +539,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(row.primarySalesFunnel).toBeNull();
     expect(row.salesFunnels).toEqual([]);
     expect(row.economics).toBeNull();
-    expect(row.currentEconomics.roiMultiple).toBeNull();
+    expect(row.currentEconomics.cacPct).toBeNull();
     expect(row.bestAudience).toBeNull();
     expect(row.bestWorkflow).toBeNull();
   });
@@ -559,9 +555,9 @@ describe("buildCustomerHealthBoard", () => {
       recencies: [recency("p", "2026-07-10"), recency("q", "2026-07-11")],
       perBrand: {
         // full history both columns
-        bp: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, budgetHistory: budget, pauseHistory: pause },
+        bp: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, budgetHistory: budget, pauseHistory: pause },
         // billing degrades → budgetChangeHistory null; campaign ok → pauseHistory empty array
-        bq: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, budgetHistoryThrow: true },
+        bq: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, budgetHistoryThrow: true },
       },
     });
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
@@ -572,7 +568,7 @@ describe("buildCustomerHealthBoard", () => {
     expect(byId.bq.notTrackedYet.budgetChangeHistory).toBeNull();
     expect(byId.bq.notTrackedYet.pauseHistory).toEqual([]);
     // a billing blip must not degrade the row's economics
-    expect(byId.bq.currentEconomics.roiMultiple).toBe(10);
+    expect(byId.bq.currentEconomics.cacPct).toBe(10);
   });
 
   it("tracker firing=false when a NEEDED tracker observes zero conversions", async () => {
@@ -584,7 +580,7 @@ describe("buildCustomerHealthBoard", () => {
           economics: econ(100),
           funnels: ["form_magnet"],
           counts: { signup: 0, meeting_booked: 0, form_submission: 0, sale: 0 },
-          revenue: { actualCostUsd: 10, expectedPipelineUsd: 50, roiMultiple: 5, cacPct: 20 },
+          revenue: { actualCostUsd: 10, cacPct: 20 },
           audiences: [],
         },
       },
@@ -612,8 +608,8 @@ describe("buildCustomerHealthBoard", () => {
       ],
       recencies: [recency("i", "2026-07-14"), recency("j", "2026-07-13")],
       perBrand: {
-        bi: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
-        bj: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+        bi: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, audiences: [] },
+        bj: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, audiences: [] },
       },
       dashboardReturns: new Map([["org_i", signal]]),
     });
@@ -630,7 +626,7 @@ describe("buildCustomerHealthBoard", () => {
     const deps = makeDeps({
       accounts: [account({ orgId: "k", brandId: "bk", status: "active" })],
       recencies: [recency("k", "2026-07-11")],
-      perBrand: { bk: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] } },
+      perBrand: { bk: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, audiences: [] } },
       dashboardReturnsThrow: true,
     });
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, deps);
@@ -647,7 +643,7 @@ describe("buildCustomerHealthBoard", () => {
       recencies: [recency("m", "2026-07-14"), recency("n", "2026-07-13")],
       perBrand: {
         bm: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], audiences: [] },
-        bn: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, expectedPipelineUsd: 100, roiMultiple: 10, cacPct: 10 }, audiences: [] },
+        bn: { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 10, cacPct: 10 }, audiences: [] },
       },
     });
     // A real (non-BrandOwnershipError) downstream failure for brand bm — e.g. a revenue composite whose
@@ -664,12 +660,12 @@ describe("buildCustomerHealthBoard", () => {
     const byId = Object.fromEntries(board.customers.map((c) => [c.brandId, c]));
     // Degraded row: still listed with identity + status, economics-derived enrichment nulled.
     expect(byId.bm.status).toBe("active");
-    expect(byId.bm.currentEconomics.roiMultiple).toBeNull();
+    expect(byId.bm.currentEconomics.cacPct).toBeNull();
     // The failure is NAMED on the row, never a blank that reads as "no data".
     expect(byId.bm.unreadParts).toEqual([{ part: "revenue", reason: "downstream revenue 503" }]);
     // Healthy sibling unaffected — full enrichment.
     expect(byId.bn.unreadParts).toEqual([]);
-    expect(byId.bn.currentEconomics.roiMultiple).toBe(10);
+    expect(byId.bn.currentEconomics.cacPct).toBe(10);
     expect(byId.bn.health.badge).toBe("green");
     // Fleet stats still computed over ALL rows.
     expect(board.stats.totalCustomers).toBe(2);
@@ -712,7 +708,7 @@ describe("buildCustomerHealthBoard — one org's unreadable billing payment-outl
       perBrand: Object.fromEntries(
         memberships.map((m) => [
           m.brandId,
-          { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 50, expectedPipelineUsd: 100, roiMultiple: 2, cacPct: 50 } },
+          { economics: econ(100), funnels: ["website_purchases"] as SalesFunnelKey[], revenue: { actualCostUsd: 50, cacPct: 50 } },
         ]),
       ),
     });
@@ -831,11 +827,11 @@ describe("SHOCKWAVE-ROI-NET-1016: the board's ROI is the brand page's NET ROI", 
     const r = await boardBrandRevenue("brand-sw", "org-sw");
     expect(brandRevenueForOrg).toHaveBeenCalledWith("brand-sw", "org-sw", "net");
     expect(r.committedCostUsd).toBe(684.15);
-    expect(r.expectedPipelineUsd).toBe(1535.39);
-    expect(r.roiMultiple).toBeCloseTo(2.244, 3);
+    expect(r.cacPct).toBeCloseTo(44.56, 2);
+    expect(r).not.toHaveProperty("roiMultiple");
   });
 
-  it("a failing best-workflow read (email-gateway timeout) no longer blanks the ROI beside it, and is named", async () => {
+  it("a failing best-workflow read (email-gateway timeout) no longer blanks the economics beside it, and is named", async () => {
     const deps = makeDeps({
       accounts: [account({ orgId: "s", brandId: "bs", status: "active" })],
       recencies: [recency("s", "2026-07-14")],
@@ -843,7 +839,7 @@ describe("SHOCKWAVE-ROI-NET-1016: the board's ROI is the brand page's NET ROI", 
         bs: {
           economics: econ(2500),
           funnels: ["sales_meetings_from_conversation"] as SalesFunnelKey[],
-          revenue: { actualCostUsd: 684.15, expectedPipelineUsd: 1535.39, roiMultiple: 2.244, cacPct: 44.6 },
+          revenue: { actualCostUsd: 684.15, cacPct: 44.6 },
           audiences: [],
         },
       },
@@ -857,7 +853,7 @@ describe("SHOCKWAVE-ROI-NET-1016: the board's ROI is the brand page's NET ROI", 
     };
     const board = await buildCustomerHealthBoard(COLD_CSV, NOW, wrapped);
     const row = board.customers[0];
-    expect(row.currentEconomics.roiMultiple).toBe(2.244);
+    expect(row.currentEconomics.cacPct).toBe(44.6);
     expect(row.bestWorkflow).toBeNull();
     expect(row.unreadParts).toEqual([{ part: "best_workflow", reason: timeout }]);
   });

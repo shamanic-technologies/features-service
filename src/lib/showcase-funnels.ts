@@ -17,10 +17,10 @@
  * same route into a way to read any brand's funnel with no session at all. That property is unchanged.
  *
  * WHAT CHANGED IS WHO DECIDES THE LIST. It used to be a frozen constant of three brand ids, curated by
- * hand and therefore ageing in public exactly as the numbers did. It is now TWO RANKINGS this service
- * computes — the most recently begun clients that have produced an outcome, and the best measured
- * return on spend past a floor — both of them in `lib/showcase-clients.ts`, both off the persisted
- * fleet snapshot, and neither of them reachable by a caller. The page refreshes on its own and nobody
+ * hand and therefore ageing in public exactly as the numbers did. It is now A RANKING this service
+ * computes — the most recently begun clients that have produced an outcome — in
+ * `lib/showcase-clients.ts`, off the persisted fleet snapshot, and not reachable by a caller (the
+ * best-return group is deleted, ROI-CONSISTENCY-1103: a return exists only where a value lands). The page refreshes on its own and nobody
  * adds a client by hand.
  *
  * ── THE PAGE DIVIDES NOTHING, AND "WE HAVE NO FIGURE" IS SAID OUT LOUD ──────────────────────────
@@ -32,36 +32,14 @@
  * marketing page it reads as a fact about the client rather than as a gap in our own reading. The
  * same rule governs every money figure below: `null` is the gap, `0` is a measurement.
  *
- * ── THE MONEY HALF IS THE SAME PASS, AND IT IS THE CLIENT'S OWN NUMBER ──────────────────────────
+ * ── THE MONEY HALF IS THE SAME PASS ─────────────────────────────────────────────────────────────
  *
- * The page also states, under each client, what they got back on the budget they paid and what one
- * outcome of their funnel cost them. Those two were read out of production by hand and pasted in as
- * literals exactly as the counts were, so they age in public the same way.
+ * The page also states what one outcome of the client's funnel cost: `costPerReachUsd`, that rung's
+ * COMMITTED spend over the people who reached it — OBSERVED accounting, never floored to a benchmark,
+ * which is what `FunnelStep.costPerReachCents` already means. It rides EVERY rung including the
+ * outreach base, on the identical formula. No return is served here (ROI-CONSISTENCY-1103).
  *
- * Both fall out of the engine pass the counts already cost, with no extra read of anything:
- *
- *   - `returnPerDollar` is `costEconomics.roiMultiple` for the funnel-narrowed read — expected
- *     pipeline over COMMITTED spend, the byte-same statistic the client's own revenue
- *     read states when priced on that funnel. So a showcase figure and the customer's own screen can
- *     never disagree, and it is emphatically NOT the forward `returnPerDollar` projection the
- *     channel-funnel economics publishes (an order apart in production — see `fleet-funnel-return.ts`).
- *   - `costPerReachUsd` is that rung's COMMITTED spend over the people who reached it — OBSERVED
- *     accounting, never floored to a benchmark, which is what `FunnelStep.costPerReachCents` already
- *     means. It rides EVERY rung including the outreach base, on the identical formula, so a consumer
- *     renders "cost per meeting booked" for one client and "cost per website visit" for another
- *     without knowing which rung to ask for and without a branch for the base.
- *
- * BOTH ARE READ ON THE **NET** PRICING BASIS — what the client ACTUALLY PAID after whatever per-org
- * usage discount they carry — and that is what makes the "byte-same as their own dashboard" claim
- * above TRUE rather than aspirational. Every consumer-facing dashboard surface in the fleet reads
- * `pricing=net`, so a GROSS figure here would publish a number no client has ever seen on a screen
- * they own: measured in prod 2026-09-10, one showcase client read 9.386x gross against 18.324x net
- * and another 1.828x against 3.481x, with the same factor on every `costPerReachUsd` rung. A client
- * carrying no discount has a frozen net equal to its gross per cost row, so it is byte-unchanged —
- * which is also the regression check that nothing else moved. NET is read off runs-service's FROZEN
- * net twin on the same cost read (zero extra IO, no discount fetch, no multiply here) and FAILS LOUD
- * when the twin is absent: there is deliberately no fall back to gross, because a silent basis swap
- * is exactly the two-numbers-under-one-word bug this basis exists to close.
+ * Read at real VENDOR cost, before our markup (PUBLIC-VENDOR-COST-1031); the counts are untouched.
  *
  * Served in DOLLARS, not cents, because the consumer divides nothing: a figure it has to scale is a
  * figure it can scale wrongly, and the two surfaces would then state one number two ways.
@@ -86,8 +64,6 @@
  */
 import { salesFunnelIndex, type SalesFunnelKey } from "./sales-funnels.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
-import type { CostEconomics } from "./cost-economics.js";
-import { servedReturnOf } from "./served-return.js";
 import type { ShowcaseGroupUnmeasuredReason } from "./showcase-clients.js";
 
 /** The key + label of the outreach base — a step of no funnel, and the base every funnel converts from. */
@@ -129,20 +105,6 @@ export interface ShowcaseFunnel {
   funnelKey: SalesFunnelKey;
   /** The funnel's own name, so a consumer renders the chain without holding the catalogue. */
   funnelName: string;
-  /**
-   * WHAT A DOLLAR THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over COMMITTED
-   * spend, i.e. the half of `costEconomics.maturity` the client's dashboard states (`servedReturnOf`: the
-   * HIGHER of flash and mature, owner 2026-10-08) for the funnel-narrowed read, on the **NET** pricing basis
-   * (what the client actually paid after their usage discount). The byte-same statistic the client
-   * reads as ROI on their own dashboard — which reads net too — so the two surfaces cannot state two
-   * numbers.
-   *
-   * `null` is "we could not measure this": nothing was spent on the funnel, or the brand states no
-   * economics to price its pipeline with. A measured `0` — real spend, no pipeline yet — is a
-   * different answer and stays a `0`, so a consumer can leave the unmeasurable one blank rather than
-   * print a number nobody stands behind.
-   */
-  returnPerDollar: number | null;
   /** The rungs, first to last, the outreach base first. Never pruned — an empty rung is still a rung. */
   steps: ShowcaseFunnelStep[];
 }
@@ -203,10 +165,8 @@ export interface ShowcaseGroup {
 /**
  * The payload.
  *
- * `brands` is the DEDUPED UNION of both groups — the field the existing consumer already reads, in an
- * unchanged shape, so it keeps rendering while it moves onto the groups. A client picked by both
- * questions appears ONCE here and in BOTH groups: a group is an answer to its own question, not a
- * slice of one list.
+ * `brands` is the clients the group names — the field the existing consumer already reads, in an
+ * unchanged shape.
  */
 export interface ShowcaseFunnelsPayload {
   /** Every money figure is at real VENDOR cost, before our markup (PUBLIC-VENDOR-COST-1031). */
@@ -215,15 +175,7 @@ export interface ShowcaseFunnelsPayload {
   groups: {
     /** Most recently begun clients that have produced at least one outcome, newest first. */
     recentlyStarted: ShowcaseGroup;
-    /** Best measured return on spend past `minSpendUsd`, best first. */
-    highestReturn: ShowcaseGroup;
   };
-  /**
-   * The spend floor the `highestReturn` ranking was taken over, in USD — stated because a ranking
-   * whose population a reader cannot see is a ranking they cannot check. Below it a return is whatever
-   * that client's first outcome happened to do (measured in prod: 21.5x on $4.12 of spend).
-   */
-  minSpendUsd: number;
 }
 
 /**
@@ -241,19 +193,10 @@ export function brandReadingFunnels(reading: ReadonlyArray<{ funnelKey: SalesFun
  * page states first ("12,307 contacted"). It is REACH — bounced and unsubscribed people included —
  * which is what `contactedRecipients` already means: they were emailed and they were paid for.
  */
-export function showcaseFunnelOf(
-  breakdown: FunnelStepBreakdown,
-  /**
-   * The funnel-narrowed read's OWN economics block, whose `maturity` pair holds the return. Absent on a
-   * path that produced none — the return is then `null`, never a substituted figure.
-   */
-  costEconomics?: Pick<CostEconomics, "maturity"> | null,
-): ShowcaseFunnel {
+export function showcaseFunnelOf(breakdown: FunnelStepBreakdown): ShowcaseFunnel {
   return {
     funnelKey: breakdown.funnelKey,
     funnelName: breakdown.name,
-    // The return the client's dashboard states: the HIGHER half of the pair (`servedReturnOf`).
-    returnPerDollar: costEconomics ? servedReturnOf(costEconomics.maturity).roiMultiple : null,
     steps: [
       {
         key: SHOWCASE_CONTACTED_KEY,

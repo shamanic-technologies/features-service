@@ -31,9 +31,8 @@
  *                       price with. A rate the brand never declared leaves it null, never 0.
  *   valueUsd            PRICED outcomes × valuePerOutcomeUsd — only the outcomes we caused are priced
  *                       (`?cause=`, default `outreach`), as on every other money surface.
- *   roiMultiple         value ÷ spend on the MATURE COHORT (`lib/maturity.ts`): a campaign on a
- *                       21-day leg counts only the spend of runs started before the cutoff and the leads
- *                       those runs SERVED. `maturing` when nothing spent is mature yet.
+ *   (no return: a value over spend below a Target is never a return, ROI-CONSISTENCY-1103; the row's
+ *   `unmeasuredReason` still names why its value or cost is not measured, `maturing` included.)
  *
  * ── WHAT DOES NOT ADD ───────────────────────────────────────────────────────────────────────────
  *
@@ -211,10 +210,9 @@ export interface OutcomeFigures {
   costPerOutcomeUsd: number | null;
   valuePerOutcomeUsd: number | null;
   valueUsd: number | null;
-  roiMultiple: number | null;
   unmeasuredReason: OutcomeUnmeasuredReason | null;
   /**
-   * THE TWO RATIOS ON BOTH BASES, beside the verdict (`lib/maturity.ts`, features-service#1196):
+   * THE COST PER OUTCOME ON BOTH BASES, beside the verdict (`lib/maturity.ts`, features-service#1196):
    * `flash` divides everything to date, `mature` the runs started before the leg's cutoff and the leads
    * those runs served (their outcomes whenever they landed). A leg's verdict is its mature outcomes
    * against its leg's count; a row's is the multi-leg rule over its legs (`lib/scope-maturity.ts`).
@@ -223,9 +221,8 @@ export interface OutcomeFigures {
   maturity: MaturityPair<OutcomeRatioFigures>;
 }
 
-/** The ratios an outcome row states, as one figure `MaturityPair` carries. */
+/** The ratio an outcome row states, as one figure `MaturityPair` carries. */
 export interface OutcomeRatioFigures {
-  roiMultiple: number | null;
   costPerOutcomeUsd: number | null;
 }
 
@@ -350,26 +347,23 @@ function reachedByGroup(
 
 /**
  * PURE. The ratio pair of one leg or row. OBSERVED on both bases: a cost per outcome is spend over the
- * leads that reached the step (null at 0), a return is the priced leads' value over the same spend. A leg
- * or row that cannot be attributed, or whose step cannot be counted, has no pair figure at all.
+ * leads that reached the step (null at 0). A leg or row that cannot be attributed, or whose step cannot
+ * be counted, has no pair figure at all.
  */
 function ratioPair(
   reached: ReachedSets,
   spend: { committedCents: number; matureCommittedCents: number },
-  value: StepValue | undefined,
   attributable: boolean,
   cuttable: boolean,
   isMature: boolean | null,
 ): MaturityPair<OutcomeRatioFigures> {
-  const unit = value?.valuePerOutcomeUsd ?? null;
-  const on = (cents: number, all: Set<string>, priced: Set<string>): OutcomeRatioFigures => ({
+  const on = (cents: number, all: Set<string>): OutcomeRatioFigures => ({
     costPerOutcomeUsd: all.size > 0 && cents > 0 ? cents / 100 / all.size : null,
-    roiMultiple: unit !== null && cents > 0 ? (priced.size * unit * 100) / cents : null,
   });
   if (!reached.measured || !attributable) return maturityPair<OutcomeRatioFigures>(null, null, isMature);
   return maturityPair(
-    on(spend.committedCents, reached.all, reached.priced),
-    cuttable ? on(spend.matureCommittedCents, reached.matureAll, reached.maturePriced) : null,
+    on(spend.committedCents, reached.all),
+    cuttable ? on(spend.matureCommittedCents, reached.matureAll) : null,
     isMature,
   );
 }
@@ -385,7 +379,6 @@ function figures(
   const count = reached.measured ? reached.all.size : null;
   const unit = value?.valuePerOutcomeUsd ?? null;
   const cost = count === null || !attributable ? null : observedCostPerOutcome(spend.committedCents, count);
-  let roi: number | null = null;
   let reason: OutcomeUnmeasuredReason | null = null;
   if (reached.notCounted) reason = "step_not_counted";
   else if (!reached.measured) reason = "evidence_unreadable";
@@ -393,16 +386,14 @@ function figures(
   else if (unit === null) reason = "no_value_defined";
   else if (spend.committedCents <= 0) reason = "nothing_spent";
   else if (spend.matureCommittedCents <= 0) reason = "maturing";
-  else roi = (reached.maturePriced.size * unit * 100) / spend.matureCommittedCents;
   return {
     recipientsReached: count,
     spentUsd: spend.committedCents / 100,
     costPerOutcomeUsd: cost === null ? null : cost / 100,
     valuePerOutcomeUsd: unit,
     valueUsd: reached.measured && unit !== null ? reached.priced.size * unit : null,
-    roiMultiple: roi,
     unmeasuredReason: reason,
-    maturity: ratioPair(reached, spend, value, attributable, cuttable, isMature),
+    maturity: ratioPair(reached, spend, attributable, cuttable, isMature),
   };
 }
 
