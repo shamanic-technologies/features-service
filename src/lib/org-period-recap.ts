@@ -27,30 +27,11 @@
  *     `outcomesRequired` positive replies); otherwise the FLEET rate the public onboarding quotes
  *     (`/public/stats/outcome-prices`, the best workflow's conversion on `start_to_conversation`). A brand a
  *     few days old is the NORMAL case: it is priced on the fleet rate and says so (`rateSource`).
- *   - THE RETURN IS THE DASHBOARD'S, READ NEVER RE-DERIVED (2026-10-04: Legistai's email
- *     said 5.9x while its Today page said 4.3x). `expectedReturn.roiMultiple` = the return the customer is
- *     shown for the scope that sent: `/offers/:offerId/revenue?pricing=net` (the Today page's read, the SAME
- *     Gold cell via `offerRevenueJson`) → `costEconomics.maturity` → `servedReturnOf` (`lib/served-return.ts`:
- *     the HIGHER half, owner 2026-10-08; not mature → to-date half when > 1x, else null `return_learning`). Every offer with
- *     channels of every brand that contacted someone in the window is a scope; they must state ONE value,
- *     else null + `return_differs_across_scopes` (never a blend, never a pick). `returnScopes` names each.
- *     The window's own reply-route valuation was a second formula for "return" and is gone: it divided the
- *     window's lined-up leads by a window spend most of whose send cost was not incurred yet, so it ran high.
- *   - The rest of the return block is that one multiple restated, so nothing in it can disagree with it:
- *     `expectedRevenueUsd` = roi × window spend, `expectedPaidClients` = that ÷ lifetime revenue per client.
- *   - LIFETIME REVENUE per client (`lifetimeRevenuePerClientUsd`, shown beside the return) is the one the
- *     customer STATED ON THEIR OFFER (brand-service `offer-economics`), else the FLEET MEDIAN of stated offer
- *     values (owner 2026-10-09: every offer always has one, `lib/offer-lifetime-revenue.ts`), never a
- *     brand/cross-brand average. Every offer resolves to the same value → that value, source `offer_stated`
- *     / `fleet_median` (null when offers mix both); values differ → null + `lifetime_revenue_differs_across_offers`;
- *     no value at all (no offer, or no fleet median) → null + `economics_missing`.
+ *   - RETURNS (ROI-CONSISTENCY-1103, owner 2026-11-03: a return exists only where a value lands): `returns`
+ *     states the EXPECTED and REALIZED returns read off each sending offer's body, never recomputed
+ *     (`recapReturnsOf`). The pipeline-based `expectedReturn` / `budgetIncrease` blocks are deleted.
  *   - SPEND = the org's whole COMMITTED spend in the window on the NET basis (runs-service dated
  *     `netTotalCostInUsdCents`, every brand, setup included) — what the month's credit was consumed by.
- *   - +$100 is LINEAR AT THE SERVED RETURN: `expectedAdditionalRevenueUsd` = 100 × roiMultiple exactly;
- *     `expectedAdditionalPositiveReplies` = 100 ÷ window spend × expected replies; `revenueMultiple` =
- *     (window spend + 100) ÷ window spend (revenue at the same return scales with spend);
- *     `expectedAdditionalRecipientsEnrolled` = 100 × enrolled ÷ spend, whole people (needs no rate or economics,
- *     so it has its own null reason). Nothing about diminishing or improving returns is claimed.
  *   - ACTUAL OUTCOMES (`actualOutcomes`, 2026-10-04, for billing's informational monthly email): the
  *     positive replies and meetings booked that HAPPENED in the window, read off the SAME dated series the
  *     dashboard draws (`recipientsRepliesPositive` / `meetingsBooked` on `/offers/:offerId/revenue`, dated on
@@ -66,10 +47,8 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { legMaturity, maturityCutoffIso } from "./maturity.js";
 import type { MaturityPair } from "./maturity.js";
-import { servedReturnOf, type ServedReturnHalf } from "./served-return.js";
 
 export const POSITIVE_REPLY_LEG_KEY = "start_to_conversation";
-export const BUDGET_INCREASE_USD = 100;
 /** The widest window a recap answers: a subscription month, with room. */
 export const MAX_WINDOW_DAYS = 93;
 
@@ -256,21 +235,6 @@ export function windowOutcomeCount(
   return { count, nullReason: null };
 }
 
-/** A scope whose served return the recap states (provenance). */
-export interface RecapReturnScope {
-  brandId: string;
-  /** null = the brand's return could not be read at all (brand not held / no offer with campaigns). */
-  offerId: string | null;
-  roiMultiple: number | null;
-  half: ServedReturnHalf | null;
-  isMature: boolean | null;
-  flashRoiMultiple: number | null;
-  matureRoiMultiple: number | null;
-  pipelineUsd: number | null;
-  committedCostUsd: number | null;
-  nullReason: RecapNullReason | null;
-}
-
 export interface OrgPeriodRecap {
   orgId: string;
   window: { from: string; to: string; grain: "utc_day"; days: number };
@@ -300,37 +264,7 @@ export interface OrgPeriodRecap {
     meetingsBookedNullReason: RecapNullReason | null;
   };
   spendUsd: number;
-  expectedReturn: {
-    /** The dashboard's served return for the scope that sent (rule in the header). */
-    basis: "served_return";
-    /** `roiMultiple × spendUsd`. */
-    expectedRevenueUsd: number | null;
-    /** `expectedRevenueUsd ÷ lifetimeRevenuePerClientUsd`. */
-    expectedPaidClients: number | null;
-    /** EXACTLY the served figure (not rounded), so it compares to the dashboard's to the last digit. */
-    roiMultiple: number | null;
-    /** Which half of the served pair it is (`mature`, or `flash` for a not-mature scope above 1x). */
-    returnHalf: ServedReturnHalf | null;
-    returnScopes: RecapReturnScope[];
-    lifetimeRevenuePerClientUsd: number | null;
-    lifetimeRevenueSource: LifetimeRevenueSource | null;
-    lifetimeRevenueNullReason: RecapNullReason | null;
-    nullReason: RecapNullReason | null;
-  };
-  budgetIncrease: {
-    amountUsd: number;
-    basis: "linear_at_served_return";
-    /** amountUsd × recipientsEnrolled ÷ spend, whole recipients: how many more leads the amount lines up. */
-    expectedAdditionalRecipientsEnrolled: number | null;
-    expectedAdditionalRecipientsEnrolledNullReason: RecapNullReason | null;
-    expectedAdditionalPositiveReplies: number | null;
-    /** `amountUsd × expectedReturn.roiMultiple`. */
-    expectedAdditionalRevenueUsd: number | null;
-    /** (window spend + amount) ÷ window spend: revenue at the same served return scales with spend. */
-    revenueMultiple: number | null;
-    nullReason: RecapNullReason | null;
-  };
-  /** The ONLY returns the recap states to a client (ROI-CONSISTENCY-1103). `expectedReturn` and `budgetIncrease` above are retired: no reader once billing reads this. */
+  /** The ONLY returns the recap states to a client (ROI-CONSISTENCY-1103). */
   returns: RecapReturns;
   brands: RecapBrand[];
   fleetPositiveReplyRate: FleetReplyRate | null;
@@ -420,38 +354,6 @@ export interface RecapInputs {
   fleetRate: FleetReplyRate | null;
 }
 
-/** PURE. The served returns of one brand that sent, as provenance rows (rule in the header). */
-export function brandReturnScopes(brandId: string, returns: OfferReturnRead[] | null): RecapReturnScope[] {
-  const unreadable = (): RecapReturnScope => ({
-    brandId,
-    offerId: null,
-    roiMultiple: null,
-    half: null,
-    isMature: null,
-    flashRoiMultiple: null,
-    matureRoiMultiple: null,
-    pipelineUsd: null,
-    committedCostUsd: null,
-    nullReason: "return_unavailable",
-  });
-  if (returns === null || returns.length === 0) return [unreadable()];
-  return returns.map((r) => {
-    const shown = servedReturnOf(r.pair);
-    return {
-      brandId,
-      offerId: r.offerId,
-      roiMultiple: shown.roiMultiple,
-      half: shown.half,
-      isMature: r.pair?.isMature ?? null,
-      flashRoiMultiple: r.pair?.flash?.roiMultiple ?? null,
-      matureRoiMultiple: r.pair?.mature?.roiMultiple ?? null,
-      pipelineUsd: r.pipelineUsd,
-      committedCostUsd: r.committedCostUsd,
-      nullReason: shown.nullReason,
-    };
-  });
-}
-
 /** PURE. The whole recap from already-read inputs. */
 export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const days = new Set(windowDays(input.from, input.to));
@@ -536,53 +438,11 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
   const repliesReason: RecapNullReason | null = unknownReplies ? unknownReplies.nullReason ?? "reply_rate_unavailable" : null;
   const expectedReplies = repliesReason ? null : brands.reduce((s, b) => s + (b._rawReplies ?? 0), 0);
 
-  // THE RETURN: the one the dashboard shows for every scope that sent, or null with the reason.
-  const returnScopes = senders.flatMap((b) => brandReturnScopes(b.brandId, b._returns));
-  let returnReason: RecapNullReason | null = null;
-  let roiMultiple: number | null = null;
-  let returnHalf: ServedReturnHalf | null = null;
-  if (senders.length === 0) returnReason = "nothing_sent";
-  else {
-    const unshown = returnScopes.find((s) => s.roiMultiple === null);
-    const values = new Set(returnScopes.map((s) => s.roiMultiple));
-    if (unshown) returnReason = unshown.nullReason ?? "return_unavailable";
-    else if (values.size > 1) returnReason = "return_differs_across_scopes";
-    else {
-      roiMultiple = returnScopes[0].roiMultiple;
-      const halves = new Set(returnScopes.map((s) => s.half));
-      returnHalf = halves.size === 1 ? returnScopes[0].half : null;
-    }
-  }
-
-  const ltrs = new Set(senders.map((b) => b.lifetimeRevenuePerClientUsd));
-  let lifetimeRevenuePerClientUsd: number | null = null;
-  let lifetimeRevenueSource: LifetimeRevenueSource | null = null;
-  let lifetimeRevenueNullReason: RecapNullReason | null = null;
-  const unvalued = senders.find((b) => b.lifetimeRevenuePerClientUsd === null);
-  if (senders.length === 0) lifetimeRevenueNullReason = "nothing_sent";
-  else if (unvalued) lifetimeRevenueNullReason = unvalued._ltrNullReason ?? "economics_missing";
-  else if (ltrs.size > 1) lifetimeRevenueNullReason = "lifetime_revenue_differs_across_brands";
-  else {
-    lifetimeRevenuePerClientUsd = [...ltrs][0];
-    const sources = new Set(senders.map((b) => b.lifetimeRevenueSource));
-    // Same value read from different places (one brand stated, another averaged): no one provenance is true.
-    lifetimeRevenueSource = sources.size === 1 ? [...sources][0] : null;
-  }
-
   // What happened: every offer read of every brand the org holds (a brand it no longer holds is shown nowhere).
   const outcomeScopes = brands.flatMap((b) => b._returns ?? []);
   const replies = windowOutcomeCount(outcomeScopes.map((r) => r.outcomeSeries?.positiveReplies), days);
   const meetings = windowOutcomeCount(outcomeScopes.map((r) => r.outcomeSeries?.meetingsBooked), days);
 
-  const expectedRevenueUsd = roiMultiple === null ? null : roiMultiple * spendUsd;
-  const expectedPaidClients =
-    expectedRevenueUsd === null || lifetimeRevenuePerClientUsd === null || lifetimeRevenuePerClientUsd <= 0
-      ? null
-      : expectedRevenueUsd / lifetimeRevenuePerClientUsd;
-  const hasSpend = spendUsd > 0;
-  // Volume needs no rate and no economics: only something lined up and a spend that lined it up.
-  const recipientsReason: RecapNullReason | null =
-    recipientsEnrolled === 0 ? "nothing_sent" : spendUsd <= 0 ? "no_spend_in_window" : null;
   return {
     orgId: input.orgId,
     window: { from: input.from, to: input.to, grain: "utc_day", days: days.size },
@@ -608,30 +468,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       meetingsBookedNullReason: meetings.nullReason,
     },
     spendUsd: round(spendUsd, 2),
-    expectedReturn: {
-      basis: "served_return",
-      expectedRevenueUsd: expectedRevenueUsd === null ? null : round(expectedRevenueUsd, 2),
-      expectedPaidClients: expectedPaidClients === null ? null : round(expectedPaidClients, 4),
-      roiMultiple,
-      returnHalf,
-      returnScopes,
-      lifetimeRevenuePerClientUsd,
-      lifetimeRevenueSource,
-      lifetimeRevenueNullReason,
-      nullReason: returnReason,
-    },
-    budgetIncrease: {
-      amountUsd: BUDGET_INCREASE_USD,
-      basis: "linear_at_served_return",
-      expectedAdditionalRecipientsEnrolled: recipientsReason ? null : Math.round((BUDGET_INCREASE_USD * recipientsEnrolled) / spendUsd),
-      expectedAdditionalRecipientsEnrolledNullReason: recipientsReason,
-      expectedAdditionalPositiveReplies:
-        expectedReplies !== null && hasSpend ? round((BUDGET_INCREASE_USD * expectedReplies) / spendUsd, 2) : null,
-      expectedAdditionalRevenueUsd: roiMultiple === null ? null : round(BUDGET_INCREASE_USD * roiMultiple, 2),
-      revenueMultiple: roiMultiple !== null && hasSpend ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
-      nullReason: returnReason ?? (hasSpend ? repliesReason : "no_spend_in_window"),
-    },
-    returns: recapReturnsOf(senders.map((b) => ({ brandId: b.brandId, returns: b._returns }))),
+        returns: recapReturnsOf(senders.map((b) => ({ brandId: b.brandId, returns: b._returns }))),
     brands: brands.map(({ _rawReplies: _a, _returns: _b, _ltrNullReason: _d, _enrolled: _e, ...rest }): RecapBrand => rest),
     fleetPositiveReplyRate: input.fleetRate,
   };
