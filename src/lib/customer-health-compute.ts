@@ -24,10 +24,9 @@
  *   - the revenue engine yields the brand's NET committed spend (what the client PAID: every channel, read as
  *     `GET /brands/:brandId/revenue?pricing=net` reads it, SHOCKWAVE-ROI-NET-1016) + expected pipeline; from
  *     its costEconomics:
- *       roiMultiple = pipeline / spend          (= LTR / CAC, by construction)
  *       cacPct      = spend / pipeline × 100     (= CAC / LTR × 100, by construction — pipeline = conversions × LTR)
  *   - currentCacUsd = (cacPct / 100) × ltrUsd     (the realized cost to acquire one paying customer)
- *   So GREEN's "ROI ≥ 1" ⟺ "CAC ≤ breakeven CAC" ⟺ "%CAC ≤ 100%" — one condition, three views, always coherent.
+ *   No return is served and none enters the badge (ROI-CONSISTENCY-1103: a return exists only where a value lands).
  *   Priced exactly as /revenue prices the brand: on the OFFER's terms (its stated lifetime revenue, the
  *   reading funnels' effective leg rates — `lib/offer-priced-economics.ts`). No priced funnel or no stated
  *   lifetime revenue → every economics-derived field is explicit null, never an average.
@@ -86,17 +85,13 @@ export type HealthBadge = "green" | "yellow" | "red";
 
 /** The economics slice of a row, computed from the revenue engine (priced economics only). */
 interface CurrentEconomics {
-  /** NET COMMITTED acquisition spend in USD (what the client paid, every channel) — the single basis roiMultiple/cacPct/currentCacUsd ride. */
+  /** NET COMMITTED acquisition spend in USD (what the client paid, every channel) — the single basis cacPct/currentCacUsd ride. */
   committedSpendUsd: number | null;
   /** Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration,
    * divided by nowhere. null when not computed (no priced economics). */
   realizedSpendUsd: number | null;
-  /** Expected pipeline in USD (revenue engine EV total). null when incomputable. */
-  expectedPipelineUsd: number | null;
   /** Committed cost to acquire ONE paying customer, USD = (cacPct/100) × LTR. null when incomputable. */
   currentCacUsd: number | null;
-  /** LTR / CAC = pipeline / spend. ≥ 1 ⟺ CAC below breakeven. null when spend or pipeline is 0/unknown. */
-  roiMultiple: number | null;
   /** CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable. */
   cacPct: number | null;
 }
@@ -154,8 +149,6 @@ interface BestWorkflow {
 interface HealthInputs {
   active: boolean;
   hasBudget: boolean;
-  roiMultiple: number | null;
-  roiHealthy: boolean;
   audiencePctUsed: number | null;
   audienceNearExhausted: boolean;
   audienceNearExhaustedThresholdPct: number;
@@ -388,12 +381,10 @@ export interface CustomerHealthBoard {
 
 /** Economics returned by the revenue-engine dep. */
 export interface BrandRevenueResult {
-  /** COMMITTED spend — the basis roiMultiple/cacPct below are computed on. */
+  /** COMMITTED spend — the basis cacPct below is computed on. */
   committedCostUsd: number;
   /** Billed-only spend. Reported, never divided by. */
   actualCostUsd: number;
-  expectedPipelineUsd: number | null;
-  roiMultiple: number | null;
   cacPct: number | null;
 }
 
@@ -449,7 +440,7 @@ export function customerHealthAccountsAudit(
 }
 
 /**
- * The board's ROI = the brand page's own body on the NET basis (SHOCKWAVE-ROI-NET-1016): what the client
+ * The board's economics = the brand page's own body on the NET basis (SHOCKWAVE-ROI-NET-1016): what the client
  * PAID, every channel, sourcing included. Before, the board priced ONE channel on GROSS spend
  * (Shockwavecenters read 0.83x on $1,323 gross while it paid $684 and its brand page read 4.5x).
  */
@@ -458,8 +449,6 @@ export async function boardBrandRevenue(brandId: string, orgId: string): Promise
   return {
     committedCostUsd: body.costEconomics.committedCostUsd,
     actualCostUsd: body.costEconomics.actualCostUsd,
-    expectedPipelineUsd: body.headline.totalPipelineUsd,
-    roiMultiple: body.costEconomics.roiMultiple,
     cacPct: body.costEconomics.costOfAcquisitionPct,
   };
 }
@@ -630,26 +619,23 @@ function pickBestWorkflow(projection: WorkflowProjectionResponse): BestWorkflow 
 /**
  * Compose the health badge (owned thresholds):
  *   red    — not active (payment declined / paused / inactive / churned / no budget), or not KNOWN active (status "unknown"). Value can't be assessed while campaigns are held/stopped.
- *   green  — active AND ROI ≥ 1 (CAC below breakeven, known) AND audience NOT near-exhausted.
- *   yellow — active but ROI < 1 (or unknown) OR the audience is near-exhausted.
+ *   green  — active AND audience NOT near-exhausted.
+ *   yellow — active but the audience is near-exhausted.
+ * No return enters it (ROI-CONSISTENCY-1103: the pipeline-based ROI it read is deleted).
  */
 function composeHealth(
   status: AccountRowStatus,
   hasBudget: boolean,
-  roiMultiple: number | null,
   audiencePctUsed: number | null,
 ): { badge: HealthBadge; inputs: HealthInputs } {
   const active = status === "active";
-  const roiHealthy = roiMultiple != null && roiMultiple >= 1;
   const audienceNearExhausted = audiencePctUsed != null && audiencePctUsed >= AUDIENCE_NEAR_EXHAUSTED_PCT;
-  const badge: HealthBadge = !active ? "red" : roiHealthy && !audienceNearExhausted ? "green" : "yellow";
+  const badge: HealthBadge = !active ? "red" : !audienceNearExhausted ? "green" : "yellow";
   return {
     badge,
     inputs: {
       active,
       hasBudget,
-      roiMultiple,
-      roiHealthy,
       audiencePctUsed,
       audienceNearExhausted,
       audienceNearExhaustedThresholdPct: AUDIENCE_NEAR_EXHAUSTED_PCT,
@@ -762,9 +748,7 @@ export async function buildCustomerHealthBoard(
     let currentEconomics: CurrentEconomics = {
       committedSpendUsd: null,
       realizedSpendUsd: null,
-      expectedPipelineUsd: null,
       currentCacUsd: null,
-      roiMultiple: null,
       cacPct: null,
     };
     let audienceEnvelope: AudienceStatsEnvelope | null = null;
@@ -822,9 +806,7 @@ export async function buildCustomerHealthBoard(
           currentEconomics = {
             committedSpendUsd: revenueRes.committedCostUsd,
             realizedSpendUsd: revenueRes.actualCostUsd,
-            expectedPipelineUsd: revenueRes.expectedPipelineUsd,
             currentCacUsd,
-            roiMultiple: revenueRes.roiMultiple,
             cacPct: revenueRes.cacPct,
           };
         }
@@ -870,7 +852,7 @@ export async function buildCustomerHealthBoard(
     // one merely configured, which buys nothing and would read a dormant account as a healthy one. Both
     // figures are the raw undiscounted ceilings (a config value is not a charge).
     const hasBudget = account.runningDailyBudgetUsd > 0;
-    const health = composeHealth(account.status, hasBudget, currentEconomics.roiMultiple, audiencesRollup.pctUsed);
+    const health = composeHealth(account.status, hasBudget, audiencesRollup.pctUsed);
 
     void ownershipSkipped; // enrichment already nulled above; retained for readability of the skip path
 

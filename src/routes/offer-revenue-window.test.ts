@@ -13,6 +13,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -285,7 +293,8 @@ describe("GET /offers/:offerId/revenue — today's spend and ?windowDays=", () =
     expect(w.recipientsRepliesPositive.total).toBe(
       w.recipientsRepliesPositive.daily.reduce((s: number, d: { count: number }) => s + d.count, 0),
     );
-    expect(w.expectedPipeline.totalPipelineUsd).toBe(body.headline.totalPipelineUsd);
+    // The dated pipeline it once carried is deleted (ROI-CONSISTENCY-1103).
+    expect(w).not.toHaveProperty("expectedPipeline");
   });
 
   it("windowDays=all runs from the first activity to today; every total is the sum of its daily values", async () => {

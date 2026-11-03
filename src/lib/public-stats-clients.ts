@@ -213,59 +213,6 @@ export async function fetchDynastySpendByDay(
   }, (a, b) => a + b);
 }
 
-/**
- * Cross-org spend per UTC day for ONE workflow dynasty, on the BILLED basis: what clients were
- * CHARGED (comped spend absent), NET of their per-org usage discount — runs' frozen
- * `netTotalCostInUsdCents` twin, fail-loud when absent (never a silent fall back to gross). The spend
- * leg of the fleet per-workflow return curve (`lib/fleet-workflow-return.ts`). Same row set as the
- * untimed `fetchPublicCosts(slug, "workflowSlug", "net", "charged")`, so runs' own
- * sum-equals-untimed-total invariant makes the curve's last point that total.
- */
-export async function fetchDynastyBilledSpendByDay(
-  featureSlug: string,
-  workflowDynastySlug: string,
-  // A LEG-scoped curve: only these campaigns' rows. Absent → the whole fleet (byte-identical request).
-  // Present and empty → nothing performs the leg, so nothing was spent on it (no request at all).
-  campaignIds?: string[],
-  slugs: SpendSlugs = "fed",
-): Promise<Map<string, number>> {
-  // runs-service resolves the dynasty itself and cannot see a merge: one read per member dynasty, summed.
-  return sumOverMembers(workflowDynastySlug, await fetchDynastyMerges(featureSlug), async (member) => {
-    if (campaignIds === undefined) return fetchDynastyBilledSpendChunk(featureSlug, member, undefined, slugs);
-    const byDay = new Map<string, number>();
-    for (let i = 0; i < campaignIds.length; i += RUNS_CAMPAIGN_IDS_PER_REQUEST) {
-      // A cost row belongs to exactly one campaign, so summing the chunks is exact.
-      const part = await fetchDynastyBilledSpendChunk(featureSlug, member, campaignIds.slice(i, i + RUNS_CAMPAIGN_IDS_PER_REQUEST), slugs);
-      for (const [day, usd] of part) byDay.set(day, (byDay.get(day) ?? 0) + usd);
-    }
-    return byDay;
-  }, (a, b) => a + b);
-}
-
-async function fetchDynastyBilledSpendChunk(
-  featureSlug: string,
-  workflowDynastySlug: string,
-  campaignIds: string[] | undefined,
-  slugs: SpendSlugs,
-): Promise<Map<string, number>> {
-  const params = new URLSearchParams({ interval: "day", featureSlugs: runsSpendSlugsParam(featureSlug, slugs), workflowDynastySlug });
-  if (campaignIds) params.set("campaignIds", campaignIds.join(","));
-  const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;
-  const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY! } });
-  if (!response.ok) {
-    throw new Error(`[features-service] runs-service /v1/stats/public/costs/timeseries failed: ${response.status} — ${await response.text()}`);
-  }
-  const data = (await response.json()) as { buckets?: Array<Record<string, unknown>> };
-  if (!Array.isArray(data.buckets)) throw new Error("[features-service] runs-service costs/timeseries returned no buckets array");
-  const byDay = new Map<string, number>();
-  for (const b of data.buckets) {
-    if (typeof b.period !== "string") throw new Error("[features-service] runs-service costs/timeseries bucket missing period");
-    const day = b.period.slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + Number(selectCostCentsString(b, "totalCostInUsdCents", "net", "charged")) / 100);
-  }
-  return byDay;
-}
-
 /** Shared parse of runs-service `/v1/stats/public/costs/timeseries` → Map<YYYY-MM-DD, spentUsd>. */
 async function fetchCostTimeseriesByDay(params: URLSearchParams, basis: CostBasis = "charged"): Promise<Map<string, number>> {
   const url = `${process.env.RUNS_SERVICE_URL}/v1/stats/public/costs/timeseries?${params}`;

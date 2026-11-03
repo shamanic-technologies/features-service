@@ -98,6 +98,7 @@ import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { BrandOwnershipError, assertBrandHeld as assertBrandHeldByOrg } from "../lib/brand-ownership.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { servedRevenueBody } from "../lib/retired-returns.js";
 import { expectedReturnForBrand, expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
@@ -329,12 +330,12 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 
     if (!resolved) {
       await assertBrandHeld(speculative.held);
-      return res.json({
+      return res.json(servedRevenueBody({
         brandId: req.params.brandId,
         costBasis: "charged" as const,
         channels: [],
         ...applyLeadDetail(noChannelRevenueBody(causes), leadDetail),
-      });
+      }));
     }
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
 
@@ -441,14 +442,14 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the best of the brand's offers' sales
         // paths priced on named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
         const expectedReturn = await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
-        return {
+        return servedRevenueBody({
           brandId,
           costBasis: "charged" as const,
           channels: groups,
           ...applyLeadDetail(body, leadDetail),
           expectedReturn,
           ...(window ? { window } : {}),
-        };
+        });
       },
     });
 
@@ -623,7 +624,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
         // WHOSE WINS EVERY ROW COUNTED. A lean row carries no `outcomeCauses` of its own, so the
         // payload states it once: the money in these rows moves with the parameter, and a consumer
         // has to be able to name the basis of a figure it is about to render beside another.
-        return { brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: groups };
+        return servedRevenueBody({ brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: groups });
       },
     });
 

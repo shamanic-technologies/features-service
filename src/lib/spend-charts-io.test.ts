@@ -93,7 +93,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     const other = expectedCostAndReturnOf(expected, "website_visit");
     expect(other.costPerOutcomeUsd).toBeNull();
     expect(other.costPerOutcomeUnavailableReason).toBe("expected_prices_another_step");
-    expect(other.roiMultiple).toBe(3);
+    expect(other).not.toHaveProperty("roiMultiple");
   });
 });
 

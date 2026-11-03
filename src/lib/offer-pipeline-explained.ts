@@ -73,8 +73,8 @@
  *     company is counted once, at its most valuable member (ties: smallest lead id). A colleague of that
  *     member adds 0 (`countedWithColleague`); what they would have added rides `countedWithColleagueUsd`.
  *   - So Σ rows' `pipelineUsd` + `contacted.pipelineUsd` = `total.pipelineUsd` = the engine's
- *     `totalPipelineUsd` over this population, and `total.headlinePipelineUsd` is what the offer's
- *     revenue read serves; a gap between the two is served with its reason, never silent.
+ *     `totalPipelineUsd` over this population; a gap is served with its reason, never silent. The
+ *     pipeline dollars stay IN PROCESS: the route serves none of them (ROI-CONSISTENCY-1103).
  *   - The contacted row's value is explained like a step's: per entry route, the chance of reaching
  *     its step from contact (the brand's per-(campaign × workflow) entry rate, averaged over the valued
  *     people) times that step's value, the routes combined as independent shots at one close, expiring
@@ -552,12 +552,10 @@ export interface ExclusiveLadder {
     noRowPipelineUsd: number | null;
     /** Σ rows' pipelineUsd + contacted.pipelineUsd (+ noRowPipelineUsd, 0) = the engine's totalPipelineUsd over this population. */
     pipelineUsd: number | null;
-    /** The offer revenue read's `headline.totalPipelineUsd` (the page's Pipeline figure). Null when unread. */
-    headlinePipelineUsd: number | null;
-    /** headlinePipelineUsd − pipelineUsd; 0 when they agree to the cent. Null when either is null. */
+    /** Σ rows' pipelineUsd + contacted.pipelineUsd + noRowPipelineUsd − pipelineUsd; 0 when the rows add up to the cent. Null when unpriced. */
     gapUsd: number | null;
-    /** Why there is a gap (or why it could not be checked); null when they agree. */
-    gapReason: "population_differs" | "headline_unreadable" | "unpriced" | null;
+    /** Why there is a gap (or why it could not be checked); null when the rows add up. */
+    gapReason: "population_differs" | "unpriced" | null;
     /**
      * Where `hotLeads.totalCount` stands on this ladder: Σ rows[].hot.count + onContactedRow + onNoRow = count.
      * A hot person sits on the contacted row / no row only when the step they engaged on is not counted
@@ -671,8 +669,6 @@ export function buildOfferPipelineAndFamilies(input: {
   pricedCauses?: readonly OutcomeCause[];
   /** How the pipeline prices a contacted-only lead (the revenue read's own `contactedPricingOf`); null = at 0. */
   contactedPricing?: ContactedPricing | null;
-  /** The offer revenue read's `headline.totalPipelineUsd`, to reconcile the exclusive total against; null = unread. */
-  headlinePipelineUsd?: number | null;
   /** Asked: the sliced rows' dated % Conversion (`ConversionHistory`). Absent/null = not served (null on the wire). */
   conversionHistory?: ConversionHistoryInput | null;
 }): { pipeline: OfferPipeline; families: LeadFamilyRow[] } {
@@ -928,7 +924,6 @@ export function buildOfferPipelineAndFamilies(input: {
     desc,
     byLeadId,
     contactedPricing: input.contactedPricing ?? null,
-    headlinePipelineUsd: input.headlinePipelineUsd ?? null,
     history: input.conversionHistory ?? null,
   });
 
@@ -1037,7 +1032,6 @@ function buildExclusiveLadder(input: {
   desc: (x: string | null, y: string | null) => number;
   byLeadId: (a: { leadId: string }, b: { leadId: string }) => number;
   contactedPricing: ContactedPricing | null;
-  headlinePipelineUsd: number | null;
   history?: ConversionHistoryInput | null;
 }): ExclusiveLadder {
   const { persons, paths, ltr } = input;
@@ -1223,26 +1217,12 @@ function buildExclusiveLadder(input: {
   const pipelineUsd = engine ? engine.headline.totalPipelineUsd : null;
   // People on no row are never contacted and reached no step, so they add nothing — served, not assumed.
   const noRowPipelineUsd = sumOr(persons.filter((p) => !rowOf.has(p.leadId)).map((p) => addsOf(p).pipelineUsd ?? 0));
-  if (pipelineUsd !== null) {
-    const rowsSum = rows.reduce((s, r) => s + (r.pipelineUsd ?? 0), 0) + (contacted.pipelineUsd ?? 0) + (noRowPipelineUsd ?? 0);
-    if (!sameCents(rowsSum, pipelineUsd)) {
-      console.error(`[features-service] exclusive ladder rows add to ${rowsSum}, not the engine's pipeline ${pipelineUsd}`);
-    }
-  }
-  const headline = input.headlinePipelineUsd;
-  const gapUsd = pipelineUsd !== null && headline !== null ? headline - pipelineUsd : null;
+  const rowsSum = rows.reduce((s, r) => s + (r.pipelineUsd ?? 0), 0) + (contacted.pipelineUsd ?? 0) + (noRowPipelineUsd ?? 0);
+  const gapUsd = pipelineUsd !== null ? rowsSum - pipelineUsd : null;
   const gapReason: ExclusiveLadder["total"]["gapReason"] =
-    pipelineUsd === null
-      ? "unpriced"
-      : headline === null
-        ? "headline_unreadable"
-        : sameCents(headline, pipelineUsd)
-          ? null
-          : "population_differs";
+    pipelineUsd === null ? "unpriced" : sameCents(rowsSum, pipelineUsd) ? null : "population_differs";
   if (gapReason === "population_differs") {
-    console.error(
-      `[features-service] exclusive ladder total ${pipelineUsd} ≠ the offer revenue headline ${headline} (gap ${gapUsd}): the two reads priced different people`,
-    );
+    console.error(`[features-service] exclusive ladder rows add to ${rowsSum}, not the engine's pipeline ${pipelineUsd}`);
   }
   const onRow = persons.filter((p) => rowOf.has(p.leadId)).length;
   const hotIds = input.hotIds;
@@ -1265,7 +1245,6 @@ function buildExclusiveLadder(input: {
       peopleOnNoRow: persons.length - onRow,
       noRowPipelineUsd,
       pipelineUsd,
-      headlinePipelineUsd: headline,
       gapUsd: gapUsd === null ? null : sameCents(gapUsd, 0) ? 0 : gapUsd,
       gapReason,
       hot: hotTotal,
@@ -1413,4 +1392,24 @@ export function buildConversionHistory(input: {
     rows: steps.map((_, i) => (counted[i] ? series(rowPoints[i]!, undated[i]!) : null)),
     contacted: series(contactedPoints, undated[CONTACTED]!),
   };
+}
+
+/** The pipeline-dollar keys the sliced ladder computes in process and never serves (ROI-CONSISTENCY-1103). */
+const UNSERVED_PIPELINE_KEYS = new Set(["pipelineUsd", "noRowPipelineUsd"]);
+
+function withoutPipelineDollars(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(withoutPipelineDollars);
+  if (node === null || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node)) if (!UNSERVED_PIPELINE_KEYS.has(k)) out[k] = withoutPipelineDollars(v);
+  return out;
+}
+
+/**
+ * PURE: the pipeline as served. The sliced ladder's pipeline dollars (each person's, row's, the contacted
+ * row's and the total's) stay in process to check the rows add up (`total.gapUsd`); a pipeline in dollars
+ * is a forecast the Deals board alone states (ROI-CONSISTENCY-1103), so none of them is on the wire.
+ */
+export function servedOfferPipeline<P extends { exclusiveLadder: unknown }>(pipeline: P): P {
+  return { ...pipeline, exclusiveLadder: withoutPipelineDollars(pipeline.exclusiveLadder) };
 }

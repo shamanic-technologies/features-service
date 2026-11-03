@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -1810,88 +1818,4 @@ describe("GET /features/:featureSlug/revenue — the brand Overview money row", 
     });
   });
 
-  describe("roiHistory — return on spend across the brand's whole life", () => {
-    const clickAt = "2026-01-02T10:00:00Z";
-    const replyAt = "2026-01-03T10:00:00Z";
-    const DATED_LEADS = [
-      leadRow({ leadId: "l1", email: "click@x.com", clicked: true, lead: { firstName: "C", lastName: "X", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } }),
-      leadRow({ leadId: "l2", email: "reply@y.com", replied: true, replyClassification: "positive", lead: { firstName: "R", lastName: "Y", photoUrl: null, organization: { id: "o2", name: "Org2", logoUrl: null } } }),
-    ];
-    const TIMESTAMPS = {
-      "click@x.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstSentAt: "2026-01-01T00:00:00Z", firstClickedAt: clickAt, firstRepliedAt: null },
-      "reply@y.com": { firstContactedAt: "2026-01-01T00:00:00Z", firstSentAt: "2026-01-01T00:00:00Z", firstClickedAt: null, firstRepliedAt: replyAt },
-    };
-    const SPEND_BY_DAY = [
-      { period: "2026-01-01", actualCents: 20000 },
-      { period: "2026-01-02", actualCents: 10000 },
-      { period: "2026-01-03", actualCents: 20000 },
-    ];
-
-    it("charts BOTH legs cumulatively and terminates ON the headline ROI", async () => {
-      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
-      expect(res.status).toBe(200);
-
-      const history = res.body.roiHistory;
-      expect(history.daily.map((d: any) => d.date)).toEqual(["2026-01-01", "2026-01-02", "2026-01-03"]);
-      // Spend accumulates; it never restarts per period.
-      expect(history.daily.map((d: any) => d.cumulativeSpendUsd)).toEqual([200, 300, 500]);
-      // ...and so does pipeline, from the SAME per-lead timestamps the leads table and signal series use.
-      const last = history.daily[history.daily.length - 1];
-      expect(last.cumulativePipelineUsd).toBe(res.body.timeSeries[res.body.timeSeries.length - 1].cumulativePipelineUsd);
-
-      // THE INVARIANT: the curve's last point IS the headline ROI. Same spend (runs guarantees the
-      // dated buckets sum to the untimed total), same pipeline — coherent by construction.
-      expect(last.cumulativeSpendUsd).toBe(res.body.costEconomics.actualCostUsd);
-      expect(last.roiMultiple).toBeCloseTo(res.body.costEconomics.roiMultiple, 9);
-    });
-
-    it("reports UNDATED pipeline separately rather than dropping it or dating it", async () => {
-      // Only one lead's events carry timestamps; the other's org sits on no day.
-      mockFetch({
-        economics: ECONOMICS,
-        leads: DATED_LEADS,
-        timestamps: { "click@x.com": TIMESTAMPS["click@x.com"] },
-        costCents: 50000,
-        spendByDay: SPEND_BY_DAY,
-      });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
-
-      const { datedPipelineUsd, undatedPipelineUsd } = res.body.roiHistory;
-      expect(undatedPipelineUsd).toBeGreaterThan(0);
-      expect(datedPipelineUsd + undatedPipelineUsd).toBeCloseTo(res.body.headline.totalPipelineUsd, 9);
-    });
-
-    it("degrades to NULL — not a fabricated flat curve — when the dated-spend read fails", async () => {
-      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDayFail: true });
-      const res = await request(app).get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1").set(AUTH);
-
-      expect(res.status).toBe(200); // never 502s the Overview — display enrichment
-      expect(res.body.roiHistory).toBeNull();
-      expect(res.body.headline.totalPipelineUsd).toBeGreaterThan(0); // every other number intact
-    });
-
-    it("is absent from the per-campaign groups and null on a lensed read (a brand-whole concept)", async () => {
-      mockFetch({ economics: ECONOMICS, leads: DATED_LEADS, timestamps: TIMESTAMPS, costCents: 50000, spendByDay: SPEND_BY_DAY });
-
-      const lensed = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&lens=signups")
-        .set(AUTH);
-      expect(lensed.body.roiHistory).toBeNull();
-
-      vi.restoreAllMocks();
-      vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as any);
-      mockFetchGrouped({
-        economics: ECONOMICS,
-        campaigns: { c1: { costCents: 7000, leads: [replyLead("o1")] } },
-      });
-      const grouped = await request(app)
-        .get("/features/sales-cold-email-outreach/revenue?leads=full&brandId=b1&groupBy=campaignId")
-        .set(AUTH);
-      expect(grouped.body.groups).toHaveLength(1);
-      for (const group of grouped.body.groups) {
-        expect(group).not.toHaveProperty("roiHistory");
-      }
-    });
-  });
 });

@@ -6,6 +6,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 const computeFeatureRevenue = vi.fn();
@@ -96,7 +104,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(args[8]).toBe("net");
     expect(args[10]).toBe("of1");
     const row = res.body.salesFunnelCampaigns[0];
-    expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", triggerLabel: null, investedUsd: 12.34, roiMultiple: 2.5, moneyUnavailableReason: null, copyUnavailableReason: null });
+    expect(row).toMatchObject({ id: "fc1", name: "Bliss", typeLabel: "Daily", type: "proactive", triggerLabel: null, investedUsd: 12.34, moneyUnavailableReason: null, copyUnavailableReason: null });
     expect(row).not.toHaveProperty("description");
     expect(row.maturity).toEqual({ isMature: false, legs: [] });
     expect(row.headline).toEqual({ totalPipelineUsd: 30, unpricedReason: null });
@@ -143,7 +151,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
 
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns").set(AUTH);
     expect(computeFeatureRevenue.mock.calls[0][3]).toBeNull();
-    expect(res.body.salesFunnelCampaigns[0]).toMatchObject({ investedUsd: 3, roiMultiple: null, moneyUnavailableReason: "units_price_differently" });
+    expect(res.body.salesFunnelCampaigns[0]).toMatchObject({ investedUsd: 3, moneyUnavailableReason: "units_price_differently" });
   });
 
   it("a funnel the catalogue does not know: copy null with a reason; offer filter forwarded", async () => {
@@ -185,9 +193,12 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     const res = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
     const [bliss, motivate] = res.body.salesFunnelCampaigns;
     // Bliss's sourcing unit produces Lead found: it took its people from nothing, the engine's figures stand.
-    expect(bliss).toMatchObject({ takeoverStep: null, roiMultiple: 2.5, investedUsd: 12, valueAdded: null });
+    expect(bliss).toMatchObject({ takeoverStep: null, investedUsd: 12 });
+    expect(bliss).not.toHaveProperty("roiMultiple");
+    expect(bliss).not.toHaveProperty("valueAdded");
     // Motivate answers Positive replies it did not produce: 2 x ($400 - $150) style value added over its spend.
-    expect(motivate).toMatchObject({ takeoverStep: "conversation", roiMultiple: 50, investedUsd: 10, headline: { totalPipelineUsd: 500 } });
+    expect(motivate).toMatchObject({ takeoverStep: "conversation", investedUsd: 10 });
+    expect(motivate).not.toHaveProperty("roiMultiple");
     expect(computeFeatureRevenue).toHaveBeenCalledTimes(1);
     expect(computeTakeoverReturn.mock.calls[0][0]).toMatchObject({ takeoverStep: "conversation", unitCampaignIds: ["c3"], takeoverLeg: { legKey: "conversation_to_meeting_booked", toStep: "meeting_booked" } });
   });

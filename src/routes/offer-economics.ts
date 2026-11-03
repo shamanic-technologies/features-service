@@ -90,6 +90,7 @@ import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey, type SnapshotJson } from "../lib/view-cache.js";
+import { servedRevenueBody } from "../lib/retired-returns.js";
 import { expectedReturnForOffer, expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 import { applyLeadDetail, parseLeadDetail, LEAD_DETAIL_VALUES } from "../lib/lead-detail.js";
 import {
@@ -417,7 +418,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the offer's best sales path priced on
       // named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
       const expectedReturn = await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity);
-      return {
+      return servedRevenueBody({
         offerId,
         brandId,
         costBasis: "charged" as const,
@@ -425,7 +426,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
         ...applyLeadDetail(body, leadDetail),
         expectedReturn,
         ...(window ? { window } : {}),
-      };
+      });
     },
   });
 }

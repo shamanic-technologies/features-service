@@ -1,7 +1,7 @@
 /**
  * ONE SCOPE'S dated spend on the VENDOR basis — what running it really cost us, before our markup.
- * The staff-only twin of `fetchBrandCommittedSpendByDay` (lib/actual-cost-history.ts says why it is
- * never reachable from a customer read).
+ * The staff-only twin of `fetchBrandCommittedSpendByDay` (never reachable from a customer read: the
+ * vendor figure is our margin).
  *
  * Reads runs-service `GET /internal/stats/costs/timeseries/vendor` — SERVICE-AUTH, and deliberately
  * not the no-auth public timeseries the billed curve reads, because the vendor figure is our margin.
@@ -22,6 +22,9 @@
  */
 
 import { fetchWithRetry } from "./fetch-retry.js";
+import type { CampaignFilter } from "./campaign-scope.js";
+import type { FeatureScope } from "./feature-scope.js";
+import type { Pricing } from "./pricing.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { campaignScopeIds } from "./campaign-scope.js";
 import { pipeRunsScope } from "./pipe-spend-attribution.js";
@@ -29,7 +32,33 @@ import { featureSlugsParam, runsFeatureSlugsParam } from "./feature-scope.js";
 import { sumOverMembers } from "./dynasty-merges.js";
 import { fetchDynastyMerges } from "./public-stats-clients.js";
 import { RUNS_CAMPAIGN_IDS_PER_REQUEST, SPEND_BY_DAY_MEMBER_CONCURRENCY } from "./brand-spend-by-day-client.js";
-import type { DatedSpendReader, VendorSpendDay } from "./actual-cost-history.js";
+
+/**
+ * The dated-spend source `computeFeatureRevenue` draws the return curve's spend leg from. Default:
+ * the billed committed spend (`fetchBrandCommittedSpendByDay`). Same signature, so a vendor-basis
+ * reader drops in without the compute knowing which basis it is drawing.
+ *
+ * @returns Map<YYYY-MM-DD, spend in USD that day>. An absent day is zero spend.
+ */
+export type DatedSpendReader = (
+  brandId: string,
+  campaignScope: CampaignFilter,
+  featureScope: FeatureScope,
+  headers: { orgId: string },
+  pricing: Pricing,
+  workflowDynastySlug?: string,
+  startedAfter?: string,
+) => Promise<Map<string, number>>;
+
+/** One day of a scope's dated spend on the VENDOR basis. */
+export interface VendorSpendDay {
+  /** Vendor cost of the rows whose vendor cost is known, in USD. */
+  vendorUsd: number;
+  /** BILLED spend of the rows whose vendor cost is NOT known, in USD. 0 when every row is priced. */
+  unpricedBilledUsd: number;
+  /** The cost names behind `unpricedBilledUsd`, as runs-service states them. */
+  unpricedCostNames: string[];
+}
 
 /** The committed + comped rows' vendor cost, and the billed amount of those we could not price. */
 const VENDOR_FIELDS = ["vendorTotalCostInUsdCents", "vendorRefundedCostInUsdCents"] as const;

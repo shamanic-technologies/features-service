@@ -221,11 +221,11 @@ export function expectedConversionOf(
   return none("no_rate_for_leg");
 }
 
-/** PURE. The expected cost per outcome and return, kept only when the model prices THIS chart's outcome step. */
+/** PURE. The expected cost per outcome, kept only when the model prices THIS chart's outcome step (no return: ROI-CONSISTENCY-1103). */
 export function expectedCostAndReturnOf(
   expected: ExpectedReturn,
   outcomeStep: string | null,
-): Pick<SpendChartExpected, "costPerOutcomeUsd" | "costPerOutcomeBasis" | "costPerOutcomeUnavailableReason" | "roiMultiple" | "roiBasis" | "roiUnavailableReason"> {
+): Pick<SpendChartExpected, "costPerOutcomeUsd" | "costPerOutcomeBasis" | "costPerOutcomeUnavailableReason"> {
   const cpo = expected.costPerOutcome;
   const cost =
     cpo && outcomeStep && cpo.stepKey === outcomeStep
@@ -235,7 +235,7 @@ export function expectedCostAndReturnOf(
           costPerOutcomeBasis: null,
           costPerOutcomeUnavailableReason: cpo ? "expected_prices_another_step" : (expected.unavailableReason ?? "no_expected_cost_for_leg"),
         };
-  return { ...cost, roiMultiple: expected.roiMultiple, roiBasis: expected.basis, roiUnavailableReason: expected.unavailableReason };
+  return cost;
 }
 
 /** TODAY in UTC. */
