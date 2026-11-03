@@ -18,6 +18,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -283,18 +291,13 @@ describe("what one outcome has cost, day by day", () => {
     expect(sept16.costPerOutcomeUsd).toBeGreaterThan(7);
   });
 
-  it("spans the days roiHistory spans, and both legs move together", async () => {
+  it("its spend leg is the dated committed spend, ending on the scope's total", async () => {
     mockFetch({});
     const res = await body();
     const curve: Array<{ date: string; cumulativeSpendUsd: number }> = res.costPerOutcomeHistory.daily;
-    const roi: Array<{ date: string; cumulativeSpendUsd: number }> = res.roiHistory.daily;
-
-    expect(curve.map((p) => p.date)).toEqual(roi.map((p) => p.date));
-    // The SAME dated committed buckets feed both — a consumer stacking the two charts reads one spend.
-    for (const [i, point] of curve.entries()) {
-      expect(point.cumulativeSpendUsd).toBeCloseTo(roi[i]!.cumulativeSpendUsd, 9);
-    }
     expect(curve.at(-1)!.cumulativeSpendUsd).toBeCloseTo(TOTAL_CENTS / 100, 6);
+    // The return curve it was drawn beside is deleted (ROI-CONSISTENCY-1103).
+    expect(res).not.toHaveProperty("roiHistory");
   });
 
   it("names the step it is denominated in — the SAME one learningPhase counts", async () => {
@@ -384,11 +387,10 @@ describe("what one outcome has cost, day by day", () => {
     expect(strip(unstated)).toEqual(strip(priced));
   });
 
-  it("is NULL when the dated-spend read degrades — like roiHistory, never a 502", async () => {
+  it("is NULL when the dated-spend read degrades, never a 502", async () => {
     mockFetch({ spendByDayDown: true });
     const res = await body();
     expect(res.costPerOutcomeHistory).toBeNull();
-    expect(res.roiHistory).toBeNull();
     // The rest of the page is correct and is served.
     expect(res.outcomes.recipientsClicked).toBe(31);
     expect(res.costEconomics.committedCostUsd).toBeGreaterThan(0);
@@ -401,6 +403,5 @@ describe("what one outcome has cost, day by day", () => {
 
     const lensed = await body("brandId=b1&campaignId=c-live&lens=signups");
     expect(lensed.costPerOutcomeHistory).toBeNull();
-    expect(lensed.roiHistory).toBeNull();
   });
 });

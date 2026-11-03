@@ -439,7 +439,6 @@ export interface EnginePickRef {
 
 export interface EngineCandidateRow extends EnginePickRef {
   fromStep: string | null;
-  valueAddedUsd: number | null;
   uplift: number;
   fleetDecisions: number;
   fleetOutcomes: number;
@@ -498,7 +497,6 @@ export function enginePlaceOf(
     return {
       ...refOf(c.id)!,
       fromStep: c.fromStep,
-      valueAddedUsd: c.valueAddedUsd,
       uplift: round(c.uplift, 3),
       fleetDecisions: round(c.fleet.decisions, 1),
       fleetOutcomes: round(c.fleet.outcomes, 1),

@@ -20,6 +20,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -286,7 +294,7 @@ describe("a campaign-scoped body states ONE spend", () => {
     vi.restoreAllMocks();
   });
 
-  it("terminates its return curve on the campaign's OWN invested spend, not the brand's", async () => {
+  it("states the campaign's OWN invested spend, not the brand's", async () => {
     mockFetch();
     const res = await body("brandId=b1&campaignId=c-live");
 
@@ -295,11 +303,9 @@ describe("a campaign-scoped body states ONE spend", () => {
     expect(res.outcomes.committedSpentCents).toBe(FAMILY_CENTS);
     expect(res.spend.totalSpentCents).toBe(FAMILY_CENTS);
 
-    // THE DIVERGENCE: the curve used to end at the brand's $1,342.38 on this exact body.
-    const last = res.roiHistory.daily.at(-1);
-    expect(last.cumulativeSpendUsd).toBeCloseTo(FAMILY_CENTS / 100, 2);
-    expect(last.cumulativeSpendUsd).not.toBeCloseTo(BRAND_CENTS / 100, 2);
     expect(BRAND_CENTS / FAMILY_CENTS).toBeGreaterThan(3);
+    // The return curve this body drew is deleted (ROI-CONSISTENCY-1103).
+    expect(res).not.toHaveProperty("roiHistory");
   });
 
   it("draws the cost per outcome the SAME body prints above it, to the cent", async () => {
@@ -336,8 +342,6 @@ describe("a campaign-scoped body states ONE spend", () => {
     mockFetch();
     const ancestor = await body("brandId=b1&campaignId=c-stopped-2");
 
-    expect(ancestor.roiHistory.daily.at(-1).cumulativeSpendUsd)
-      .toBeCloseTo(live.roiHistory.daily.at(-1).cumulativeSpendUsd, 6);
     expect(ancestor.costPerOutcomeHistory.daily.at(-1).costPerOutcomeUsd)
       .toBeCloseTo(live.costPerOutcomeHistory.daily.at(-1).costPerOutcomeUsd, 6);
   });
@@ -347,7 +351,6 @@ describe("a campaign-scoped body states ONE spend", () => {
     const res = await body("brandId=b1");
 
     expect(timeseriesCampaignIds).toEqual([null]);
-    expect(res.roiHistory.daily.at(-1).cumulativeSpendUsd).toBeCloseTo(BRAND_CENTS / 100, 2);
     expect(res.costEconomics.committedCostUsd).toBeCloseTo(BRAND_CENTS / 100, 2);
   });
 });

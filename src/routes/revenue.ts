@@ -72,6 +72,7 @@ import {
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { expectedReturnForBrand, expectedReturnForCampaign, expectedReturnForOffer } from "../lib/expected-return.js";
+import { servedRevenueBody } from "../lib/retired-returns.js";
 import {
   applyLeadDetail,
   attributedOutcomesFor,
@@ -104,7 +105,6 @@ import {
   type MaturityPlan,
 } from "../lib/roi-maturity.js";
 import { describeIdentity } from "../lib/campaign-identity.js";
-import { buildRoiHistory, type RoiHistory } from "../lib/roi-history.js";
 import {
   buildCostPerOutcomeHistory,
   type CostPerOutcomeHistory,
@@ -114,8 +114,7 @@ import {
   type ConversionRateHistory,
 } from "../lib/conversion-rate-history.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
-import { buildActualCostHistory, vendorSpendLedger, type DatedSpendReader } from "../lib/actual-cost-history.js";
-import { fetchBrandVendorSpendByDay } from "../lib/vendor-spend-by-day-client.js";
+import type { DatedSpendReader } from "../lib/actual-cost-history.js";
 import { buildCostEconomics, type CostEconomics, type MaturityReason } from "../lib/cost-economics.js";
 import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
@@ -599,31 +598,12 @@ interface RevenueResponse {
   costEconomics: CostEconomics;
   timeSeries: TimeSeriesPoint[];
   /**
-   * RETURN ON SPEND ACROSS THE BRAND'S WHOLE LIFE — a single line a consumer charts instead of a raw
-   * cumulative signal count. One point per UTC day, ascending, from the brand's first spend to its
-   * last dated day; BOTH legs are CUMULATIVE SINCE INCEPTION (see {@link buildRoiHistory} for why a
-   * period-grain ratio would describe nothing — spend on a day buys outcomes that land weeks later).
-   *
-   * REALIZED on both legs, nothing modelled: spend is dated by runs-service's own cost buckets and
-   * pipeline by the per-lead event timestamps the engine already holds. Its LAST `roiMultiple` is the
-   * headline `costEconomics.roiMultiple` for the same read — coherent by construction, not corrected.
-   * Pipeline whose outcome carries no timestamp cannot sit on a day and is reported separately as
-   * `undatedPipelineUsd` rather than dropped or dated (`datedPipelineUsd + undatedPipelineUsd ===
-   * headline.totalPipelineUsd`).
-   *
-   * OVERVIEW ONLY (same gate as `spend`): null on the lensed `?lens=` response and absent on the
-   * grouped `?groupBy=campaignId` groups. Fail-SOFT — null when the dated-spend read fails, exactly
-   * like `sequences`: the curve is display enrichment and must never 502 an Overview whose every
-   * other number is correct. Null means "we could not measure this", never "the return was zero".
-   */
-  roiHistory: RoiHistory | null;
-  /**
    * WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome
    * `outcomes` states as a scalar, and the curve a customer reads to answer "is this getting
    * cheaper, and how fast".
    *
-   * BOTH legs are CUMULATIVE since the scope's first day, for the reason {@link buildRoiHistory}
-   * gives: spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates
+   * BOTH legs are CUMULATIVE since the scope's first day, because
+   * spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates
    * and describes nothing. The outcome is the scope's OWN leg's step — the byte-same step and rate
    * `learningPhase` counts with, resolved ONCE by the same leader — so the curve and the verdict
    * beside it can never be denominated in two different things.
@@ -632,8 +612,7 @@ interface RevenueResponse {
    * buckets (the basis `outcomes.committedSpentCents` rides) and the outcomes are the same deduped
    * leads `outcomes.recipientsClicked` / `recipientsRepliesPositive` count, so the final point IS
    * that block's `cpcCents`/`cpprCents` divided by the leg's rate — to the sub-cent rounding
-   * documented in {@link buildCostPerOutcomeHistory}, the same one `roiHistory`'s terminal ROI
-   * carries. An outcome whose signal carries no timestamp sits on no day and is stated as
+   * documented in {@link buildCostPerOutcomeHistory}. An outcome whose signal carries no timestamp sits on no day and is stated as
    * `undatedOutcomes` rather than dated or dropped.
    *
    * NOT `learningPhase.expectedCostPerOutcomeUsd`, which answers a different question: that one is
@@ -641,7 +620,7 @@ interface RevenueResponse {
    * exploration spend must not price into it. This is the OBSERVED accounting figure — every dollar
    * the scope spent over every outcome it produced.
    *
-   * OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride: null on the lensed `?lens=` read and
+   * OVERVIEW ONLY, the same gate `spend` rides: null on the lensed `?lens=` read and
    * absent on the lean `?groupBy=` groups. NULL also whenever the scope names no priceable outcome
    * step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read
    * degraded — `learningPhase.unmeasuredReason` beside it names which, so no reason vocabulary is
@@ -653,8 +632,8 @@ interface RevenueResponse {
    * conversion rate the `outcomes` block states as a scalar, and the curve a customer reads to answer
    * "is this converting BETTER than it was".
    *
-   * BOTH legs are CUMULATIVE since the scope's first day, for the reason {@link buildRoiHistory}
-   * gives. The outcome is the scope's OWN leg's step — the byte-same `outcomeTerms` the
+   * BOTH legs are CUMULATIVE since the scope's first day, because spend on a
+   * day buys outcomes that land weeks later. The outcome is the scope's OWN leg's step — the byte-same `outcomeTerms` the
    * cost-per-outcome curve is denominated in, resolved ONCE by the same leader — so the three curves
    * a consumer draws side by side can never be measuring different steps.
    *
@@ -670,7 +649,7 @@ interface RevenueResponse {
    * reached yet — a measured `0` means people were reached and nobody converted, which is the
    * opposite of {@link buildCostPerOutcomeHistory}'s null rule and must not be harmonised with it.
    *
-   * OVERVIEW ONLY, the same gate `roiHistory` and `spend` ride: null on the lensed `?lens=` read and
+   * OVERVIEW ONLY, the same gate `spend` rides: null on the lensed `?lens=` read and
    * absent on the lean `?groupBy=` groups. NULL also whenever the scope names no priceable outcome
    * step (no campaign, no leg stated, a rate the brand never declared) —
    * `learningPhase.unmeasuredReason` beside it names which, so no reason vocabulary is duplicated.
@@ -835,7 +814,6 @@ function emptyBody(
   cost: RunsCostCents,
   spend: Spend | null,
   sequences: SignalSeries | null = null,
-  roiHistory: RoiHistory | null = null,
   // The VOLUME half. Null on the no-funnel short-circuit, where the leads were never read: a 0 there
   // would say this scope reached nobody, when what happened is that nobody counted. On the cold-start
   // path (economics null) the leads WERE read, so the caller passes the real block — a brand with no
@@ -867,7 +845,6 @@ function emptyBody(
       totalPipelineUsd,
     }),
     timeSeries: [],
-    roiHistory,
     // Neither path that reaches here names a leg: the no-funnel short-circuit never read the leads
     // and the cold-start path holds no rate ladder to walk one through.
     costPerOutcomeHistory: null,
@@ -914,7 +891,7 @@ export function noChannelRevenueBody(causes: readonly OutcomeCause[] = DEFAULT_P
   // Nothing was sent either: an empty series, not null — the dashboard's schema takes `sequences` as a
   // series or absent, and "no campaign" is a known zero, not an unreadable one.
   const nothingSent: SignalSeries = { total: 0, daily: [], undatedCount: 0 };
-  return emptyBody(null, { committedCents: 0, actualCents: 0 }, buildSpend(nothingBought, []), nothingSent, null, null, null, [], causes, "no_channel");
+  return emptyBody(null, { committedCents: 0, actualCents: 0 }, buildSpend(nothingBought, []), nothingSent, null, null, [], causes, "no_channel");
 }
 
 /**
@@ -963,7 +940,7 @@ function fetchSpendByDaySoft(
 ): Promise<Map<string, number> | null> {
   return datedSpend(brandId, campaignScope, featureScope, headers, pricing, workflowDynastySlug).catch((err) => {
     console.warn(
-      `[features-service] dated-spend enrichment failed (degrading roiHistory to null): ${(err as Error).message}`,
+      `[features-service] dated-spend enrichment failed (degrading the dated curves to null): ${(err as Error).message}`,
     );
     return null;
   });
@@ -1220,11 +1197,8 @@ function buildLensBody(
             : perConversion(cost.committedCents, expectedConversions),
     },
     timeSeries: [],
-    // The lens describes a SUBSET of the brand's leads; its spend leg would be the brand's whole
-    // spend, so the curve belongs to the un-lensed Overview alone.
-    roiHistory: null,
-    // Same gate, same reason: a cost-per-outcome curve counted over a lensed subset and divided by
-    // the brand's whole dated spend would belong to neither scope.
+    // The lens describes a SUBSET of the brand's leads: a cost-per-outcome curve counted over it and
+    // divided by the brand's whole dated spend would belong to neither scope.
     costPerOutcomeHistory: null,
     // Same gate, different reason: both of this curve's legs WOULD be the lensed subset, but the lens
     // short-circuits before the leg is ever resolved, so there is no step to denominate it in. A lens
@@ -1383,7 +1357,6 @@ function attachMaturity(
   body.maturity = scoped ? scoped.maturity : null;
   if (!scoped) return body;
   // The curves are the mature cohort's: their verdict rides beside them, the byte-same one.
-  if (body.roiHistory) body.roiHistory.isMature = scoped.maturity.isMature;
   if (body.costPerOutcomeHistory) body.costPerOutcomeHistory.isMature = scoped.maturity.isMature;
   body.costEconomics.maturity = costRatiosPair(scoped.bases, pipelines, lifetimeRevenueUsd);
   if (body.outcomes) body.outcomes.maturity = outcomeRatiosPair(scoped.bases);
@@ -1590,7 +1563,6 @@ export async function computeFeatureRevenue(
         sequences,
         null,
         null,
-        null,
         [],
         causes,
       );
@@ -1599,7 +1571,7 @@ export async function computeFeatureRevenue(
       fetchRunsCostCents(brandId, campaignScope, featureScope, headers, pricing, workflowScope?.producerSlugs),
       brandLevelRead,
     ]);
-    return emptyBody(null, addBrandLevelCost(ownCost, brandLevel), null, null, null, null, null, [], causes);
+    return emptyBody(null, addBrandLevelCost(ownCost, brandLevel), null, null, null, null, [], causes);
   }
 
   // ── Wave A: the downstream reads with NO data dependency on each other, in parallel.
@@ -1657,7 +1629,7 @@ export async function computeFeatureRevenue(
           plan.cutoffIso,
         ).catch((err) => {
           console.warn(
-            `[features-service] maturing dated-spend read failed (degrading roiHistory to null): ${(err as Error).message}`,
+            `[features-service] maturing dated-spend read failed (degrading the dated curves to null): ${(err as Error).message}`,
           );
           return null;
         })
@@ -1798,7 +1770,6 @@ export async function computeFeatureRevenue(
       cost,
       breakdown ? buildSpend(breakdown, [], counts, parents, coldSpendBasis) : null,
       sequences,
-      null,
       buildRevenueOutcomes(persons, cost, coldBasis),
       // The chain is walked here too, and it is walked HONESTLY: this path short-circuits before the
       // per-lead statement / attribution overlays are read, so every rung that depends on one is
@@ -2174,22 +2145,6 @@ export async function computeFeatureRevenue(
       realized,
     }),
     timeSeries: result.timeSeries,
-    // runs' dated COMMITTED buckets against the engine's own dated pipeline — the same basis AND the
-    // same mature cohort the headline ROI rides, so the curve's last point IS that ROI. Null when the
-    // dated-spend read (or the maturing campaigns' part of it) degraded — a curve is never drawn from
-    // one leg.
-    roiHistory:
-      spendByDay && maturingByDay && !plan.unknown
-        ? {
-            ...buildRoiHistory(
-              plan.cutoffIso ? matureSpendByDay(matureCurveSpendByDay!, maturingByDay, plan.cutoffIso) : spendByDay,
-              matureResult.timeSeries,
-              matureResult.headline.totalPipelineUsd,
-            ),
-            // The flash twin: every dollar, every lead — the basis of `costEconomics.maturity.flash`.
-            flash: buildRoiHistory(spendByDay, result.timeSeries, result.headline.totalPipelineUsd),
-          }
-        : null,
     // The SAME dated committed buckets, against the scope's own dated count of the step its leg
     // closes. Null when either ingredient is missing — the dated-spend read degraded, or the scope
     // names no priceable outcome step — and `learningPhase.unmeasuredReason` beside it says which.
@@ -2339,13 +2294,11 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     return res.status(400).json({ error: "brandId query parameter is required" });
   }
 
-  // The actual-cost basis answers ONE question — the return curve of a scope on vendor cost — so it
-  // takes the scope parameters (brand, campaign, offer, workflow, cause) and nothing that would ask
-  // for a different body. A grouping or a lens is a table / a lead subset it does not serve, and a
-  // pricing selector is a discount basis vendor cost does not have. Refused, never silently ignored.
+  // The actual-cost basis serves ONLY the per-workflow and per-campaign groups (`?groupBy=workflow` |
+  // `campaignId`), their spend read at vendor cost (lib/actual-cost-groups.ts). The un-grouped return
+  // curve it once served is deleted (ROI-CONSISTENCY-1103: a pipeline-based return). A lens is a lead
+  // subset and a pricing selector a discount basis vendor cost does not have. Refused, never ignored.
   if (costBasis === "actual") {
-    // `?groupBy=workflow` and `?groupBy=campaignId` ARE served on this basis: the per-workflow and
-    // per-campaign rows a Workflow page shows, their spend read at vendor cost (lib/actual-cost-groups.ts).
     const groupedOk = groupBy === "workflow" || groupBy === "campaignId";
     const refused = ["groupBy", "lens", "pricing"].filter((k) => req.query[k] !== undefined && !(k === "groupBy" && groupedOk));
     if (refused.length > 0) {
@@ -2353,6 +2306,9 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
         error: `${refused.join(", ")} not supported on the actual-cost basis`,
         reason: "not_on_actual_cost_basis",
       });
+    }
+    if (!groupedOk) {
+      return res.status(400).json({ error: "groupBy=workflow or groupBy=campaignId is required on the actual-cost basis", reason: "group_by_required" });
     }
   }
 
@@ -2549,7 +2505,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             // What each workflow's spend could not be priced at vendor cost, on the SAME scope the
             // group's own cost was read on, folded onto the group's versions exactly as the cost is.
             const unpricedBySlug = await fetchRunsCostCentsByWorkflowSlug(brandId, featureSlug, headers, "vendorUnpriced", workflowCampaignScope);
-            return {
+            return servedRevenueBody({
               featureSlug,
               costBasis: "actual" as const,
               groupBy: "workflow",
@@ -2557,10 +2513,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               groups: groups.map((g) =>
                 stampVendorGroup(g, g.workflowSlugs.reduce((sum, slug) => sum + (unpricedBySlug.get(slug)?.committedCents ?? 0), 0)),
               ),
-            };
+            });
           }
 
-          return {
+          return servedRevenueBody({
             featureSlug,
             costBasis: "charged" as const,
             groupBy: "workflow",
@@ -2569,7 +2525,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             // the un-grouped campaign read and `/audience-stats` already carry. Absent brand-wide.
             campaignIdentity: campaignId ? describeIdentity(workflowIdentity, campaignId) : undefined,
             groups,
-          };
+          });
         },
       });
 
@@ -2626,7 +2582,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-offer-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-          return { featureSlug, costBasis: "charged" as const, groupBy: "offerId", groups };
+          return servedRevenueBody({ featureSlug, costBasis: "charged" as const, groupBy: "offerId", groups });
         },
       });
 
@@ -2721,7 +2677,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
 
-          return { featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups };
+          return servedRevenueBody({ featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups });
         },
       });
 
@@ -2763,44 +2719,6 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // name. A dynasty the scope never ran is not an error — it is an empty answer, zero counts and a
     // null return, which is what the consumer's "this workflow has not run here" state renders.
     const workflowScope = workflowParam ? await resolveWorkflowScope(featureSlug, workflowParam) : undefined;
-
-    if (costBasis === "actual") {
-      const actualPayload = await servedCachedJson({
-        view: "revenue-actual-cost",
-        scopeKey: buildScopeKey(featureSlug, {
-          orgId,
-          brandId,
-          campaignId: identity?.key ?? campaignId,
-          offerId,
-          workflow: workflowParam,
-          decl,
-          econ,
-          cause: causeKey,
-          pipeSpend,
-        }),
-        orgId,
-        compute: () => withPipeSpendAttribution(pipeAttribution, async () => {
-          const ledger = vendorSpendLedger(fetchBrandVendorSpendByDay);
-          const body = await computeFeatureRevenue(featureSlug, brandId, campaignScope, funnel, headers, undefined, pricingForIdentity(campaignId ? identity : null), true, "gross", undefined, undefined, undefined, causes, workflowScope, ledger.reader);
-          return {
-            featureSlug,
-            costBasis: "actual" as const,
-            campaignIdentity: campaignId ? describeIdentity(identity, campaignId) : undefined,
-            workflow: workflowScope
-              ? {
-                  workflowDynastySlug: workflowScope.workflowDynastySlug,
-                  workflowDynastyName: workflowScope.workflowDynastyName,
-                  workflowSlugs: workflowScope.workflowSlugs,
-                }
-              : undefined,
-            // Null when the dated vendor spend (or the value leg) could not be read — never a curve
-            // drawn from one leg, and never the billed curve under this basis.
-            actualCostHistory: body.roiHistory ? buildActualCostHistory(body.roiHistory, ledger.unpricedByDay(), ledger.unpricedCostNames()) : null,
-          };
-        }),
-      });
-      return sendSnapshotJson(res, actualPayload);
-    }
 
     const payload = await servedCachedJson({
       view: lens ? "revenue-lens" : "revenue",
@@ -2848,7 +2766,6 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
           body.headline = { ...body.headline, ...takeover.headline };
           body.costEconomics = takeover.costEconomics;
           body.maturity = takeover.maturity;
-          body.roiHistory = null;
         }
 
         traceEvent(runId, { service: "features-service", event: "feature-revenue-done", detail: `featureSlug=${featureSlug}, orgs=${body.organizations.length}, pipelineUsd=${body.headline.totalPipelineUsd}` }, req.headers).catch(() => {});
@@ -2886,7 +2803,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               : offerId
                 ? await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity)
                 : await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
-        return {
+        return servedRevenueBody({
           featureSlug,
           costBasis: "charged" as const,
           ...applyLeadDetail(body, leadDetail),
@@ -2903,7 +2820,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 workflowSlugs: workflowScope.workflowSlugs,
               }
             : undefined,
-        };
+        });
       }),
     });
 

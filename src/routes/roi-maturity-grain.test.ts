@@ -17,6 +17,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -257,30 +265,6 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     expect(res.costEconomics.roiMultiple).not.toBeCloseTo((whole * 3) / 7 / 60, 3);
     expect(res.costEconomics.costOfAcquisitionPct).toBeCloseTo((60 / maturePipeline) * 100, 6);
     expect(res.costEconomics.costPerAcquisitionUsd).toBeCloseTo(60 / (maturePipeline / 5000), 6);
-  });
-
-  it("ends the return curve ON the headline ROI — the curve rides the same mature cohort", async () => {
-    mockFetch();
-    const res = await body();
-    const last = res.roiHistory.daily.at(-1);
-    expect(last.cumulativeSpendUsd).toBeCloseTo(60, 6);
-    expect(last.cumulativePipelineUsd + res.roiHistory.undatedPipelineUsd).toBeCloseTo(
-      (res.headline.totalPipelineUsd * 4) / 7,
-      6,
-    );
-  });
-
-  it("serves the FLASH twin curve: every dollar and every lead, ending on the flash return", async () => {
-    mockFetch();
-    const res = await body();
-    const last = res.roiHistory.flash.daily.at(-1);
-    expect(last.cumulativeSpendUsd).toBeCloseTo(100, 6);
-    expect(last.cumulativePipelineUsd + res.roiHistory.flash.undatedPipelineUsd).toBeCloseTo(res.headline.totalPipelineUsd, 6);
-    // With every lead dated, the curve's last point IS the flash headline; the outer curve stays mature.
-    if (res.roiHistory.flash.undatedPipelineUsd === 0) {
-      expect(last.roiMultiple).toBeCloseTo(res.costEconomics.maturity.flash.roiMultiple, 6);
-    }
-    expect(res.roiHistory.daily.at(-1).cumulativeSpendUsd).toBeCloseTo(60, 6);
   });
 
   it("a campaign whose every dollar is younger than the delay reads NULL ratios, reason `maturing` — never 0", async () => {

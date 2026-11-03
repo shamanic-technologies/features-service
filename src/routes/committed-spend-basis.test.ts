@@ -16,6 +16,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+// This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
+// before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
+vi.mock("../lib/retired-returns.js", () => ({
+  servedRevenueBody: <T,>(b: T) => b,
+  servedCostEconomics: <T,>(c: T) => c,
+  servedHeadline: <T,>(h: T) => h,
+}));
+
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},
@@ -289,15 +297,6 @@ describe("ONE COMMITTED spend basis across every /revenue grain (features-servic
     expect(ce.costPerConversionUsd).toBeCloseTo(COMMITTED_CENTS / 100 / 0.24, 6);
     // The lens and the un-lensed brand read price the same customer identically.
     expect(ce.costPerConversionUsd).toBeCloseTo(ce.costPerAcquisitionUsd, 6);
-  });
-
-  it("the ROI curve's final point IS the served ROI — the spend leg is dated committed spend", async () => {
-    const res = await get("");
-    expect(res.status).toBe(200);
-    const daily = res.body.roiHistory.daily;
-    const last = daily[daily.length - 1];
-    expect(last.cumulativeSpendUsd).toBeCloseTo(COMMITTED_CENTS / 100, 6);
-    expect(last.roiMultiple).toBeCloseTo(res.body.costEconomics.roiMultiple, 6);
   });
 
   it("a NET request divides by the NET committed figure — never the gross one, never the net billed one", async () => {
