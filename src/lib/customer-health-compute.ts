@@ -23,9 +23,8 @@
  *   - breakevenCacUsd = ltrUsd = the brand's own lifetime revenue per customer (SalesEconomics.lifetimeRevenueUsd).
  *   - the revenue engine yields the brand's NET committed spend (what the client PAID: every channel, read as
  *     `GET /brands/:brandId/revenue?pricing=net` reads it, SHOCKWAVE-ROI-NET-1016) + expected pipeline; from
- *     its costEconomics:
- *       cacPct      = spend / pipeline × 100     (= CAC / LTR × 100, by construction — pipeline = conversions × LTR)
- *   - currentCacUsd = (cacPct / 100) × ltrUsd     (the realized cost to acquire one paying customer)
+ *     its costEconomics. No pipeline-based CAC (%CAC, current CAC) is served (ROI-CONSISTENCY-1103: a pipeline is a
+ *     forecast, never a ratio's numerator); a realized cost per paying client lives on realizedReturn.
  *   No return is served and none enters the badge (ROI-CONSISTENCY-1103: a return exists only where a value lands).
  *   Priced exactly as /revenue prices the brand: on the OFFER's terms (its stated lifetime revenue, the
  *   reading funnels' effective leg rates — `lib/offer-priced-economics.ts`). No priced funnel or no stated
@@ -85,15 +84,11 @@ export type HealthBadge = "green" | "yellow" | "red";
 
 /** The economics slice of a row, computed from the revenue engine (priced economics only). */
 interface CurrentEconomics {
-  /** NET COMMITTED acquisition spend in USD (what the client paid, every channel) — the single basis cacPct/currentCacUsd ride. */
+  /** NET COMMITTED acquisition spend in USD (what the client paid, every channel). */
   committedSpendUsd: number | null;
   /** Billed-only acquisition spend, USD. TRANSITIONAL — reported for the staff console's migration,
    * divided by nowhere. null when not computed (no priced economics). */
   realizedSpendUsd: number | null;
-  /** Committed cost to acquire ONE paying customer, USD = (cacPct/100) × LTR. null when incomputable. */
-  currentCacUsd: number | null;
-  /** CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable. */
-  cacPct: number | null;
 }
 
 interface ConversionTracker {
@@ -381,11 +376,10 @@ export interface CustomerHealthBoard {
 
 /** Economics returned by the revenue-engine dep. */
 export interface BrandRevenueResult {
-  /** COMMITTED spend — the basis cacPct below is computed on. */
+  /** COMMITTED spend. */
   committedCostUsd: number;
   /** Billed-only spend. Reported, never divided by. */
   actualCostUsd: number;
-  cacPct: number | null;
 }
 
 /** Injectable client bundle (defaults to the real composites; overridden in tests). */
@@ -449,7 +443,6 @@ export async function boardBrandRevenue(brandId: string, orgId: string): Promise
   return {
     committedCostUsd: body.costEconomics.committedCostUsd,
     actualCostUsd: body.costEconomics.actualCostUsd,
-    cacPct: body.costEconomics.costOfAcquisitionPct,
   };
 }
 
@@ -748,8 +741,6 @@ export async function buildCustomerHealthBoard(
     let currentEconomics: CurrentEconomics = {
       committedSpendUsd: null,
       realizedSpendUsd: null,
-      currentCacUsd: null,
-      cacPct: null,
     };
     let audienceEnvelope: AudienceStatsEnvelope | null = null;
     // Read beside the enrichment, not inside it: it is already fail-soft, and a row whose economics
@@ -801,13 +792,9 @@ export async function buildCustomerHealthBoard(
         workflowProjection = settledOrNamed(workflowSettled, "best_workflow");
 
         if (revenueRes && economics) {
-          const ltr = economics.lifetimeRevenueUsd;
-          const currentCacUsd = revenueRes.cacPct != null ? (revenueRes.cacPct / 100) * ltr : null;
           currentEconomics = {
             committedSpendUsd: revenueRes.committedCostUsd,
             realizedSpendUsd: revenueRes.actualCostUsd,
-            currentCacUsd,
-            cacPct: revenueRes.cacPct,
           };
         }
       }
