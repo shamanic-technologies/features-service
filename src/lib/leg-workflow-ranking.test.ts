@@ -17,8 +17,6 @@ function rank(byDynasty: Record<string, LegMaturityFigures>, assignments: Record
     names: new Map(slugs.map((s) => [s, s.toUpperCase()])),
     assignments: new Map(slugs.map((s) => [s, assignments[s] ?? "active"])),
     executable: new Set(slugs),
-    pipelineUsd: new Map(),
-    billedSpendUsd: new Map(),
   });
 }
 
@@ -76,28 +74,16 @@ describe("rankLegWorkflows", () => {
       names: new Map(),
       assignments: new Map(),
       executable: new Set(["never", "ran"]),
-      pipelineUsd: new Map(),
-      billedSpendUsd: new Map(),
     });
     expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["ran"]);
     expect(rows[0]).toMatchObject({ assignment: "unassigned", selectable: false });
   });
 
-  it("the return is pipeline ÷ billed spend, null when either is missing or spend is zero", () => {
-    const rows = rankLegWorkflows({
-      byDynasty: new Map([
-        ["a", wf([100, 1000, 2], [100, 1000, 2])],
-        ["b", wf([100, 1000, 2], [100, 1000, 2])],
-        ["c", wf([100, 1000, 2], [100, 1000, 2])],
-      ]),
-      names: new Map(),
-      assignments: new Map([["a", "active"], ["b", "active"], ["c", "active"]]),
-      executable: new Set(["a", "b", "c"]),
-      pipelineUsd: new Map([["a", 500], ["c", 500]]),
-      billedSpendUsd: new Map([["a", 100], ["b", 100], ["c", 0]]),
-    });
-    const roi = Object.fromEntries(rows.map((r) => [r.workflowDynastySlug, r.roiMultiple]));
-    expect(roi).toEqual({ a: 5, b: null, c: null });
+  // ROI-CONSISTENCY-1103 (owner 2026-11-03): a workflow serves its cost per outcome, never a return.
+  it("serves no return on a row or in its figures", () => {
+    const rows = rank({ a: wf([100, 1000, 2], [100, 1000, 2]) });
+    expect(Object.keys(rows[0]!).filter((k) => /roi|pipeline|billed/i.test(k))).toEqual([]);
+    expect(Object.keys(rows[0]!.figures!)).not.toContain("roi");
   });
 
   it("lists a workflow ASSIGNED to the leg before its first run, never an empty list (owner 2026-10-10)", () => {
@@ -106,8 +92,6 @@ describe("rankLegWorkflows", () => {
       names: new Map(),
       assignments: new Map([["algenib", "active"], ["raven", "active"]]),
       executable: new Set(["algenib", "raven"]),
-      pipelineUsd: new Map(),
-      billedSpendUsd: new Map(),
     });
     // Nothing mature: ordered on the explore price, so the never-run algenib ($0) goes before raven ($14).
     expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["algenib", "raven"]);
@@ -125,8 +109,6 @@ describe("rankLegWorkflows", () => {
       names: new Map(),
       assignments: new Map([["allegro", "active"], ["lyonesse", "active"]]),
       executable: new Set(["lyonesse"]),
-      pipelineUsd: new Map(),
-      billedSpendUsd: new Map(),
     });
     expect(rows.map((r) => r.workflowDynastySlug)).toEqual(["lyonesse", "allegro"]);
     expect(rows[0]).toMatchObject({ selectable: true, executable: true, goesFirst: true, moneyGoesHere: true });

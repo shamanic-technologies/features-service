@@ -5193,16 +5193,14 @@ router.get("/public/stats/outcome-prices", (_req, res) => {
 
 const LEG_RANKING_FRESH_MS = 15 * 60_000;
 const LEG_RANKING_WARM_TIMEOUT_MS = 10 * 60_000;
-const LEG_RANKING_SPEND_CONCURRENCY = 4;
 
 export interface LegWorkflowRankingPayload {
   featureSlug: string;
   legKey: string;
   grain: "fleet";
-  /** The cost per outcome, outcomes, spend and rate are on the incurred fleet basis (outcome-prices'). */
+  /** The cost per outcome, outcomes, spend and rate are on the incurred fleet basis (outcome-prices'). A workflow
+   *  serves no return (ROI-CONSISTENCY-1103). */
   costBasis: "incurred";
-  /** The return divides the fleet pipeline by what clients were billed, net (workflow-return-history's). */
-  roiBasis: "billed";
   computedAt: string | null;
   maturity: { durationDays: number; outcomesRequired: number; cutoffIso: string | null; measured: boolean };
   /** On a pipe landing on a meeting step: the brands counted / left out (`lib/meeting-population.ts`); else null. */
@@ -5459,40 +5457,24 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
     console.error(`[features-service] leg workflow ranking: net evidence unreadable (${featureSlug}, ${legKey}); its net figures and last runs read not measured:`, error);
     return null;
   });
-  const [maturity, assignmentRows, workflows, pipelines, campaigns] = await Promise.all([
+  const [maturity, assignmentRows, workflows] = await Promise.all([
     fleetPipeFigures(featureSlug, legKey),
     fetchLegAssignments(featureSlug, legKey),
     fetchPublicWorkflows(featureSlug, "all"),
-    getFleetWorkflowPipelines(featureSlug, legKey),
-    getFleetLegCampaigns(featureSlug, legKey),
   ]);
   const byDynasty = new Map(maturity.byDynasty);
-  const campaignIds = campaigns.map((c) => c.campaignId);
-  const spent = [...byDynasty].filter(([, f]) => (f.flash?.spentUsd ?? 0) > 0).map(([slug]) => slug);
-  const billedSpendUsd = new Map<string, number>();
-  await mapWithConcurrency(spent, LEG_RANKING_SPEND_CONCURRENCY, async (slug) => {
-    try {
-      const byDay = await fetchDynastyBilledSpendByDay(featureSlug, slug, campaignIds, "own");
-      billedSpendUsd.set(slug, [...byDay.values()].reduce((a, b) => a + b, 0));
-    } catch (error) {
-      console.error(`[features-service] leg workflow ranking: billed spend read failed (${featureSlug}, ${legKey}, ${slug}); its return is unstated:`, error);
-    }
-  });
   const assignments = new Map<string, "active" | "deprecated">();
   for (const [slug, row] of assignmentRows) {
     if (row.state === "active" || row.state === "deprecated") assignments.set(slug, row.state);
   }
   const names = new Map<string, string | null>();
   for (const w of workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName ?? null);
-  const pipelineUsd = new Map<string, number | null>();
-  for (const [slug, p] of pipelines.byDynasty) pipelineUsd.set(slug, p.totalPipelineUsd);
   const rule = legMaturity(legKey);
   return {
     featureSlug,
     legKey,
     grain: "fleet",
     costBasis: "incurred",
-    roiBasis: "billed",
     computedAt: new Date().toISOString(),
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: maturity.cutoffIso, measured: maturity.measured },
     meetingPopulation: maturity.meetingPopulation,
@@ -5501,16 +5483,15 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
       names,
       assignments,
       executable: executableDynasties(workflows),
-      pipelineUsd,
-      billedSpendUsd,
       ...(await netP.then((net) => ({ netSpend: net?.netSpend ?? null, lastRunAt: net?.lastRunAt ?? null }))),
       defaultConversionPct: legDefaultConversionPct(legKey),
     }),
   };
 }
 
-/** The persisted copy of one leg's ranking (`lib/fleet-cell-store.ts`). */
-const legRankingCellKey = (key: string): string => `leg-workflow-ranking:${key}`;
+/** The persisted copy of one leg's ranking (`lib/fleet-cell-store.ts`). `-v2`: the builds stored before
+ *  ROI-CONSISTENCY-1103 carry the deleted per-workflow return, never served again. */
+const legRankingCellKey = (key: string): string => `leg-workflow-ranking-v2:${key}`;
 
 /** Rebuild one leg's ranking in the background when absent or past its fresh window (single-flight). */
 export function warmLegWorkflowRanking(featureSlug: string, rawLegKey: string): Promise<void> {
@@ -5624,7 +5605,6 @@ router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
     legKey,
     grain: "fleet",
     costBasis: "incurred",
-    roiBasis: "billed",
     computedAt: null,
     maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: null, measured: false },
     pricing,

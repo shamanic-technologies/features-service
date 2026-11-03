@@ -107,8 +107,6 @@ const RESOLVED_MONEY = [
   "costPerOutcomeUsd",
   "costPerPaidClientUsd",
   "costPerMeetingBookedUsd",
-  "roiMultiple",
-  "cacPct",
 ] as const;
 
 /**

@@ -158,8 +158,6 @@ export function meetingPipeOn(inputs: MeetingHistoryInputs, day: string): { flee
     names,
     assignments: assignmentsOn(inputs.assignmentChanges, MEETING_BOOKING_LEG_KEY, day, dynasties, inputs.merges),
     executable: executableOn(day, inputs.workflows),
-    pipelineUsd: new Map(),
-    billedSpendUsd: new Map(),
   });
   return { fleet, rows };
 }

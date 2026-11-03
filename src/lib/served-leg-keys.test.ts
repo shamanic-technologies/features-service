@@ -91,7 +91,7 @@ describe("the served body", () => {
       entryLegKey: "start_to_conversation",
       legs: [{ legKey: "start_to_conversation", channel: { slug: COLD }, fromStep: null, toStep: { key: "conversation", label: "Positive reply" } }],
     };
-    const body = { paths: [row], campaigns: [{ campaignKey: "campaign:sales-cold-email-outreach|start_to_conversation", roiCombinationKey: row.combinationKey }] };
+    const body = { paths: [row], campaigns: [{ campaignKey: "campaign:sales-cold-email-outreach|start_to_conversation" }] };
     const served = serveOutboundLegKeys(body);
     expect(served.paths[0]).toMatchObject({
       combinationKey: "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client",
@@ -102,7 +102,6 @@ describe("the served body", () => {
     expect(served.paths[0].legs[0].fromStep).toEqual({ key: "lead_found", label: "Lead" });
     expect(served.campaigns[0]).toEqual({
       campaignKey: "campaign:sales-cold-email-outreach|lead_found_to_conversation",
-      roiCombinationKey: "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client",
     });
     // A Google Ads row is untouched.
     const ads = { combinationKey: "start_to_website_visit@google-ads+website_visit_to_signup+signup_to_paid_client", pathKey: "start_to_website_visit+website_visit_to_signup+signup_to_paid_client" };

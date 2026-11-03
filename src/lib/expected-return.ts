@@ -42,7 +42,8 @@ import {
 } from "./offer-sales-paths.js";
 import type { EffectiveArrowRate, EffectiveRateSource } from "./effective-conversion-rates.js";
 import type { OfferLifetimeRevenueSource as LifetimeRevenueSource } from "./offer-lifetime-revenue.js";
-import type { AudienceStatsEnvelope } from "./audience-stats-compute.js";
+import type { AudienceStatsEnvelope, ProjectionRatios, ServedProjectionRatios } from "./audience-stats-compute.js";
+import type { MaturityPair } from "./maturity.js";
 import type { CatalogueFunnel } from "./agent-catalogue.js";
 
 /** What an expected figure rests on, weakest last. */
@@ -683,21 +684,34 @@ interface ProjectionPairLike {
   mature: { returnPerDollar: number | null } | null;
 }
 
+/** PURE: a projection pair as served, its internal return dropped. */
+const servedProjectionPair = (pair: MaturityPair<ProjectionRatios>): MaturityPair<ServedProjectionRatios> => {
+  const cost = (r: ProjectionRatios | null): ServedProjectionRatios | null => (r ? { costPerPaidClientUsd: r.costPerPaidClientUsd } : null);
+  return { ...pair, flash: cost(pair.flash), mature: cost(pair.mature) };
+};
+
 const projectionMeasured = (pair: ProjectionPairLike | null | undefined): MeasuredReturnPair | null =>
   pair ? { isMature: pair.isMature, mature: pair.mature ? { roiMultiple: pair.mature.returnPerDollar } : null } : null;
 
 /**
- * PURE: an audience-stats envelope with `expectedReturn` on the envelope (the scope's) and on every row (the
- * row's own mature return, else the scope's model figure). Additive: nothing else moves.
+ * PURE: the SERVED audience-stats envelope: `expectedReturn` on the envelope (the scope's) and on every row (the
+ * row's own mature return, else the scope's model figure), and every projection pair stripped of its internal return
+ * (ROI-CONSISTENCY-1103: an audience serves a cost, its only return is its `expectedReturn`).
  */
-export function withAudienceExpectedReturns(envelope: AudienceStatsEnvelope, scopeModel: ExpectedReturn): AudienceStatsEnvelope & { expectedReturn: ExpectedReturn } {
+export function withAudienceExpectedReturns(envelope: AudienceStatsEnvelope, scopeModel: ExpectedReturn) {
+  const { maturity: brandPair, ...brandProjection } = envelope.brandProjection;
   return {
     ...envelope,
-    expectedReturn: withMeasuredReturn(scopeModel, projectionMeasured(envelope.brandProjection?.maturity)),
-    audiences: envelope.audiences.map((row) => ({
-      ...row,
-      expectedReturn: withMeasuredReturn(scopeModel, projectionMeasured(row.projection?.maturity)),
-    })),
+    brandProjection: { ...brandProjection, ...(brandPair ? { maturity: servedProjectionPair(brandPair) } : {}) },
+    expectedReturn: withMeasuredReturn(scopeModel, projectionMeasured(brandPair)),
+    audiences: envelope.audiences.map((row) => {
+      const { maturity: pair, ...projection } = row.projection;
+      return {
+        ...row,
+        projection: { ...projection, ...(pair ? { maturity: servedProjectionPair(pair) } : {}) },
+        expectedReturn: withMeasuredReturn(scopeModel, projectionMeasured(pair)),
+      };
+    }),
   };
 }
 

@@ -105,7 +105,7 @@ function audienceRow(id: string, memberCount: number, contacted: number, cpcCent
       positiveReplies: 0,
     },
     metrics: { cpcCents, cpprCents: null, cpfsCents: null, cpsCents: null, cpsaleCents: null },
-    projection: { costPerPaidClientUsd: null, returnPerDollar: null, costOfAcquisitionPct: null },
+    projection: { costPerPaidClientUsd: null },
   };
 }
 
@@ -121,8 +121,6 @@ function audienceEnvelope(brandId: string, rows: AudienceStatsRow[]): AudienceSt
     brandProjection: {
       lifetimeRevenueUsd: null,
       costPerPaidClientUsd: null,
-      returnPerDollar: null,
-      costOfAcquisitionPct: null,
     },
   };
 }
@@ -155,8 +153,6 @@ function wfRow(slug: string, name: string | null, cost: number | null, grain: "c
       costPerPaidClientUsd: cost,
       costPerMeetingBookedUsd: null,
       conversionRatePct: null,
-      roiMultiple: null,
-      cacPct: null,
     },
   };
 }

@@ -273,7 +273,7 @@ describe("a brand-scoped read of a several-offer brand degrades, it never 502s",
     expect(res.body.audiences[0].evidence.contacted).toBe(100);
     // The PROJECTED half is what degrades — null, never one offer's number under the other's name.
     expect(res.body.brandProjection.lifetimeRevenueUsd).toBeNull();
-    expect(res.body.brandProjection.returnPerDollar).toBeNull();
+    expect(res.body.brandProjection).not.toHaveProperty("returnPerDollar");
   });
 
   it("refuses a brand-grain LEG read with a 409 naming the offers — never a fabricated funnel set", async () => {
@@ -294,7 +294,7 @@ describe("?offerId= prices a (brand, offer) pair that has NO campaign yet", () =
   // campaign exists, so there is no campaign to name the offer through.
   const brandRow = (body: { rows: Array<{ audienceId: string | null; workflow: { workflowDynastySlug: string } }> }) =>
     body.rows.find((r) => r.audienceId === null && r.workflow.workflowDynastySlug === "wf-a") as
-      | { resolved: { costPerOutcomeUsd: number | null; roiMultiple: number | null } }
+      | { resolved: { costPerOutcomeUsd: number | null; costPerPaidClientUsd: number | null } }
       | undefined;
 
   for (const leg of ["start_to_website_visit", "start_to_conversation"]) {
@@ -308,7 +308,7 @@ describe("?offerId= prices a (brand, offer) pair that has NO campaign yet", () =
     });
   }
 
-  it("prices on THE NAMED offer's lifetime revenue — two offers, two returns on identical spend", async () => {
+  it("prices on THE NAMED offer's lifetime revenue — two offers, two lifetime revenues on identical spend", async () => {
     const path = (offerId: string) =>
       `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&offerId=${offerId}`;
     const sales = await get(path(OFFER_SALES_LED));
@@ -317,10 +317,10 @@ describe("?offerId= prices a (brand, offer) pair that has NO campaign yet", () =
     expect(product.status).toBe(200);
     // Same evidence, same cost per outcome: the offer moves what an outcome is WORTH, not what it costs.
     expect(brandRow(sales.body)?.resolved.costPerOutcomeUsd).toBe(brandRow(product.body)?.resolved.costPerOutcomeUsd);
-    const salesRoi = brandRow(sales.body)?.resolved.roiMultiple;
-    const productRoi = brandRow(product.body)?.resolved.roiMultiple;
-    expect(salesRoi).toEqual(expect.any(Number));
-    expect(salesRoi).toBeCloseTo((productRoi as number) * (OFFER_LTR[OFFER_SALES_LED] / OFFER_LTR[OFFER_PRODUCT_LED]), 6);
+    expect(sales.body.economics.lifetimeRevenueUsd).toBe(OFFER_LTR[OFFER_SALES_LED]);
+    expect(product.body.economics.lifetimeRevenueUsd).toBe(OFFER_LTR[OFFER_PRODUCT_LED]);
+    // A row serves its costs, never a return (ROI-CONSISTENCY-1103).
+    expect(brandRow(sales.body)?.resolved).not.toHaveProperty("roiMultiple");
   });
 
   it("is a 404 for an offer the brand does not sell — never the brand's other offer", async () => {
@@ -349,7 +349,8 @@ describe("?offerId= prices a (brand, offer) pair that has NO campaign yet", () =
     const byCampaign = await get(
       `/features/${FEATURE.slug}/workflow-projection?brandId=${MULTI_BRAND}&leg=start_to_website_visit&campaignId=${CAMPAIGN}`,
     );
-    expect(brandRow(byOffer.body)?.resolved.roiMultiple).toBe(brandRow(byCampaign.body)?.resolved.roiMultiple);
+    expect(brandRow(byOffer.body)?.resolved.costPerOutcomeUsd).toBe(brandRow(byCampaign.body)?.resolved.costPerOutcomeUsd);
+    expect(brandRow(byOffer.body)?.resolved.costPerPaidClientUsd).toBe(brandRow(byCampaign.body)?.resolved.costPerPaidClientUsd);
   });
 });
 

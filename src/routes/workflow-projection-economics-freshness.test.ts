@@ -172,38 +172,27 @@ describe("workflow-projection reflects a just-written lifetime revenue (no consu
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("AC1 — a read immediately after the economics write returns the NEW ROI + CAC, not the previous one", async () => {
+  it("AC1 — a read immediately after the economics write returns the NEW lifetime revenue, not the previous one", async () => {
     const before = await readProjection();
     expect(before.economics.lifetimeRevenueUsd).toBe(2500);
-    const roiBefore = before.rows[0].resolved.roiMultiple;
-    const cacBefore = before.rows[0].resolved.cacPct;
-    expect(roiBefore).toBeGreaterThan(0);
+    expect(before.rows[0].resolved.costPerPaidClientUsd).toBeGreaterThan(0);
 
     // The dashboard writes the confirmed lifetime revenue, then reads back with NO wait.
     lifetimeRevenueUsd = 100;
     const after = await readProjection();
 
     expect(after.economics.lifetimeRevenueUsd).toBe(100);
-    // ROI = LTR / cost-per-paid-client → 25x lower for a 25x lower LTR; CAC% = 100/ROI → 25x higher.
-    expect(after.rows[0].resolved.roiMultiple).toBeCloseTo(roiBefore / 25, 6);
-    expect(after.rows[0].resolved.cacPct).toBeCloseTo(cacBefore * 25, 6);
-    expect(after.rows[0].resolved.roiMultiple).not.toBeCloseTo(roiBefore, 6);
+    // A row serves its costs, never a return (ROI-CONSISTENCY-1103).
+    expect(after.rows[0].resolved).not.toHaveProperty("roiMultiple");
+    expect(after.rows[0].resolved).not.toHaveProperty("cacPct");
   });
 
   it("AC2 — repeated writes always read back the newest lifetime revenue, never the previous one", async () => {
-    let previousRoi: number | null = null;
     for (const ltr of [2500, 100, 900, 40, 5000]) {
       lifetimeRevenueUsd = ltr;
       const body = await readProjection();
-      const roi = body.rows[0].resolved.roiMultiple;
-      const costPerPaidClient = body.rows[0].resolved.costPerPaidClientUsd;
-
       expect(body.economics.lifetimeRevenueUsd).toBe(ltr);
-      // Coherent with the number the user typed: roiMultiple === LTR / cost-per-paid-client.
-      expect(roi).toBeCloseTo(ltr / costPerPaidClient, 6);
-      expect(body.rows[0].resolved.cacPct).toBeCloseTo(100 / roi, 6);
-      if (previousRoi !== null) expect(roi).not.toBeCloseTo(previousRoi, 6);
-      previousRoi = roi;
+      expect(body.rows[0].resolved.costPerPaidClientUsd).toBeGreaterThan(0);
     }
   });
 

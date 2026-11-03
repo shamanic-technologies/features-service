@@ -171,8 +171,8 @@ const audienceMetricsMaturitySchema = blockPair(
 );
 const audienceProjectionMaturitySchema = blockPair(
   "AudienceProjectionMaturity",
-  { costPerPaidClientUsd: z.number().nullable(), returnPerDollar: z.number().nullable(), costOfAcquisitionPct: z.number().nullable() },
-  "The projection priced from this audience's OBSERVED unit costs through the same funnel",
+  { costPerPaidClientUsd: z.number().nullable() },
+  "The paid-client cost priced from this audience's OBSERVED unit costs through the same funnel",
 );
 const offerOutcomeMaturitySchema = blockPair(
   "OfferOutcomeMaturity",
@@ -1181,8 +1181,6 @@ const grainBlockSchema = z.object({
     costPerSignupUsd: z.number().nullable(),
     costPerPaidClientUsd: z.number().nullable().describe("Cost per paying client for the queried goal (single-step rate for website_visits/positive_replies, visit→form→paid for form_submissions, cost-per-sale = 1/((1/clickUsd)·v2pc+(1/replyUsd)·r2pc) for the combined `sales` goal, else the multi-step website_purchase close funnel). For `sales` this equals costPerOutcomeUsd (the outcome IS the paying client). Drives roiMultiple (= CLTV / this) + cacPct."),
     costPerMeetingBookedUsd: z.number().nullable(),
-    roiMultiple: z.number().nullable().describe("LTR / costPerPaidClientUsd (= 100 / cacPct). Null when economics are absent or the paid-client cost is null/0."),
-    cacPct: z.number().nullable().describe("100 / roiMultiple. Null when economics are absent or the paid-client cost is null/0."),
   }).describe("All fields null ONLY when economics is null (cold start) — the floor rule makes unit costs > 0, so a zero denominator never nulls projected."),
   legOutcome: z.object({
     costPerOutcomeUsd: z.number().nullable().describe("What ONE outcome OF THE LEG costs at this grain — the grain's own cascade-floored driver unit cost walked forward through the basis funnel's declared rates. Null when the walk needs a rate the brand never declared: unpriceable, never 0. An ENTRY leg (its step is the funnel's observed signal: conversation, website visit) walks no rate, so it is served even when the offer states no return economics (`economics: null`)."),
@@ -1203,8 +1201,6 @@ const resolvedBlockSchema = z.object({
   costPerOutcomeUsd: z.number().nullable().describe("The GOAL metric from the finest grain WITH SPEND (cascade floor) — campaign-service ranks on THIS. Single-step goals (websiteVisit/positiveReply) = the RAW unit cost of the outcome (CPC / CPPR); multi-step goals = cost per signup/meeting/purchase. Distinct from costPerPaidClientUsd for single-step goals (they differ by the visit/reply→paid rate). A 0-outcome grain keeps its own spend floor here (not collapsed to the fleet value), while `grain` labels it crossOrg. On an UNMEASURED row (measured=false) it carries the EXPLORE ALLOWANCE — the price of one outreach in this channel through the goal's funnel — so an active workflow with no history is RANKABLE and can earn a first run; it is a cost floor only (costPerPaidClientUsd / roiMultiple / cacPct stay null). Null at cold start (no economics) and when the channel has measured nothing at all."),
   costPerPaidClientUsd: z.number().nullable(),
   costPerMeetingBookedUsd: z.number().nullable(),
-  roiMultiple: z.number().nullable(),
-  cacPct: z.number().nullable(),
   conversionRatePct: z.number().nullable().describe("HOW MUCH OF THE LIST THIS WORKFLOW BURNS PER OUTCOME — 100 × resolvedOutcomeCount / observedContacted, read off the SAME grain the costs above came from, so the three figures describe one body of evidence (that grain's spend over its outcomes is costPerOutcomeUsd, and its outcomes over its people are this). It is what `?maximize=conversionRate` ranks on, and it is stated under BOTH objectives so the two answers are readable side by side. Measured only — no cascade floor, since the mirror of flooring a COST is reporting the honest measured RATE. A measured 0 is a real answer (this workflow reached people and converted nobody); NULL is 'we could not count this': the grain reached nobody, economics are absent (cold start), or this is an UNMEASURED row whose figures are an explore allowance rather than a measurement."),
 });
 
@@ -1307,7 +1303,6 @@ const workflowProjectionResponseSchema = z.object({
     candidateFunnelKeys: z.array(salesFunnelKeyEnum).describe("Every DECLARED funnel of this brand containing the leg — what the pick chose between. Their figures overlap on the shared leg and must never be summed."),
     basisFunnelKey: salesFunnelKeyEnum.describe("The funnel the numbers on this body were priced through. Equals `funnelKey`."),
     basis: z.enum(["sole_declared_funnel", "best_returning_declared_funnel", "best_converting_declared_funnel", "no_return_evidence", "no_conversion_evidence"]).describe("WHY that funnel: it was the only declared one containing the leg; it scored best on WHAT THE CALLER ASKED TO MAXIMISE (best_returning_* under `return`, best_converting_* under `conversionRate`); or nothing containing the leg has that figure yet and the catalogue's canonical order broke the tie deterministically (no_return_evidence / no_conversion_evidence). It names WHICH figure won, so a body ranked on a rate can never claim it ranked on a return."),
-    returnPerDollar: z.number().nullable().describe("The basis funnel's return per dollar — the IDENTICAL definition the audience-stats brand-level read combines on. Stated whether or not the pick was made on it, so the two objectives' answers are readable side by side. Null when nothing measurable stated one; 0 would say the funnel returns nothing."),
     conversionRatePct: z.number().nullable().describe("The basis funnel's conversion rate on the same terms — its best workflow's measured outcomes per 100 people reached, the figure `?maximize=conversionRate` picks on. Stated under both objectives. Null when nothing measured it."),
     evidence: z.object({
       grain: z.enum(["audience", "campaign", "brand", "crossOrg"]).nullable().describe("Whose results the recommendation's numbers are — crossOrg is the FLEET BENCHMARK, not this brand's own. Null when nothing measured it."),
@@ -1608,12 +1603,10 @@ const audienceStatsRowSchema = z.object({
 }),
   projection: z.object({
     basisFunnelKey: z.string().nullable().describe("BRAND-LEVEL read only (no `goal` sent): WHICH of the brand's declared sales funnels this row's return was priced through — this audience's own best-returning funnel, so an audience that pays best through a different funnel than the brand's headline says so instead of being silently priced on the brand's. Absent on a single-funnel read (the caller named the funnel); null when nothing could be priced.").optional(),
-    lifetimeRevenueUsd: z.number().nullable().describe("The lifetime revenue this row's return was divided by — the NUMERATOR of returnPerDollar. Carried per row because on the brand-level read two audiences ca legitimately be priced through two funnels the brand values differently (a $200 self-serve plan and a $20k contract), so a consumer can never pair a return with an LTR this projection did not use. Equals brandProjection.lifetimeRevenueUsd on a single-funnel read.").optional(),
+    lifetimeRevenueUsd: z.number().nullable().describe("The lifetime revenue of the funnel this row was priced through (its best-returning declared funnel on the brand-level read). Equals brandProjection.lifetimeRevenueUsd on a single-funnel read.").optional(),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost to win ONE paying client from this audience — its own observed unit costs (send-tag spend against send-tag clicks/replies, on the workflow the Strategy page renders it under) pushed through the queried goal's funnel on the brand's own declared economics. The denominator of returnPerDollar. Null (never 0) when the funnel has no path to a paying client or at cold start."),
-    returnPerDollar: z.number().nullable().describe("PROJECTED — dollars of lifetime revenue per dollar spent on this audience = brandProjection.lifetimeRevenueUsd / costPerPaidClientUsd. Rank a brand's audiences on THIS, not on cost per outcome: cost per outcome ranks by cheapness, so an audience that converts to nothing outranks an expensive one that pays. An audience's return and the brand's return are one statistic at two grains. Not the REALIZED /revenue costEconomics.roiMultiple (that divides measured pipeline by measured spend) — this is what the evidence PROJECTS. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns take). Null (never 0) when unmeasurable."),
-    costOfAcquisitionPct: z.number().nullable().describe("PROJECTED — what winning a customer from this audience costs as a SHARE of what that customer is worth over their lifetime, percent = 100 x costPerPaidClientUsd / brandProjection.lifetimeRevenueUsd, which is exactly 100 / returnPerDollar. Below 100 means the audience pays for itself. Served rather than left to the consumer BECAUSE it is the reciprocal of a field already on this row: a consumer dividing one of our fields into another is how two surfaces come to print two numbers for one statistic. Same statement as returnPerDollar and costPerPaidClientUsd in a third unit, so the three can never disagree, and the identical definition one grain coarser at brandProjection.costOfAcquisitionPct. PROJECTED, NOT REALIZED: do not pair it with the realized /revenue costEconomics.costOfAcquisitionPct (measured spend / measured pipeline) as if they were the same figure — this one prices what the audience's own observed unit costs imply under the brand's declared economics. An audience with no measured grain of its own inherits brandProjection verbatim (the same brand-level fallback the derived cost columns and returnPerDollar take). NULL (never 0) whenever it could not be measured — no lifetime revenue, no path to a paying client, cold start; a 0 would say winning a customer costs nothing."),
   maturity: audienceProjectionMaturitySchema.optional(),
-}).describe("PROJECTED return for this audience, on the brand's own economics — three units of ONE statement (cost per paying client, return per dollar, and that cost as a share of lifetime revenue). See returnPerDollar."),
+}).describe("PROJECTED cost of one paying client for this audience, on the brand's own economics. An audience serves a cost, never a return (ROI-CONSISTENCY-1103): the return is the scope's `expectedReturn`."),
   maturity: scopeMaturitySchema.nullable().describe("This audience's per-leg figures on both bases and its verdict. The rows' spend and outcomes plus the envelope's unattributedMaturity add up to the envelope's maturity.").optional(),  expectedReturn: expectedReturnRef.describe("This audience's EXPECTED return, never empty (see ExpectedReturn): its own projection.maturity mature returnPerDollar when mature (basis measured), else the scope's sales path model (the campaign's, offer's or brand's).").optional(),
 });
 
@@ -1634,13 +1627,11 @@ const audienceStatsResponseSchema = z.object({
   }).describe("Present ONLY on the BRAND-LEVEL read (no `goal` sent) — what the money figures cover.").optional(),
   brandProfileId: z.string().nullable(),
   sortMetric: z.enum(["cpc", "cppr", "returnPerDollar"]).describe("Single-funnel read: signup / websiteVisit / formSubmission / whatsappConversation sort by CPC (click-driven); meetingBooked / purchase / websitePurchase / sales / positiveReply sort by CPPR. BRAND-LEVEL read: `returnPerDollar`, DESCENDING (best return first, unmeasurable rows last) — at brand level there is no goal, and cost per outcome would rank by cheapness, putting an audience that converts to nothing above an expensive one that pays."),
-  audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted by sortMetric — ascending for the cost metrics (null last), DESCENDING for returnPerDollar (null last). Rank by projection.returnPerDollar when the question is where the money should go."),
+  audiences: z.array(audienceStatsRowSchema).describe("Audience rows sorted by sortMetric — ascending for the cost metrics (null last); on `returnPerDollar` (brand-level read) best projected return first, null last. The return itself is not served (ROI-CONSISTENCY-1103)."),
   brandProjection: z.object({
     basisFunnelKey: z.string().nullable().describe("BRAND-LEVEL read only: the funnel the BRAND's own return was priced through (its best-returning one). Absent on a single-funnel read; null when nothing could be priced.").optional(),
     lifetimeRevenueUsd: z.number().nullable().describe("The brand's lifetime revenue per paying client, from the resolved (declared-funnel-priced) economics this whole payload was projected on — the numerator behind every returnPerDollar here. Surfaced so a consumer can never pair a return with an LTR this projection did not use. Null at cold start."),
     costPerPaidClientUsd: z.number().nullable().describe("PROJECTED cost per paying client for the BRAND on the goal's winning workflow — the value an audience with no measured grain of its own inherits. Null (never 0) at cold start or when the funnel has no path to a paying client."),
-    returnPerDollar: z.number().nullable().describe("PROJECTED brand-level return per dollar = lifetimeRevenueUsd / costPerPaidClientUsd — the same definition as each row's, one grain coarser. Read a row's return against this ('this audience beats the brand'). Null (never 0) when unmeasurable."),
-    costOfAcquisitionPct: z.number().nullable().describe("PROJECTED brand-level cost of acquisition as a share of lifetime revenue, percent = 100 / returnPerDollar — the same definition as each row's, one grain coarser, and the value a row with no measured grain inherits. Read a row's share against this ('this audience wins customers at a smaller slice of their worth than the brand does'). PROJECTED, not the realized /revenue costEconomics.costOfAcquisitionPct. Null (never 0) when unmeasurable."),
     maturity: audienceProjectionMaturitySchema.describe("The SCOPE's own projection on both bases, beside its verdict (features-service#1196): priced from the scope's OBSERVED unit costs (every audience plus the untagged remainder) through the byte-same funnel rule the rows' projection.maturity uses, so the rows' pairs are a partition of this one. The fields above are the best workflow's cascade projection (the flash explore floor a row with no measured grain inherits); this pair is what the scope itself produced. Absent when the maturity inputs could not be read.").optional(),
   }).describe("The BRAND-level twin of every row's projection, on the same economics and the same formula."),
   declaredFunnelsUnresolved: z.object({
@@ -2223,8 +2214,6 @@ const offerSourcingOriginStatsSchema = z.object({
   outreachCostUsd: z.number().describe("Each campaign's outreach split evenly over the leads it served; each lead's share counts for every origin it carries."),
   endToEndCostUsd: z.number().describe("sourcingCostUsd + outreachCostUsd: what this origin's leads cost end to end."),
   endToEndCostPerPositiveReplyUsd: z.number().nullable(),
-  roi: z.number().nullable().describe("positiveReplies × valuePerPositiveReplyUsd ÷ endToEndCostUsd, since inception."),
-  roiUnavailableReason: z.enum(["no_positive_reply_value", "nothing_spent"]).nullable(),
 });
 const offerSourcingCampaignSchema = z.object({
   campaignId: z.string(),
@@ -2439,7 +2428,7 @@ const offerSalesPathsResponseRef = registry.register(
         unlistedCombinationKeys: z.array(z.string()).describe("Keys the customer selected that this read does not list (e.g. a channel the offer no longer accepts). Ignored."),
         statedAt: z.string().nullable(),
       })
-      .describe("Which paths count as the customer's: the basis of every campaigns[].roi."),
+      .describe("Which paths count as the customer's: what orders campaigns[] and prices their outcomesForCredit."),
     campaigns: z
       .array(
         z.object({
@@ -2453,16 +2442,10 @@ const offerSalesPathsResponseRef = registry.register(
           operatedBy: z.enum(["platform", "customer"]),
           pathCount: z.number().int().describe("Paths of this read that use the campaign."),
           selectedPathCount: z.number().int().describe("Selected paths (selectedSalesPaths) that use the campaign."),
-          roi: z.number().nullable().describe("The campaign's ROI (a return multiple) = the HIGHEST roi among the SELECTED paths whose leg legKey runs on channel channelSlug. A campaign is one link of a chain whose every link is needed for any revenue, so revenue cannot be split per link (a marginal ROI, path revenue over the link's own cost, credits every link with the whole revenue and inflates the cheap reactive links; an equal split is arbitrary): its ROI is what a dollar in it returns on the best selected path it is part of, with the rest of that path running. roiCombinationKey names that path. Render it, never re-derive it."),
-          roiCombinationKey: z.string().nullable().describe("The selected path (paths[].combinationKey) the roi is read off. Null when roi is null."),
-          roiUnavailableReason: z
-            .enum(["leg_cost_unavailable", "zero_conversion_rate", "no_lifetime_revenue", "no_platform_cost", "not_on_a_selected_path", "selected_paths_unavailable"])
-            .nullable()
-            .describe("Why roi is null: not_on_a_selected_path (no selected path uses it), selected_paths_unavailable (the selection could not be read), else the reason of the best-ranked selected path that uses it (its own paths[].roiUnavailableReason)."),
           outcomesForCredit: z
             .object({
               creditUsd: z.number().describe("The credit the figure is for, in dollars (echo of ?creditUsd=, default 100)."),
-              combinationKey: z.string().nullable().describe("The path (paths[].combinationKey) the figure is read off: roiCombinationKey when roi is set, else the best-ranked selected path using the campaign. Null when no selected path uses it."),
+              combinationKey: z.string().nullable().describe("The path (paths[].combinationKey) the figure is read off: the selected path with the highest roi running the campaign, else the best-ranked selected path using it. Null when no selected path uses it."),
               costPerOutcomeUsd: z.number().nullable().describe("That path's legs[].costPerOutcomeUsd for this campaign's leg (byte-equal): what one outcome of the leg's toStep costs on this campaign."),
               outcomes: z.number().int().nullable().describe("Whole outcomes of the leg's toStep the credit pays for = floor(creditUsd ÷ costPerOutcomeUsd). 0 when one outcome costs more than the credit. Null only with unavailableReason. Render it, never re-derive it."),
               unavailableReason: z
@@ -2470,14 +2453,14 @@ const offerSalesPathsResponseRef = registry.register(
                 .nullable()
                 .describe("Why outcomes is null: no_platform_cost (the customer's team works the leg, a credit buys none of it), leg_cost_unavailable (the leg is unpriced on that path), not_on_a_selected_path, selected_paths_unavailable."),
             })
-            .describe("What a credit of creditUsd buys of this campaign's outcome, on the same path and the same leg cost as its roi (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you'). Additive: roi and every cost are unchanged."),
+            .describe("What a credit of creditUsd buys of this campaign's outcome, on its best selected path (owner 2026-10-06: the get-started wall's 'Here is what your $100 gets you')."),
           fedBy: z
             .object({ step: leadFoundStepSchema, sourceCampaignKeys: z.array(z.string()).describe("Every sourceCampaigns[].campaignKey of this read: the ON ones feed it.") })
             .nullable()
             .describe("Set on an ENTRY (proactive) campaign of a channel that sources leads (sales-cold-email-outreach, feedback-request-cold-email-outreach, sales-crm-email-outreach): it works every lead the offer's ON source campaigns found, so it reads `Lead found -> <channel> -> <toStep>`. Null on every other campaign. Its identity (campaignKey, legKey) is unchanged. Additive."),
         }),
       )
-      .describe("One row per CAMPAIGN (one channel on one leg) any listed path uses, with its ROI. Ordered proactive before reactive, then roi descending, a null roi last (a consumer may put the campaigns that are on first)."),
+      .describe("One row per CAMPAIGN (one channel on one leg) any listed path uses. A campaign serves no return (ROI-CONSISTENCY-1103). Ordered proactive before reactive, then the roi of its best selected path descending, none last (a consumer may put the campaigns that are on first)."),
     sourceCampaigns: z
       .array(
         z.object({
@@ -2496,9 +2479,6 @@ const offerSalesPathsResponseRef = registry.register(
           family: z.enum(["cold_filters", "signal", "own_contacts"]),
           description: z.string(),
           live: z.boolean().describe("False on a retired origin, listed only when the offer used it."),
-          roi: z.number().nullable().describe("MEASURED since inception: what this source's leads returned once contacted = its positive replies × the offer's value of a positive reply ÷ what they cost end to end (sourcing + the outreach spent on them). Same figure as /offers/:id/sourcing origins[].roi (pricing=net)."),
-          roiBasis: z.literal("measured"),
-          roiUnavailableReason: z.enum(["no_positive_reply_value", "nothing_spent", "sourcing_unavailable"]).nullable(),
           leadsFound: z.number().int().nullable().describe("Leads CARRYING this source (= /offers/:id/sourcing origins[].leadsServed): a lead several sources found counts in each. Σ over sources ≥ the offer's leads; see sourceOverlap."),
           leadsAlsoFoundByAnotherSource: z.number().int().nullable().describe("Of leadsFound, the leads another source found too (higher interest). Null when unreadable."),
           positiveReplies: z.number().int().nullable().describe("Positive replies of every lead carrying this source."),
@@ -3647,12 +3627,6 @@ const outcomeCostSeriesResponseRef = registry.register(
               unavailableReason: z.string().nullable().describe("step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
             })
             .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
-          roi: z
-            .object({
-              measured: z.number().nullable().describe("value.valuePerOutcomeUsd / sinceInception.costPerOutcomeUsd, 2 decimals. Null when the step is not valued or has 0 outcomes."),
-              expected: z.number().nullable().describe("value.valuePerOutcomeUsd / expected.costPerOutcomeUsd, 2 decimals. Null when either is null. Readers show measured, else this one marked expected."),
-            })
-            .describe("Return of one outcome of this step."),
           months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
         }),
       )
@@ -5802,24 +5776,23 @@ const workflowFigureSchema = z.object({
   value: z.number().nullable(),
   basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."),
   source: z
-    .enum(["workflow", "pipe_pooled", "pipe_best_workflow", "leg_default"])
+    .enum(["workflow", "pipe_pooled", "leg_default"])
     .nullable()
-    .describe("measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ pipeline ÷ Σ billed, Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `pipe_best_workflow` (ROI: the pooled return is 0, the money workflow's return), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."),
+    .describe("measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."),
   expectedValue: z.number().nullable().describe("What the pipe expects of a workflow (the expected figure), served beside a measured value too."),
-  unavailableReason: z.enum(["no_return_on_pipe", "no_outcome_on_pipe", "no_conversion_on_pipe", "net_not_measured_on_pipe"]).nullable(),
+  unavailableReason: z.enum(["no_outcome_on_pipe", "no_conversion_on_pipe", "net_not_measured_on_pipe"]).nullable(),
 });
 const legWorkflowFiguresSchema = z
   .object({
     pricing: z.enum(["gross", "net"]),
-    half: z.enum(["mature", "flash"]).describe("The half $/outcome, % conversion and $ spent are read on (the row's `basis`). The ROI is lifetime."),
-    roi: workflowFigureSchema.describe("Fleet pipeline ÷ what clients were billed (net), lifetime on the leg. MEASURED only once the workflow has an outcome of its own (a 0-outcome workflow's pipeline is the value of people it contacted, never a measured return). Pricing-independent (already on what clients paid)."),
+    half: z.enum(["mature", "flash"]).describe("The half $/outcome, % conversion and $ spent are read on (the row's `basis`)."),
     costPerOutcomeUsd: workflowFigureSchema.describe("Spend on `pricing` ÷ outcomes, on `half`. Measured once the half holds an outcome."),
     conversionRatePct: workflowFigureSchema.describe("Outcomes ÷ people contacted (%), on `half`. Measured once the half holds an outcome or the workflow is mature (a mature 0% is a fact)."),
     spentUsd: z.object({ value: z.number().nullable(), basis: z.enum(["measured"]).nullable(), unavailableReason: z.enum(["net_not_measured_on_pipe"]).nullable() }).describe("Spend on `pricing`, on `half`. Always measured."),
     outcomes: z.number(),
     contacted: z.number(),
   })
-  .describe("RESEARCH-WF-FIGURES-1022: THE four figures the Workflows list and the workflow page print, one per workflow (the catalogue's workflow page copies this object). A ROI and a % conversion are never blank.");
+  .describe("RESEARCH-WF-FIGURES-1022: THE three figures the Workflows list and the workflow page print, one per workflow (the catalogue's workflow page copies this object). A % conversion is never blank. A workflow serves no return (ROI-CONSISTENCY-1103).");
 
 const legWorkflowRankingRowSchema = z.object({
   rank: z.number().int().describe("1-based, total, no gaps. The leg order campaign-service receives on the leg-keyed `workflow-projection` (ONE computation), here on the fleet evidence: selectable rows first, then the rest in the same order. Within each: LEARNING workflows whose explore price (fleet spend on the leg ÷ max(outcomes, 1): $0 for one never run) is below the best MATURE price, cheapest first; the mature ones cheapest first (the first holds the money); then the other learning ones, cheapest explore price first. Slug ties."),
@@ -5835,9 +5808,6 @@ const legWorkflowRankingRowSchema = z.object({
   outcomes: z.number(),
   contacted: z.number(),
   spentUsd: z.number(),
-  roiMultiple: z.number().nullable().describe("Lifetime on the leg: the fleet pipeline for the workflow ÷ what clients were billed for it (net). Null when either is absent."),
-  pipelineUsd: z.number().nullable().describe("The numerator of `roiMultiple`: the fleet pipeline (USD) for the workflow on the leg, lifetime. Null = unknown.").optional(),
-  billedSpendUsd: z.number().nullable().describe("The denominator of `roiMultiple`: what clients were billed (USD, net) for the workflow on the leg, lifetime. Null = unknown.").optional(),
   goesFirst: z.boolean().describe("Rank 1, when selectable."),
   moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
   explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
@@ -6018,7 +5988,6 @@ registry.registerPath({
             legKey: z.string(),
             grain: z.literal("fleet"),
             costBasis: z.literal("incurred"),
-            roiBasis: z.literal("billed"),
             computedAt: z.string().nullable(),
             maturity: z.object({
               durationDays: z.number(),
@@ -7657,22 +7626,28 @@ const catalogueStatus = z
   .describe(
     "About the COST. `measured`: every input is a measured fleet outcome (a pipe's, step's, channel's or workflow's cost per outcome is the mature fleet figure). `estimated` (sales funnels and paths): the pipes' costs are measured but a leg RATE the cost per paying client uses is not (an industry default or a declared rate): never present it as measured. `learning`: no mature history, cost and roi null. `customer_time`: the customer's own team, no cost to us. Rows rank by this tier first (measured > estimated > customer_time > learning), then roi desc: a measured figure is never out-ranked by an estimate.",
   );
-const catalogueEcon = {
+const catalogueCost = {
   costUsd: z.number().nullable().describe("Average fleet cost, in the unit `costPer` names. Null unless `status` is measured or estimated."),
   costPer: z.string().nullable().describe("The unit of `costUsd` in words, on every row: `per <outcome step>` for a step, pipe, channel (its best pipe's step) or workflow (its pipe's step), e.g. `per positive reply`; `per paying client` for a sales path or funnel. Quote it with the figure. Null when `costUsd` is null."),
-  roi: z.number().nullable().describe("Average fleet return multiple. Null unless measured or estimated."),
+  status: catalogueStatus,
+};
+/** A sales path's / sales funnel's EXPECTED return per paying client (its Target = Paid client). Every other
+ *  catalogue object serves its cost only (ROI-CONSISTENCY-1103: a return exists only where a value lands). */
+const catalogueReturn = {
+  roi: z.number().nullable().describe("Expected return multiple per paying client (a sales path or funnel only). Null unless measured or estimated."),
   roiBasis: z
     .enum(["measured", "estimated"])
     .nullable()
-    .describe("`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a step value or a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."),
-  status: catalogueStatus,
+    .describe("`estimated` when anything the ROI rests on is not a measured fleet outcome: every ROI today, since it divides a lifetime revenue that ends on the fleet median of STATED lifetime revenues. Null with no roi."),
 };
-const catalogueEconDetail = {
-  ...catalogueEcon,
+const catalogueEcon = { ...catalogueCost, ...catalogueReturn };
+const catalogueDetailFields = {
   estimates: z
     .array(z.string())
     .describe("What the figures rest on that is NOT a measured fleet outcome: `rate:<legKey>` (a leg rate: stated fleet median, default or declared), `lifetime_revenue` (fleet median of stated lifetime revenues), `step_value` (a step's value, which ends on that lifetime revenue). Empty = all measured."),
   learningReason: z.string().nullable().describe("Why it is learning (`no_fleet_history`, `no_mature_workflow_yet`, `measurement_unreadable`, `pipe_learning:<pipe id>`, `leg_unrated:<leg>`, `no_measured_funnel`, `no_measured_pipe`, `no_lifetime_revenue`). Null when measured.") };
+const catalogueCostDetail = { ...catalogueCost, ...catalogueDetailFields };
+const catalogueEconDetail = { ...catalogueEcon, ...catalogueDetailFields };
 const cataloguePage = (row: z.ZodTypeAny, object: string, costUnit: string) =>
   z.object({
     object: z.literal(object),
@@ -7716,11 +7691,12 @@ const catalogueLifecycleLadder = z
   .array(z.object({ key: z.enum(catalogueLifecycleRungs), rank: z.number().int(), label: z.string() }))
   .describe("The lifecycle ladder itself, lowest rung first.");
 
-const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). Use it for an endpoint's ROI: value / cost of the call."), ...catalogueEcon, declared: z.boolean().describe("Present (true) on a step declared at run time.").optional(), ...catalogueLifecycleFields });
+const catalogueStepRow = z.object({ id: z.string(), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads')."), icon: z.string().describe("Phosphor icon name."), line: z.string(), valueUsd: z.number().nullable().describe("What reaching the step is worth on the way to a paid client (fleet). "), ...catalogueCost, declared: z.boolean().describe("Present (true) on a step declared at run time.").optional(), ...catalogueLifecycleFields });
 const catalogueTriggerField = { trigger: z.object({ slug: z.string(), name: z.string() }).nullable().describe("A REACTIVE path/funnel starts with this trigger (unique slug, unique name; owner 2026-10-11): `line` reads it in place of the trigger step. Null on a proactive one (it starts at Start)."), };
-const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueEcon, runnable: z.boolean().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows.").optional(), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").describe("Sales path rows only.").optional(), trigger: catalogueTriggerField.trigger.optional() });
+const catalogueGlyphRow = z.object({ id: z.string(), name: z.string(), icon: z.string().describe("The family glyph (Phosphor): `waves` (sales path), `bird` (pipe), `flow-arrow` (workflow)."), color: z.string().describe("`#RRGGBB`, derived from the name."), line: z.string(), ...catalogueCost, runnable: z.boolean().describe("Sales path rows: at least one of its funnels is runnable. Absent on workflow rows.").optional(), type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier.").describe("Sales path rows only.").optional(), trigger: catalogueTriggerField.trigger.optional() });
+const cataloguePathRow = catalogueGlyphRow.extend(catalogueReturn);
 const cataloguePipeRow = catalogueGlyphRow.extend({ mode: z.enum(["proactive", "reactive"]), ...catalogueRunnableField, draft: z.boolean().optional() });
-const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueEcon, ...catalogueRunnableField });
+const catalogueChannelRow = z.object({ id: z.string().describe("The channel slug."), name: z.string(), icon: z.string(), line: z.string(), ...catalogueCost, ...catalogueRunnableField });
 const catalogueFunnelCopy = {
   ...catalogueTriggerField,
   triggerLabel: z.string().nullable().describe("A REACTIVE funnel: the customer label of what starts it (e.g. `Positive replies`), shown as a tag. Null on a proactive funnel."),
@@ -7767,7 +7743,7 @@ const catalogueStepDetail = z.object({
   producedBy: z.string().nullable().describe("What produces it (an endpoint, a service), as declared."),
   ...catalogueLifecycleFields,
   valueUsd: z.number().nullable(), valueVia: z.object({ toStep: z.string(), toStepName: z.string(), ratePct: z.number() }).nullable(), valueBasis: z.string(), lifetimeRevenueUsd: z.number().nullable(),
-  ...catalogueEconDetail, costUnit: z.literal("per_outcome"), producingPipeIds: z.array(z.string()), salesPathCount: z.number().int(),
+  ...catalogueCostDetail, costUnit: z.literal("per_outcome"), producingPipeIds: z.array(z.string()), salesPathCount: z.number().int(),
 });
 const cataloguePathDetail = z.object({
   object: z.literal("sales_path"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), ...catalogueTriggerField, type: z.enum(["proactive", "reactive"]).describe("`proactive`: starts at Start, on a leg from nothing (an outbound path on Start -> Lead found; owner 2026-10-11, the id it had from `lead_found_to_*` still resolves). `reactive` (owner 2026-10-10): starts on a TRIGGER step through a reactive pipe (Positive reply -> Meeting booked -> ... -> Paid client); its cost per paying client leaves out what produced the trigger, so a reactive path ranks after the proactive ones of its status tier."),
@@ -7778,7 +7754,7 @@ const cataloguePathDetail = z.object({
 const catalogueChannelDetail = z.object({
   object: z.literal("channel"), id: z.string(), name: z.string(), icon: z.string(), line: z.string(), description: z.string(), channelType: z.string(),
   operatedBy: z.enum(["platform", "customer"]), performedBy: z.enum(["software", "person"]), managed: z.boolean(), ...catalogueRunnableField,
-  ...catalogueEconDetail, costUnit: z.literal("per_outcome"), bestPipeId: z.string().nullable(), pipes: z.array(cataloguePipeRow),
+  ...catalogueCostDetail, costUnit: z.literal("per_outcome"), bestPipeId: z.string().nullable(), pipes: z.array(cataloguePipeRow),
 });
 const catalogueNotRunnable = {
   notRunnableReason: z
@@ -7800,7 +7776,7 @@ const catalogueTacticPlayRow = z.object({
     .nullable()
     .describe("The strategy's description: who the play finds or what it does, in one plain line (e.g. `People reachable by email (they have an email address).`). Null on a pipe cataloguing no play (`strategyId` null: every assigned workflow)."),
   default: z.boolean(),
-  ...catalogueEcon,
+  ...catalogueCost,
   bestWorkflowSlug: z.string().nullable().describe("The allowed workflow the figure rests on."),
   measuredBasis: z.enum(["mature", "flash"]).nullable(),
   allowedActiveWorkflowCount: z.number().int().nullable(),
@@ -7812,7 +7788,7 @@ const cataloguePipeDetail = z.object({
   object: z.literal("pipe"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), line: z.string(), channelSlug: z.string(), channelName: z.string(),
   legKey: z.string(), fromStep: z.string().nullable(), toStep: z.string(), mode: z.enum(["proactive", "reactive"]), triggerId: z.string().nullable(),
   operatedBy: z.enum(["platform", "customer"]), managed: z.boolean(), ...catalogueRunnableField, ...catalogueNotRunnable, draft: z.boolean(),
-  ...catalogueEconDetail, costUnit: z.literal("per_outcome"), toStepValueUsd: z.number().nullable(), bestWorkflowSlug: z.string().nullable(),
+  ...catalogueCostDetail, costUnit: z.literal("per_outcome"), toStepValueUsd: z.number().nullable(), bestWorkflowSlug: z.string().nullable(),
   measuredBasis: z.enum(["mature", "flash"]).nullable(), conversionRatePct: z.number().nullable(),
   play: z
     .object({
@@ -7828,18 +7804,18 @@ const cataloguePipeDetail = z.object({
     .describe("Owner 2026-10-13 (TACTIC = a yes/no tag Jev puts on every workflow version; STRATEGY = tactics it requires and excludes; PLAY = a pipe x a strategy). The play this object IS: a pipe id is its default play, `<pipe id>~<strategy id>` another play. Null = the pipe catalogues no play (every assigned workflow runs, as always). Not the dashboard's Strategy page."),
   plays: z
     .array(catalogueTacticPlayRow)
-    .describe("ROI PER PLAY (owner 2026-10-13): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."),
+    .describe("COST PER PLAY (owner 2026-10-13; no return since ROI-CONSISTENCY-1103): every play of the pipe, default first, each priced on its best ALLOWED workflow (same pick as the pipe: cheapest mature, else cheapest flash). The default play's figures are the pipe's own. A pipe cataloguing no play lists itself alone (`strategyId` null)."),
 });
 const catalogueFunnelDetail = z.object({
   ...catalogueFunnelCopy,
   object: z.literal("sales_funnel"), id: z.string(), name: z.string(), face: catalogueFace, line: z.string(), salesPathId: z.string(), salesPathName: z.string().nullable(),
-  legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().nullable().describe("Null = Start."), toStep: z.string(), channels: z.array(z.object({ id: z.string().describe("The channel slug."), name: z.string(), runByUs: z.boolean().describe("False = the customer's own team (`Your Team`).") })).describe("The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."), pipes: z.array(z.object({ id: z.string(), name: z.string().nullable(), channelSlug: z.string(), runnable: z.boolean() })).describe("The leg's pipe, as a list of exactly one."), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated", "offer_team_measured"]).nullable().describe("`fleet_median` = RETIRED 2026-10-14, never served (nobody is priced on other clients' stated rates); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."), rateMeasured: z.boolean(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueEcon }).nullable().describe("The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently.") })),
+  legs: z.array(z.object({ legKey: z.string(), fromStep: z.string().nullable().describe("Null = Start."), toStep: z.string(), channels: z.array(z.object({ id: z.string().describe("The channel slug."), name: z.string(), runByUs: z.boolean().describe("False = the customer's own team (`Your Team`).") })).describe("The ONE channel working the leg (owner 2026-10-11: one channel per leg, the sourcing leg included: one source, or Lead Sourcing)."), pipes: z.array(z.object({ id: z.string(), name: z.string().nullable(), channelSlug: z.string(), runnable: z.boolean() })).describe("The leg's pipe, as a list of exactly one."), ratePct: z.number().nullable(), rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated", "offer_team_measured"]).nullable().describe("`fleet_median` = RETIRED 2026-10-14, never served (nobody is priced on other clients' stated rates); `default` = seeded industry default or a declared rate; `measured_pipe` = the fleet's measured conversion; per-offer read only: `offer_measured` (the brand's own measured rate) / `offer_stated` (the rate it stated) / `offer_team_measured` (a leg its own team works, measured on its tools' history through crm-service, when neither of the first two exists). Null on the entry leg (not used by the cost)."), rateMeasured: z.boolean(), outcomesNeededPerPayingClient: z.number().nullable(), pipe: z.object({ id: z.string(), name: z.string().nullable(), line: z.string(), mode: z.enum(["proactive", "reactive"]), ...catalogueCost }).nullable().describe("The leg's one pipe. On the sourcing leg (Start -> Lead found) it adds its OWN cost (owner 2026-10-11): cost per lead found x the leads one paying client needs; the outreach pipe's cost is its outreach alone, so two funnels that differ only by their source price differently.") })),
   ...catalogueEconDetail, expected: catalogueExpectedDetail, costUnit: z.literal("per_paying_client"), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["fleet_median_stated", "offer_stated", "fleet_median"]).nullable().describe("The lifetime revenue the roi divides: `fleet_median_stated` on the fleet catalogue; on a per-offer read `offer_stated` (the client value the customer typed) or `fleet_median` (the offer states none)."), ...catalogueRunnableField, mixed: z.boolean().describe("A proactive pipe AND a reactive pipe we run (platform-operated) in one funnel: its budget caps both, so the reactive part can starve the proactive one (owner 2026-10-10). A mixed funnel is never `runnable`; propose a proactive funnel and a separate reactive one."), draft: z.boolean(),
 });
 const catalogueWorkflowDetail = z.object({
   object: z.literal("workflow"), id: z.string(), name: z.string(), icon: z.string(), color: z.string(), pipeId: z.string(), rank: z.number().int(), assignment: z.string(), selectable: z.boolean(),
   isMature: z.boolean().nullable(), basis: z.enum(["mature", "flash"]), outcomes: z.number(), contacted: z.number(), spentUsd: z.number(), conversionRatePct: z.number().nullable(), holdsTheMoney: z.boolean(),
-  ...catalogueEconDetail, costUnit: z.literal("per_outcome"),
+  ...catalogueCostDetail, costUnit: z.literal("per_outcome"),
   tactics: z.array(z.object({ id: z.string(), name: z.string(), follows: z.boolean().nullable().describe("Jev's verdict on the workflow's CURRENT version; null = not judged yet.") })).describe("Owner 2026-10-13: every tactic and whether this workflow follows it."),
 });
 
@@ -7902,7 +7878,7 @@ const catalogueOfferDetailFit = {
   setAside: z.boolean().describe("Per-offer read only: true when this walks a step the offer's business does not have.").optional(),
   missingSteps: z.array(catalogueStepRef).describe("Per-offer read only: the steps it walks that the offer lacks (empty when kept).").optional(),
 };
-catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueGlyphRow, "sales_path", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-paths", "List sales paths (internal, api-key)", { containsSteps: z.string().describe("Comma list of step keys or labels: the paths containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(cataloguePathRow, "sales_path", "per_paying_client").extend(catalogueOfferListFit));
 catalogueRead("/internal/catalogue/sales-paths/{id}", "One sales path (internal, api-key)", { ...catalogueOfferQuery }, cataloguePathDetail.extend(catalogueOfferDetailFit), idParam("A sales path id"));
 catalogueRead("/internal/catalogue/channels", "List channels (internal, api-key)", { forPaths: z.string().describe("Comma list of sales path ids: channels with a pipe on a leg of one of them.").optional(), legKeys: z.string().describe("Comma list of leg keys.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueChannelRow, "channel", "per_outcome"));
 catalogueRead("/internal/catalogue/channels/{id}", "One channel and its pipes (internal, api-key)", {}, catalogueChannelDetail, idParam("A channel slug"));
@@ -8054,8 +8030,6 @@ const pipeStatsSchema = z
     costPerOutcomeUsd: z.number().nullable().describe("spendUsd ÷ outcomes since inception, the WHOLE pipe (every workflow, flash, net). NOT the headline `costUsd` (best mature workflow, incurred). Null while there is no outcome (learning: never a floor, never the spend)."),
     costPerOutcomeUnavailableReason: pipeStatsReason(["no_outcome_yet", "outcome_not_measured", "no_spend_recorded"], "Why costPerOutcomeUsd is null."),
     valuePerOutcomeUsd: z.number().nullable().describe("The value the pipe ADDS per outcome (catalogue step values: its `to` step minus the step it takes people over at)."),
-    roi: z.number().nullable().describe("valuePerOutcomeUsd × outcomes ÷ spendUsd."),
-    roiUnavailableReason: pipeStatsReason(["step_unvalued", "no_cost_per_outcome"], "Why roi is null."),
     conversionRates: z
       .array(
         z.object({
@@ -8077,7 +8051,6 @@ const pipeStatsSchema = z
           spendUsd: z.number().describe("Cumulative net spend to that day."),
           volumes: z.record(z.string(), z.number().int().nullable()).describe("Volume key -> cumulative count to that day."),
           costPerOutcomeUsd: z.number().nullable().describe("Since-inception cost per outcome as it stood that day (null with no outcome yet)."),
-          roi: z.number().nullable(),
           conversionRates: z.record(z.string(), z.number().nullable()).describe("Conversion rate key (see `conversionRates[].key`) -> cumulative rate to that day, PERCENT. Null while the input volume is 0 or a volume is unmeasured. The last point equals `conversionRates[].ratePct`."),
         }),
       )
@@ -8120,7 +8093,7 @@ const catalogueTriggerRow = z.object({
   pipeCount: z.number().int().describe("Reactive pipes that name this trigger."),
 });
 catalogueRead("/internal/catalogue/triggers", "List triggers: the entry doors a reactive campaign starts on (internal, api-key)", { q: catalogueQ, limit: catalogueLimit, includeInline: z.enum(["true", "false"]).describe("Absent or `false` = ENTRY DOORS only (2026-10-16): the triggers a reactive campaign is offered on. `true` adds the INLINE triggers (`on_demand`, `lead_requested`: one of our services asking another inside a run, never offered to a client), for our own services. Anything else = 400 `include_inline_unrecognised`. A read by id answers every declared trigger.").optional() }, z.object({ object: z.literal("trigger"), order: z.literal("catalogue"), total: z.number().int(), truncated: z.boolean(), rows: z.array(catalogueTriggerRow) }));
-catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.string(), z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, best ROI first.") }), idParam("A trigger id"));
+catalogueRead("/internal/catalogue/triggers/{id}", "One trigger and the reactive pipes it starts (internal, api-key)", {}, catalogueTriggerRow.extend({ object: z.literal("trigger"), params: z.record(z.string(), z.unknown()).nullable().describe("A declared delay/poll trigger's parameters."), pipes: z.array(cataloguePipeRow).describe("The reactive pipes naming it, in the catalogue's pipe order.") }), idParam("A trigger id"));
 
 const catalogueFunnelsCarryingPlay = z
   .object({
@@ -8192,10 +8165,10 @@ catalogueRead(
   {},
   catalogueTacticPlayRow.extend({ learningReason: z.string().nullable(), estimates: z.array(z.string()), excludedWorkflowDynastySlugs: z.array(z.string()),
     allowedWorkflows: z
-      .array(z.object({ id: z.string().describe("Dynasty slug."), name: z.string(), ...catalogueEcon, isDefaultPlayPick: z.boolean().describe("The workflow the pipe's DEFAULT play runs today.") }))
+      .array(z.object({ id: z.string().describe("Dynasty slug."), name: z.string(), ...catalogueCost, isDefaultPlayPick: z.boolean().describe("The workflow the pipe's DEFAULT play runs today.") }))
       .nullable()
       .describe("Owner ask 2026-10-14: each workflow the play may run, with its fleet figure on the leg (`measured` = mature cost per outcome; `learning` otherwise). Null on a pipe cataloguing no play."),
-    defaultPlayPick: z.object({ playId: z.string(), bestWorkflowSlug: z.string().nullable(), measuredBasis: z.enum(["mature", "flash"]).nullable(), ...catalogueEcon }).describe("What the pipe's DEFAULT play runs today, to compare with."),
+    defaultPlayPick: z.object({ playId: z.string(), bestWorkflowSlug: z.string().nullable(), measuredBasis: z.enum(["mature", "flash"]).nullable(), ...catalogueCost }).describe("What the pipe's DEFAULT play runs today, to compare with."),
     figuresUnavailableReason: z.enum(["workflow_ranking_not_computed_yet"]).nullable(),
     salesFunnels: catalogueFunnelsCarryingPlay }),
   idParam("A play id (`<pipe id>` or `<pipe id>~<strategy id>`)"),
@@ -8261,7 +8234,7 @@ catalogueCreate(
   "Declare a sales path (internal, api-key)",
   "The legs in order (a chain the catalogue holds: GET /internal/catalogue/sales-paths lists them). Persisted and named with a never-given river; an existing path answers 200 `created: false` with its name.",
   z.object({ legKeys: z.array(z.string()), runnableOnly: z.boolean().describe("True when the write acts for a CUSTOMER (the gateway sets it for a non-staff key, 2026-10-16): every leg must be worked by at least one pipe we run today (`runnable`), else 400 `leg_not_runnable` naming the leg. Absent or false = staff, any leg. Anything else = 400 `runnable_only_invalid`.").optional(), triggerId: z.string().describe("A trigger at the HEAD (owner 2026-10-15: the trigger sits at the funnel head, so a reactive funnel reuses the proactive pipes and their workflows): the first leg must leave from the trigger's step (an outcome trigger's outcome, a delay trigger's anchor); an `any_of` trigger (`lead_event`) stands at every step, so its first leg may leave from any step or from Start. The id becomes `trigger:<triggerId>+<legs>`. 404 `trigger_not_found`, 400 `trigger_without_step` (a step-less trigger heads nothing here), `trigger_step_mismatch`, `path_invalid`. A sales funnel whose first pipe already answers that trigger is the existing reactive funnel (its own id).").optional(), ...catalogueActor }),
-  catalogueGlyphRow.extend({ created: z.boolean() }),
+  cataloguePathRow.extend({ created: z.boolean() }),
 );
 catalogueCreate(
   "/internal/catalogue/sales-funnels",
@@ -8838,7 +8811,7 @@ const researchRefSchema = z.object({
 });
 const researchCatalogFigures = {
   rank: z.number().int().nullable().describe("Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."),
-  rankBasis: z.enum(["cost_per_outcome"]).describe("What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. The return (`roiDetail`) is a separate figure: two rows on different workflows may rank in another order than their returns."),
+  rankBasis: z.enum(["cost_per_outcome"]).describe("What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. No Research page serves a return (ROI-CONSISTENCY-1103)."),
   emails: z.string().describe("People reached, printed."),
   emailsNoun: z.string(),
   outcomes: z.string(),
@@ -8849,19 +8822,6 @@ const researchCatalogFigures = {
   sample: z.string(),
   charts: z.array(researchChartSchema),
 };
-const researchCatalogRoi = z
-  .object({
-    value: z.number().nullable().describe("The multiple: 3.2 = $3.20 of pipeline per $1 billed."),
-    display: z.string().nullable().describe("Printed (`3.20x`)."),
-    basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = nothing narrower states a return yet: the figure it is expected to read (render it marked expected)."),
-    source: z
-      .enum(["workflow", "own_outcomes", "pipe_templates", "pipe_models", "pipe_workflows", "writes_with_now", "dynasty", "pipe_best_workflow"])
-      .nullable()
-      .describe("measured: `workflow` (its leg ranking row), `own_outcomes` (a template, TPL-ROI-OWN-1022: the pipeline its OWN outcomes carry, each workflow's pipeline shared on the outcomes it produced, ÷ what its own people were billed, each workflow's billed spend shared on what they cost; measured only once it has an outcome of its own; a MODEL page or model version reads its own the same way, MODEL-ROI-1023). expected: `pipe_templates` (a template that earned none: every template of the pipe pooled, own pipeline ÷ own billed, the ones that earned nothing included; first choice), `pipe_models` (a model that earned none: every model of the pipe pooled, the same way; first choice), `writes_with_now` (mean of the positive returns of the workflows writing with it now that produced an outcome), `dynasty` (a version reads its dynasty's), `pipe_best_workflow` (the workflow the pipe puts its money on, else its best positive return). An expected return is never 0."),
-    spendCovered: z.number().nullable().describe("On `own_outcomes`: share (0..1) of its spend whose workflow states its pipeline and billed spend."),
-    unavailableReason: z.enum(["no_return_on_pipe"]).nullable().describe("Null whenever `value` is set; `no_return_on_pipe` = no workflow of the pipe states a return (or the ranking was unreadable)."),
-  })
-  .describe("Return on the leg workflow ranking's basis (TPL-DYNASTY-ROWS-1021-FS): a workflow's `roiMultiple` = its fleet pipeline on the leg ÷ what clients were billed for it, lifetime. A template's is its OWN (`own_outcomes`): a template that wrote all of a workflow reads that workflow's return exactly; a template with no outcome of its own is never `measured`. Never blank: `expected` when not measured.");
 const researchTemplateStatus = z.enum(["active", "deprecated"]);
 const researchRunCost = z
   .object({
@@ -8895,8 +8855,7 @@ const researchCatalogPipeSchema = z.object({
     icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
     name: z.string().nullable(),
     runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every workflow the leg workflow ranking lists has a page (TPL-TACTICS-ROWS-1022: runnable or not, so both reads list the same workflows), with zero figures until it sends."),
-    roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
-    figures: legWorkflowFiguresSchema.nullable().describe("The CURRENT leg workflow ranking row's `figures` (gross), copied at every read: the list and this page print the same ROI, $/outcome, % conversion and $ spent. `roiDetail` is taken from `figures.roi`. Null when the ranking lists no such row."),
+    figures: legWorkflowFiguresSchema.nullable().describe("The CURRENT leg workflow ranking row's `figures` (gross), copied at every read: the list and this page print the same $/outcome, % conversion and $ spent. Null when the ranking lists no such row."),
     model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
     template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
     wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
@@ -8949,9 +8908,8 @@ const researchCatalogPipeSchema = z.object({
       status: researchTemplateStatus.nullable().describe("The DYNASTY's status (the Active / Deprecated tabs): content-generation-service's own when served, else deprecated exactly when every version is (owner 2026-10-21). Null with `statusUnavailableReason`."),
       statusSource: z.enum(["content_generation", "all_versions_deprecated"]).nullable().describe("`content_generation` = the dynasty status content-generation-service serves; `all_versions_deprecated` = the owner rule on the version statuses it serves."),
       statusUnavailableReason: z.enum(["no_dynasty", "status_not_stated"]).nullable(),
-      roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi,
       versions: z
-        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("The version's status IN this dynasty (content-generation-service `statusInDynasty`: the head its own, every older version deprecated)."), roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi, ...researchCatalogFigures }))
+        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("The version's status IN this dynasty (content-generation-service `statusInDynasty`: the head its own, every older version deprecated)."), ...researchCatalogFigures }))
         .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
       ...researchCatalogFigures,
       workflows: z.array(z.object({ key: z.string(), label: z.string() })),
@@ -8966,10 +8924,8 @@ const researchCatalogPipeSchema = z.object({
       .nullable()
       .describe("The LLM dynasty this page is (chat-service `/internal/model-dynasties`); null on a model it places in none."),
     standaloneReason: z.enum(["no_dynasty_in_chat_service", "llm_dynasties_unreadable"]).nullable().describe("Null on a dynasty. Why this page is one model on its own."),
-    roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."),
-    roiDetail: researchCatalogRoi.describe("MODEL-ROI-1023: the model's OWN return, the template rule (TPL-ROI-OWN-1022): the pipeline its own outcomes carry (each workflow's pipeline shared on the outcomes its emails produced) ÷ what its own people were billed (each workflow's billed spend shared on what they cost), on the same people as its $/outcome, % conversion, # outcomes and $ spent; `measured` only with an outcome of its own. Else `expected`: every model of the pipe pooled (`pipe_models`), then the workflows writing with it now (`writes_with_now`), then the pipe's money workflow (`pipe_best_workflow`); null only with `unavailableReason`."),
     models: z
-      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), runCost: researchRunCost.describe("This version's runs only (written by one of its `modelIds`): the versions' runs partition the page's, their `totalUsd` add up to it."), roi: z.string().nullable().describe("The return printed (`3.20x`) = `roiDetail.display`; null with none (`roiDetail.unavailableReason`)."), roiDetail: researchCatalogRoi.describe("MODEL-ROI-1023: this version's OWN return (`own_outcomes`) once it has an outcome of its own, else its dynasty page's, `expected` + `source: dynasty`. Its pipeline and billed spend are its share of the page's: the versions' add up to the page's."), ...researchCatalogFigures }))
+      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), runCost: researchRunCost.describe("This version's runs only (written by one of its `modelIds`): the versions' runs partition the page's, their `totalUsd` add up to it."), ...researchCatalogFigures }))
       .describe("Every version of the dynasty, newest first (chat-service's order), each with its share of the page's figures read on the DYNASTY's basis: their spend, people and outcomes add up to the page's. `rank` is null. Zero for a version that never wrote. On a model on its own: that model."),
     modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). Empty when chat-service lists none."),
     aliases: z.array(z.string()).describe("Every alias chat-service serves this page's models under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
@@ -8998,17 +8954,16 @@ const researchPerformanceFigureSchema = z.object({
   display: z.string().nullable(),
   basis: z.enum(["measured", "expected"]).nullable(),
   source: z
-    .enum(["own", "pipe_best_workflow"])
+    .enum(["own"])
     .nullable()
-    .describe("measured: `own`. expected (only the pipe `totals` return while the pipe measured none): `pipe_best_workflow` (the money workflow's, else the best measured). A row never reads an estimated figure (PERF-COST-ORDER-1024)."),
+    .describe("measured: `own`. A row never reads an estimated figure (PERF-COST-ORDER-1024)."),
   unavailableReason: z
-    .enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_return_on_pipe", "no_outcome_yet", "nobody_emailed_yet", "no_return_yet"])
+    .enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_outcome_yet", "nobody_emailed_yet"])
     .nullable()
-    .describe("Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome and return need an outcome of its own), `nobody_emailed_yet`, `no_return_yet` (outcomes, no return readable)."),
+    .describe("Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome needs an outcome of its own), `nobody_emailed_yet`."),
 });
 const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
 const researchPerformanceFiguresShape = {
-  roi: researchPerformanceFigureSchema.describe("Own pipeline (its workflow's pipeline shared on outcomes) ÷ own billed spend (its workflow's billed spend shared on spend), the catalogue's rule. Measured with >= 1 outcome of its own, else null `no_outcome_yet` (never estimated, PERF-COST-ORDER-1024)."),
   costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes, measured with >= 1 outcome of its own, else null `no_outcome_yet`."),
   conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."),
   outcomes: researchPerformanceCountSchema,
@@ -9074,7 +9029,6 @@ const researchPerformancePipeSchema = z.object({
         z.object({
           month: z.string(),
           label: z.string(),
-          roi: z.number().nullable(),
           costPerOutcomeUsd: z.number().nullable(),
           conversionRatePct: z.number().nullable(),
           outcomes: z.number().describe("Cumulated."),

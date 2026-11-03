@@ -10,7 +10,6 @@ import {
   byRoi,
   isMeasuredRate,
   roiBasisOf,
-  STEP_VALUE_ESTIMATES,
   channelEconomics,
   channelRunnable,
   funnelRunnable,
@@ -624,7 +623,14 @@ function resolveStep(model: CatalogueModel, raw: string): string | null {
  * when there is no cost. A list's `costUnit` alone let an agent quote a channel's cost per positive reply
  * as "per paying client" (prod 2026-10-10): every figure carries its own unit.
  */
-const econWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, costPer: e.costUsd === null ? null : per, roi: e.roi, roiBasis: roiBasisOf(e), status: e.status });
+const costWire = (e: Economics, per: string | null) => ({ costUsd: e.costUsd, costPer: e.costUsd === null ? null : per, status: e.status });
+const costDetail = (e: Economics, per: string | null) => ({ ...costWire(e, per), learningReason: e.reason, estimates: e.estimates });
+/**
+ * A sales funnel's / sales path's figures add its EXPECTED return per paying client (a Target = Paid
+ * client); every other object (step, channel, pipe, play, workflow, trigger) serves its cost only, never
+ * a return (ROI-CONSISTENCY-1103, owner 2026-11-03: a return exists only where a value lands).
+ */
+const econWire = (e: Economics, per: string | null) => ({ ...costWire(e, per), roi: e.roi, roiBasis: roiBasisOf(e) });
 const econDetail = (e: Economics, per: string | null) => ({ ...econWire(e, per), learningReason: e.reason, estimates: e.estimates });
 
 const PER_PAYING_CLIENT = "per paying client";
@@ -688,7 +694,7 @@ const pipeRowOf = (m: CatalogueModel, p: CataloguePipe, name: string) => ({
   ...pipeIdentityOf(p.channelSlug, p.legKey, name),
   line: pipeLine(m, p),
   mode: p.mode,
-  ...econWire(p.economics, perStep(m, p.toStep)),
+  ...costWire(p.economics, perStep(m, p.toStep)),
   runnable: pipeRunnable(p),
   ...(p.published ? {} : { draft: true }),
 });
@@ -728,7 +734,7 @@ router.get("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       .filter((s) => matchesQuery(q, [s.label, s.key, s.shortDescription, s.description, s.producedBy]))
       .map((s) => ({ s, e: stepEconomics(model, s.key) }))
       .sort((a, b) => (b.s.valueUsd ?? -1) - (a.s.valueUsd ?? -1) || a.s.key.localeCompare(b.s.key))
-      .map(({ s, e }) => ({ id: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...econWire(e, perStep(model, s.key)), ...lifecycleWire(s), ...(s.declared ? { declared: true } : {}) }));
+      .map(({ s, e }) => ({ id: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, line: s.shortDescription, valueUsd: s.valueUsd, ...costWire(e, perStep(model, s.key)), ...lifecycleWire(s), ...(s.declared ? { declared: true } : {}) }));
     res.json({ object: "step", costUnit: "per_outcome", order: "value_desc", lifecycleLadder: servedLifecycleLadder(), ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list steps");
@@ -758,7 +764,7 @@ router.get("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
       valueVia: s.valueVia ? { toStep: s.valueVia.toStep, toStepName: stepLabel(model, s.valueVia.toStep), ratePct: s.valueVia.ratePct } : null,
       valueBasis: "fleet median lifetime revenue x the best rated route to Paid client",
       lifetimeRevenueUsd: model.lifetimeRevenueUsd,
-      ...econDetail(stepEconomics(model, s.key), perStep(model, s.key)),
+      ...costDetail(stepEconomics(model, s.key), perStep(model, s.key)),
       costUnit: "per_outcome",
       producingPipeIds: producing.map((p) => p.id),
       salesPathCount: paths.length,
@@ -893,7 +899,7 @@ router.get("/internal/catalogue/channels", apiKeyOnly, async (req, res) => {
       .filter((c) => matchesQuery(q, [c.name, c.slug, c.shortDescription, c.description, c.channelType]))
       .map((c) => ({ c, e: channelEconomics(model, c.slug, legs) }))
       .sort(byRoi((x) => x.e, (x) => x.c.slug))
-      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...econWire(e, perChannel(model, e.bestPipeId)), runnable: channelRunnable(model, c.slug) }));
+      .map(({ c, e }) => ({ id: c.slug, name: c.name, icon: phosphorIconOf(c.icon), line: c.shortDescription, ...costWire(e, perChannel(model, e.bestPipeId)), runnable: channelRunnable(model, c.slug) }));
     res.json({ object: "channel", costUnit: "per_outcome", order: "roi_desc", ...page(rows, limit) });
   } catch (err) {
     fail(res, err, "list channels");
@@ -920,7 +926,7 @@ router.get("/internal/catalogue/channels/:id", apiKeyOnly, async (req, res) => {
       performedBy: c.performedBy,
       managed: c.managed,
       runnable: channelRunnable(model, c.slug),
-      ...econDetail(e, perChannel(model, e.bestPipeId)),
+      ...costDetail(e, perChannel(model, e.bestPipeId)),
       costUnit: "per_outcome",
       bestPipeId: e.bestPipeId,
       pipes: pipes.map((p) => pipeRowOf(model, p, n.get(nameKeyOfPipe(p))!)),
@@ -994,7 +1000,7 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     notRunnableReason: notRunnableOf(p)?.reason ?? null,
     notRunnableDetail: notRunnableOf(p)?.detail ?? null,
     draft: !p.published,
-    ...econDetail(p.economics, perStep(model, p.toStep)),
+    ...costDetail(p.economics, perStep(model, p.toStep)),
     costUnit: "per_outcome",
     toStepValueUsd: to?.valueUsd ?? null,
     bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
@@ -1040,7 +1046,7 @@ const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   strategyName: p.play?.strategyName ?? null,
   strategyDescription: p.play?.strategyDescription ?? null,
   default: p.play?.isDefault ?? true,
-  ...econWire(p.economics, perStep(m, p.toStep)),
+  ...costWire(p.economics, perStep(m, p.toStep)),
   bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
   measuredBasis: p.measurement?.basis ?? null,
   allowedActiveWorkflowCount: p.play?.allowedActiveWorkflowCount ?? null,
@@ -1231,7 +1237,7 @@ async function funnelDetail(model: CatalogueModel, f: CatalogueFunnel, names: Ma
       rateMeasured: isMeasuredRate(path.rates[i].source),
       outcomesNeededPerPayingClient: needed[i],
       pipe: l.pipe
-        ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...econWire(l.pipe.economics, perStep(model, l.pipe.toStep)) }
+        ? { id: l.pipe.id, name: names.get(nameKeyOfPipe(l.pipe)) ?? null, line: pipeLine(model, l.pipe), mode: l.pipe.mode, ...costWire(l.pipe.economics, perStep(model, l.pipe.toStep)) }
         : null,
     })),
     ...econDetail(f.economics, PER_PAYING_CLIENT),
@@ -1275,8 +1281,6 @@ async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
   if (!ranking) return null;
   // A play lists only the workflows its strategy allows (`lib/plays.ts`).
   const excluded = new Set(pipe.play?.excludedDynasties ?? []);
-  // The value the pipe ADDS per outcome (`valueAddedTo`, `lib/value-added.ts`), every workflow on it alike.
-  const value = valueAddedTo((st) => model.steps.get(st)?.valueUsd ?? null, pipe.fromStep, pipe.toStep);
   return ranking.rows.filter((r) => !excluded.has(r.workflowDynastySlug)).map((r) => {
     const name = r.workflowDynastyName ?? r.workflowDynastySlug;
     const mature = r.isMature === true && r.basis === "mature" && r.costPerOutcomeUsd !== null && r.costPerOutcomeUsd > 0;
@@ -1284,9 +1288,10 @@ async function workflowRows(model: CatalogueModel, pipe: CataloguePipe) {
       ? {
           status: "measured",
           costUsd: Math.round(r.costPerOutcomeUsd! * 100) / 100,
-          roi: value === null ? null : Math.round((value / r.costPerOutcomeUsd!) * 100) / 100,
+          // A workflow serves its cost per outcome, never a return (ROI-CONSISTENCY-1103).
+          roi: null,
           reason: null,
-          estimates: value === null ? [] : [...STEP_VALUE_ESTIMATES],
+          estimates: [],
         }
       : { status: "learning", costUsd: null, roi: null, reason: r.outcomes > 0 ? "not_mature_yet" : "no_outcome_yet", estimates: [] };
     return { r, name, e };
@@ -1317,7 +1322,7 @@ router.get("/internal/catalogue/workflows", apiKeyOnly, async (req, res) => {
         name: x.name,
         ...markOrGlyph(marks.get(x.r.workflowDynastySlug), x.name),
         line: `${x.r.outcomes} outcomes from ${x.r.contacted} people, ${x.r.assignment}${x.r.moneyGoesHere ? ", holds the money" : ""}`,
-        ...econWire(x.e, perStep(model, pipe.toStep)),
+        ...costWire(x.e, perStep(model, pipe.toStep)),
       }));
     res.json({ object: "workflow", pipeId, costUnit: "per_outcome", order: "fleet_rank", ...page(listed, limit) });
   } catch (err) {
@@ -1353,7 +1358,7 @@ router.get("/internal/catalogue/workflows/:id", apiKeyOnly, async (req, res) => 
       spentUsd: x.r.spentUsd,
       conversionRatePct: x.r.conversionRatePct,
       holdsTheMoney: x.r.moneyGoesHere,
-      ...econDetail(x.e, perStep(model, pipe.toStep)),
+      ...costDetail(x.e, perStep(model, pipe.toStep)),
       costUnit: "per_outcome",
       // Every tactic Jev judged on this workflow's CURRENT version (`lib/plays.ts`); absent = not judged yet.
       tactics: [...plays.tactics.values()].map((t) => ({ id: t.id, name: t.name, follows: plays.tacticsByDynasty.get(x.r.workflowDynastySlug)?.get(t.id) ?? null })),
@@ -2197,14 +2202,14 @@ async function funnelsCarrying(model: CatalogueModel, names: Map<string, string>
  */
 async function allowedWorkflowsOf(model: CatalogueModel, p: CataloguePipe) {
   const base = model.pipes.get(p.play?.basePipeId ?? p.id) ?? p;
-  const defaultPick = { playId: base.id, bestWorkflowSlug: base.measurement?.workflowDynastySlug ?? null, measuredBasis: base.measurement?.basis ?? null, ...econWire(base.economics, perStep(model, base.toStep)) };
+  const defaultPick = { playId: base.id, bestWorkflowSlug: base.measurement?.workflowDynastySlug ?? null, measuredBasis: base.measurement?.basis ?? null, ...costWire(base.economics, perStep(model, base.toStep)) };
   if (!p.play) return { allowedWorkflows: null, defaultPlayPick: defaultPick, figuresUnavailableReason: null };
   const rows = p.operatedBy === "customer" ? [] : await workflowRows(model, p);
   const byDynasty = new Map((rows ?? []).map((x) => [x.r.workflowDynastySlug, x]));
   const allowedWorkflows = p.play.allowedActiveDynasties.map((d) => {
     const x = byDynasty.get(d);
     const e: Economics = x?.e ?? { status: "learning", costUsd: null, roi: null, reason: "no_outcome_yet", estimates: [] };
-    return { id: d, name: x?.name ?? d, ...econWire(e, perStep(model, p.toStep)), isDefaultPlayPick: d === defaultPick.bestWorkflowSlug };
+    return { id: d, name: x?.name ?? d, ...costWire(e, perStep(model, p.toStep)), isDefaultPlayPick: d === defaultPick.bestWorkflowSlug };
   });
   return { allowedWorkflows, defaultPlayPick: defaultPick, figuresUnavailableReason: rows === null ? "workflow_ranking_not_computed_yet" : null };
 }
