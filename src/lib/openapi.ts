@@ -4412,10 +4412,8 @@ const customerHealthRowSchema = z.object({
   ltrUsd: z.number().nullable().describe("Lifetime revenue per customer (LTR / LTV), USD. Same value as breakevenCacUsd."),
   economics: salesEconomicsSchema.nullable(),
   currentEconomics: z.object({
-    committedSpendUsd: z.number().nullable().describe("NET COMMITTED acquisition spend, USD (billed + open holds, after the org's discount = what the client PAID, every channel the brand runs, sourcing included) — the single basis roiMultiple / cacPct / currentCacUsd are computed on. Read from the SAME body GET /brands/{brandId}/revenue?pricing=net serves, so the board's ROI equals the brand page's (SHOCKWAVE-ROI-NET-1016; before, the board divided one channel's pipeline by GROSS spend). null when not computed (no own economics, or the revenue read failed: see unreadParts)."),
+    committedSpendUsd: z.number().nullable().describe("NET COMMITTED acquisition spend, USD (billed + open holds, after the org's discount = what the client PAID, every channel the brand runs, sourcing included) Read from the SAME body GET /brands/{brandId}/revenue?pricing=net serves, so the board's ROI equals the brand page's (SHOCKWAVE-ROI-NET-1016; before, the board divided one channel's pipeline by GROSS spend). null when not computed (no own economics, or the revenue read failed: see unreadParts)."),
     realizedSpendUsd: z.number().nullable().describe("Billed-only acquisition spend, USD, NET. TRANSITIONAL — reported for the staff console's migration, divided by nowhere. null when not computed (no own economics)."),
-    currentCacUsd: z.number().nullable().describe("Realized cost to acquire one paying customer, USD = (cacPct/100) × LTR. null when incomputable."),
-    cacPct: z.number().nullable().describe("CAC as a share of LTR, percent = spend / pipeline × 100. null when incomputable."),
   }),
   audiences: z.object({
     count: z.number().int().describe("Number of the brand's active audiences."),
@@ -4548,8 +4546,8 @@ registry.registerPath({
     "per-row fan-out). Each row carries: identity (org + brand, owner email, Clerk org id); recency + retention (first/last active day, retention " +
     "weeks, active-day timeline from billed spend); the brand's optimization goal; conversion-tracker context (whether a tracker is NEEDED for the " +
     "goal + an INFERRED firing flag from observed conversion counts — a clean installed/verified boolean is a known gap); breakeven CAC (= brand " +
-    "LTR); full conversion economics + LTR; realized CAC / %CAC (cacPct = spend/pipeline = CAC/LTR — " +
-    "coherent by construction, own-economics only); an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
+    "LTR); full conversion economics + LTR; " +
+    "an audiences rollup (total size, remaining, %used) + the single best audience by CAC; the single " +
     "best workflow by CAC + the grain it came from; and the current status (active/paused/inactive, same composition as GET /internal/stats/accounts). " +
     "Health: red = not active; green = active AND audience not near-exhausted; yellow = active but audience " +
     "near-exhausted. Served from the LAST BUILD at once (never built on the request path; rebuilt in the view refresher when older than 15 min; " +
