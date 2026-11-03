@@ -16,6 +16,7 @@ import { funnelCopiesFor } from "./agent-catalogue.js";
 import { readPlan } from "../lib/factory-shadow-store.js";
 import { milestonesOf, type MilestoneLegFigures } from "../lib/campaign-milestones.js";
 import { peopleJourneysOf } from "../lib/people-journeys.js";
+import { withJourneyScriptMarks } from "../lib/catalogue-mark-serving.js";
 import { fetchRunsCostCentsByWorkflowSlug } from "../lib/runs-cost-client.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { dynastyOfSlug } from "../lib/workflow-scope.js";
@@ -127,7 +128,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
       (k) => labels.get(k) ?? titleOf(k),
       (d) => names.get(d) ?? titleOf(d.replace(/-/g, "_")),
     );
-    res.json({ salesFunnelCampaignId: row.id, brandId, pricing, transitions });
+    res.json({ salesFunnelCampaignId: row.id, brandId, pricing, transitions: await withJourneyScriptMarks(transitions) });
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] campaign people journeys error:", err);
