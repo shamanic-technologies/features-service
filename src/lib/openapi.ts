@@ -621,10 +621,11 @@ const revenueCostEconomicsSchema = z.object({
     totalPipelineUsd: z.number().nullable().describe("The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."),
   }).describe("THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."),
   realizedReturn: z.object({
-    closedWonCount: z.number().int().describe("Deals actually CLOSED WON in the same cohort the ratios divide, PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."),
+    closedWonCount: z.number().int().describe("Deals actually CLOSED WON to date (whole history), PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."),
     closedWonRevenueUsd: z.number().describe("What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."),
-    roiMultiple: z.number().nullable().describe("closedWonRevenueUsd / ratioBasis.committedCostUsd — the MEASURED return, beside the pipeline ROI and never instead of it. Null when that spend is 0 (maturing)."),
-  }).nullable().describe("THE MEASURED RETURN — revenue from deals actually closed won over the same matured spend the ROI divides. NULL when it cannot be measured on this read: no source of closed deals could be read, the legs are unknown, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
+    spentUsd: z.number().nullable().describe("Every dollar the scope actually spent, whole history (= actualCostUsd): runs that ran, never follow-ups only reserved. Null only on a staff vendor-cost group whose vendor cost is not fully known."),
+    roiMultiple: z.number().nullable().describe("closedWonRevenueUsd / spentUsd: the REALIZED return (ROI-CONSISTENCY-1103), whole history, Paid clients our outreach caused over money actually spent. Null when nothing was spent yet."),
+  }).nullable().describe("THE REALIZED RETURN (ROI-CONSISTENCY-1103): revenue of the Paid clients our outreach caused over every dollar actually spent, whole history. A return exists only where a value lands; the pipeline-based roiMultiple / maturity ratios beside it are being retired. NULL when it cannot be measured on this read: no source of closed deals could be read, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
   maturity: costRatiosMaturitySchema.optional(),
 });
 

@@ -87,14 +87,14 @@ export interface CostEconomics {
    */
   ratioBasis: { committedCostUsd: number | null; totalPipelineUsd: number | null };
   /**
-   * THE MEASURED RETURN — revenue from deals actually CLOSED WON over the same matured spend the ROI
-   * divides. Beside the pipeline ROI, never instead of it: the pipeline projects every lead forward,
-   * this counts only sales that happened. A won deal is valued at the amount stated on it, else the
-   * lifetime revenue the pipeline prices a paying client at. Only deals PRICED to our outreach
-   * (`?cause=`, default `outreach`) count — the same rule the pipeline's won rung follows.
-   * `closedWonCount: 0` is a MEASURED answer (nothing closed yet) and reads `roiMultiple: 0` when spend
-   * is mature. NULL when it cannot be measured: no source of closed deals could be read on this path,
-   * the legs are unknown, or the grain never computes it (lens / grouped / cross-org reads).
+   * THE REALIZED RETURN (ROI-CONSISTENCY-1103, owner 2026-11-03: a return exists only where a value
+   * LANDS): revenue of the deals actually CLOSED WON over every dollar the scope actually SPENT (runs that
+   * ran, `actualCostUsd`), whole history. Never the mature cohort and never the committed spend: a
+   * follow-up reserved but not yet sent is no cost incurred. A won deal is valued at the amount stated on
+   * it, else the offer's lifetime revenue. Only deals PRICED to our outreach (`?cause=`, default
+   * `outreach`) count. `closedWonCount: 0` is a MEASURED answer and reads `roiMultiple: 0`. NULL when no
+   * source of closed deals could be read on this path, or the grain never computes it (lens / grouped /
+   * cross-org reads).
    */
   realizedReturn: RealizedReturn | null;
   /**
@@ -113,7 +113,9 @@ export type CostRatios = Pick<CostEconomics, "roiMultiple" | "costOfAcquisitionP
 export interface RealizedReturn {
   closedWonCount: number;
   closedWonRevenueUsd: number;
-  /** `closedWonRevenueUsd ÷ ratioBasis.committedCostUsd`. Null when that spend is 0 (maturing). */
+  /** The money the scope actually spent, whole history (= `actualCostUsd`): the divisor. */
+  spentUsd: number;
+  /** `closedWonRevenueUsd ÷ spentUsd`. Null when nothing was spent yet. */
   roiMultiple: number | null;
 }
 
@@ -185,7 +187,7 @@ export function buildCostEconomics(input: {
       maturityDays: 0,
       unmeasuredReason: "maturity_unknown",
       ratioBasis: { committedCostUsd: null, totalPipelineUsd: null },
-      realizedReturn: null,
+      realizedReturn: realizedReturnOf(realized, actualCostInUsdCents),
     };
     MATURE_BASIS.set(block, { committedCents: 0, pipelineUsd: null, days: 0 });
     return block;
@@ -206,16 +208,24 @@ export function buildCostEconomics(input: {
     maturityDays: days,
     unmeasuredReason: maturing ? "maturing" : null,
     ratioBasis: { committedCostUsd: basisCents / 100, totalPipelineUsd: basisPipeline },
-    realizedReturn: realized
-      ? {
-          closedWonCount: realized.closedWonCount,
-          closedWonRevenueUsd: realized.closedWonRevenueUsd,
-          roiMultiple: basisCents > 0 ? realized.closedWonRevenueUsd / (basisCents / 100) : null,
-        }
-      : null,
+    realizedReturn: realizedReturnOf(realized, actualCostInUsdCents),
   };
   MATURE_BASIS.set(block, { committedCents: basisCents, pipelineUsd: basisPipeline, days });
   return block;
+}
+
+function realizedReturnOf(
+  realized: { closedWonCount: number; closedWonRevenueUsd: number } | null | undefined,
+  actualCostInUsdCents: number,
+): RealizedReturn | null {
+  if (!realized) return null;
+  const spentUsd = actualCostInUsdCents / 100;
+  return {
+    closedWonCount: realized.closedWonCount,
+    closedWonRevenueUsd: realized.closedWonRevenueUsd,
+    spentUsd,
+    roiMultiple: actualCostInUsdCents > 0 ? realized.closedWonRevenueUsd / spentUsd : null,
+  };
 }
 
 export function ratiosOf(

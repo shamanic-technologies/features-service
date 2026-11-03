@@ -387,25 +387,20 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     expect(res.spend.totalSpentCents).toBe(4000);
   });
 
-  it("serves a MEASURED return beside the pipeline one: closed-won revenue in the mature cohort over the mature spend", async () => {
+  it("serves the REALIZED return beside the pipeline one: every deal closed won to date over money actually spent (ROI-CONSISTENCY-1103)", async () => {
     mockFetch({ closes: true });
     const res = await body();
-    // l1 closed after our email and was contacted before the cutoff; l5 is young → out of the cohort.
-    expect(res.costEconomics.realizedReturn).toEqual({
-      closedWonCount: 1,
-      closedWonRevenueUsd: 5000,
-      roiMultiple: 5000 / 60,
-    });
-    expect(res.costEconomics.realizedReturn.roiMultiple).toBeCloseTo(
-      res.costEconomics.realizedReturn.closedWonRevenueUsd / res.costEconomics.ratioBasis.committedCostUsd,
-      9,
-    );
+    // Whole history: l1 AND the young l5 count (the mature cohort no longer gates a realized sale).
+    const rr = res.costEconomics.realizedReturn;
+    expect(rr.closedWonCount).toBe(2);
+    expect(rr.spentUsd).toBeCloseTo(res.costEconomics.actualCostUsd, 9);
+    expect(rr.roiMultiple).toBeCloseTo(rr.closedWonRevenueUsd / res.costEconomics.actualCostUsd, 9);
   });
 
   it("nothing closed is a MEASURED 0, not a null", async () => {
     mockFetch();
     const res = await body();
-    expect(res.costEconomics.realizedReturn).toEqual({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
+    expect(res.costEconomics.realizedReturn).toMatchObject({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
   });
 
   it("states it cannot separate the cohort when campaign-service is unreachable — null, never the whole-history ratio", async () => {

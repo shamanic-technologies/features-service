@@ -1854,7 +1854,8 @@ export async function computeFeatureRevenue(
       const ltr = pricer.lifetimeRevenueOver(persons, (people, paths, offerLtr) =>
         computeRevenue(paths, people, offerLtr, funnel.milestones, contactedPricing).headline.totalPipelineUsd,
       );
-      const realized = observed === null && quals === null ? null : pricer.closedWon(coldMaturePersons);
+      // Realized = every deal closed won to date (whole history, ROI-CONSISTENCY-1103), never the mature cohort.
+      const realized = observed === null && quals === null ? null : pricer.closedWon(persons);
       const pricedBody: RevenueBody = {
         ...coldBody,
         headline: { totalPipelineUsd: total, unpricedReason: null },
@@ -1868,7 +1869,7 @@ export async function computeFeatureRevenue(
             : coldBasis.kind === "mature"
               ? { days: coldBasis.days, committedCostInUsdCents: coldBasis.cost.committedCents, totalPipelineUsd: matureResult.headline.totalPipelineUsd }
               : undefined,
-          realized: plan.unknown ? null : realized,
+          realized,
         }),
         timeSeries: result.timeSeries,
         organizations: result.organizations,
@@ -2109,13 +2110,11 @@ export async function computeFeatureRevenue(
     ratioBasis.kind === "mature"
       ? { kind: "mature", days: ratioBasis.days, cost: ratioBasis.cost, leads: matureResult.leads }
       : ratioBasis;
-  // THE MEASURED RETURN's numerator: deals actually closed won in the same cohort, priced to our
+  // THE REALIZED RETURN's numerator: every deal actually closed won to date (whole history), priced to our
   // outreach. Only when a source of closed deals was READ (the human statements or the legacy
   // qualifications) — with neither, "0 won" would be a fabricated measurement.
   const realized =
-    plan.unknown || (observed === null && quals === null)
-      ? null
-      : closedWonOf(maturePersons, economics.lifetimeRevenueUsd);
+    observed === null && quals === null ? null : closedWonOf(persons, economics.lifetimeRevenueUsd);
   const maturity = plan.unknown
     ? ({ unknown: true } as const)
     : plan.cutoffIso && matureCost
