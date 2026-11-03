@@ -214,7 +214,8 @@ export function priceObservedUnits(
 
 /**
  * RETURN PER DOLLAR — how many dollars of lifetime revenue one dollar of spend buys, for whatever
- * grain the two inputs describe.
+ * grain the two inputs describe. INTERNAL ONLY since ROI-CONSISTENCY-1103: it picks a funnel and orders
+ * the brand-level audiences, and is served nowhere (a return exists only where a value lands).
  *
  * This is the ONE definition of "return" in this service, shared verbatim with the funnel ranking
  * (`lib/funnel-ranking.ts`, which picks a leg's basis funnel on it) so an audience's return and the brand's return are
@@ -235,28 +236,6 @@ export function returnPerDollar(
   if (lifetimeRevenueUsd == null || !(lifetimeRevenueUsd > 0)) return null;
   if (costPerPaidClientUsd == null || !(costPerPaidClientUsd > 0)) return null;
   return lifetimeRevenueUsd / costPerPaidClientUsd;
-}
-
-/**
- * COST OF ACQUISITION, AS A SHARE OF WHAT A CUSTOMER IS WORTH — the third unit the same statement is
- * read in: `100 × costPerPaidClientUsd / lifetimeRevenueUsd`, i.e. exactly `100 / returnPerDollar`.
- *
- * Defined AS the reciprocal, deliberately, rather than recomputed from the two inputs: the two
- * figures then null together, and a reader can never be shown a return and a %CAC that disagree by a
- * rounding step. Same relation `/workflow-projection` states between `roiMultiple` and `cacPct`, and
- * `/revenue` between `roiMultiple` and `costOfAcquisitionPct`.
- *
- * PROJECTED wherever `returnPerDollar` is projected — it inherits that field's provenance exactly,
- * because it IS that field. null (never 0) on the same conditions: a 0 would say winning a customer
- * costs nothing.
- */
-export function costOfAcquisitionPct(
-  lifetimeRevenueUsd: number | null,
-  costPerPaidClientUsd: number | null,
-): number | null {
-  const perDollar = returnPerDollar(lifetimeRevenueUsd, costPerPaidClientUsd);
-  if (perDollar == null || !(perDollar > 0)) return null;
-  return 100 / perDollar;
 }
 
 export interface ProjectionIdentity {

@@ -18,8 +18,8 @@
  * EVERY ROW READS ITS OWN MEASURED FIGURES, nothing estimated (owner 2026-10-24, PERF-COST-ORDER-1024: « Tu ne fais pas
  * tes calculs mathématiques compliqués pour estimer la vraie valeur de ce $/outcome »; supersedes RESEARCH-COMBO-ESTIMATE-1023
  * and PRIOR-PART-EFFECTS-1023). Spend, people and outcomes are measured; conversion is measured whenever it emailed somebody
- * (0% included); cost per outcome and ROI only with an outcome of its own, else null with the reason. A measured ROI is the
- * catalogue's (TPL-ROI-OWN-1022): its workflow's pipeline shared on outcomes ÷ its workflow's billed spend shared on spend.
+ * (0% included); cost per outcome only with an outcome of its own, else null with the reason. No combination serves a
+ * return (ROI-CONSISTENCY-1103, owner 2026-11-03: a return exists only where a value lands).
  *
  * THE ROWS STAND ON THE FIGURE THE TABLE SHOWS (PERF-COST-ORDER-1024, supersedes PERF-LEG-ORDER-1023's pick order, which put
  * 150 never-used combinations above every combination that had proven itself): active first, then cost per outcome
@@ -49,10 +49,10 @@ export interface PerformanceFigure {
   value: number | null;
   display: string | null;
   basis: "measured" | "expected" | null;
-  /** measured: `own`. expected (the pipe totals' return only): `pipe_best_workflow` (the money workflow's, else the best measured). */
-  source: "own" | "pipe_best_workflow" | null;
-  /** `no_outcome_yet` / `nobody_emailed_yet` / `no_return_yet`: a row that has not measured it (never estimated). */
-  unavailableReason: "no_outcome_on_pipe" | "nobody_emailed_on_pipe" | "no_return_on_pipe" | "no_outcome_yet" | "nobody_emailed_yet" | "no_return_yet" | null;
+  /** measured: `own`. */
+  source: "own" | null;
+  /** `no_outcome_yet` / `nobody_emailed_yet`: a row that has not measured it (never estimated). */
+  unavailableReason: "no_outcome_on_pipe" | "nobody_emailed_on_pipe" | "no_outcome_yet" | "nobody_emailed_yet" | null;
 }
 
 export interface PerformanceCount {
@@ -61,7 +61,6 @@ export interface PerformanceCount {
 }
 
 export interface PerformanceFigures {
-  roi: PerformanceFigure;
   costPerOutcomeUsd: PerformanceFigure;
   conversionRatePct: PerformanceFigure;
   outcomes: PerformanceCount;
@@ -104,7 +103,6 @@ export interface PerformancePoint {
   month: string;
   label: string;
   /** Everything to the END of the month (cumulative). */
-  roi: number | null;
   costPerOutcomeUsd: number | null;
   conversionRatePct: number | null;
   outcomes: number;
@@ -165,13 +163,6 @@ export interface PipePerformanceInput {
   /** Model id / alias → its LLM bar key (dynasty slug, else model key) and that bar's label (`generationBuckets`). */
   llmKeyOf: (id: string) => string;
   llmLabelOf: (key: string) => string;
-  /** The leg workflow ranking's return terms per workflow dynasty (the catalogue's). Absent = no return readable. */
-  workflowReturns?: {
-    roiOf: ReadonlyMap<string, number | null>;
-    moneyGoesHere: string | null;
-    pipelineOf: ReadonlyMap<string, number | null>;
-    billedOf: ReadonlyMap<string, number | null>;
-  };
   /** The parts that can no longer run (keys as on the rows); a combination with any of them is deprecated. */
   deprecated?: DeprecatedParts;
   /**
@@ -247,7 +238,6 @@ const figure = (value: number, basis: "measured" | "expected", source: Performan
   unavailableReason: null,
 });
 const missing = (reason: NonNullable<PerformanceFigure["unavailableReason"]>): PerformanceFigure => ({ value: null, display: null, basis: null, source: null, unavailableReason: reason });
-const roiText = (v: number) => `${v.toFixed(2)}x`;
 const count = (v: number, display: (x: number) => string): PerformanceCount => ({ value: v, display: display(v) });
 const printed = (outcomes: number) => Math.round(outcomes) >= 1;
 
@@ -255,16 +245,12 @@ interface Acc {
   spentUsd: number;
   contacted: number;
   outcomes: number;
-  pipelineUsd: number;
-  billedUsd: number;
 }
-const zero = (): Acc => ({ spentUsd: 0, contacted: 0, outcomes: 0, pipelineUsd: 0, billedUsd: 0 });
+const zero = (): Acc => ({ spentUsd: 0, contacted: 0, outcomes: 0 });
 const addInto = (a: Acc, b: Acc) => {
   a.spentUsd += b.spentUsd;
   a.contacted += b.contacted;
   a.outcomes += b.outcomes;
-  a.pipelineUsd += b.pipelineUsd;
-  a.billedUsd += b.billedUsd;
 };
 
 const nextMonth = (ym: string) => {
@@ -363,8 +349,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // Each workflow's rows on its bar's basis, scaled onto its bar (one figure per pipe, both tabs).
   const lastMonth = p.now.toISOString().slice(0, 7);
   const outcomesRequired = legMaturity(p.legKey).outcomesRequired;
-  type Terms = { perOutcome: number; perSpent: number };
-  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null; terms: Terms | null; candidate?: true };
+  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null; candidate?: true };
   const drafts: Draft[] = [];
   const combosOf = new Map<string, string[]>();
   for (const [key, e] of byCombo) combosOf.set(e.dynasty, [...(combosOf.get(e.dynasty) ?? []), key]);
@@ -391,7 +376,6 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
       contacted: sum.contacted > 0 ? 0 : bar.figures.contacted,
       outcomes: sum.outcomes > 0 ? 0 : bar.figures.outcomes,
     };
-    const terms = returnTerms(p, bar);
     for (const r of raw) {
       const f = { spentUsd: r.b.figures.spentUsd * ks.spentUsd, contacted: r.b.figures.contacted * ks.contacted, outcomes: r.b.figures.outcomes * ks.outcomes };
       const months = new Map<string, Acc>();
@@ -399,22 +383,21 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         const ym = m.month > lastMonth ? lastMonth : m.month;
         const t = months.get(ym) ?? zero();
         const mf = { spentUsd: m.spentUsd * ks.spentUsd, contacted: m.contacted * ks.contacted, outcomes: m.outcomes * ks.outcomes };
-        addInto(t, { ...mf, pipelineUsd: mf.outcomes * terms.perOutcome, billedUsd: mf.spentUsd * terms.perSpent });
+        addInto(t, mf);
         months.set(ym, t);
       }
       drafts.push({
         key: r.key,
         e: r.e,
-        acc: { ...f, pipelineUsd: f.outcomes * terms.perOutcome, billedUsd: f.spentUsd * terms.perSpent },
+        acc: f,
         months,
         isMature: isMatureCount(r.matureOutcomes, p.legKey) === true,
         matureOutcomes: r.matureOutcomes,
-        terms,
       });
     }
     if (rest.spentUsd > 0 || rest.contacted > 0 || rest.outcomes > 0) {
       const key = `${bar.key}|${NONE}|${NONE}`;
-      const acc = { ...rest, pipelineUsd: rest.outcomes * terms.perOutcome, billedUsd: rest.spentUsd * terms.perSpent };
+      const acc = { ...rest };
       const existing = drafts.find((d) => d.key === key);
       if (existing) {
         addInto(existing.acc, acc);
@@ -422,7 +405,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
         addInto(t, acc);
         existing.months.set(lastMonth, t);
       } else {
-        drafts.push({ key, e: { dynasty: bar.key, tpl: NONE, llm: NONE, sources: new Set(), cells: [] }, acc, months: new Map([[lastMonth, { ...acc }]]), isMature: false, matureOutcomes: null, terms });
+        drafts.push({ key, e: { dynasty: bar.key, tpl: NONE, llm: NONE, sources: new Set(), cells: [] }, acc, months: new Map([[lastMonth, { ...acc }]]), isMature: false, matureOutcomes: null });
       }
     }
   }
@@ -432,7 +415,6 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // nothing to the totals or the series.
   const written = new Set(drafts.map((d) => d.key));
   const c = p.candidates;
-  const termsOfWorkflow = new Map(p.bars.map((bar) => [bar.key, returnTerms(p, bar)] as const));
   if (c)
     for (const w of c.workflows)
       for (const t of c.templates)
@@ -440,7 +422,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
           const key = `${w}|${t}|${l}`;
           if (written.has(key)) continue;
           written.add(key);
-          drafts.push({ key, e: { dynasty: w, tpl: t, llm: l, sources: new Set(), cells: [] }, acc: zero(), months: new Map(), isMature: false, matureOutcomes: null, terms: termsOfWorkflow.get(w) ?? null, candidate: true });
+          drafts.push({ key, e: { dynasty: w, tpl: t, llm: l, sources: new Set(), cells: [] }, acc: zero(), months: new Map(), isMature: false, matureOutcomes: null, candidate: true });
         }
 
   // The series: every month from the first to this one, cumulative; its last point IS the totals (the cards).
@@ -460,7 +442,6 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
     points.push({
       month: ym,
       label: monthLabel(ym),
-      roi: cum.billedUsd > 0 && printed(cum.outcomes) ? cum.pipelineUsd / cum.billedUsd : null,
       costPerOutcomeUsd: printed(cum.outcomes) && cum.spentUsd > 0 ? cum.spentUsd / cum.outcomes : null,
       conversionRatePct: cum.contacted > 0 ? (100 * cum.outcomes) / cum.contacted : null,
       outcomes: cum.outcomes,
@@ -468,30 +449,18 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
     });
   }
 
-  const measuredRoi = (a: Acc) => (printed(a.outcomes) && a.billedUsd > 0 ? a.pipelineUsd / a.billedUsd : null);
   const measuredCost = (a: Acc) => (printed(a.outcomes) && a.spentUsd > 0 ? a.spentUsd / a.outcomes : null);
   const measuredRate = (a: Acc) => (a.contacted > 0 ? (100 * a.outcomes) / a.contacted : null);
 
-  // The money workflow's return: the pipe totals' expected return while the pipe measured none of its own.
-  const w = p.workflowReturns;
-  const moneyRoi = (() => {
-    if (!w) return null;
-    const money = w.moneyGoesHere ? w.roiOf.get(w.moneyGoesHere) : null;
-    if (money != null && money > 0) return money;
-    return [...w.roiOf.values()].filter((v): v is number => v != null && v > 0).sort((a, b) => b - a)[0] ?? null;
-  })();
-  const pooledRoi = measuredRoi(cum);
   const pooledCost = measuredCost(cum);
   const pooledRate = measuredRate(cum);
 
   // Every row reads its own measured figures, nothing estimated (PERF-COST-ORDER-1024).
-  const rowFigures = (d: Draft): Pick<PerformanceFigures, "roi" | "costPerOutcomeUsd" | "conversionRatePct"> => {
+  const rowFigures = (d: Draft): Pick<PerformanceFigures, "costPerOutcomeUsd" | "conversionRatePct"> => {
     const a = d.acc;
-    const roi = measuredRoi(a);
     const cost = measuredCost(a);
     const rate = measuredRate(a);
     return {
-      roi: roi !== null ? figure(roi, "measured", "own", roiText) : missing(printed(a.outcomes) ? "no_return_yet" : "no_outcome_yet"),
       costPerOutcomeUsd: cost !== null ? figure(cost, "measured", "own", usd) : missing("no_outcome_yet"),
       conversionRatePct: rate !== null ? figure(rate, "measured", "own", pctText) : missing("nobody_emailed_yet"),
     };
@@ -546,9 +515,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // The order (PERF-COST-ORDER-1024): active first, then cost per outcome, else $ spent, ascending.
   const ranked: PerformanceRow[] = [...unordered].sort(byShownCost).map((r, i) => ({ ...r, rank: i + 1 }));
 
-  const totalsRoi = pooledRoi !== null ? figure(pooledRoi, "measured", "own", roiText) : moneyRoi != null ? figure(moneyRoi, "expected", "pipe_best_workflow", roiText) : missing("no_return_on_pipe");
   const totals: PerformanceFigures = {
-    roi: totalsRoi,
     costPerOutcomeUsd: pooledCost !== null ? figure(pooledCost, "measured", "own", usd) : missing("no_outcome_on_pipe"),
     conversionRatePct: pooledRate !== null ? figure(pooledRate, "measured", "own", pctText) : missing("nobody_emailed_on_pipe"),
     outcomes: count(cum.outcomes, (v) => n(Math.round(v))),
@@ -558,10 +525,3 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   return { ...base, rows: ranked, totals, series: { grain: "month", points }, unavailableReason: null };
 }
 
-/** A workflow's return terms per outcome and per dollar of its bar (its ranking pipeline and billed spend shared on them). */
-function returnTerms(p: PipePerformanceInput, bar: ResearchBucket): { perOutcome: number; perSpent: number } {
-  const pl = p.workflowReturns?.pipelineOf.get(bar.key);
-  const bl = p.workflowReturns?.billedOf.get(bar.key);
-  if (pl == null || bl == null) return { perOutcome: 0, perSpent: 0 };
-  return { perOutcome: bar.figures.outcomes > 0 ? pl / bar.figures.outcomes : 0, perSpent: bar.figures.spentUsd > 0 ? bl / bar.figures.spentUsd : 0 };
-}

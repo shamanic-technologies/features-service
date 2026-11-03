@@ -33,7 +33,7 @@
  * The OFFER counts each lead once: `sourceOverlap` buckets the leads by how many origins found them
  * (Σ buckets = leadTotal) and states the excess Σ per-origin leads carries (`extraSourceCredits`).
  *   endToEndCostUsd        sourcing + allocated outreach: what the origin's leads cost end to end.
- *   roi                 positive replies × value of a positive reply (offer terms) ÷ end-to-end cost.
+ * A source serves its costs, never a return (ROI-CONSISTENCY-1103).
  * A serve or lead that recorded NO audience takes the origin its campaign's unrecorded runs are PROVEN
  * to come from (`originOfUnrecorded`: a single-origin channel, or the lead-provider costs those runs
  * bought). Only WHICH origin a serve counts under moves: every campaign total and sourcing figure is
@@ -115,8 +115,6 @@ export interface OriginStats {
   outreachCostUsd: number;
   endToEndCostUsd: number;
   endToEndCostPerPositiveReplyUsd: number | null;
-  roi: number | null;
-  roiUnavailableReason: "no_positive_reply_value" | "nothing_spent" | null;
 }
 
 export interface CampaignSourcingSplit {
@@ -387,7 +385,6 @@ export function computeOfferSourcing(input: {
     const sourcingCostUsd = decimalCentsToUsd(sumDecimalStrings(a.cents));
     const endToEndCostUsd = sourcingCostUsd + a.outreachUsd;
     const replies = a.replied.size;
-    const value = input.valuePerPositiveReplyUsd;
     return {
       slug: a.origin?.slug ?? null,
       name: a.origin?.name ?? null,
@@ -407,8 +404,6 @@ export function computeOfferSourcing(input: {
       outreachCostUsd: a.outreachUsd,
       endToEndCostUsd,
       endToEndCostPerPositiveReplyUsd: perUnit(endToEndCostUsd, replies),
-      roi: value === null || endToEndCostUsd <= 0 ? null : (replies * value) / endToEndCostUsd,
-      roiUnavailableReason: value === null ? "no_positive_reply_value" : endToEndCostUsd <= 0 ? "nothing_spent" : null,
     };
   };
 

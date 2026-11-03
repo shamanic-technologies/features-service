@@ -72,7 +72,6 @@ describe("source campaign identity (the contract campaign-service and billing ke
       fromStep: null,
       toStep: { key: "lead_found", label: "Lead" },
       provider: { name: "Apollo", domain: "apollo.io" },
-      roiBasis: "measured",
     });
   });
 
@@ -103,22 +102,21 @@ describe("source campaign identity (the contract campaign-service and billing ke
 });
 
 describe("source campaign figures: the origin's, measured; an unused origin is unmeasured", () => {
-  it("ROI = what its leads returned once contacted (the origin's measured ROI), cost = its sourcing", () => {
+  it("cost = its sourcing; no return (ROI-CONSISTENCY-1103)", () => {
     const o = sourcing.origins.find((x) => x.slug === "sourcing-apollo-cold-filters")!;
     const cold = bySlug("sourcing-apollo-cold-filters");
-    expect(cold.roi).toBe(o.roi);
-    expect(cold.roi).not.toBeNull();
+    expect(Object.keys(cold).filter((k) => /roi/i.test(k))).toEqual([]);
     expect(cold).toMatchObject({ leadsFound: 3, positiveReplies: 1, costUsd: o.sourcingCostUsd, endToEndCostUsd: o.endToEndCostUsd });
     expect(cold.costUsd).toBeCloseTo(1.3475, 10);
     for (const slug of ["sourcing-apollo-buying-signals", "sourcing-crm-contacts"]) {
-      expect(bySlug(slug)).toMatchObject({ roi: null, roiUnavailableReason: "nothing_spent", costUsd: 0, leadsFound: 0 });
+      expect(bySlug(slug)).toMatchObject({ costUsd: 0, leadsFound: 0 });
     }
   });
 
   it("an unreadable sourcing lists the live source campaigns with null figures and a reason", () => {
     const none = buildSourceCampaigns({ sourcing: null, names: NAMES });
     expect(none).toHaveLength(4);
-    for (const r of none) expect(r).toMatchObject({ roi: null, roiUnavailableReason: "sourcing_unavailable", costUsd: null, leadsFound: null });
+    for (const r of none) expect(r).toMatchObject({ costUsd: null, leadsFound: null });
   });
 });
 

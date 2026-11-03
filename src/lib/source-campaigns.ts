@@ -40,12 +40,6 @@ import {
 } from "./sourcing-origins.js";
 import type { OfferSourcing, OriginStats, SourceOverlap } from "./offer-sourcing.js";
 
-export type SourceCampaignRoiUnavailableReason =
-  | "no_positive_reply_value"
-  | "nothing_spent"
-  /** The offer's sourcing read failed: the row is listed (identity, name), its figures are null. */
-  | "sourcing_unavailable";
-
 export interface LeadFoundStep {
   key: "lead_found";
   label: string;
@@ -73,9 +67,6 @@ export interface SourceCampaign {
   description: string;
   /** False on a retired origin (listed only when the offer used it: its history still costs what it cost). */
   live: boolean;
-  roi: number | null;
-  roiBasis: "measured";
-  roiUnavailableReason: SourceCampaignRoiUnavailableReason | null;
   /** Leads CARRYING this source (a lead two sources found counts in both). */
   leadsFound: number | null;
   /** Of `leadsFound`, the leads another source found too. Null when unreadable. */
@@ -226,13 +217,10 @@ export function buildSourceCampaigns(input: { sourcing: OfferSourcing | null; na
       family: o.family,
       description: o.description,
       live: o.live,
-      roiBasis: "measured" as const,
     };
     if (!sourcing || !s) {
       return {
         ...base,
-        roi: null,
-        roiUnavailableReason: "sourcing_unavailable",
         leadsFound: null,
         leadsAlsoFoundByAnotherSource: null,
         positiveReplies: null,
@@ -246,8 +234,6 @@ export function buildSourceCampaigns(input: { sourcing: OfferSourcing | null; na
     const costUsd = s.sourcingCostUsd + own;
     return {
       ...base,
-      roi: s.roi,
-      roiUnavailableReason: s.roiUnavailableReason,
       leadsFound: s.leadsServed,
       leadsAlsoFoundByAnotherSource: s.leadsAlsoFoundByAnotherSource,
       positiveReplies: s.positiveReplies,

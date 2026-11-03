@@ -106,9 +106,9 @@ describe("computeOutcomeCostSeries (OUTCOME-COST-SERIES-1027)", () => {
     // The signup was never preceded by a message of ours: Learning, no spend floor.
     expect(signup.sinceInception).toMatchObject({ outcomes: 0, costPerOutcomeUsd: null, learning: true });
     expect(signup.expected.unavailableReason).toBe("expected_model_unavailable");
-    // No expected path: nothing valued, so no ROI is guessed.
+    // No expected path: nothing valued; no step serves a return (ROI-CONSISTENCY-1103).
     expect(signup.value.unavailableReason).toBe("expected_model_unavailable");
-    expect(body.steps.every((s) => s.roi.measured === null && s.roi.expected === null)).toBe(true);
+    expect(body.steps.every((s) => !("roi" in s))).toBe(true);
     for (const s of body.steps) {
       const last = s.months.at(-1)!;
       expect(last.cumulativeCostPerOutcomeUsd).toBe(s.sinceInception.costPerOutcomeUsd);

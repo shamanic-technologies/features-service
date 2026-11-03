@@ -290,7 +290,8 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     const pipe = (await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(COLD)}`).set(KEY)).body;
     expect(pipe.play).toMatchObject({ strategyId: "valid-only", strategyDescription: "only confirmed", default: true, allowedActiveWorkflowCount: 1 });
     const [def, catchAll] = pipe.plays;
-    expect(def).toMatchObject({ id: COLD, strategyId: "valid-only", strategyDescription: "only confirmed", default: true, costUsd: pipe.costUsd, roi: pipe.roi, status: pipe.status, runnable: true });
+    expect(def).toMatchObject({ id: COLD, strategyId: "valid-only", strategyDescription: "only confirmed", default: true, costUsd: pipe.costUsd, status: pipe.status, runnable: true });
+    expect(def).not.toHaveProperty("roi");
     // Nothing judged Catch-all yet: the play has no workflow to run, so it is learning and never runnable.
     expect(catchAll).toMatchObject({ id: CATCH, strategyId: "valid-catch-all", strategyDescription: "confirmed and catch-all", default: false, status: "learning", costUsd: null, allowedActiveWorkflowCount: 0, runnable: false });
   });

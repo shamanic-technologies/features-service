@@ -214,8 +214,8 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     expect(res.body.leg.basis).toBe("best_returning_declared_funnel");
     expect(res.body.leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
     expect(res.body.funnelKey).toBe("sales_meetings_from_conversation");
-    // 1000 / 5 — the return the pick was made on, stated so nobody has to re-derive it.
-    expect(res.body.leg.returnPerDollar).toBeCloseTo(200, 6);
+    // The pick reads the return (1000 / 5) but never serves it (ROI-CONSISTENCY-1103).
+    expect(res.body.leg).not.toHaveProperty("returnPerDollar");
 
     const chosen = res.body.rows.find((r: any) => r.audienceId === null).resolved.costPerOutcomeUsd;
     expect(chosen).toBeCloseTo(2, 6);
@@ -245,7 +245,7 @@ describe("workflow-projection: a LEG is answerable with no sales funnel named", 
     const cold = await get("leg=meeting_booked_to_meeting_attended");
     expect(cold.status).toBe(200);
     expect(cold.body.leg.basis).toBe("no_return_evidence");
-    expect(cold.body.leg.returnPerDollar).toBeNull();
+    expect(cold.body.leg).not.toHaveProperty("returnPerDollar");
     expect(cold.body.leg.evidence.measured).toBe(false);
     // The tie is broken by the catalogue's canonical order, deterministically.
     expect(cold.body.leg.basisFunnelKey).toBe("sales_meetings_from_conversation");
@@ -462,8 +462,8 @@ describe("workflow-projection: an offer with NO return economics still prices an
       expect(brandRow.resolved.costPerOutcomeUsd).toBeCloseTo(cost, 6);
       // A measurement, never a projection: no return is invented without the offer's terms.
       expect(brandRow.resolved.costPerPaidClientUsd).toBeNull();
-      expect(brandRow.resolved.roiMultiple).toBeNull();
-      expect(brandRow.resolved.cacPct).toBeNull();
+      expect(brandRow.resolved).not.toHaveProperty("roiMultiple");
+      expect(brandRow.resolved).not.toHaveProperty("cacPct");
       expect(res.body.recommendedWorkflowDynastySlug).toBe("dyn-a");
     }
   });

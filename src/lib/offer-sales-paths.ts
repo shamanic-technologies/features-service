@@ -321,24 +321,11 @@ export interface SalesPathSelection {
   statedAt: string | null;
 }
 
-export type CampaignRoiUnavailableReason =
-  | SalesPathRoiUnavailableReason
-  /** No selected path uses this campaign. */
-  | "not_on_a_selected_path"
-  /** The customer's selection could not be read. */
-  | "selected_paths_unavailable";
-
 /**
- * A CAMPAIGN = one channel on one leg. Its ROI (owner asked features-service to define it, 2026-10-05):
- *
- *   campaign.roi = MAX roi over the SELECTED paths whose leg `legKey` runs on channel `channelSlug`.
- *
- * Why the path's ROI and not a share of it: a campaign is one link of a chain whose every link is NEEDED
- * for any revenue (drop one and the path sells nothing). So revenue cannot be split per link: a
- * marginal-contribution ROI (path revenue ÷ the link's own cost) credits every link with the WHOLE
- * revenue and inflates the cheap reactive links to absurd multiples; an equal split is arbitrary. The
- * honest figure is the return of the cheapest-to-run selected path the campaign is part of: what a dollar
- * in it returns at best, with the rest of that path running. `roiCombinationKey` names that path.
+ * A CAMPAIGN = one channel on one leg. It serves no return (ROI-CONSISTENCY-1103, owner 2026-11-03: a
+ * return exists only where a value lands; the sales path's `roi` is the expected return per paying client).
+ * The campaigns still ORDER on the best selected path running them (proactive first, then that path's roi
+ * desc), and `outcomesForCredit` is read off that same path.
  */
 export interface SalesPathCampaign {
   /** `campaignNameKeyOf(channelSlug, legKey)`, unique within the response. */
@@ -355,12 +342,8 @@ export interface SalesPathCampaign {
   pathCount: number;
   /** Selected paths that use it. */
   selectedPathCount: number;
-  roi: number | null;
-  /** The selected path the roi is read off (the best). Null when roi is null. */
-  roiCombinationKey: string | null;
-  roiUnavailableReason: CampaignRoiUnavailableReason | null;
-  /** What a credit of `creditUsd` buys of this campaign's outcome (its leg's `toStep`), on the SAME path its
-   *  roi is read off (see `CampaignOutcomesForCredit`). */
+  /** What a credit of `creditUsd` buys of this campaign's outcome (its leg's `toStep`), on the best selected
+   *  path running it (see `CampaignOutcomesForCredit`). */
   outcomesForCredit: CampaignOutcomesForCredit;
 }
 
@@ -377,8 +360,8 @@ export type CampaignOutcomesUnavailableReason =
 
 /**
  * What a credit buys of a campaign's outcome (owner 2026-10-06, the /get-started wall's "Here is what
- * your $100 gets you"): the campaign's leg cost per outcome on the path its roi is read off
- * (`roiCombinationKey`; when roi is null, the best-ranked selected path using it), and
+ * your $100 gets you"): the campaign's leg cost per outcome on the best selected path running it (the
+ * highest path roi; when none has one, the best-ranked selected path using it), and
  *
  *   outcomes = floor(creditUsd ÷ costPerOutcomeUsd)   (whole outcomes the credit pays for, 0 possible)
  *
@@ -796,8 +779,8 @@ export interface SelectedSalesPathsInput {
   statedAt: string | null;
 }
 
-/** PURE: the selection that counts, then one row per campaign with its ROI (see `SalesPathCampaign`).
- *  Order: proactive before reactive, then roi descending, a null roi last. */
+/** PURE: the selection that counts, then one row per campaign (see `SalesPathCampaign`).
+ *  Order: proactive before reactive, then its best selected path's roi descending, none last. */
 export function withCampaignRois(
   body: OfferSalesPathsBody,
   selected: SelectedSalesPathsInput | null,
@@ -845,9 +828,6 @@ export function withCampaignRois(
             operatedBy: ch.operatedBy,
             pathCount: 0,
             selectedPathCount: 0,
-            roi: null,
-            roiCombinationKey: null,
-            roiUnavailableReason: null,
             outcomesForCredit: { creditUsd, combinationKey: null, costPerOutcomeUsd: null, outcomes: null, unavailableReason: null },
           },
           best: null,
@@ -864,24 +844,17 @@ export function withCampaignRois(
     }
   }
 
-  const campaigns = [...byKey.values()].map(({ row, best, firstSelected }): SalesPathCampaign => {
+  const ranked = [...byKey.values()].map(({ row, best, firstSelected }) => {
     const noPath = selection.basis === "unavailable" ? "selected_paths_unavailable" : "not_on_a_selected_path";
-    const outcomesForCredit = outcomesForCreditOn(best ?? firstSelected, row.legKey, creditUsd, noPath);
-    if (best) return { ...row, roi: best.roi, roiCombinationKey: best.combinationKey, outcomesForCredit };
-    const reason: CampaignRoiUnavailableReason =
-      selection.basis === "unavailable"
-        ? "selected_paths_unavailable"
-        : firstSelected
-          ? firstSelected.roiUnavailableReason! // a null roi always carries its reason
-          : "not_on_a_selected_path";
-    return { ...row, roiUnavailableReason: reason, outcomesForCredit };
+    const campaign: SalesPathCampaign = { ...row, outcomesForCredit: outcomesForCreditOn(best ?? firstSelected, row.legKey, creditUsd, noPath) };
+    return { campaign, pathRoi: best?.roi ?? null };
   });
-  campaigns.sort((a, b) => {
-    if (a.reactive !== b.reactive) return a.reactive ? 1 : -1;
-    if (a.roi !== null && b.roi !== null && a.roi !== b.roi) return b.roi - a.roi;
-    if (a.roi !== null && b.roi === null) return -1;
-    if (a.roi === null && b.roi !== null) return 1;
-    return a.campaignKey.localeCompare(b.campaignKey);
+  ranked.sort((a, b) => {
+    if (a.campaign.reactive !== b.campaign.reactive) return a.campaign.reactive ? 1 : -1;
+    if (a.pathRoi !== null && b.pathRoi !== null && a.pathRoi !== b.pathRoi) return b.pathRoi - a.pathRoi;
+    if (a.pathRoi !== null && b.pathRoi === null) return -1;
+    if (a.pathRoi === null && b.pathRoi !== null) return 1;
+    return a.campaign.campaignKey.localeCompare(b.campaign.campaignKey);
   });
-  return { ...body, selectedSalesPaths: selection, campaigns };
+  return { ...body, selectedSalesPaths: selection, campaigns: ranked.map((x) => x.campaign) };
 }

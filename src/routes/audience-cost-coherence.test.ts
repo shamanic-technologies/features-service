@@ -489,15 +489,10 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
     });
   });
 
-  // ── RETURN PER DOLLAR — the figure the brand Overview's Top-audiences card leads with ──────────
-  //
-  // Cost per outcome ranks audiences by CHEAPNESS, which answers the wrong question: a cheap audience
-  // that converts to nothing outranks an expensive one that pays. `projection.returnPerDollar` answers
-  // "where should the money go", and it is the SAME returnPerDollar statistic every surface here uses —
-  // so one brand cannot read two different returns on two pages. Both surfaces are driven
-  // from the ONE fixture above, so the agreement is a property of the computes.
-  describe("per-audience RETURN per dollar", () => {
-    it("is lifetimeRevenueUsd / costPerPaidClientUsd — the SAME definition, and the same LTR, the brand is ranked on", async () => {
+  // ── NO RETURN PER AUDIENCE (ROI-CONSISTENCY-1103, owner 2026-11-03) ───────────────────────────────
+  // An audience serves its PROJECTED cost of one paying client; its only return is its `expectedReturn`.
+  describe("per-audience projection: a cost, never a return", () => {
+    it("serves the paid-client cost at both grains on the brand's own LTR, and no return", async () => {
       fleet = FLEET_GOAL_BEATS_CLICKS;
       audienceSpendSlug = "wf-closer";
       audienceSpendCents = 40000;
@@ -511,43 +506,10 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
       expect(stats.body.brandProjection.lifetimeRevenueUsd).toBe(ECONOMICS.lifetimeRevenueUsd);
       expect(row.projection.costPerPaidClientUsd).toBeGreaterThan(0);
-      expect(row.projection.returnPerDollar).toBeCloseTo(
-        ECONOMICS.lifetimeRevenueUsd / row.projection.costPerPaidClientUsd,
-        9,
-      );
-      // The brand-level twin is the identical formula one grain coarser — a row is read AGAINST it.
-      expect(stats.body.brandProjection.returnPerDollar).toBeCloseTo(
-        ECONOMICS.lifetimeRevenueUsd / stats.body.brandProjection.costPerPaidClientUsd,
-        9,
-      );
-    });
-
-    it("states the same thing in a THIRD unit — cost as a SHARE of lifetime revenue, reciprocal of the return at BOTH grains", async () => {
-      fleet = FLEET_GOAL_BEATS_CLICKS;
-      audienceSpendSlug = "wf-closer";
-      audienceSpendCents = 40000;
-      audienceClicks = 100;
-
-      const stats = await request(app)
-        .get(`/features/${FEATURE.slug}/audience-stats?brandId=brand-1&goal=websitePurchase`)
-        .set(AUTH);
-      const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
-
-      // One statement, three units: the share reconciles with the cost AND with the return it sits
-      // beside — and with the brand-level answer for the same brand at the same moment.
-      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(
-        (100 * row.projection.costPerPaidClientUsd) / ECONOMICS.lifetimeRevenueUsd,
-        9,
-      );
-      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(100 / row.projection.returnPerDollar, 9);
-      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeCloseTo(
-        100 / stats.body.brandProjection.returnPerDollar,
-        9,
-      );
-      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeCloseTo(
-        (100 * stats.body.brandProjection.costPerPaidClientUsd) / ECONOMICS.lifetimeRevenueUsd,
-        9,
-      );
+      for (const p of [row.projection, stats.body.brandProjection]) {
+        expect(p).not.toHaveProperty("returnPerDollar");
+        expect(p).not.toHaveProperty("costOfAcquisitionPct");
+      }
     });
 
     it("prices the audience off the SAME workflow row /workflow-projection resolves for it", async () => {
@@ -567,11 +529,7 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
       const rendered = strategyRowFor("audience-a", projection.body);
       expect(row.projection.costPerPaidClientUsd).toBeCloseTo(rendered.resolved.costPerPaidClientUsd, 9);
-      // ...so the audience's return equals the roiMultiple that same row reports. One number, two pages.
-      expect(row.projection.returnPerDollar).toBeCloseTo(rendered.resolved.roiMultiple, 9);
-      // And the share-of-lifetime-revenue is that row's cacPct — the SAME reciprocal relation, so a
-      // reader cannot get two answers to "what slice of a customer's worth did winning them cost".
-      expect(row.projection.costOfAcquisitionPct).toBeCloseTo(rendered.resolved.cacPct, 9);
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
     });
 
     it("RANKS BY WHAT PAYS, not by what is cheap — a cheap audience that converts to nothing loses", async () => {
@@ -587,7 +545,7 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
 
       // Cheapness and return disagree here — which is exactly why the card cannot lead with cost.
       expect(row.metrics.cpcCents / 100).toBeGreaterThan(2); // wf-cheap's $2.00 click is cheaper
-      expect(row.projection.returnPerDollar).toBeGreaterThan(0);
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
     });
 
     it("an audience with NO measured grain inherits the BRAND projection verbatim — never a blank, never an invention", async () => {
@@ -600,9 +558,8 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
       const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
 
       expect(row.projection.costPerPaidClientUsd).toBe(stats.body.brandProjection.costPerPaidClientUsd);
-      expect(row.projection.returnPerDollar).toBe(stats.body.brandProjection.returnPerDollar);
-      expect(row.projection.costOfAcquisitionPct).toBe(stats.body.brandProjection.costOfAcquisitionPct);
-      expect(row.projection.costOfAcquisitionPct).not.toBeNull();
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
+      expect(row.projection).not.toHaveProperty("costOfAcquisitionPct");
     });
 
     it("is NULL, never 0, when the offer states no lifetime revenue", async () => {
@@ -621,11 +578,11 @@ describe("per-audience cost coherence: /audience-stats ↔ /workflow-projection"
         .set(AUTH);
       const row = stats.body.audiences.find((r: any) => r.audienceId === "audience-a");
 
-      expect(row.projection.returnPerDollar).toBeNull();
-      expect(stats.body.brandProjection.returnPerDollar).toBeNull();
+      expect(row.projection).not.toHaveProperty("returnPerDollar");
+      expect(stats.body.brandProjection).not.toHaveProperty("returnPerDollar");
       // "we could not measure this", NOT "winning a customer costs nothing" — never 0.
-      expect(row.projection.costOfAcquisitionPct).toBeNull();
-      expect(stats.body.brandProjection.costOfAcquisitionPct).toBeNull();
+      expect(row.projection).not.toHaveProperty("costOfAcquisitionPct");
+      expect(stats.body.brandProjection).not.toHaveProperty("costOfAcquisitionPct");
     });
   });
 });

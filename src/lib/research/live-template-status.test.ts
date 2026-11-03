@@ -3,9 +3,8 @@ import { withLiveTemplateStatus } from "./live-template-status.js";
 import type { CatalogTemplate, CatalogTemplateVersion } from "./catalog.js";
 import type { TemplateDynasty } from "./template-dynasties.js";
 
-const roi = { value: 2, display: "2.00x", basis: "measured" as const, source: "own_outcomes" as const, spendCovered: null, unavailableReason: null };
 const figs = { rank: 1, rankBasis: "cost_per_outcome" as const, emails: "100", emailsNoun: "emails", outcomes: "3", spend: "$30", cost: "$10.00", rate: "3.0%", thin: false, sample: "3 positive replies · 100 emails", charts: [] };
-const version = (key: string, head: boolean): CatalogTemplateVersion => ({ key, label: key, head, hasText: true, status: head ? "active" : "deprecated", roi: roi.display, roiDetail: roi, ...figs });
+const version = (key: string, head: boolean): CatalogTemplateVersion => ({ key, label: key, head, hasText: true, status: head ? "active" : "deprecated", ...figs });
 
 // The stored build (up to 15 min old): Client Rep Pitch active, head v7.
 const built: CatalogTemplate = {
@@ -17,8 +16,6 @@ const built: CatalogTemplate = {
   status: "active",
   statusSource: "content_generation",
   statusUnavailableReason: null,
-  roi: roi.display,
-  roiDetail: roi,
   versions: [version("blind-discovery-email-v6", false), version("blind-discovery-email-v7", true)],
   workflows: [],
   runs: [],
@@ -71,7 +68,7 @@ describe("withLiveTemplateStatus (TPL-STATUS-LIVE-1023)", () => {
     ]);
     const v8 = row!.versions[2]!;
     expect([v8.emails, v8.outcomes, v8.spend, v8.cost, v8.rank, v8.sample]).toEqual(["0", "0", "$0.00", null, null, "0 positive replies · 0 emails"]);
-    expect(v8.roiDetail.basis).toBe("expected");
+    expect(v8).not.toHaveProperty("roi"); // ROI-CONSISTENCY-1103
   });
 
   it("an unreadable read, or a dynasty no longer listed, keeps the build's rows", () => {
