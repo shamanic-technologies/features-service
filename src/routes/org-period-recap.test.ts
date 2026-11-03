@@ -13,7 +13,7 @@ vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: []
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 const { default: app } = await import("../index.js");
 const { __setRecapDepsForTest } = await import("./org-period-recap.js");
-const { buildOrgPeriodRecap, windowDays, isCalendarDay, windowOutcomeCount } = await import("../lib/org-period-recap.js");
+const { windowDays, isCalendarDay, windowOutcomeCount } = await import("../lib/org-period-recap.js");
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const BRAND = "11111111-1111-4111-8111-111111111111";
@@ -63,94 +63,6 @@ const get = (q = "from=2026-09-15&to=2026-10-14") =>
 describe("GET /internal/orgs/:orgId/period-recap", () => {
   beforeEach(() => setDeps({}));
 
-  it("the return is the dashboard's served return for the offer, never the window's reply-route valuation (Legistai, 2026-10-04)", async () => {
-    const res = await get();
-    expect(res.status).toBe(200);
-    const b = res.body;
-    expect(b.window).toEqual({ from: "2026-09-15", to: "2026-10-14", grain: "utc_day", days: 30 });
-    expect(b.outbound).toMatchObject({ emailsSent: 400, emailsDelivered: 380, recipientsContacted: 200, deliveryRatePct: 95, deliveryRateNullReason: null });
-    // Expected replies: 200 contacted × 1.5% fleet = 3. The window's reply route would have valued them at
-    // 3 × 20% × $2,500 = $1,500 over $99 = 15.15x: that second formula is exactly what must NOT be served.
-    expect(b.expectedPositiveReplies).toBe(3);
-    expect(b.brands[0].rateSource).toBe("fleet");
-    expect(b.spendUsd).toBe(99);
-    expect(b.expectedReturn.roiMultiple).toBe(LEGISTAI_FLASH_ROI); // byte the served figure, not rounded
-    expect(b.expectedReturn).toMatchObject({
-      basis: "served_return",
-      returnHalf: "flash",
-      expectedRevenueUsd: Math.round(LEGISTAI_FLASH_ROI * 99 * 100) / 100,
-      expectedPaidClients: Math.round(((LEGISTAI_FLASH_ROI * 99) / 2500) * 10000) / 10000,
-      lifetimeRevenuePerClientUsd: 2500,
-      nullReason: null,
-      returnScopes: [
-        {
-          brandId: BRAND,
-          offerId: OFFER,
-          roiMultiple: LEGISTAI_FLASH_ROI,
-          half: "flash",
-          isMature: false,
-          flashRoiMultiple: LEGISTAI_FLASH_ROI,
-          matureRoiMultiple: null,
-          pipelineUsd: 402.58,
-          committedCostUsd: 92.94,
-          nullReason: null,
-        },
-      ],
-    });
-    expect(b.budgetIncrease).toMatchObject({
-      amountUsd: 100,
-      basis: "linear_at_served_return",
-      expectedAdditionalRevenueUsd: 433.16, // 100 × the served return
-      expectedAdditionalPositiveReplies: 3.03,
-      expectedAdditionalRecipientsEnrolled: 202, // 200 enrolled on $99 → $100 more lines up 202.02
-      expectedAdditionalRecipientsEnrolledNullReason: null,
-      revenueMultiple: 2.01,
-      nullReason: null,
-    });
-  });
-
-  it("a mature offer is shown its MATURE return when it is the higher half", async () => {
-    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 1.5 }, mature: { roiMultiple: 2.5 }, isMature: true }) });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 2.5, returnHalf: "mature" });
-    expect(res.body.budgetIncrease.expectedAdditionalRevenueUsd).toBe(250);
-  });
-
-  it("a mature offer whose flash return is higher is shown the FLASH return, like its Today page (owner 2026-10-08)", async () => {
-    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 2.21 }, mature: { roiMultiple: 0.74 }, isMature: true }) });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 2.21, returnHalf: "flash" });
-  });
-
-  it("a not-mature offer at or under 1x reads Learning on the dashboard → null + return_learning, never a figure", async () => {
-    setDeps({ offerReturn: async () => offerReturn({ flash: { roiMultiple: 0.8 }, mature: { roiMultiple: null }, isMature: false }) });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, expectedRevenueUsd: null, nullReason: "return_learning" });
-    expect(res.body.budgetIncrease).toMatchObject({ expectedAdditionalRevenueUsd: null, revenueMultiple: null, nullReason: "return_learning" });
-    expect(res.body.expectedPositiveReplies).toBe(3);
-  });
-
-  it("two offers shown different returns → null + return_differs_across_scopes, never a blend", async () => {
-    const OTHER = "44444444-4444-4444-8444-444444444444";
-    setDeps({
-      offers: async () => [offer(null), offer(null, OTHER)],
-      offerReturn: async (_o, _b, offerId) =>
-        offerReturn(offerId === OFFER ? NOT_MATURE : { flash: { roiMultiple: 2 }, mature: { roiMultiple: null }, isMature: false }, offerId),
-    });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, nullReason: "return_differs_across_scopes" });
-    expect(res.body.expectedReturn.returnScopes.map((s: { offerId: string }) => s.offerId)).toEqual([OFFER, OTHER]);
-  });
-
-  it("an offer with no campaign is not a scope; the one that sends states the return", async () => {
-    setDeps({
-      offers: async () => [offer(null), offer(null, "44444444-4444-4444-8444-444444444444")],
-      offerReturn: async (_o, _b, offerId) => (offerId === OFFER ? offerReturn(NOT_MATURE) : null),
-    });
-    const res = await get();
-    expect(res.body.expectedReturn.roiMultiple).toBe(LEGISTAI_FLASH_ROI);
-  });
-
   it("an unreadable served return is a 502, never the window's valuation", async () => {
     setDeps({ offerReturn: async () => { throw new Error("offer revenue failed"); } });
     expect((await get()).status).toBe(502);
@@ -175,13 +87,11 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
       sendStatus: "nothing_sent", deliveryRatePct: null, deliveryRateNullReason: "nothing_sent",
     });
     expect(res.body.expectedPositiveReplies).toBe(0);
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, expectedRevenueUsd: null, nullReason: "nothing_sent", lifetimeRevenueNullReason: "nothing_sent", returnScopes: [] });
-    expect(res.body.budgetIncrease).toMatchObject({
-      expectedAdditionalRevenueUsd: null,
-      nullReason: "nothing_sent",
-      expectedAdditionalRecipientsEnrolled: null,
-      expectedAdditionalRecipientsEnrolledNullReason: "nothing_sent",
-    });
+    expect(res.body.returns.expected).toMatchObject({ roiMultiple: null, nullReason: "nothing_sent", scopes: [] });
+    expect(res.body.returns.realized).toMatchObject({ roiMultiple: null, nullReason: "nothing_sent", scopes: [] });
+    // ROI-CONSISTENCY-1103: the pipeline-based return blocks are gone.
+    expect(res.body.expectedReturn).toBeUndefined();
+    expect(res.body.budgetIncrease).toBeUndefined();
   });
 
   it("no mature rate and no fleet benchmark yet → null + reply_rate_unavailable, never 0", async () => {
@@ -189,79 +99,14 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     const res = await get();
     expect(res.body.expectedPositiveReplies).toBeNull();
     expect(res.body.expectedPositiveRepliesNullReason).toBe("reply_rate_unavailable");
-    // The return does not depend on the reply rate: it is the served one.
-    expect(res.body.expectedReturn.roiMultiple).toBe(LEGISTAI_FLASH_ROI);
-    expect(res.body.budgetIncrease).toMatchObject({ expectedAdditionalPositiveReplies: null, nullReason: "reply_rate_unavailable" });
     expect(res.body.outbound.emailsSent).toBe(400);
-  });
-
-  it("a sending brand whose offer states no lifetime revenue → none (economics_missing), the served return still stated", async () => {
-    setDeps({ offers: async () => [offer(null)] });
-    const res = await get();
-    expect(res.body.expectedPositiveReplies).toBe(3);
-    expect(res.body.expectedReturn).toMatchObject({
-      roiMultiple: LEGISTAI_FLASH_ROI,
-      expectedPaidClients: null,
-      lifetimeRevenuePerClientUsd: null,
-      lifetimeRevenueNullReason: "economics_missing",
-    });
-  });
-
-  it("the lifetime revenue is the customer's STATED offer value, said so (Legistai, 2026-10-04)", async () => {
-    // The retired brand economics said $2,500 (cross-brand-average); the customer stated $2,100 on the
-    // offer, and that is the only value read now.
-    setDeps({ offers: async () => [offer(2100)] });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({
-      lifetimeRevenuePerClientUsd: 2100,
-      lifetimeRevenueSource: "offer_stated",
-      roiMultiple: LEGISTAI_FLASH_ROI,
-    });
-    expect(res.body.brands[0]).toMatchObject({
-      lifetimeRevenuePerClientUsd: 2100,
-      lifetimeRevenueSource: "offer_stated",
-      lifetimeRevenueOfferId: OFFER,
-      lifetimeRevenueStatedAt: "2026-09-01 08:16:15.704+00",
-    });
-    // The brand-level economics' provenance is gone from the wire.
-    expect(res.body.brands[0]).not.toHaveProperty("economicsSource");
-  });
-
-  it("no offer states a lifetime revenue → null + economics_missing, never the brand's (retired) economics or an average", async () => {
-    setDeps({ offers: async () => [offer(null)] });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({
-      lifetimeRevenuePerClientUsd: null,
-      lifetimeRevenueSource: null,
-      lifetimeRevenueNullReason: "economics_missing",
-      expectedPaidClients: null,
-    });
-    expect(res.body.brands[0]).toMatchObject({ lifetimeRevenuePerClientUsd: null, lifetimeRevenueSource: null, lifetimeRevenueOfferId: null });
-  });
-
-  it("offers stating different lifetime revenues → null + lifetime_revenue_differs_across_offers, never an average", async () => {
-    setDeps({ offers: async () => [offer(2100), offer(900, "44444444-4444-4444-8444-444444444444")] });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({
-      lifetimeRevenuePerClientUsd: null,
-      lifetimeRevenueNullReason: "lifetime_revenue_differs_across_offers",
-      expectedPaidClients: null,
-    });
-    expect(res.body.expectedPositiveReplies).toBe(3);
   });
 
   it("a brand the org no longer holds (offers null) still counts its sends; its return is unreadable, said so", async () => {
     setDeps({ offers: async () => null });
     const res = await get();
     expect(res.body.outbound.recipientsContacted).toBe(200);
-    // No statements to read → no lifetime revenue either (no brand-economics fallback any more).
-    expect(res.body.expectedReturn).toMatchObject({
-      lifetimeRevenuePerClientUsd: null,
-      lifetimeRevenueSource: null,
-      lifetimeRevenueNullReason: "economics_missing",
-      roiMultiple: null,
-      nullReason: "return_unavailable",
-    });
+    expect(res.body.returns.expected.nullReason).toBe("return_unavailable");
   });
 
   it("leads lined up but no email out yet → sendStatus lined_up_not_sent, Contacted 0: nobody was emailed (Legistai: 302 queued / 0 sent)", async () => {
@@ -280,21 +125,7 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
     expect(res.body.brands[0]).toMatchObject({ recipientsContacted: 0, recipientsEmailed: 0 });
     // Nobody emailed → no reply expected and no return to state.
     expect(res.body.expectedPositiveReplies).toBe(0);
-    expect(res.body.expectedReturn.nullReason).toBe("nothing_sent");
-  });
-
-  it("+$100 states how many more recipients it lines up, linear at current results (Legistai: 302 on $98.97 → 305)", async () => {
-    setDeps({
-      brandDays: async () => [day("2026-10-03", 0, 173), day("2026-10-04", 0, 129)],
-      spendByDay: async () => new Map([["2026-10-03", 50], ["2026-10-04", 48.97]]),
-    });
-    const res = await get("from=2026-10-03&to=2026-10-04");
-    expect(res.body.spendUsd).toBe(98.97);
-    // 100 × 302 / 98.97 = 305.14 → 305 whole recipients.
-    expect(res.body.budgetIncrease).toMatchObject({
-      expectedAdditionalRecipientsEnrolled: 305,
-      expectedAdditionalRecipientsEnrolledNullReason: null,
-    });
+    expect(res.body.returns.expected.nullReason).toBe("nothing_sent");
   });
 
   it("emails out → sendStatus emails_sent with the emailed lead count", async () => {
@@ -305,20 +136,6 @@ describe("GET /internal/orgs/:orgId/period-recap", () => {
   it("an unreadable offer statement is a 502, never an averaged value", async () => {
     setDeps({ offers: async () => { throw new Error("brand-service down"); } });
     expect((await get()).status).toBe(502);
-  });
-
-  it("sends but no spend in the window → the return and +$100 stand, the per-window-dollar figures say no_spend_in_window", async () => {
-    setDeps({ spendByDay: async () => new Map() });
-    const res = await get();
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: LEGISTAI_FLASH_ROI, expectedRevenueUsd: 0, nullReason: null });
-    expect(res.body.budgetIncrease).toMatchObject({
-      expectedAdditionalRevenueUsd: 433.16,
-      revenueMultiple: null,
-      expectedAdditionalPositiveReplies: null,
-      expectedAdditionalRecipientsEnrolled: null,
-      expectedAdditionalRecipientsEnrolledNullReason: "no_spend_in_window",
-      nullReason: "no_spend_in_window",
-    });
   });
 
   it("validates the org and the window, and requires the api key", async () => {
@@ -373,7 +190,7 @@ describe("actualOutcomes: what HAPPENED in the window, on the dashboard's dated 
     });
     const res = await get();
     expect(res.body.actualOutcomes).toMatchObject({ positiveReplies: 2, meetingsBooked: 1 });
-    expect(res.body.expectedReturn.returnScopes.map((s: { brandId: string }) => s.brandId)).toEqual([BRAND]);
+    expect(res.body.returns.expected.scopes.map((s: { brandId: string }) => s.brandId)).toEqual([BRAND]);
   });
 
   it("an unreadable series is null outcomes_unavailable, an undated outcome null undated_outcomes — never 0", async () => {
@@ -398,24 +215,5 @@ describe("org-period-recap pure helpers", () => {
     expect(windowDays("2026-09-29", "2026-10-02")).toEqual(["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]);
     expect(isCalendarDay("2026-02-29")).toBe(false);
     expect(isCalendarDay("2028-02-29")).toBe(true);
-  });
-
-  it("brands valued differently → no single lifetime revenue, the shared served return still stated", () => {
-    const r = buildOrgPeriodRecap({
-      orgId: ORG,
-      from: "2026-09-15",
-      to: "2026-10-14",
-      now: NOW,
-      brands: [
-        { brandId: "a", days: [day("2026-09-20", 10, 100)], offers: [offer(2500)], returns: [offerReturn(NOT_MATURE)] },
-        { brandId: "b", days: [day("2026-09-20", 10, 100)], offers: [offer(1000)], returns: [offerReturn(NOT_MATURE, "o2")] },
-      ],
-      spendByDay: new Map([["2026-09-20", 100]]),
-      fleetRate: FLEET,
-    });
-    expect(r.expectedReturn.lifetimeRevenuePerClientUsd).toBeNull();
-    expect(r.expectedReturn.lifetimeRevenueNullReason).toBe("lifetime_revenue_differs_across_brands");
-    expect(r.expectedReturn.roiMultiple).toBe(LEGISTAI_FLASH_ROI);
-    expect(r.expectedReturn.returnScopes.map((s) => s.brandId)).toEqual(["a", "b"]);
   });
 });
