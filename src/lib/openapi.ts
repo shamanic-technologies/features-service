@@ -4358,18 +4358,6 @@ const recapBrandSchema = z.object({
   lifetimeRevenueStatedAt: z.string().nullable().describe("When the customer stated it (brand-service), when lifetimeRevenueOfferId is set."),
   nullReason: recapNullReason.nullable(),
 });
-const recapReturnScopeSchema = z.object({
-  brandId: z.string(),
-  offerId: z.string().nullable().describe("null = the brand's return could not be read at all (brand no longer held, or no offer of it has campaigns)."),
-  roiMultiple: z.number().nullable().describe("The return the dashboard shows for this offer (servedReturnOf over costEconomics.maturity of /offers/{offerId}/revenue?pricing=net)."),
-  half: z.enum(["mature", "flash"]).nullable(),
-  isMature: z.boolean().nullable(),
-  flashRoiMultiple: z.number().nullable(),
-  matureRoiMultiple: z.number().nullable(),
-  pipelineUsd: z.number().nullable().describe("The offer's headline.totalPipelineUsd (the dashboard's pipeline)."),
-  committedCostUsd: z.number().nullable().describe("The offer's costEconomics.committedCostUsd."),
-  nullReason: recapNullReason.nullable(),
-});
 const orgPeriodRecapResponseRef = registry.register(
   "OrgPeriodRecapResponse",
   z.object({
@@ -4397,28 +4385,6 @@ const orgPeriodRecapResponseRef = registry.register(
       meetingsBookedNullReason: recapNullReason.nullable(),
     }).describe("What HAPPENED in the window (not a forecast): the twin of expectedPositiveReplies, on the dashboard's basis."),
     spendUsd: z.number().describe("The org's whole COMMITTED spend in the window, NET basis (every brand, setup included)."),
-    expectedReturn: z.object({
-      basis: z.literal("served_return").describe("The return is the one the dashboard shows for the offer(s) that sent in the window, read from the same served figure, never recomputed over the window."),
-      expectedRevenueUsd: z.number().nullable().describe("roiMultiple x spendUsd."),
-      expectedPaidClients: z.number().nullable().describe("expectedRevenueUsd / lifetimeRevenuePerClientUsd."),
-      roiMultiple: z.number().nullable().describe("EXACTLY the return the dashboard shows (Today page 'Return') for the offer that contacted people in the window: /offers/{offerId}/revenue?brandId=&pricing=net costEconomics.maturity, the HIGHER half (flash when its return is above the mature one, owner 2026-10-08); a not-mature offer shows its to-date (flash) half when above 1x, else null return_learning. Not rounded. Every scope that sent must show the same value, else null return_differs_across_scopes."),
-      returnHalf: z.enum(["mature", "flash"]).nullable().describe("Which half of the served pair roiMultiple is."),
-      returnScopes: z.array(recapReturnScopeSchema).describe("Provenance: one row per offer (with campaigns) of each brand that contacted people in the window."),
-      lifetimeRevenuePerClientUsd: z.number().nullable().describe("The lifetime revenue per client the ROI and budgetIncrease are based on, when every brand that sent shares one: the customer's STATED offer lifetime revenue when stated, else the brand's effective economics (lifetimeRevenueSource)."),
-      lifetimeRevenueSource: recapLtrSource.nullable(),
-      lifetimeRevenueNullReason: recapNullReason.nullable(),
-      nullReason: recapNullReason.nullable(),
-    }),
-    budgetIncrease: z.object({
-      amountUsd: z.number(),
-      basis: z.literal("linear_at_served_return").describe("amountUsd more returns amountUsd x expectedReturn.roiMultiple; no diminishing or improving returns are claimed."),
-      expectedAdditionalRecipientsEnrolled: z.number().int().nullable().describe("How many more recipients (decision-makers) amountUsd lines up at current results: amountUsd x outbound.recipientsEnrolled / spendUsd, rounded to whole people. Same lead grain as recipientsEnrolled (lined up, not necessarily emailed yet). Null with expectedAdditionalRecipientsEnrolledNullReason when nothing was lined up or nothing was spent; independent of reply rate and economics."),
-      expectedAdditionalRecipientsEnrolledNullReason: recapNullReason.nullable(),
-      expectedAdditionalPositiveReplies: z.number().nullable(),
-      expectedAdditionalRevenueUsd: z.number().nullable().describe("amountUsd x expectedReturn.roiMultiple (the dashboard's return), rounded to the cent."),
-      revenueMultiple: z.number().nullable().describe("(spendUsd + amountUsd) / spendUsd: revenue at the same served return scales with spend. Null when roiMultiple is null or nothing was spent in the window."),
-      nullReason: recapNullReason.nullable(),
-    }),
     returns: z.object({
       expected: z.object({
         roiMultiple: z.number().nullable().describe("The EXPECTED return of the offers that sent in the window: each offer body's expectedReturn.roiMultiple (/offers/{offerId}/revenue?pricing=net), one value across them, never a blend."),
@@ -4434,7 +4400,7 @@ const orgPeriodRecapResponseRef = registry.register(
         nullReason: z.enum(["nothing_sent", "return_unavailable", "return_differs_across_scopes", "several_scopes"]).nullable().describe("several_scopes = more than one offer sent: a brand's campaign-less spend joins every offer in full, so spends never add."),
         scopes: z.array(z.object({ brandId: z.string(), offerId: z.string().nullable(), roiMultiple: z.number().nullable(), closedWonCount: z.number().int().nullable(), closedWonRevenueUsd: z.number().nullable(), spentUsd: z.number().nullable() })),
       }),
-    }).describe("ROI-CONSISTENCY-1103 (owner 2026-11-03): the ONLY returns a client email may state. expectedReturn and budgetIncrease above are RETIRED (pipeline-based) and removed once billing reads this block."),
+    }).describe("ROI-CONSISTENCY-1103 (owner 2026-11-03): the ONLY returns a client email may state (the pipeline-based expectedReturn / budgetIncrease blocks are deleted)."),
     brands: z.array(recapBrandSchema).describe("Every brand the org ever broadcast for, ascending brandId. Counts add up to the top-level figures."),
     fleetPositiveReplyRate: z.object({
       ratePct: z.number(),
