@@ -38,6 +38,7 @@ const MEMBERS: Record<ChannelType, readonly string[]> = {
     "sourcing-linkedin-engagement-signals",
     "sourcing-crm-contacts",
     "sourcing-apify-search",
+    "sourcing-google-maps",
     // Picks among the origins above for the brand (owner 2026-10-11).
     "lead-sourcing",
   ],

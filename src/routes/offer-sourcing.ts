@@ -30,6 +30,7 @@ import {
   SOURCING_CHANNEL_SLUGS,
   LEAD_SOURCING_CHANNEL,
   originsLeadSourcingMayUse,
+  MESSAGING_NETWORK_BY_CHANNEL,
   SOURCING_ORIGINS_BY_CHANNEL,
   SOURCING_PARENT_CHANNEL_SLUGS,
   sourceCampaignKeyOf,
@@ -88,6 +89,8 @@ router.get("/public/sourcing-origins", (_req, res) => {
     contactMethodsByChannel: Object.fromEntries(
       Object.entries(CONTACT_METHODS_BY_CHANNEL).map(([c, m]) => [c, [...m]]),
     ),
+    // The messaging network each one-to-one channel writes on (GMAPS-SOURCE-1103): lead-service passes it as `reachableOn`.
+    messagingNetworkByChannel: { ...MESSAGING_NETWORK_BY_CHANNEL },
     // LEAD SOURCING (owner 2026-10-11): the sourcing channel that is no origin of its own; it picks among the origins
     // an outreach channel accepts (human-service decides which, per brand). Listed in `originsByChannel` beside them.
     leadSourcing: {

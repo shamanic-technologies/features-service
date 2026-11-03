@@ -63,6 +63,7 @@ const SOURCED: Readonly<Record<string, string>> = {
   "sourcing-apollo-buying-signals": "buyers showing intent",
   "sourcing-linkedin-engagement-signals": "LinkedIn-active buyers",
   "sourcing-crm-contacts": "your CRM contacts",
+  "sourcing-google-maps": "local businesses",
 };
 const DEFAULT_SOURCED = "new buyers";
 
