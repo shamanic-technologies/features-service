@@ -480,6 +480,39 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/public/catalogue/sales-funnels").query({ limit: "x" })).status).toBe(400);
   });
 
+  it("a client pages through EVERY public sales funnel with offset/nextOffset: none twice, none missing (CLIENT-FRICTION-API-1103)", async () => {
+    // No query = the small first page, unchanged.
+    const first = await request(app).get("/public/catalogue/sales-funnels");
+    expect(first.status).toBe(200);
+    const total: number = first.body.total;
+    expect(total).toBeGreaterThan(2); // larger than the page asked below
+    expect(first.body).toMatchObject({ offset: 0 });
+    const limit = 2;
+    const seen: string[] = [];
+    let offset: number | null = 0;
+    let pages = 0;
+    while (offset !== null) {
+      const page = await request(app).get("/public/catalogue/sales-funnels").query({ limit, offset });
+      expect(page.status).toBe(200);
+      expect(page.body.total).toBe(total);
+      expect(page.body.offset).toBe(offset);
+      expect(page.body.truncated).toBe(page.body.nextOffset !== null);
+      seen.push(...page.body.rows.map((r: { id: string }) => r.id));
+      offset = page.body.nextOffset;
+      pages += 1;
+      expect(pages).toBeLessThan(1000);
+    }
+    expect(seen).toHaveLength(total);
+    expect(new Set(seen).size).toBe(total);
+    // The pages concatenated are the one big list, in its order.
+    const whole = await request(app).get("/public/catalogue/sales-funnels").query({ limit: 25 });
+    expect(seen.slice(0, whole.body.rows.length)).toEqual(whole.body.rows.map((r: { id: string }) => r.id));
+    // Past the end: an empty last page, never an error.
+    const past = await request(app).get("/public/catalogue/sales-funnels").query({ offset: total + 5 });
+    expect(past.body).toMatchObject({ rows: [], nextOffset: null, truncated: false });
+    for (const bad of ["-1", "x", "1.5"]) expect((await request(app).get("/public/catalogue/sales-funnels").query({ offset: bad })).body.reason).toBe("offset_unrecognised");
+  });
+
   it("the PUBLIC step vocabulary needs no key and serves every step's key, name and icon byte-equal to the staff read (owner 2026-10-11)", async () => {
     const pub = await request(app).get("/public/catalogue/steps");
     expect(pub.status).toBe(200);
