@@ -585,6 +585,16 @@ function limitOf(req: Request): number {
   return n;
 }
 
+/** `?offset=` (CLIENT-FRICTION-API-1103): rows skipped before the page, so a client reads a list longer than
+ *  `limit` page by page (`nextOffset`). Absent = 0, the first page, byte-unchanged. */
+function offsetOf(req: Request): number {
+  const raw = req.query.offset;
+  if (raw === undefined || raw === "") return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new BadQuery("offset_unrecognised", "offset must be a whole number >= 0");
+  return n;
+}
+
 /** A comma list. For an id list (`ids`), a `+` sent unencoded arrives as a space (form decoding) and is put
  *  back: an id never holds a space. A step list keeps its spaces (labels: "Meeting booked"). */
 function listOf(req: Request, field: string, ids = true): string[] | null {
@@ -1154,6 +1164,7 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
 async function listSalesFunnels(req: Request, res: Response, forceRunnable: boolean): Promise<void> {
   try {
     const limit = limitOf(req);
+    const offset = offsetOf(req);
     const q = qOf(req);
     const paths = listOf(req, "paths");
     const containsChannels = listOf(req, "containsChannels");
@@ -1178,7 +1189,8 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
     const { kept: candidates, setAside } = offer
       ? splitByOfferSteps(matching, (f) => model.paths.get(f.pathId)!.steps, offer.steps)
       : { kept: matching, setAside: [] };
-    const shown = candidates.slice(0, limit);
+    const shown = candidates.slice(offset, offset + limit);
+    const nextOffset = offset + limit < candidates.length ? offset + limit : null;
     const shownAside = setAside.slice(0, limit);
     const n = await named([...shown.map((f) => f.id), ...shownAside.map((x) => x.item.id)], names);
     res.json({
@@ -1186,7 +1198,9 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
       costUnit: "per_paying_client",
       order: "roi_desc",
       total: candidates.length,
-      truncated: candidates.length > limit,
+      truncated: nextOffset !== null,
+      offset,
+      nextOffset,
       rows: shown.map((f) => funnelRowOf(f, n.get(f.id)!, funnelCopy(model, f))),
       ...(offer
         ? {

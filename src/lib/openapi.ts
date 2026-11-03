@@ -7227,6 +7227,11 @@ const cataloguePage = (row: z.ZodTypeAny, object: string, costUnit: string) =>
     rows: z.array(row),
   });
 const catalogueLimit = z.string().describe("1..25, default 10.").optional();
+const catalogueOffset = z.string().describe("Rows to skip before this page (whole number >= 0, default 0; else 400 `offset_unrecognised`). To read EVERY row: start at 0, then ask again with `offset` = the answer's `nextOffset` until it is null. Same filters on every page: rows keep one order (ROI first, then id), so no row is read twice and none is missed.").optional();
+const catalogueOffsetPage = {
+  offset: z.number().int().describe("Rows skipped before this page (the `offset` asked, 0 when none)."),
+  nextOffset: z.number().int().nullable().describe("The `offset` of the next page; null on the last page. `truncated` = `nextOffset` is not null."),
+};
 const catalogueQ = z.string().describe("Text search: every word must appear in the row's text (name, line, id).").optional();
 const catalogueRunnable = z.enum(["true", "false"]).describe("`true` keeps only what we run today (`runnable`): what a customer surface may present. Default: everything.").optional();
 const catalogueRunnableField = { runnable: z.boolean().describe("We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects.") };
@@ -7441,6 +7446,7 @@ const catalogueSetAsideByStep = z
   .describe("Per-offer read only: each missing step and how many set-aside rows it accounts for, most first.")
   .optional();
 const catalogueOfferListFit = { offer: catalogueOfferEcho, offerSteps: catalogueOfferSteps, setAside: catalogueSetAside, setAsideByStep: catalogueSetAsideByStep };
+const catalogueOfferPageFields = { ...catalogueOfferListFit, ...catalogueOffsetPage };
 const catalogueOfferDetailFit = {
   offer: catalogueOfferEcho,
   offerSteps: catalogueOfferSteps,
@@ -7639,7 +7645,7 @@ catalogueRead(
   cataloguePipeDetail.extend({ stats: pipeStatsSchema }),
   idParam("A pipe id `<channel slug>|<leg key>`"),
 );
-catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().describe("Comma list of sales path ids (default: every path).").optional(), containsChannels: z.string().describe("Comma list of channel slugs: funnels containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOfferListFit));
+catalogueRead("/internal/catalogue/sales-funnels", "List sales funnels (internal, api-key)", { paths: z.string().describe("Comma list of sales path ids (default: every path).").optional(), containsChannels: z.string().describe("Comma list of channel slugs: funnels containing AT LEAST ONE.").optional(), runnable: catalogueRunnable, q: catalogueQ, limit: catalogueLimit, offset: catalogueOffset, ...catalogueOfferQuery }, cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOfferPageFields));
 catalogueRead("/internal/catalogue/sales-funnels/{id}", "One sales funnel (internal, api-key)", { ...catalogueOfferQuery }, catalogueFunnelDetail.extend(catalogueOfferDetailFit), idParam("A sales funnel id"));
 catalogueRead("/internal/catalogue/workflows", "List the workflows of one pipe (internal, api-key)", { pipe: z.string().describe("A pipe id (required)."), q: catalogueQ, limit: catalogueLimit }, cataloguePage(catalogueGlyphRow, "workflow", "per_outcome").extend({ pipeId: z.string() }));
 catalogueRead("/internal/catalogue/workflows/{id}", "One workflow on one pipe (internal, api-key)", { pipe: z.string().describe("The pipe id (required).") }, catalogueWorkflowDetail, idParam("A workflow dynasty slug"));
@@ -8098,10 +8104,11 @@ registry.registerPath({
       containsChannels: z.string().describe("Comma list of channel slugs: funnels containing AT LEAST ONE.").optional(),
       q: catalogueQ,
       limit: catalogueLimit,
+      offset: catalogueOffset,
     }),
   },
   responses: {
-    200: { description: "One page, ROI first.", content: { "application/json": { schema: cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client") } } },
+    200: { description: "One page, ROI first. Page through every row with `offset` / `nextOffset`.", content: { "application/json": { schema: cataloguePage(catalogueFunnelRow, "sales_funnel", "per_paying_client").extend(catalogueOffsetPage) } } },
     400: { description: "A query value the read does not recognise (`reason`)." },
   },
 });
