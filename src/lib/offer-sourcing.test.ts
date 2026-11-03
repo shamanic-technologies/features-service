@@ -63,7 +63,7 @@ describe("sourcing origins", () => {
       "sourcing-crm-contacts",
       "sourcing-linkedin-engagement-signals",
     ]);
-    expect(withSourcingSlugs(["cold-whatsapp-outreach"])).toEqual(["cold-whatsapp-outreach", "sourcing-crm-contacts"]);
+    expect(withSourcingSlugs(["cold-whatsapp-outreach"])).toEqual(["cold-whatsapp-outreach", "lead-sourcing", "sourcing-crm-contacts", "sourcing-google-maps"]);
     expect(withSourcingSlugs(["sales-crm-email-outreach"])).toEqual(["sales-crm-email-outreach", "sourcing-crm-contacts"]);
     expect(withSourcingSlugs(["ai-meeting-booking"])).toEqual(["ai-meeting-booking"]);
   });
@@ -73,8 +73,9 @@ describe("sourcing origins", () => {
     for (const [channel, origins] of Object.entries(SOURCING_ORIGINS_BY_CHANNEL)) for (const o of origins) servedBy.set(o, [...(servedBy.get(o) ?? []), channel]);
     for (const slug of SOURCING_ORIGIN_SLUGS) expect(servedBy.has(slug), slug).toBe(true);
     expect([...servedBy.get("sourcing-crm-contacts")!].sort()).toEqual(["cold-whatsapp-outreach", "sales-cold-email-outreach", "sales-crm-email-outreach"]);
-    // WhatsApp reaches a phone: only the brand's own contacts carry one we send to.
-    expect(SOURCING_ORIGINS_BY_CHANNEL["cold-whatsapp-outreach"]).toEqual(["sourcing-crm-contacts"]);
+    // WhatsApp reaches a phone: the brand's own contacts and Google Maps businesses carry one we send to (GMAPS-SOURCE-1103).
+    expect(SOURCING_ORIGINS_BY_CHANNEL["cold-whatsapp-outreach"]).toEqual(["sourcing-google-maps", "lead-sourcing", "sourcing-crm-contacts"]);
+    expect(servedBy.get("sourcing-google-maps")).toEqual(["cold-whatsapp-outreach"]);
   });
 
   it("Lead Sourcing never picks the brand's own contacts, even on a channel they feed", () => {
@@ -84,7 +85,7 @@ describe("sourcing origins", () => {
       "sourcing-apollo-buying-signals",
       "sourcing-linkedin-engagement-signals",
     ]);
-    expect(originsLeadSourcingMayUse("cold-whatsapp-outreach")).toEqual([]);
+    expect(originsLeadSourcingMayUse("cold-whatsapp-outreach")).toEqual(["sourcing-google-maps"]);
   });
 });
 
@@ -183,6 +184,7 @@ describe("every origin states its provider (a logo keys on the stated domain)", 
       "sourcing-linkedin-engagement-signals": { name: "LinkedIn", domain: "linkedin.com" },
       "sourcing-crm-contacts": null,
       "sourcing-apify-search": { name: "Apify", domain: "apify.com" },
+      "sourcing-google-maps": { name: "Google", domain: "google.com" },
     });
   });
 

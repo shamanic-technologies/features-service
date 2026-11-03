@@ -70,6 +70,7 @@ const SOURCING_WHO: Readonly<Record<string, string>> = {
   "sourcing-apollo-buying-signals": "Intent",
   "sourcing-linkedin-engagement-signals": "Engaged",
   "sourcing-crm-contacts": "CRM",
+  "sourcing-google-maps": "Local",
 };
 
 /** What we do, proactive (one or two words, read after <who>). */

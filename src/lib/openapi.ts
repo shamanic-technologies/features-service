@@ -2089,6 +2089,9 @@ const sourcingOriginsResponseRef = registry.register(
     contactMethodsByChannel: z
       .record(z.string(), z.array(z.enum(["email", "phone", "linkedin", "x", "instagram", "reddit"])))
       .describe("Per one-to-one channel slug, the contact method(s) a person must carry for that channel to write to them (ALL required): email for the cold email channels, phone for WhatsApp / SMS / calls, a profile for LinkedIn / X / Instagram / Reddit. A serve made for the channel never hands out a person without them (lead-service passes it as `reachableBy`). A channel absent here states none."),
+    messagingNetworkByChannel: z
+      .record(z.string(), z.enum(["whatsapp"]))
+      .describe("Per one-to-one channel slug, the messaging network it writes on (only channels that write on one: `cold-whatsapp-outreach` = whatsapp). A phone number does not say whether it is on WhatsApp: lead-service passes this as `reachableOn` on each serve, so a person crm-service says is not on the network is never handed to that channel. A channel absent here writes on none."),
     leadFoundStep: leadFoundStepSchema,
     sourceLegKey: z.literal("start_to_lead_found").describe("The leg key of every source campaign (from nothing to lead_found)."),
     leadSourcing: z

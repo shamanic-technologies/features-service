@@ -34,4 +34,28 @@ describe("GET /public/sourcing-origins", () => {
     expect(res.body.sourceLegKey).toBe("start_to_lead_found");
     for (const o of res.body.origins) expect(o.sourceCampaignKey).toBe(`campaign:${o.slug}|start_to_lead_found`);
   });
+
+  it("serves Google Maps: a live origin feeding WhatsApp, which Lead Sourcing may pick there, and the network WhatsApp writes on (GMAPS-SOURCE-1103)", async () => {
+    const app = express().use(router);
+    const res = await request(app).get("/public/sourcing-origins");
+    const gmaps = res.body.origins.find((o: { slug: string }) => o.slug === "sourcing-google-maps");
+    expect(gmaps).toMatchObject({
+      name: "Google Maps",
+      description: "Local businesses found on Google Maps, with their phone and website.",
+      family: "cold_filters",
+      provider: { name: "Google", domain: "google.com" },
+      audienceLists: ["google_maps_search"],
+      live: true,
+      sourceCampaignKey: "campaign:sourcing-google-maps|start_to_lead_found",
+    });
+    expect(res.body.originsByChannel["cold-whatsapp-outreach"]).toEqual(["sourcing-google-maps", "lead-sourcing", "sourcing-crm-contacts"]);
+    expect(res.body.leadSourcing.mayUseByChannel["cold-whatsapp-outreach"]).toEqual(["sourcing-google-maps"]);
+    // A business carries no email: the cold email channels never take it.
+    for (const c of ["sales-cold-email-outreach", "feedback-request-cold-email-outreach", "sales-crm-email-outreach"]) {
+      expect(res.body.originsByChannel[c]).not.toContain("sourcing-google-maps");
+    }
+    expect(res.body.messagingNetworkByChannel).toEqual({ "cold-whatsapp-outreach": "whatsapp" });
+    // contactMethodsByChannel never moves (lead-service understands email|phone only there).
+    expect(res.body.contactMethodsByChannel["cold-whatsapp-outreach"]).toEqual(["phone"]);
+  });
 });
