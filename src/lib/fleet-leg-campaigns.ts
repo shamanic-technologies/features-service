@@ -1,6 +1,6 @@
 /**
  * EVERY CAMPAIGN, ACROSS EVERY ORG, THAT PERFORMS ONE LEG OF ONE CHANNEL — the population a
- * leg-scoped fleet workflow curve (`/public/stats/workflow-return-history?leg=`) is restricted to.
+ * leg-scoped fleet read (the leg ranking, the leg's fleet evidence) is restricted to.
  *
  * A campaign identity is (org, brand, offer, LEG, channel), and campaign-service owns it: the leg a
  * campaign performs is its own stated `legKey`, read here verbatim, never inferred. A row stating no

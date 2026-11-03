@@ -27349,232 +27349,6 @@
           "channels"
         ]
       },
-      "PublicRevenueResponse": {
-        "type": "object",
-        "properties": {
-          "costBasis": {
-            "type": "string",
-            "enum": [
-              "charged"
-            ],
-            "description": "ACCOUNTING — every money figure on this response is what the customer was CHARGED. Spend the platform COMPED (refunded after the fact) is absent from it: they did not pay it. This is the opposite of the CROSS-ORG PERFORMANCE benchmark (/public/stats/* and the crossOrg grain of /workflow-projection), which shares the words \"spend\" and \"cost per outcome\" but counts comped spend at full value, because what a workflow costs to produce an outcome does not depend on whether we billed it. ORTHOGONAL to ?pricing=gross|net, which is a DISCOUNT question, not a comped one."
-          },
-          "featureSlug": {
-            "type": "string"
-          },
-          "groupBy": {
-            "type": "string",
-            "enum": [
-              "brand"
-            ]
-          },
-          "results": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "brand": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "name": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "domain": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "name",
-                    "domain"
-                  ]
-                },
-                "headline": {
-                  "type": "object",
-                  "properties": {
-                    "totalPipelineUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cross-org expected pipeline for the brand (sum over the orgs it appears in). Null when no pair prices (no offer states a lifetime revenue)."
-                    }
-                  },
-                  "required": [
-                    "totalPipelineUsd"
-                  ]
-                },
-                "costEconomics": {
-                  "type": "object",
-                  "properties": {
-                    "committedCostUsd": {
-                      "type": "number",
-                      "description": "COMMITTED run spend for the brand (+ optional campaign), feature-scoped, in dollars (>= 0) — billed `actual` PLUS the open `provisioned` holds. THE spend basis: every money figure below divides by it, and it is byte the same total the `spend` block reports as totalSpentCents, so the ROI a campaign row shows and the 'Total spent' the Overview shows can never describe different money. This is the field a consumer renders as '$ Invested'. features-service serves EXACTLY ONE spend basis and it is COMMITTED (billed `actual` + the open `provisioned` holds). A split basis was a bug, not a tradeoff: while ROI rode billed-only and the `spend` block rode committed, one payload answered 'how much did this cost' two ways at once and a brand with a single campaign read $202 on its Overview beside $191 on its campaigns table. Do NOT reintroduce a second basis and do NOT add a parameter to pick one. (features-service#779)"
-                    },
-                    "actualCostUsd": {
-                      "type": "number",
-                      "description": "Billed-only run spend for the same scope, in dollars (>= 0) — EXCLUDES the open provisioned holds. TRANSITIONAL AND REPORTED ONLY: it is kept populated (and still honestly billed-only, because a field whose name asserts 'actual' must never start carrying a committed value) so a consumer rendering money off this field has a gap-free path onto committedCostUsd. NOTHING divides by it any more — ROI, %CAC, cost per acquisition and cost per conversion all ride committedCostUsd. (features-service#396, naming features-service#402, single basis features-service#779)"
-                    },
-                    "costOfAcquisitionPct": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "(mature committed spend / mature pipeline) * 100 — the MATURE cohort, see maturityDays. Null when that pipeline is null or 0, or when unmeasuredReason is 'maturing'."
-                    },
-                    "roiMultiple": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "mature pipeline / mature committed spend — the MATURE cohort, see maturityDays. Null when that spend is 0 or that pipeline is null; with unmeasuredReason 'maturing' when the scope spent but nothing it spent is mature yet. Never 0 in place of null."
-                    },
-                    "costPerAcquisitionUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Cost of winning ONE customer, on COMMITTED spend, for the scope this body describes — present on EVERY response including the default un-lensed brand read (the brand Overview is not lensed; it is the whole brand, every funnel). = committedCostUsd / expected paying clients, where expected paying clients = totalPipelineUsd / lifetimeRevenueUsd. Equivalently (costOfAcquisitionPct / 100) x lifetimeRevenueUsd, i.e. lifetimeRevenueUsd / roiMultiple — the same statement as ROI and %CAC in a third unit, which is why it MATCHES the lensed costPerConversionUsd for the same scope rather than being a second opinion (the lens divides the same committed spend by the same expected-client count). Uses the brand's own declared-funnel-priced economics — the same economics that produced totalPipelineUsd. NULL, never 0, when the brand states no lifetime revenue (or it is 0), when the pipeline is null/0, or when no funnel is wired: null means 'we could not measure this', a 0 would mean 'a customer costs nothing'."
-                    },
-                    "expectedConversions": {
-                      "type": "number",
-                      "description": "LENS ONLY — expected conversion count = sum of per-lead conversion probability (decimal) across the lensed leads (totalPipelineUsd = expectedConversions × LTR). Present only on a lensed (?lens=) response; absent on the default/grouped responses."
-                    },
-                    "costPerConversionUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "LENS ONLY — the mature cohort's committed spend / its expected conversions (see maturityDays). Null when that count is 0 or the scope is maturing. Present only on a lensed (?lens=) response; absent on the default/grouped responses."
-                    },
-                    "maturityDays": {
-                      "type": "integer",
-                      "description": "The MATURITY DELAY the ratios (roiMultiple, costOfAcquisitionPct, costPerAcquisitionUsd, costPerConversionUsd) were measured under. A campaign bought for a cold-email entry leg (start_to_website_visit, start_to_conversation) waits 21 days for its replies and visits (lib/maturity.ts); every other leg waits 0. The ratios divide the MATURE cohort only: the committed cost of runs STARTED before UTC midnight of today minus this many days, and the pipeline of the leads those runs SERVED (a lead served before it, on the run-start clock; their outcomes count whenever they happened; a lead with no serve date stated is in the cohort). committedCostUsd, actualCostUsd, the headline pipeline and every count keep the whole history. 0 when nothing in scope waits, in which case the ratios cover the whole scope. A scope mixing legs applies each campaign's own delay; this field states the longest."
-                    },
-                    "unmeasuredReason": {
-                      "type": "string",
-                      "nullable": true,
-                      "enum": [
-                        "maturing",
-                        "maturity_unknown",
-                        null
-                      ],
-                      "description": "Why the ratios are null for a reason other than having nothing to divide. 'maturing' = the scope has spent, but none of that spend is older than maturityDays yet, so there is no mature cohort to measure — a young campaign, not a bad one. 'maturity_unknown' = campaign-service could not say which campaigns wait for their outcomes, so the mature cohort could not be separated (a degraded read, not a property of the scope). Null otherwise."
-                    },
-                    "ratioBasis": {
-                      "type": "object",
-                      "properties": {
-                        "committedCostUsd": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "The committed spend (dollars) the ratios divide: the MATURE cohort's when maturityDays > 0 (runs old enough to have produced their outcomes), the whole scope's otherwise. Smaller than committedCostUsd by exactly the spend still maturing. Null under maturity_unknown."
-                        },
-                        "totalPipelineUsd": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "The pipeline (dollars) the ratios divide: the mature cohort's (leads served before the cutoff, undated included) when maturityDays > 0, headline.totalPipelineUsd otherwise. Null under maturity_unknown or when there is no pipeline."
-                        }
-                      },
-                      "required": [
-                        "committedCostUsd",
-                        "totalPipelineUsd"
-                      ],
-                      "description": "THE TOTALS THE RATIOS DIVIDE, served so nobody inverts a ratio: roiMultiple = totalPipelineUsd / committedCostUsd; costOfAcquisitionPct = committedCostUsd / totalPipelineUsd × 100. Every cost per outcome on this body (spend.*Cents, outcomes.cpcCents/cpprCents, funnelSteps costPerReachCents, costPerOutcomeHistory) divides this same spend."
-                    },
-                    "realizedReturn": {
-                      "type": "object",
-                      "nullable": true,
-                      "properties": {
-                        "closedWonCount": {
-                          "type": "integer",
-                          "description": "Deals actually CLOSED WON to date (whole history), PRICED to our outreach (?cause=, default outreach) — the rule the pipeline's won rung follows. 0 is measured."
-                        },
-                        "closedWonRevenueUsd": {
-                          "type": "number",
-                          "description": "What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."
-                        },
-                        "spentUsd": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "Every dollar the scope actually spent, whole history (= actualCostUsd): runs that ran, never follow-ups only reserved. Null only on a staff vendor-cost group whose vendor cost is not fully known."
-                        },
-                        "roiMultiple": {
-                          "type": "number",
-                          "nullable": true,
-                          "description": "closedWonRevenueUsd / spentUsd: the REALIZED return (ROI-CONSISTENCY-1103), whole history, Paid clients our outreach caused over money actually spent. Null when nothing was spent yet."
-                        }
-                      },
-                      "required": [
-                        "closedWonCount",
-                        "closedWonRevenueUsd",
-                        "spentUsd",
-                        "roiMultiple"
-                      ],
-                      "description": "THE REALIZED RETURN (ROI-CONSISTENCY-1103): revenue of the Paid clients our outreach caused over every dollar actually spent, whole history. A return exists only where a value lands; the pipeline-based roiMultiple / maturity ratios beside it are being retired. NULL when it cannot be measured on this read: no source of closed deals could be read, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."
-                    },
-                    "maturity": {
-                      "$ref": "#/components/schemas/CostRatiosMaturity"
-                    }
-                  },
-                  "required": [
-                    "committedCostUsd",
-                    "actualCostUsd",
-                    "costOfAcquisitionPct",
-                    "roiMultiple",
-                    "costPerAcquisitionUsd",
-                    "maturityDays",
-                    "unmeasuredReason",
-                    "ratioBasis",
-                    "realizedReturn"
-                  ]
-                },
-                "timeline": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "date": {
-                        "type": "string"
-                      },
-                      "cumulativePipelineUsd": {
-                        "type": "number"
-                      }
-                    },
-                    "required": [
-                      "date",
-                      "cumulativePipelineUsd"
-                    ]
-                  },
-                  "description": "Public-safe cumulative expected-pipeline timeline for this brand. Omitted when no dated revenue events exist."
-                }
-              },
-              "required": [
-                "brand",
-                "headline",
-                "costEconomics"
-              ]
-            }
-          }
-        },
-        "required": [
-          "costBasis",
-          "featureSlug",
-          "groupBy",
-          "results"
-        ]
-      },
-      "PublicRevenueRollup": {
-        "type": "object",
-        "properties": {
-          "featureSlug": {
-            "type": "string"
-          },
-          "totalPipelineUsd": {
-            "type": "number",
-            "nullable": true,
-            "description": "Feature-wide sum of every brand's expected pipeline (null when no brand prices). Returned when rollup=true — no per-brand results/timelines."
-          }
-        },
-        "required": [
-          "featureSlug",
-          "totalPipelineUsd"
-        ]
-      },
       "SendForecastResponse": {
         "type": "object",
         "properties": {
@@ -30998,27 +30772,24 @@
               "website_visit",
               "positive_reply",
               "meeting_booked",
-              "engaged_lead",
-              "revenue"
+              "engaged_lead"
             ],
-            "description": "`engaged_lead`: a positive reply or a website visit. `revenue`: the ROI index."
+            "description": "`engaged_lead`: a positive reply or a website visit."
           },
           "metric": {
             "type": "string",
             "enum": [
               "cost_per_outcome",
-              "conversion_rate",
-              "return_on_spend"
+              "conversion_rate"
             ]
           },
           "unit": {
             "type": "string",
             "enum": [
               "usd",
-              "percent",
-              "multiple"
+              "percent"
             ],
-            "description": "`usd`: dollars per outcome. `percent`: 0..100, share of people emailed. `multiple`: dollars back per dollar spent (3.6 reads 3.6x)."
+            "description": "`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."
           },
           "valuePer": {
             "type": "string",
@@ -31036,7 +30807,7 @@
           "value": {
             "type": "number",
             "nullable": true,
-            "description": "The latest recorded value, unrounded. Every MONEY value (`usd`, and the `multiple` of the ROI index) is REAL VENDOR COST: what the vendors charged us to produce it, before any markup (PUBLIC-VENDOR-COST-1031). Null = could not be stated (`unavailableReason`), never a 0 for unknown."
+            "description": "The latest recorded value, unrounded. Every MONEY value (`usd`) is REAL VENDOR COST: what the vendors charged us to produce it, before any markup (PUBLIC-VENDOR-COST-1031). Null = could not be stated (`unavailableReason`), never a 0 for unknown."
           },
           "status": {
             "type": "string",
@@ -31049,7 +30820,7 @@
           },
           "outcomes": {
             "type": "integer",
-            "description": "Outcomes behind the value (website visits, positive replies, or meetings booked). On the two client-median indexes (`cold-email-cost-per-engaged-lead`, `cold-email-roi`): the CLIENTS behind the median, and `status` counts them."
+            "description": "Outcomes behind the value (website visits, positive replies, or meetings booked). On the client-median index (`cold-email-cost-per-engaged-lead`): the CLIENTS behind the median, and `status` counts them."
           },
           "contacted": {
             "type": "integer",
@@ -31068,7 +30839,7 @@
           "unavailableReason": {
             "type": "string",
             "nullable": true,
-            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `not_enough_brands` (ROI: fewer than 5 mature clients past $100 spent), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."
+            "description": "Why `value` is null: `not_recorded_yet`, `no_mature_workflow`, `no_meeting_measured`, `not_measured`, `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."
           },
           "valueKind": {
             "type": "string",
@@ -33033,11 +32804,6 @@
                           null
                         ]
                       },
-                      "returnPerDollar": {
-                        "type": "number",
-                        "nullable": true,
-                        "description": "lifetimeRevenueUsd / costPerSaleUsd — the identical returnPerDollar definition every surface of this service uses. Null, never 0, when either half is missing."
-                      },
                       "lifetimeRevenueUsd": {
                         "type": "number",
                         "nullable": true
@@ -33070,7 +32836,6 @@
                       "steps",
                       "costPerSaleUsd",
                       "costPerSaleUnpricedReason",
-                      "returnPerDollar",
                       "lifetimeRevenueUsd",
                       "evidence"
                     ]
@@ -33140,103 +32905,6 @@
           "channelSlug",
           "pairs"
         ]
-      },
-      "MatureScopesReturn": {
-        "type": "object",
-        "properties": {
-          "basis": {
-            "type": "string",
-            "enum": [
-              "mature_scopes"
-            ],
-            "description": "Only brands whose OWN scope is mature (the isMature their dashboard states) are in the population."
-          },
-          "measured": {
-            "type": "boolean"
-          },
-          "reason": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "no_snapshot_yet",
-              "maturity_not_recorded_yet",
-              "not_enough_brands",
-              null
-            ],
-            "description": "`maturity_not_recorded_yet` = the snapshot was written before brands carried a verdict; the next warm fills it in."
-          },
-          "brandCount": {
-            "type": "integer",
-            "description": "How many mature brands past the spend floor the medians were taken over. Always present."
-          },
-          "flash": {
-            "type": "object",
-            "nullable": true,
-            "properties": {
-              "median": {
-                "type": "number"
-              },
-              "p25": {
-                "type": "number"
-              },
-              "p75": {
-                "type": "number"
-              },
-              "min": {
-                "type": "number"
-              },
-              "max": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "median",
-              "p25",
-              "p75",
-              "min",
-              "max"
-            ],
-            "description": "Their return on everything to date: whole pipeline / whole committed spend (net)."
-          },
-          "mature": {
-            "type": "object",
-            "nullable": true,
-            "properties": {
-              "median": {
-                "type": "number"
-              },
-              "p25": {
-                "type": "number"
-              },
-              "p75": {
-                "type": "number"
-              },
-              "min": {
-                "type": "number"
-              },
-              "max": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "median",
-              "p25",
-              "p75",
-              "min",
-              "max"
-            ],
-            "description": "Their return on the mature cohort — the figure each client's own dashboard displays."
-          }
-        },
-        "required": [
-          "basis",
-          "measured",
-          "reason",
-          "brandCount",
-          "flash",
-          "mature"
-        ],
-        "description": "THE SAME MEDIAN OVER MATURE SCOPES ONLY, on both versions (features-service#1196). The legacy median fields beside it are taken over the SAME mature population and equal `mature` (since 2026-09-28)."
       },
       "DeclaredChannelView": {
         "type": "object",
@@ -47475,108 +47143,6 @@
         }
       }
     },
-    "/public/stats/revenue": {
-      "get": {
-        "summary": "Cross-org expected pipeline revenue + CAC + ROI per brand (public, no auth)",
-        "description": "Per-brand expected pipeline revenue, cost-of-acquisition % and ROI multiple for a feature, aggregated cross-org. Runs the same expected-pipeline engine as GET /features/{featureSlug}/revenue once per (org, brand) that has leads for the feature, and sums each brand across the orgs it appears in (leads are disjoint per org, so no double-count). costEconomics is byte-identical to the dashboard's (buildCostEconomics). Only groupBy=brand is supported today — per-workflow revenue is a follow-up. Pass rollup=true to get only the feature-wide totalPipelineUsd (no per-brand timelines, ~1 KB instead of ~1.9 MB).",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Feature slug (required)."
-            },
-            "required": true,
-            "description": "Feature slug (required).",
-            "name": "featureSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "brand"
-              ],
-              "description": "Group results by brand (only supported value)."
-            },
-            "required": true,
-            "description": "Group results by brand (only supported value).",
-            "name": "groupBy",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "true"
-              ],
-              "description": "If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup."
-            },
-            "required": false,
-            "description": "If 'true', return only { featureSlug, totalPipelineUsd } — the slim feature-wide rollup.",
-            "name": "rollup",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Per-brand cross-org revenue, or the slim rollup when rollup=true",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/PublicRevenueResponse"
-                    },
-                    {
-                      "$ref": "#/components/schemas/PublicRevenueRollup"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing or invalid parameters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Feature not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/internal/stats/send-forecast": {
       "get": {
         "summary": "Global fleet email send forecast per day (internal, api-key; staff-gated at api-service)",
@@ -49668,7 +49234,7 @@
                           "billedSpentUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "The same workflow's cross-org spend on the BILLED basis: what clients were CHARGED (comped spend absent), NET of their per-org discount. The basis of /public/stats/workflow-return-history — its last roiHistory.daily[].cumulativeSpendUsd equals this figure (to sub-cent rounding). `spentUsd` beside it is the INCURRED gross benchmark basis the cost per outcome divides."
+                            "description": "The same workflow's cross-org spend on the BILLED basis: what clients were CHARGED (comped spend absent), NET of their per-org discount. `spentUsd` beside it is the INCURRED gross benchmark basis the cost per outcome divides."
                           },
                           "observedClicks": {
                             "type": "number"
@@ -52084,457 +51650,6 @@
         }
       }
     },
-    "/public/stats/workflow-return-history": {
-      "get": {
-        "summary": "One workflow's fleet-wide dated spend, value and return on spend — BILLED basis (public, no auth)",
-        "description": "For ONE workflow dynasty of a feature, across every org: per UTC day, cumulative spend (what clients were CHARGED, NET of their discount — runs-service's dated ledger for the dynasty, fleet-wide), cumulative value (the same pipeline the per-brand /revenue engine prices, summed across (org, brand) pairs as daily increments; pairs are disjoint, leads belong to one org), and their ratio. Never blended across workflows. The last cumulativeSpendUsd equals the row's `billedSpentUsd` on /public/stats/workflow-cost-per-outcome. Served from a 15 min / 6 h stale-while-revalidate cache, warmed at boot. 404 `workflow_not_found` when the feature carries no such dynasty.",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Feature slug (required)."
-            },
-            "required": true,
-            "description": "Feature slug (required).",
-            "name": "featureSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."
-            },
-            "required": true,
-            "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required).",
-            "name": "workflowDynastySlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`."
-            },
-            "required": false,
-            "description": "Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`.",
-            "name": "leg",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Fleet per-workflow return curve, billed basis",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "featureSlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastySlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastyName": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "fleet"
-                      ],
-                      "description": "Every org and brand that ran the feature. An aggregate: no org or brand is named."
-                    },
-                    "legKey": {
-                      "type": "string",
-                      "description": "Echo of the canonical `?leg=` when one was named: the curve counts only the campaigns performing that leg. Absent on the fleet-wide read."
-                    },
-                    "totalPipelineUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."
-                    },
-                    "valueCoverage": {
-                      "type": "object",
-                      "properties": {
-                        "pairsPriced": {
-                          "type": "integer",
-                          "description": "(org, brand) pairs whose value leg was computed."
-                        },
-                        "pairsFailed": {
-                          "type": "integer",
-                          "description": "Pairs whose compute failed (logged). > 0 means the value leg is a partial sum."
-                        }
-                      },
-                      "required": [
-                        "pairsPriced",
-                        "pairsFailed"
-                      ]
-                    },
-                    "costBasis": {
-                      "type": "string",
-                      "enum": [
-                        "billed"
-                      ]
-                    },
-                    "pricing": {
-                      "type": "string",
-                      "enum": [
-                        "net"
-                      ]
-                    },
-                    "totalSpendUsd": {
-                      "type": "number",
-                      "description": "Cumulative billed spend at the last point."
-                    },
-                    "roiHistory": {
-                      "type": "object",
-                      "properties": {
-                        "daily": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "date": {
-                                "type": "string",
-                                "description": "UTC day, YYYY-MM-DD."
-                              },
-                              "cumulativeSpendUsd": {
-                                "type": "number"
-                              },
-                              "cumulativePipelineUsd": {
-                                "type": "number"
-                              },
-                              "roiMultiple": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing had been spent yet — never 0."
-                              }
-                            },
-                            "required": [
-                              "date",
-                              "cumulativeSpendUsd",
-                              "cumulativePipelineUsd",
-                              "roiMultiple"
-                            ]
-                          },
-                          "description": "Ascending, one point per day with spend or a dated outcome."
-                        },
-                        "datedPipelineUsd": {
-                          "type": "number"
-                        },
-                        "undatedPipelineUsd": {
-                          "type": "number",
-                          "description": "Pipeline whose outcome carries no date, so it sits on no day. datedPipelineUsd + undatedPipelineUsd = totalPipelineUsd."
-                        }
-                      },
-                      "required": [
-                        "daily",
-                        "datedPipelineUsd",
-                        "undatedPipelineUsd"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "featureSlug",
-                    "workflowDynastySlug",
-                    "workflowDynastyName",
-                    "scope",
-                    "totalPipelineUsd",
-                    "valueCoverage",
-                    "costBasis",
-                    "pricing",
-                    "totalSpendUsd",
-                    "roiHistory"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing parameters, or an unrecognised leg (`leg_unrecognised`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Feature or workflow dynasty not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/internal/stats/workflow-return-history/actual-cost": {
-      "get": {
-        "summary": "STAFF ONLY: one workflow's fleet-wide return curve on ACTUAL (vendor) cost",
-        "description": "The /public/stats/workflow-return-history curve with its spend leg at VENDOR cost before our markup (runs-service /internal/stats/costs/timeseries/vendor, comped rows included — they were still paid to the vendor). Same value leg. Reveals our margin: service-auth only, and the api-service gateway mounts it behind requireStaff. Billed spend with no known vendor cost nulls cumulativeSpendUsd / roiMultiple from its first day on and is named (unpricedBilledCostUsd, unpricedFromDate, unpricedCostNames) — never substituted with the billed figure.",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Feature slug (required)."
-            },
-            "required": true,
-            "description": "Feature slug (required).",
-            "name": "featureSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required)."
-            },
-            "required": true,
-            "description": "The workflow DYNASTY (all its versions) — the key /public/stats/workflow-cost-per-outcome rows carry (required).",
-            "name": "workflowDynastySlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`."
-            },
-            "required": false,
-            "description": "Optional LEG key (the `legKey` of /public/channels `legs[]`, e.g. `start_to_conversation`). When named, BOTH legs of the curve count only the campaigns (every org) whose stated leg is this one: spend is runs' dated ledger for those campaigns, value is each pair's pipeline over those campaigns' leads. A campaign stating no leg is in no leg. Omitted → the fleet-wide curve, byte-unchanged. Unknown → 400 `leg_unrecognised`.",
-            "name": "leg",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Fleet per-workflow actual-cost curve",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "featureSlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastySlug": {
-                      "type": "string"
-                    },
-                    "workflowDynastyName": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "fleet"
-                      ],
-                      "description": "Every org and brand that ran the feature. An aggregate: no org or brand is named."
-                    },
-                    "legKey": {
-                      "type": "string",
-                      "description": "Echo of the canonical `?leg=` when one was named: the curve counts only the campaigns performing that leg. Absent on the fleet-wide read."
-                    },
-                    "totalPipelineUsd": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "Sum across (org, brand) pairs of this dynasty's headline pipeline — the per-brand revenue engine's value definition. Null when no pair could price it."
-                    },
-                    "valueCoverage": {
-                      "type": "object",
-                      "properties": {
-                        "pairsPriced": {
-                          "type": "integer",
-                          "description": "(org, brand) pairs whose value leg was computed."
-                        },
-                        "pairsFailed": {
-                          "type": "integer",
-                          "description": "Pairs whose compute failed (logged). > 0 means the value leg is a partial sum."
-                        }
-                      },
-                      "required": [
-                        "pairsPriced",
-                        "pairsFailed"
-                      ]
-                    },
-                    "costBasis": {
-                      "type": "string",
-                      "enum": [
-                        "actual"
-                      ]
-                    },
-                    "actualCostHistory": {
-                      "type": "object",
-                      "properties": {
-                        "daily": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "date": {
-                                "type": "string",
-                                "description": "UTC day, YYYY-MM-DD."
-                              },
-                              "cumulativeSpendUsd": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "Cumulative VENDOR cost (before our markup) since inception. NULL from `unpricedFromDate` on — never the billed figure."
-                              },
-                              "cumulativePipelineUsd": {
-                                "type": "number",
-                                "description": "Cumulative dated pipeline — the same value leg `/revenue`'s `roiHistory` carries."
-                              },
-                              "roiMultiple": {
-                                "type": "number",
-                                "nullable": true,
-                                "description": "cumulativePipelineUsd / cumulativeSpendUsd. NULL when nothing spent yet or the spend is unknown."
-                              },
-                              "cumulativePricedVendorCostUsd": {
-                                "type": "number",
-                                "description": "Vendor cost of the rows whose vendor cost IS known, up to this day. Equals cumulativeSpendUsd while nothing is unpriced; NOT the actual cost once something is (it leaves those rows out)."
-                              },
-                              "cumulativeUnpricedBilledCostUsd": {
-                                "type": "number",
-                                "description": "BILLED spend up to this day on rows with no known vendor cost (see unpricedCostNames)."
-                              }
-                            },
-                            "required": [
-                              "date",
-                              "cumulativeSpendUsd",
-                              "cumulativePipelineUsd",
-                              "roiMultiple",
-                              "cumulativePricedVendorCostUsd",
-                              "cumulativeUnpricedBilledCostUsd"
-                            ]
-                          }
-                        },
-                        "datedPipelineUsd": {
-                          "type": "number"
-                        },
-                        "undatedPipelineUsd": {
-                          "type": "number"
-                        },
-                        "unpricedBilledCostUsd": {
-                          "type": "number"
-                        },
-                        "unpricedFromDate": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "unpricedCostNames": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        }
-                      },
-                      "required": [
-                        "daily",
-                        "datedPipelineUsd",
-                        "undatedPipelineUsd",
-                        "unpricedBilledCostUsd",
-                        "unpricedFromDate",
-                        "unpricedCostNames"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "featureSlug",
-                    "workflowDynastySlug",
-                    "workflowDynastyName",
-                    "scope",
-                    "totalPipelineUsd",
-                    "valueCoverage",
-                    "costBasis",
-                    "actualCostHistory"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing parameters, or an unrecognised leg (`leg_unrecognised`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid service key",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Feature or workflow dynasty not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/public/stats/best-model-cost-per-outcome-trend": {
       "get": {
         "summary": "Dated cost-per-outcome trend of the single BEST cross-org workflow model (public, no auth)",
@@ -52759,7 +51874,7 @@
     "/public/channel-funnel-economics": {
       "get": {
         "summary": "Measured economics per (sales funnel, acquisition channel) pair, or an explicit not-enough-data (public, no auth)",
-        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel, cost per SALE, and return per dollar — or an explicit statement that there is not enough data, naming which ingredient is missing. Every row also carries `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, composed against the channel's own term, with `governedBy` naming which side produced it — byte-identical to what /public/channels states for the same pair, so the two reads can never publish two answers. It is a run length before the result is judgeable, NOT a lock-in. A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a funnel is priced through its OWN channel (the conversation funnel on replies, the click-driven funnels on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one funnel. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
+        "description": "One row per (sales funnel, acquisition channel) PAIR: either the pair's MEASURED economics — cost per each STEP of that funnel and cost per SALE (no return: ROI-CONSISTENCY-1103) — or an explicit statement that there is not enough data, naming which ingredient is missing. Every row also carries `effectiveMinimumCommitmentDays` — the pair's MINIMUM RUN LENGTH, composed against the channel's own term, with `governedBy` naming which side produced it — byte-identical to what /public/channels states for the same pair, so the two reads can never publish two answers. It is a run length before the result is judgeable, NOT a lock-in. A customer buys a PAIR, and the same funnel costs a very different amount through a phone channel than through paid search, so neither a brand-level nor a channel-level aggregate can answer this. Evidence is the SAME cross-org per-brand dataset every other public cost surface reads, and a funnel is priced through its OWN channel (the conversation funnel on replies, the click-driven funnels on visits), so a public per-pair figure and a customer's own dashboard can never print two prices for one funnel. Nothing is fabricated: a pair with no spend, no produced entry step, or no declared economics returns `measured: false` with its reason.",
         "tags": [
           "Public"
         ],
@@ -52971,14 +52086,14 @@
     },
     "/public/stats/showcase-funnels": {
       "get": {
-        "summary": "Ordered funnel counts AND money for the SHOWCASE brands named on our homepage (public, no auth)",
-        "description": "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT PAST CONTACTED IS OUR OUTREACH'S WIN ONLY (owner 2026-10-29): a rung reached only through an outcome lead-service did not judge caused by our outreach (`causedByOutreach` false or undecided, e.g. a CRM meeting booked before our first email to that person, or by someone we never emailed) is not counted here, unlike the client's own dashboard, which counts every conversion. The verdict is lead-service's alone: a booked/attended/sale rung counts only when a lead-service statement judged it ours. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: two rankings, served as `groups` — `recentlyStarted` (the hero row: the 3 most recently begun clients with at least 1 meeting booked, filled with the newest clients with at least 1 positive reply when fewer than 3; never one qualified by website visits alone) and `highestReturn` (the best realized return on spend past `minSpendUsd`, best first, with at least 5 people on one outcome past contacted). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the deduped union of both groups, in an unchanged shape, so an existing consumer keeps rendering while it moves onto the groups; a client picked by both rankings is in both. Every ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds — the per-brand return it ranks on is a full engine pass per brand and takes minutes. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars), and each chain carries returnPerDollar — expected pipeline over committed spend, the byte-same ROI the client reads on their own dashboard. EVERY MONEY FIGURE HERE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history, comped work included. The client's own dashboard keeps what the client paid. A brand whose billed spend lacks a vendor cost on more than 1% states `vendorCost.moneyUnavailableReason` and null money, never a mix. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+        "summary": "Ordered funnel counts AND cost per rung for the SHOWCASE brands named on our homepage (public, no auth)",
+        "description": "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT PAST CONTACTED IS OUR OUTREACH'S WIN ONLY (owner 2026-10-29): a rung reached only through an outcome lead-service did not judge caused by our outreach (`causedByOutreach` false or undecided, e.g. a CRM meeting booked before our first email to that person, or by someone we never emailed) is not counted here, unlike the client's own dashboard, which counts every conversion. The verdict is lead-service's alone: a booked/attended/sale rung counts only when a lead-service statement judged it ours. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: one ranking, served as `groups.recentlyStarted` (the hero row: the 3 most recently begun clients with at least 1 meeting booked, filled with the newest clients with at least 1 positive reply when fewer than 3; never one qualified by website visits alone). The best-return group is deleted (ROI-CONSISTENCY-1103). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the group's clients, in an unchanged shape. The ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars). No return is served. EVERY MONEY FIGURE HERE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history, comped work included. The client's own dashboard keeps what the client paid. A brand whose billed spend lacks a vendor cost on more than 1% states `vendorCost.moneyUnavailableReason` and null money, never a mix. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
         "tags": [
           "Public"
         ],
         "responses": {
           "200": {
-            "description": "The two PICKED groups of clients, each already ordered, plus their deduped union — ordered funnel counts, per-rung cost and per-funnel return for each",
+            "description": "The PICKED group of clients, already ordered — ordered funnel counts and per-rung cost for each",
             "content": {
               "application/json": {
                 "schema": {
@@ -53031,11 +52146,6 @@
                                   "type": "string",
                                   "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
                                 },
-                                "returnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
-                                },
                                 "steps": {
                                   "type": "array",
                                   "items": {
@@ -53073,7 +52183,6 @@
                               "required": [
                                 "funnelKey",
                                 "funnelName",
-                                "returnPerDollar",
                                 "steps"
                               ]
                             },
@@ -53125,7 +52234,7 @@
                           "unmeasuredReason"
                         ]
                       },
-                      "description": "The DEDUPED UNION of both groups below — every client named anywhere in this payload, once. A client picked by BOTH rankings appears once here and in both groups."
+                      "description": "Every client the group below names, once, in its order."
                     },
                     "groups": {
                       "type": "object",
@@ -53173,11 +52282,6 @@
                                           "type": "string",
                                           "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
                                         },
-                                        "returnPerDollar": {
-                                          "type": "number",
-                                          "nullable": true,
-                                          "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
-                                        },
                                         "steps": {
                                           "type": "array",
                                           "items": {
@@ -53215,7 +52319,6 @@
                                       "required": [
                                         "funnelKey",
                                         "funnelName",
-                                        "returnPerDollar",
                                         "steps"
                                       ]
                                     },
@@ -53281,7 +52384,7 @@
                                 "no_qualifying_clients",
                                 null
                               ],
-                              "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and nobody passed this ranking's gate (too new, below the spend floor, or nothing produced). Different silences, kept apart."
+                              "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and nobody passed this ranking's gate (undated, or nothing produced). Different silences, kept apart."
                             },
                             "requestedCount": {
                               "type": "integer",
@@ -53300,195 +52403,18 @@
                             "qualifyingCount"
                           ],
                           "description": "THE HOMEPAGE HERO ROW: CLIENTS WHO BOOKED MEETINGS (owner 2026-10-19). The 3 most recently begun clients with at least 1 meeting booked, newest first; if fewer than 3 exist, the remaining slots go to the most recently begun clients with at least 1 positive reply, always listed after the meeting clients. A website visit never qualifies a client for this group. 'Began' is the FIRST UTC DAY the client was ever billed for the channel, a measured fact from the dated cost ledger; a client we cannot date is not a candidate. Active or not. A row that cannot be filled is short rather than padded (`qualifyingCount`)."
-                        },
-                        "highestReturn": {
-                          "type": "object",
-                          "properties": {
-                            "brands": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "brand": {
-                                    "type": "object",
-                                    "properties": {
-                                      "id": {
-                                        "type": "string",
-                                        "format": "uuid"
-                                      },
-                                      "name": {
-                                        "type": "string",
-                                        "nullable": true
-                                      },
-                                      "domain": {
-                                        "type": "string",
-                                        "nullable": true
-                                      }
-                                    },
-                                    "required": [
-                                      "id",
-                                      "name",
-                                      "domain"
-                                    ]
-                                  },
-                                  "funnels": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "object",
-                                      "properties": {
-                                        "funnelKey": {
-                                          "type": "string",
-                                          "description": "The sales funnel this chain walks — brand-service's own catalogue key."
-                                        },
-                                        "funnelName": {
-                                          "type": "string",
-                                          "description": "The funnel's own name, so a consumer renders the chain without holding the catalogue."
-                                        },
-                                        "returnPerDollar": {
-                                          "type": "number",
-                                          "nullable": true,
-                                          "description": "WHAT A DOLLAR OF REAL COST THROUGH THIS FUNNEL CAME BACK AS FOR THIS CLIENT — expected pipeline over the COMMITTED spend at REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031; comped work counts, it was still paid to the vendor). The half stated is the one the client's dashboard picks (the higher of flash and mature). It is NOT the figure the client's own dashboard prints (that one divides what the client paid). Null when the brand's billed spend with no known vendor cost is past the tolerance (`vendorCost.moneyUnavailableReason`). NOT the forward returnPerDollar projection /public/channel-funnel-economics publishes — those are an order apart in production. null is 'we could not measure this' (nothing spent, or the brand states no economics); a measured 0 (real spend, no pipeline yet) stays 0."
-                                        },
-                                        "steps": {
-                                          "type": "array",
-                                          "items": {
-                                            "type": "object",
-                                            "properties": {
-                                              "key": {
-                                                "type": "string",
-                                                "description": "Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."
-                                              },
-                                              "label": {
-                                                "type": "string",
-                                                "description": "The funnel's OWN name for this step, in the words the customer's screen uses."
-                                              },
-                                              "peopleReached": {
-                                                "type": "integer",
-                                                "nullable": true,
-                                                "description": "DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."
-                                              },
-                                              "costPerReachUsd": {
-                                                "type": "number",
-                                                "nullable": true,
-                                                "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
-                                              }
-                                            },
-                                            "required": [
-                                              "key",
-                                              "label",
-                                              "peopleReached",
-                                              "costPerReachUsd"
-                                            ]
-                                          },
-                                          "description": "The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."
-                                        }
-                                      },
-                                      "required": [
-                                        "funnelKey",
-                                        "funnelName",
-                                        "returnPerDollar",
-                                        "steps"
-                                      ]
-                                    },
-                                    "description": "One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."
-                                  },
-                                  "measured": {
-                                    "type": "boolean",
-                                    "description": "True iff at least one chain was walked. False always names its reason."
-                                  },
-                                  "unmeasuredReason": {
-                                    "type": "string",
-                                    "nullable": true,
-                                    "enum": [
-                                      "brand_has_no_channels",
-                                      "no_funnel_sold",
-                                      "no_lead_membership",
-                                      "read_failed",
-                                      null
-                                    ]
-                                  },
-                                  "vendorCost": {
-                                    "type": "object",
-                                    "properties": {
-                                      "unpricedSharePct": {
-                                        "type": "number",
-                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
-                                      },
-                                      "moneyUnavailableReason": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "enum": [
-                                          "vendor_cost_unknown",
-                                          null
-                                        ],
-                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
-                                      }
-                                    },
-                                    "required": [
-                                      "unpricedSharePct",
-                                      "moneyUnavailableReason"
-                                    ],
-                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
-                                  }
-                                },
-                                "required": [
-                                  "brand",
-                                  "funnels",
-                                  "measured",
-                                  "unmeasuredReason"
-                                ]
-                              },
-                              "description": "The clients this ranking named, ALREADY ORDERED by this service. The consumer ranks nothing. Empty exactly when `measured` is false."
-                            },
-                            "measured": {
-                              "type": "boolean",
-                              "description": "True iff this ranking named at least one client. False always carries a reason. It is a statement about the PICK, not about any one client's chain — a named client whose own funnel could not be walked still appears, with its own measured:false."
-                            },
-                            "unmeasuredReason": {
-                              "type": "string",
-                              "nullable": true,
-                              "enum": [
-                                "no_snapshot_yet",
-                                "no_qualifying_clients",
-                                null
-                              ],
-                              "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and nobody passed this ranking's gate (too new, below the spend floor, or nothing produced). Different silences, kept apart."
-                            },
-                            "requestedCount": {
-                              "type": "integer",
-                              "description": "How many clients this group set out to name (3)."
-                            },
-                            "qualifyingCount": {
-                              "type": "integer",
-                              "description": "How many clients passed the gate BEFORE the cut to requestedCount. A SHORT group is therefore a stated fact (qualifyingCount < requestedCount) rather than a list a consumer has to count — a short or empty group is never served silently."
-                            }
-                          },
-                          "required": [
-                            "brands",
-                            "measured",
-                            "unmeasuredReason",
-                            "requestedCount",
-                            "qualifyingCount"
-                          ],
-                          "description": "THE CLIENTS WHOSE MONEY CAME BACK BEST, past `minSpendUsd` of spend, best first — ranked on the return each client's own dashboard Today page states (the HIGHER of its flash and mature halves, owner 2026-10-08; a not-mature client only when its to-date return is above 1x), the same figure /showcase-outcomes serves as returnPerDollar. The floor is the point: below it a ratio is whatever that client's first outcome happened to do (measured in production, the top of an UNFILTERED ranking is 21.5x on $4.12 of spend and 12.3x on $9.77). The same minimum as recentlyStarted holds: a client is named only when its own chain shows at least 5 people on one step other than `contacted`; a refused candidate is replaced by the next best and comes off `qualifyingCount`."
                         }
                       },
                       "required": [
-                        "recentlyStarted",
-                        "highestReturn"
+                        "recentlyStarted"
                       ],
-                      "description": "The two PICKS. A client may legitimately be in BOTH: a group is an answer to its own question, not a slice of one list."
-                    },
-                    "minSpendUsd": {
-                      "type": "number",
-                      "description": "The spend floor the highestReturn ranking was taken over, in USD — stated because a ranking whose population a reader cannot see is a ranking they cannot check."
+                      "description": "The PICK. The best-return group is deleted (ROI-CONSISTENCY-1103: a return exists only where a value lands)."
                     }
                   },
                   "required": [
                     "costBasis",
                     "brands",
-                    "groups",
-                    "minSpendUsd"
+                    "groups"
                   ]
                 }
               }
@@ -53803,416 +52729,10 @@
         }
       }
     },
-    "/public/stats/return-on-spend": {
-      "get": {
-        "summary": "Fleet MEDIAN return on spend across client brands, over a spend floor (public, no auth)",
-        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get on an acquisition channel: per brand, its expected pipeline divided by its committed spend on the NET pricing basis (what the brand actually paid after its per-org usage discount) — the exact ratio that brand reads as ROI on its own dashboard, which reads net too — with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean (a handful of brands sit tens of multiples above the rest, so an average describes nobody). POPULATION: only brands whose own scope is MATURE (the isMature their dashboard states: runs started 21+ days ago have produced the leg's outcome count; features-service#1196) and past `minSpendUsd` of spend, because a young brand's ratio says how young it is, not how it performs. `brandCount` states how many brands the median was actually taken over. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (lifetime revenue over a modelled cost per paying client) — the two answer different questions and differ by an order of magnitude in production. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per brand and takes minutes. A read arriving before the first refresh answers `measured: false, reason: \"no_snapshot_yet\"` rather than blocking. Never a 0 and never a wider population when the figure cannot be stated honestly.",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Acquisition-channel (feature) slug (required)."
-            },
-            "required": true,
-            "description": "Acquisition-channel (feature) slug (required).",
-            "name": "featureSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."
-            },
-            "required": false,
-            "description": "Spend floor in USD a brand must be past to enter the population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default.",
-            "name": "minSpendUsd",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Fleet median return on spend across client brands",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "costBasis": {
-                      "type": "string",
-                      "enum": [
-                        "charged"
-                      ],
-                      "description": "ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides. This ACCOUNTING axis is ORTHOGONAL to gross-vs-net pricing: the figures are also read NET (what each brand actually paid after its per-org usage discount), which is the basis a client's own dashboard reads, so the fleet median and one client's number are the same statistic at two grains."
-                    },
-                    "featureSlug": {
-                      "type": "string"
-                    },
-                    "unit": {
-                      "type": "string",
-                      "enum": [
-                        "brand"
-                      ],
-                      "description": "Each data point is ONE brand's realized return on its own spend."
-                    },
-                    "measured": {
-                      "type": "boolean",
-                      "description": "True only when a median is stated. False ⇒ every figure is null and `reason` says why."
-                    },
-                    "reason": {
-                      "type": "string",
-                      "nullable": true,
-                      "enum": [
-                        "no_snapshot_yet",
-                        "not_enough_brands",
-                        "maturity_not_recorded_yet",
-                        null
-                      ],
-                      "description": "Present exactly when `measured` is false. `no_snapshot_yet` = the background compute has not written a snapshot for this channel yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts (the median is over mature scopes only; the next refresh fills them); `not_enough_brands` = a snapshot exists but too few MATURE brands are past the spend floor to state a median honestly. Neither is an error, and neither is ever answered with a 0 or with the median over a wider population."
-                    },
-                    "minSpendUsd": {
-                      "type": "number",
-                      "description": "The spend floor the population was restricted to (USD), echoed back so a consumer can state it."
-                    },
-                    "brandCount": {
-                      "type": "integer",
-                      "description": "How many MATURE brands the median was taken over. ALWAYS present, including when it is too few to state one."
-                    },
-                    "medianReturnPerDollar": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "The MIDDLE mature brand's realized return on spend — its expected pipeline divided by its committed spend, on its mature cohort. Equals `maturity.mature.median`. A median, never a mean: a handful of brands sit tens of multiples above the rest, so an average describes nobody in the population."
-                    },
-                    "p25ReturnPerDollar": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "25th percentile — the lower edge of the bulk."
-                    },
-                    "p75ReturnPerDollar": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "75th percentile — the upper edge of the bulk."
-                    },
-                    "minReturnPerDollar": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "The weakest qualifying brand's return."
-                    },
-                    "maxReturnPerDollar": {
-                      "type": "number",
-                      "nullable": true,
-                      "description": "The strongest qualifying brand's return."
-                    },
-                    "computedAt": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "When the snapshot these figures were taken from was computed (ISO 8601). Null when no snapshot exists yet."
-                    },
-                    "maturity": {
-                      "$ref": "#/components/schemas/MatureScopesReturn"
-                    }
-                  },
-                  "required": [
-                    "costBasis",
-                    "featureSlug",
-                    "unit",
-                    "measured",
-                    "reason",
-                    "minSpendUsd",
-                    "brandCount",
-                    "medianReturnPerDollar",
-                    "p25ReturnPerDollar",
-                    "p75ReturnPerDollar",
-                    "minReturnPerDollar",
-                    "maxReturnPerDollar",
-                    "computedAt",
-                    "maturity"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing or invalid parameters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Feature not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/public/stats/funnel-return-on-spend": {
-      "get": {
-        "summary": "Fleet MEDIAN return on spend per (acquisition channel x sales funnel) pair (public, no auth)",
-        "description": "Cross-org (fleet-wide) MEDIAN return on spend our clients get through ONE SALES FUNNEL on one acquisition channel, plus the median cost per paying client on the same population. Per brand the figure is its expected pipeline scoped to that funnel divided by its committed spend on the channel - the byte-same ratio that brand reads as ROI on its own dashboard (GET /features/{slug}/revenue?pricing=net), on the NET pricing basis - what the brand actually paid after its per-org usage discount - with the median taken across brands. The unit is the BRAND and the statistic is the MEDIAN, never a mean. POPULATION: MATURE brands (their own scope isMature) that read the funnel and are past `minSpendUsd` of spend on the channel. A pair below the minimum brand count answers `measured: false, reason: \"not_enough_brands\"` with `brandCount` stated, and no figure is ever computed over a wider population to make a number appear. This is a REALIZED figure and is NOT the projected `returnPerDollar` on /public/channel-funnel-economics (a pooled unit price through MEAN declared rates and a MEAN lifetime revenue) - the two answer different questions and differ by an order of magnitude in production. Both reads exist; neither may be relabelled as the other. Served from a PERSISTED snapshot refreshed off the request path, so it answers in milliseconds; the underlying per-brand compute is a full engine pass per (brand, funnel) and takes minutes. A read arriving before the first refresh answers `no_snapshot_yet` rather than blocking. No identity of any kind: no org, no user, no run, no key.",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Narrow to one acquisition channel (feature slug). Omitted returns every published channel's pairs. An unknown slug is a 404, never an empty pair list."
-            },
-            "required": false,
-            "description": "Narrow to one acquisition channel (feature slug). Omitted returns every published channel's pairs. An unknown slug is a 404, never an empty pair list.",
-            "name": "channelSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Spend floor in USD a brand must be past to enter a pair's population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default."
-            },
-            "required": false,
-            "description": "Spend floor in USD a brand must be past to enter a pair's population (default 100). Applied at read time over stored per-brand ingredients, so any floor is answerable from one snapshot. A non-numeric or negative value is a 400, never a silent fall back to the default.",
-            "name": "minSpendUsd",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Fleet median return on spend per (channel x funnel) pair",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "costBasis": {
-                      "type": "string",
-                      "enum": [
-                        "charged"
-                      ],
-                      "description": "ACCOUNTING — the CUSTOMERS' money: what each brand was CHARGED (comped spend absent), on the COMMITTED basis (actual + provisioned holds) every money figure in this service rides."
-                    },
-                    "unit": {
-                      "type": "string",
-                      "enum": [
-                        "brand"
-                      ],
-                      "description": "Each data point is ONE brand's realized return on its own spend, through one funnel."
-                    },
-                    "channelSlug": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "The channel this read was narrowed to, or null for the whole catalogue."
-                    },
-                    "minSpendUsd": {
-                      "type": "number",
-                      "description": "The spend floor every pair's population was restricted to (USD), echoed once."
-                    },
-                    "pairs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "channelSlug": {
-                            "type": "string",
-                            "description": "The acquisition channel (feature slug) the funnel is bought through."
-                          },
-                          "channelName": {
-                            "type": "string"
-                          },
-                          "funnelKey": {
-                            "type": "string",
-                            "enum": [
-                              "sales_meetings_from_conversation",
-                              "sales_meetings_from_website",
-                              "website_purchases",
-                              "form_magnet",
-                              "sales_from_conversation",
-                              "sales_meetings_from_ads",
-                              "lead_forms_from_ads",
-                              "sales_from_website"
-                            ],
-                            "description": "The sales funnel, in brand-service's own canonical vocabulary."
-                          },
-                          "funnelName": {
-                            "type": "string"
-                          },
-                          "funnelSteps": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            },
-                            "description": "The funnel's steps in order, so a row renders without the consumer knowing the catalogue."
-                          },
-                          "measured": {
-                            "type": "boolean",
-                            "description": "True only when a median RETURN is stated for this pair. False ⇒ every figure is null and `reason` says why."
-                          },
-                          "reason": {
-                            "type": "string",
-                            "nullable": true,
-                            "enum": [
-                              "no_snapshot_yet",
-                              "not_enough_brands",
-                              "maturity_not_recorded_yet",
-                              null
-                            ],
-                            "description": "Present exactly when `measured` is false. `no_snapshot_yet` = no background compute has written a snapshot for this CHANNEL yet; `maturity_not_recorded_yet` = the snapshot predates the brands' maturity verdicts; `not_enough_brands` = a snapshot exists but too few MATURE brands sell this funnel through this channel past the spend floor. Neither is an error, and neither is ever answered with a 0 or with a median quietly taken over a wider population (a neighbouring funnel, the whole channel)."
-                          },
-                          "minSpendUsd": {
-                            "type": "number",
-                            "description": "The spend floor this pair's population was restricted to (USD)."
-                          },
-                          "brandCount": {
-                            "type": "integer",
-                            "description": "How many brands the RETURN median was taken over. ALWAYS present, including when it is too few to state one."
-                          },
-                          "medianReturnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The MIDDLE brand's realized return on spend through THIS funnel — its expected pipeline (scoped to the funnel) divided by its committed spend on the channel. Byte-same statistic as `costEconomics.roiMultiple` for one brand reading that funnel. A median, never a mean."
-                          },
-                          "p25ReturnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "25th percentile — the lower edge of the bulk."
-                          },
-                          "p75ReturnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "75th percentile — the upper edge of the bulk."
-                          },
-                          "minReturnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The weakest qualifying brand's return."
-                          },
-                          "maxReturnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The strongest qualifying brand's return."
-                          },
-                          "medianCostPerPaidClientUsd": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "The MIDDLE brand's cost per PAYING CLIENT (its committed spend divided by the paying clients its pipeline is). Stated on its OWN population, because it needs one ingredient the return does not — the brand's lifetime revenue per client — so a pair can state a return and no cost per client. Null, never 0."
-                          },
-                          "costPerPaidClientBrandCount": {
-                            "type": "integer",
-                            "description": "How many brands the cost-per-paid-client median was taken over. Never inferred from `brandCount`."
-                          },
-                          "computedAt": {
-                            "type": "string",
-                            "nullable": true,
-                            "description": "When the snapshot these figures were taken from was computed (ISO 8601). Null when the channel has no snapshot yet."
-                          },
-                          "maturity": {
-                            "$ref": "#/components/schemas/MatureScopesReturn"
-                          }
-                        },
-                        "required": [
-                          "channelSlug",
-                          "channelName",
-                          "funnelKey",
-                          "funnelName",
-                          "funnelSteps",
-                          "measured",
-                          "reason",
-                          "minSpendUsd",
-                          "brandCount",
-                          "medianReturnPerDollar",
-                          "p25ReturnPerDollar",
-                          "p75ReturnPerDollar",
-                          "minReturnPerDollar",
-                          "maxReturnPerDollar",
-                          "medianCostPerPaidClientUsd",
-                          "costPerPaidClientBrandCount",
-                          "computedAt",
-                          "maturity"
-                        ]
-                      },
-                      "description": "Every (acquisition channel x sales funnel) pair in the catalogue, measured or not. A pair is never absent — absence would read as 'this channel does not sell this funnel'."
-                    }
-                  },
-                  "required": [
-                    "costBasis",
-                    "unit",
-                    "channelSlug",
-                    "minSpendUsd",
-                    "pairs"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid parameters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Acquisition channel not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/public/channel-outcome-economics": {
       "get": {
         "summary": "PROJECTED channel economics per OUTCOME and per LEG — the funnel-free twin of /public/channel-funnel-economics (public, no auth)",
-        "description": "Wave C4. One entry per acquisition channel: every outcome (step) its paths reach with the cheapest projected price, every leg with its price, and every path (= one /public/channel-funnel-economics pair row, named by its leg keys) with its full priced chain, cost per paying client and PROJECTED return per dollar. Built from the SAME pair rows (same pooled dataset, same cache windows), so a channel selling one path reads byte-same figures. Also answers the funnel questions /public/channels answers (which outcomes follow, the composed minimum commitment) without naming a funnel. No field names a funnel. PROJECTED — never relabel as the realized /public/stats/outcome-return-on-spend.",
+        "description": "Wave C4. One entry per acquisition channel: every outcome (step) its paths reach with the cheapest projected price, every leg with its price, and every path (= one /public/channel-funnel-economics pair row, named by its leg keys) with its full priced chain and cost per paying client (no return: ROI-CONSISTENCY-1103). Built from the SAME pair rows (same pooled dataset, same cache windows), so a channel selling one path reads byte-same figures. Also answers the funnel questions /public/channels answers (which outcomes follow, the composed minimum commitment) without naming a funnel. No field names a funnel.",
         "tags": [
           "Public"
         ],
@@ -54763,57 +53283,6 @@
                                   ],
                                   "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
                                 },
-                                "returnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "PROJECTED — lifetimeRevenueUsd / costPerPaidClientUsd. Never a realized return."
-                                },
-                                "returnPerDollarMaturity": {
-                                  "type": "object",
-                                  "properties": {
-                                    "isMature": {
-                                      "type": "boolean",
-                                      "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
-                                    },
-                                    "notMatureReason": {
-                                      "type": "string",
-                                      "nullable": true,
-                                      "enum": [
-                                        "too_few_outcomes",
-                                        "no_figure",
-                                        null
-                                      ],
-                                      "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
-                                    },
-                                    "measuredOutcome": {
-                                      "type": "string",
-                                      "nullable": true,
-                                      "enum": [
-                                        "positive_reply",
-                                        "website_visit",
-                                        null
-                                      ],
-                                      "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
-                                    },
-                                    "outcomesMeasured": {
-                                      "type": "integer",
-                                      "nullable": true,
-                                      "description": "How many of those outcomes the figure stands on. Null when the path measures none."
-                                    },
-                                    "outcomesRequired": {
-                                      "type": "integer",
-                                      "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
-                                    }
-                                  },
-                                  "required": [
-                                    "isMature",
-                                    "notMatureReason",
-                                    "measuredOutcome",
-                                    "outcomesMeasured",
-                                    "outcomesRequired"
-                                  ],
-                                  "description": "CHANNEL-ECON-MATURITY-1031: is the figure beside it mature enough to state and rank?"
-                                },
                                 "lifetimeRevenueUsd": {
                                   "type": "number",
                                   "nullable": true
@@ -54834,72 +53303,12 @@
                                 "steps",
                                 "costPerPaidClientUsd",
                                 "costPerPaidClientMaturity",
-                                "returnPerDollar",
-                                "returnPerDollarMaturity",
                                 "lifetimeRevenueUsd",
                                 "statedBrandCount",
                                 "effectiveMinimumCommitmentDays"
                               ]
                             },
                             "description": "The pair rows 1:1, in catalogue order, named by their legs."
-                          },
-                          "returnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "PROJECTED — the best path's return per dollar."
-                          },
-                          "returnPerDollarMaturity": {
-                            "type": "object",
-                            "properties": {
-                              "isMature": {
-                                "type": "boolean",
-                                "description": "True = a consumer may state AND rank this figure. False = still serve it, labelled Learning; never rank it against a mature one. features-service's verdict: never re-grade it in a browser."
-                              },
-                              "notMatureReason": {
-                                "type": "string",
-                                "nullable": true,
-                                "enum": [
-                                  "too_few_outcomes",
-                                  "no_figure",
-                                  null
-                                ],
-                                "description": "Present exactly when `isMature` is false. `too_few_outcomes` = the figure stands on fewer measured entry outcomes than `outcomesRequired`; `no_figure` = the figure is null (its own reason says why)."
-                              },
-                              "measuredOutcome": {
-                                "type": "string",
-                                "nullable": true,
-                                "enum": [
-                                  "positive_reply",
-                                  "website_visit",
-                                  null
-                                ],
-                                "description": "The measured entry outcome the figure is priced from (every projected figure is spend ÷ this count carried down stated rates). Null when the path measures none."
-                              },
-                              "outcomesMeasured": {
-                                "type": "integer",
-                                "nullable": true,
-                                "description": "How many of those outcomes the figure stands on. Null when the path measures none."
-                              },
-                              "outcomesRequired": {
-                                "type": "integer",
-                                "description": "The bar (30, market consensus: Google Ads 15-30 conversions before Target CPA, Meta ~50 events to leave learning, n >= 30 statistics rule of thumb)."
-                              }
-                            },
-                            "required": [
-                              "isMature",
-                              "notMatureReason",
-                              "measuredOutcome",
-                              "outcomesMeasured",
-                              "outcomesRequired"
-                            ],
-                            "description": "Is `returnPerDollar` mature enough to state and rank? The verdict of the path it was taken from."
-                          },
-                          "returnPathLegKeys": {
-                            "type": "array",
-                            "nullable": true,
-                            "items": {
-                              "type": "string"
-                            }
                           },
                           "evidence": {
                             "type": "object",
@@ -54934,9 +53343,6 @@
                           "outcomes",
                           "legs",
                           "paths",
-                          "returnPerDollar",
-                          "returnPerDollarMaturity",
-                          "returnPathLegKeys",
                           "evidence",
                           "effectiveMinimumCommitmentDays"
                         ]
@@ -54972,379 +53378,10 @@
         }
       }
     },
-    "/public/stats/outcome-return-on-spend": {
-      "get": {
-        "summary": "Fleet MEDIAN REALIZED return per (channel x leg) and (channel x outcome) — the funnel-free twin of /public/stats/funnel-return-on-spend (public, no auth)",
-        "description": "Wave C4. The population of a leg row is the brands whose campaigns on the channel are bought for that leg; of an outcome row, the brands with a leg landing on it. Each brand's figure is its channel-wide realized return from the SAME persisted snapshot the channel-wide median reads, so a population of one-path brands reads the byte-same median as the funnel pair. Minimum 3 brands; the brand is the unit and the statistic the median. Served from the snapshot, never computed on the request. REALIZED — never relabel as the projected `returnPerDollar` of /public/channel-outcome-economics.",
-        "tags": [
-          "Public"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "description": "Narrow to one channel. Unknown = 404."
-            },
-            "required": false,
-            "description": "Narrow to one channel. Unknown = 404.",
-            "name": "channelSlug",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "description": "Spend floor in USD (default 100). Non-numeric or negative = 400."
-            },
-            "required": false,
-            "description": "Spend floor in USD (default 100). Non-numeric or negative = 400.",
-            "name": "minSpendUsd",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Per-leg / per-outcome realized medians",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "costBasis": {
-                      "type": "string",
-                      "enum": [
-                        "charged"
-                      ]
-                    },
-                    "unit": {
-                      "type": "string",
-                      "enum": [
-                        "brand"
-                      ]
-                    },
-                    "channelSlug": {
-                      "type": "string",
-                      "nullable": true
-                    },
-                    "minSpendUsd": {
-                      "type": "number"
-                    },
-                    "channels": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "channelSlug": {
-                            "type": "string"
-                          },
-                          "channelName": {
-                            "type": "string"
-                          },
-                          "computedAt": {
-                            "type": "string",
-                            "nullable": true
-                          },
-                          "legs": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "legKey": {
-                                  "type": "string"
-                                },
-                                "fromStep": {
-                                  "type": "object",
-                                  "nullable": true,
-                                  "properties": {
-                                    "key": {
-                                      "type": "string",
-                                      "description": "A step of the shared vocabulary (GET /public/channels `steps`)."
-                                    },
-                                    "label": {
-                                      "type": "string"
-                                    },
-                                    "description": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "key",
-                                    "label",
-                                    "description"
-                                  ]
-                                },
-                                "toStep": {
-                                  "type": "object",
-                                  "properties": {
-                                    "key": {
-                                      "type": "string",
-                                      "description": "A step of the shared vocabulary (GET /public/channels `steps`)."
-                                    },
-                                    "label": {
-                                      "type": "string"
-                                    },
-                                    "description": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "key",
-                                    "label",
-                                    "description"
-                                  ]
-                                },
-                                "measured": {
-                                  "type": "boolean"
-                                },
-                                "reason": {
-                                  "type": "string",
-                                  "nullable": true,
-                                  "enum": [
-                                    "no_snapshot_yet",
-                                    "legs_not_recorded_yet",
-                                    "maturity_not_recorded_yet",
-                                    "not_enough_brands",
-                                    null
-                                  ],
-                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; `maturity_not_recorded_yet` = it predates the per-leg maturity verdicts; the next warm fills either. The population is the brands MATURE on these legs. Never a 0, never a wider population."
-                                },
-                                "minSpendUsd": {
-                                  "type": "number"
-                                },
-                                "brandCount": {
-                                  "type": "integer"
-                                },
-                                "medianReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over the MATURE brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
-                                },
-                                "p25ReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "p75ReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "minReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "maxReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "medianCostPerPaidClientUsd": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "costPerPaidClientBrandCount": {
-                                  "type": "integer"
-                                },
-                                "maturity": {
-                                  "allOf": [
-                                    {
-                                      "$ref": "#/components/schemas/MatureScopesReturn"
-                                    },
-                                    {
-                                      "description": "The same median over the brands MATURE ON THESE LEGS (each judged on the legs of the set it performs), on both versions."
-                                    }
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "legKey",
-                                "fromStep",
-                                "toStep",
-                                "measured",
-                                "reason",
-                                "minSpendUsd",
-                                "brandCount",
-                                "medianReturnPerDollar",
-                                "p25ReturnPerDollar",
-                                "p75ReturnPerDollar",
-                                "minReturnPerDollar",
-                                "maxReturnPerDollar",
-                                "medianCostPerPaidClientUsd",
-                                "costPerPaidClientBrandCount",
-                                "maturity"
-                              ]
-                            }
-                          },
-                          "outcomes": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "step": {
-                                  "type": "object",
-                                  "properties": {
-                                    "key": {
-                                      "type": "string",
-                                      "description": "A step of the shared vocabulary (GET /public/channels `steps`)."
-                                    },
-                                    "label": {
-                                      "type": "string"
-                                    },
-                                    "description": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "key",
-                                    "label",
-                                    "description"
-                                  ]
-                                },
-                                "legKeys": {
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string"
-                                  }
-                                },
-                                "measured": {
-                                  "type": "boolean"
-                                },
-                                "reason": {
-                                  "type": "string",
-                                  "nullable": true,
-                                  "enum": [
-                                    "no_snapshot_yet",
-                                    "legs_not_recorded_yet",
-                                    "maturity_not_recorded_yet",
-                                    "not_enough_brands",
-                                    null
-                                  ],
-                                  "description": "`legs_not_recorded_yet` = the channel snapshot predates the brand-leg field; `maturity_not_recorded_yet` = it predates the per-leg maturity verdicts; the next warm fills either. The population is the brands MATURE on these legs. Never a 0, never a wider population."
-                                },
-                                "minSpendUsd": {
-                                  "type": "number"
-                                },
-                                "brandCount": {
-                                  "type": "integer"
-                                },
-                                "medianReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true,
-                                  "description": "REALIZED — the middle brand's channel-wide return (mature pipeline / mature committed spend, net) over the MATURE brands whose campaigns are bought for this leg / land on this outcome. Replaces the pair's `medianReturnPerDollar`."
-                                },
-                                "p25ReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "p75ReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "minReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "maxReturnPerDollar": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "medianCostPerPaidClientUsd": {
-                                  "type": "number",
-                                  "nullable": true
-                                },
-                                "costPerPaidClientBrandCount": {
-                                  "type": "integer"
-                                },
-                                "maturity": {
-                                  "allOf": [
-                                    {
-                                      "$ref": "#/components/schemas/MatureScopesReturn"
-                                    },
-                                    {
-                                      "description": "The same median over the brands MATURE ON THESE LEGS (each judged on the legs of the set it performs), on both versions."
-                                    }
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "step",
-                                "legKeys",
-                                "measured",
-                                "reason",
-                                "minSpendUsd",
-                                "brandCount",
-                                "medianReturnPerDollar",
-                                "p25ReturnPerDollar",
-                                "p75ReturnPerDollar",
-                                "minReturnPerDollar",
-                                "maxReturnPerDollar",
-                                "medianCostPerPaidClientUsd",
-                                "costPerPaidClientBrandCount",
-                                "maturity"
-                              ]
-                            }
-                          }
-                        },
-                        "required": [
-                          "channelSlug",
-                          "channelName",
-                          "computedAt",
-                          "legs",
-                          "outcomes"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "costBasis",
-                    "unit",
-                    "channelSlug",
-                    "minSpendUsd",
-                    "channels"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid parameters",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Acquisition channel not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/public/stats/showcase-outcomes": {
       "get": {
         "summary": "The homepage's named clients per OUTCOME — the funnel-free twin of /public/stats/showcase-funnels (public, no auth)",
-        "description": "Wave C4. The SAME cell, picks, order and figures as /public/stats/showcase-funnels, re-keyed: each client states one row per outcome (the rungs of every path it sells, merged by step — a rung's count and cost do not depend on the path it was walked on), ALWAYS including `conversation` (positive replies) and `meeting_booked` (0 when measured zero; every count is our outreach's wins only, as on the funnel twin; a step none of its paths walks is stated from the client's own person counts with `legKeys: []`), and ONE realized return across its paths. No brand parameter; no field names a funnel.",
+        "description": "Wave C4. The SAME cell, picks, order and figures as /public/stats/showcase-funnels, re-keyed: each client states one row per outcome (the rungs of every path it sells, merged by step — a rung's count and cost do not depend on the path it was walked on), ALWAYS including `conversation` (positive replies) and `meeting_booked` (0 when measured zero; every count is our outreach's wins only, as on the funnel twin; a step none of its paths walks is stated from the client's own person counts with `legKeys: []`). No return is served (ROI-CONSISTENCY-1103). No brand parameter; no field names a funnel.",
         "tags": [
           "Public"
         ],
@@ -55428,11 +53465,6 @@
                               ]
                             }
                           },
-                          "returnPerDollar": {
-                            "type": "number",
-                            "nullable": true,
-                            "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
-                          },
                           "measured": {
                             "type": "boolean"
                           },
@@ -55474,7 +53506,6 @@
                         "required": [
                           "brand",
                           "outcomes",
-                          "returnPerDollar",
                           "measured",
                           "unmeasuredReason"
                         ]
@@ -55551,11 +53582,6 @@
                                       ]
                                     }
                                   },
-                                  "returnPerDollar": {
-                                    "type": "number",
-                                    "nullable": true,
-                                    "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
-                                  },
                                   "measured": {
                                     "type": "boolean"
                                   },
@@ -55597,154 +53623,6 @@
                                 "required": [
                                   "brand",
                                   "outcomes",
-                                  "returnPerDollar",
-                                  "measured",
-                                  "unmeasuredReason"
-                                ]
-                              }
-                            },
-                            "measured": {
-                              "type": "boolean"
-                            },
-                            "unmeasuredReason": {
-                              "type": "string",
-                              "nullable": true,
-                              "enum": [
-                                "no_snapshot_yet",
-                                "no_qualifying_clients",
-                                null
-                              ]
-                            },
-                            "requestedCount": {
-                              "type": "integer"
-                            },
-                            "qualifyingCount": {
-                              "type": "integer"
-                            }
-                          },
-                          "required": [
-                            "brands",
-                            "measured",
-                            "unmeasuredReason",
-                            "requestedCount",
-                            "qualifyingCount"
-                          ]
-                        },
-                        "highestReturn": {
-                          "type": "object",
-                          "properties": {
-                            "brands": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "brand": {
-                                    "type": "object",
-                                    "properties": {
-                                      "id": {
-                                        "type": "string"
-                                      },
-                                      "name": {
-                                        "type": "string",
-                                        "nullable": true
-                                      },
-                                      "domain": {
-                                        "type": "string",
-                                        "nullable": true
-                                      }
-                                    },
-                                    "required": [
-                                      "id",
-                                      "name",
-                                      "domain"
-                                    ]
-                                  },
-                                  "outcomes": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "object",
-                                      "properties": {
-                                        "key": {
-                                          "type": "string",
-                                          "description": "A step key, or `contacted` for the outreach base (first)."
-                                        },
-                                        "label": {
-                                          "type": "string"
-                                        },
-                                        "legKeys": {
-                                          "type": "array",
-                                          "items": {
-                                            "type": "string"
-                                          },
-                                          "description": "The legs landing on this step on the paths the brand sells (empty for the base). Replaces a rung's `key`."
-                                        },
-                                        "peopleReached": {
-                                          "type": "integer",
-                                          "nullable": true,
-                                          "description": "DISTINCT people who reached the step. 0 measured; null = no figure."
-                                        },
-                                        "costPerReachUsd": {
-                                          "type": "number",
-                                          "nullable": true,
-                                          "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
-                                        }
-                                      },
-                                      "required": [
-                                        "key",
-                                        "label",
-                                        "legKeys",
-                                        "peopleReached",
-                                        "costPerReachUsd"
-                                      ]
-                                    }
-                                  },
-                                  "returnPerDollar": {
-                                    "type": "number",
-                                    "nullable": true,
-                                    "description": "REALIZED — the brand's own return across every path it sells on REAL VENDOR COST (before any markup, whole history), the half picked as its dashboard Today page picks it: of `costEconomics.maturity`, the HIGHER half (flash when above mature, owner 2026-10-08), a not-mature brand's to-date half only above 1x, else null. For a one-path brand = that path's `returnPerDollar` on /showcase-funnels."
-                                  },
-                                  "measured": {
-                                    "type": "boolean"
-                                  },
-                                  "unmeasuredReason": {
-                                    "type": "string",
-                                    "nullable": true,
-                                    "enum": [
-                                      "brand_has_no_channels",
-                                      "no_leg_performed",
-                                      "no_lead_membership",
-                                      "read_failed",
-                                      null
-                                    ]
-                                  },
-                                  "vendorCost": {
-                                    "type": "object",
-                                    "properties": {
-                                      "unpricedSharePct": {
-                                        "type": "number",
-                                        "description": "Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."
-                                      },
-                                      "moneyUnavailableReason": {
-                                        "type": "string",
-                                        "nullable": true,
-                                        "enum": [
-                                          "vendor_cost_unknown",
-                                          null
-                                        ],
-                                        "description": "`vendor_cost_unknown` when that share is above 1%: every money figure of the brand is then null (never the billed figure, never the priced part passed off as the whole). Null = the money figures are served."
-                                      }
-                                    },
-                                    "required": [
-                                      "unpricedSharePct",
-                                      "moneyUnavailableReason"
-                                    ],
-                                    "description": "What the brand's money figures rest on: real vendor cost (PUBLIC-VENDOR-COST-1031). Absent on a brand nothing was walked for."
-                                  }
-                                },
-                                "required": [
-                                  "brand",
-                                  "outcomes",
-                                  "returnPerDollar",
                                   "measured",
                                   "unmeasuredReason"
                                 ]
@@ -55779,19 +53657,14 @@
                         }
                       },
                       "required": [
-                        "recentlyStarted",
-                        "highestReturn"
+                        "recentlyStarted"
                       ]
-                    },
-                    "minSpendUsd": {
-                      "type": "number"
                     }
                   },
                   "required": [
                     "costBasis",
                     "brands",
-                    "groups",
-                    "minSpendUsd"
+                    "groups"
                   ]
                 }
               }

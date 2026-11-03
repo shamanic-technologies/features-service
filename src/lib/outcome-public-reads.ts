@@ -1,5 +1,5 @@
 /**
- * WAVE C4, PRODUCER HALF — the four funnel-keyed PUBLIC reads, re-stated per OUTCOME and per LEG.
+ * WAVE C4, PRODUCER HALF — the funnel-keyed PUBLIC reads, re-stated per OUTCOME and per LEG.
  *
  * The fleet retired the sales funnel as an identity (org > brand > offer > outcome > leg). This service
  * is the last place the word survives, on public identity-free reads that customer-facing surfaces
@@ -8,7 +8,6 @@
  *
  *   /public/stats/showcase-funnels          → /public/stats/showcase-outcomes
  *   /public/channel-funnel-economics        → /public/channel-outcome-economics  (PROJECTED)
- *   /public/stats/funnel-return-on-spend    → /public/stats/outcome-return-on-spend  (REALIZED)
  *   /public/channels `funnels[]` / `salesFunnels` → /public/channel-outcome-economics `outcomes[]` /
  *                                               `legs[]` / `paths[]` (+ the channel's own terms)
  *
@@ -19,9 +18,12 @@
  * brand (or a channel) that sells ONE path reads the byte-same numbers under both.
  *
  * WHERE SEVERAL PATHS REACH ONE OUTCOME the BEST one answers — the cheapest price for a projected
- * cost, the highest return — which is the engine's own best-path rule (a lead converts through
+ * cost — which is the engine's own best-path rule (a lead converts through
  * whichever of the brand's paths pays best). Every path is still listed beside it, so nothing is hidden
  * and nothing is blended.
+ *
+ * No return is served on any of them (ROI-CONSISTENCY-1103: a return exists only where a value lands); the
+ * realized per-leg / per-outcome return medians are deleted with their funnel-keyed twin.
  *
  * NOTHING FALLS BACK TO A FUNNEL. A figure that cannot be stated is `null` with a NAMED reason, never
  * 0 and never the funnel-keyed row's value borrowed under an outcome's name.
@@ -30,8 +32,6 @@
 import { CHANNEL_STEPS, CHANNEL_STEP_KEYS, FUNNEL_STEP_LABEL_TO_KEY, type ChannelStepKey } from "./acquisition-channels.js";
 import type { ChannelStepDefWire, PublicChannel } from "./channel-catalogue.js";
 import { funnelEntryChannel, type PairResult, type PairUnmeasuredReason, type StepUnpricedReason } from "./channel-funnel-economics.js";
-import { buildFunnelReturnOnSpend, type FunnelReturnOnSpend, MIN_FUNNEL_RETURN_BRANDS } from "./fleet-funnel-return.js";
-import type { BrandReturnRow } from "./fleet-return-on-spend.js";
 import { funnelLeg, legKeysOfFunnel } from "./funnel-legs.js";
 import type { SalesFunnelKey } from "./sales-funnels.js";
 import {
@@ -55,8 +55,7 @@ function toStepOfLeg(legKey: string): ChannelStepKey | null {
 
 // ── Maturity of a PROJECTED figure (CHANNEL-ECON-MATURITY-1031) ──────────────────────────────────
 //
-// Every projected figure on this read (a step's cost, a path's cost per paying client, its return per
-// dollar) is the channel's MEASURED entry unit cost (spend ÷ positive replies, or spend ÷ website visits)
+// Every projected figure on this read (a step's cost, a path's cost per paying client) is the channel's MEASURED entry unit cost (spend ÷ positive replies, or spend ÷ website visits)
 // carried down stated rates. So how much a figure stands on is the count of entry outcomes that unit cost
 // divides by — nothing downstream adds evidence. A figure is MATURE (a consumer may state it and rank it)
 // once that count reaches `MIN_OUTCOMES_TO_RANK`; below it the figure is still served, labelled Learning.
@@ -147,9 +146,6 @@ export interface ChannelOutcomePath {
   /** What one PAYING CLIENT costs through this path (the pair's `costPerSaleUsd`). */
   costPerPaidClientUsd: number | null;
   costPerPaidClientMaturity: FigureMaturity;
-  /** PROJECTED — `lifetimeRevenueUsd / costPerPaidClientUsd`. Never a realized return. */
-  returnPerDollar: number | null;
-  returnPerDollarMaturity: FigureMaturity;
   lifetimeRevenueUsd: number | null;
   /** Brands whose stated economics backed this path's rates. */
   statedBrandCount: number | null;
@@ -202,12 +198,6 @@ export interface ChannelOutcomeEconomics {
   legs: ChannelLegRow[];
   /** The pair rows, named by legs. One per path, in catalogue order. */
   paths: ChannelOutcomePath[];
-  /** PROJECTED — the best path's return per dollar. Null when no path states one. */
-  returnPerDollar: number | null;
-  /** May a consumer state and rank `returnPerDollar`? The verdict of the path it was taken from. */
-  returnPerDollarMaturity: FigureMaturity;
-  /** The legs of the path that return was taken from. */
-  returnPathLegKeys: string[] | null;
   /** The channel-wide evidence every path's prices ride on. Null when no path was measured. */
   evidence: { totalSpentUsd: number; conversationsProduced: number; websiteVisitsProduced: number } | null;
   /** The longest run a buyer of any of these paths commits to. Null when the channel has no path. */
@@ -256,7 +246,6 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
       };
     });
     const costPerPaidClientUsd = r.measured ? r.economics.costPerSaleUsd : null;
-    const returnPerDollar = r.measured ? r.economics.returnPerDollar : null;
     return {
       legKeys,
       measured: r.measured,
@@ -264,8 +253,6 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
       steps,
       costPerPaidClientUsd,
       costPerPaidClientMaturity: figureMaturityOf(costPerPaidClientUsd, basis),
-      returnPerDollar,
-      returnPerDollarMaturity: figureMaturityOf(returnPerDollar, basis),
       lifetimeRevenueUsd: r.measured ? r.economics.lifetimeRevenueUsd : null,
       statedBrandCount: r.measured ? r.economics.evidence.brandCount : null,
       effectiveMinimumCommitmentDays: pair.effectiveMinimumCommitmentDays,
@@ -313,11 +300,6 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
     };
   });
 
-  let bestReturn: ChannelOutcomePath | null = null;
-  for (const p of paths) {
-    if (p.returnPerDollar == null) continue;
-    if (bestReturn === null || p.returnPerDollar > (bestReturn.returnPerDollar as number)) bestReturn = p;
-  }
   const measuredPair = pairs.find((p) => p.result.measured);
   const evidence =
     measuredPair && measuredPair.result.measured
@@ -334,63 +316,13 @@ export function channelOutcomeEconomicsOf(channel: PublicChannel, pairs: readonl
     outcomes,
     legs,
     paths,
-    returnPerDollar: bestReturn?.returnPerDollar ?? null,
-    returnPerDollarMaturity: bestReturn
-      ? bestReturn.returnPerDollarMaturity
-      : paths[0]?.returnPerDollarMaturity ?? figureMaturityOf(null, { measuredOutcome: null, outcomesMeasured: null }),
-    returnPathLegKeys: bestReturn?.legKeys ?? null,
     evidence,
     effectiveMinimumCommitmentDays:
       pairs.length === 0 ? null : Math.max(...pairs.map((p) => p.effectiveMinimumCommitmentDays)),
   };
 }
 
-// ── 2. REALIZED return on spend, per (channel × leg) and per (channel × outcome) ───────────────────
-
-/** Why a realized per-leg / per-outcome median is not stated. */
-export type OutcomeReturnUnmeasuredReason =
-  | "no_snapshot_yet"
-  /** A snapshot exists but was written before brand legs were recorded; the next warm fills them in. */
-  | "legs_not_recorded_yet"
-  /** The snapshot predates the brands' per-leg maturity verdicts (a median is over mature scopes only). */
-  | "maturity_not_recorded_yet"
-  | "not_enough_brands";
-
-export interface OutcomeReturnFigures extends Omit<FunnelReturnOnSpend, "reason"> {
-  reason: OutcomeReturnUnmeasuredReason | null;
-}
-
-/**
- * PURE: the median REALIZED return over the brands whose campaigns on this channel perform one of
- * `legKeys`. Each brand's figure is its CHANNEL-WIDE return (mature pipeline ÷ mature committed
- * spend, net) — a campaign is bought for one leg, and the dollar it spent bought the channel's
- * outreach whichever leg it was bought for. A brand that sells ONE path is the byte-same row the
- * funnel-keyed read takes its median over (that read REUSES the channel pass for such a brand).
- */
-export function buildOutcomeReturnOnSpend(
-  rows: readonly BrandReturnRow[] | null,
-  legKeys: ReadonlySet<string>,
-  minSpendUsd: number,
-): OutcomeReturnFigures {
-  if (rows !== null && rows.length > 0 && rows.every((r) => r.legKeys === undefined)) {
-    const empty = buildFunnelReturnOnSpend([], minSpendUsd, MIN_FUNNEL_RETURN_BRANDS);
-    return { ...empty, reason: "legs_not_recorded_yet" };
-  }
-  const population =
-    rows === null
-      ? null
-      : rows
-          .filter((r) => (r.legKeys ?? []).some((k) => legKeys.has(k)))
-          .map((r) => ({
-            brandId: r.brandId,
-            committedSpendUsd: r.committedSpendUsd,
-            expectedPipelineUsd: r.expectedPipelineUsd,
-            expectedPaidClients: r.expectedPaidClients ?? null,
-          }));
-  return buildFunnelReturnOnSpend(population, minSpendUsd, MIN_FUNNEL_RETURN_BRANDS);
-}
-
-// ── 3. The homepage showcase, per outcome ───────────────────────────────────────────────────────────
+// ── 2. The homepage showcase, per outcome ───────────────────────────────────────────────────────────
 
 export interface ShowcaseOutcome {
   /** A step of the shared vocabulary, or `contacted` for the outreach base. */
@@ -414,12 +346,6 @@ export type ShowcaseOutcomeUnmeasuredReason =
 export interface ShowcaseBrandOutcomes {
   brand: { id: string; name: string | null; domain: string | null };
   outcomes: ShowcaseOutcome[];
-  /**
-   * REALIZED — what a dollar of real VENDOR cost came back as for this client, across every path it sells
-   * (PUBLIC-VENDOR-COST-1031; the served half of `costEconomics.maturity` on the vendor basis). For a brand that sells
-   * ONE path it IS that path's `returnPerDollar` on the funnel-keyed read. Null = could not measure.
-   */
-  returnPerDollar: number | null;
   measured: boolean;
   unmeasuredReason: ShowcaseOutcomeUnmeasuredReason | null;
   /** The brand's vendor cost coverage, as on the funnel-keyed read. Absent when nothing was walked. */
@@ -434,8 +360,7 @@ export interface ShowcaseOutcomesPayload {
   /** Every money figure is at real VENDOR cost, before our markup (PUBLIC-VENDOR-COST-1031). */
   costBasis: "vendor";
   brands: ShowcaseBrandOutcomes[];
-  groups: { recentlyStarted: ShowcaseOutcomeGroup; highestReturn: ShowcaseOutcomeGroup };
-  minSpendUsd: number;
+  groups: { recentlyStarted: ShowcaseOutcomeGroup };
 }
 
 /**
@@ -464,11 +389,7 @@ const SHOWCASE_HERO_STEPS: ReadonlyArray<{ key: ChannelStepKey; count: (c: Showc
   { key: "meeting_booked", count: (c) => c.meetingsBooked },
 ];
 
-export function showcaseOutcomesOf(
-  entry: ShowcaseBrandFunnels,
-  brandReturnPerDollar: number | null,
-  heroCounts: ShowcaseHeroCounts | null = null,
-): ShowcaseBrandOutcomes {
+export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, heroCounts: ShowcaseHeroCounts | null = null): ShowcaseBrandOutcomes {
   const reason: ShowcaseOutcomeUnmeasuredReason | null =
     entry.unmeasuredReason === "no_funnel_sold" ? "no_leg_performed" : entry.unmeasuredReason;
   const byKey = new Map<string, ShowcaseOutcome>();
@@ -522,7 +443,6 @@ export function showcaseOutcomesOf(
   return {
     brand: entry.brand,
     outcomes,
-    returnPerDollar: entry.measured ? brandReturnPerDollar : null,
     measured: entry.measured,
     unmeasuredReason: reason,
     ...(entry.vendorCost ? { vendorCost: entry.vendorCost } : {}),
@@ -532,16 +452,13 @@ export function showcaseOutcomesOf(
 /** PURE: the funnel-keyed showcase payload → its per-outcome twin, same picks, same order. */
 export function showcaseOutcomesPayloadOf(
   payload: ShowcaseFunnelsPayload,
-  brandReturns: ReadonlyMap<string, number | null>,
   heroCounts: ReadonlyMap<string, ShowcaseHeroCounts> = new Map(),
 ): ShowcaseOutcomesPayload {
-  const of = (e: ShowcaseBrandFunnels) =>
-    showcaseOutcomesOf(e, brandReturns.get(e.brand.id) ?? null, heroCounts.get(e.brand.id) ?? null);
+  const of = (e: ShowcaseBrandFunnels) => showcaseOutcomesOf(e, heroCounts.get(e.brand.id) ?? null);
   const group = (g: ShowcaseGroup): ShowcaseOutcomeGroup => ({ ...g, brands: g.brands.map(of) });
   return {
     costBasis: payload.costBasis,
     brands: payload.brands.map(of),
-    groups: { recentlyStarted: group(payload.groups.recentlyStarted), highestReturn: group(payload.groups.highestReturn) },
-    minSpendUsd: payload.minSpendUsd,
+    groups: { recentlyStarted: group(payload.groups.recentlyStarted) },
   };
 }
