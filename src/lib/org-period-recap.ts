@@ -154,6 +154,85 @@ export interface OfferReturnRead {
   committedCostUsd: number | null;
   /** The dashboard's dated outcome series on the same body (absent/null = not served: unknown, never 0). */
   outcomeSeries?: { positiveReplies: OutcomeSeries | null; meetingsBooked: OutcomeSeries | null };
+  /** The body's `expectedReturn` (ROI-CONSISTENCY-1103); null/absent = not served. */
+  expected?: { roiMultiple: number | null; basis: string | null; unavailableReason: string | null } | null;
+  /** The body's `costEconomics.realizedReturn`; null/absent = not measured on that read. */
+  realized?: { roiMultiple: number | null; closedWonCount: number; closedWonRevenueUsd: number; spentUsd: number | null } | null;
+}
+
+/** Why a recap return is null (ROI-CONSISTENCY-1103). */
+export type RecapReturnNullReason = "nothing_sent" | "return_unavailable" | "return_differs_across_scopes" | "several_scopes";
+
+export interface RecapReturns {
+  /** The EXPECTED return of the scopes that sent: one value across them, else null + reason. */
+  expected: {
+    roiMultiple: number | null;
+    /** Weakest input behind it (`measured` < `stated` < `fleet` < `default`), as the offer body serves it. */
+    basis: string | null;
+    nullReason: RecapReturnNullReason | null;
+    scopes: Array<{ brandId: string; offerId: string | null; roiMultiple: number | null; basis: string | null; unavailableReason: string | null }>;
+  };
+  /** The REALIZED return: Paid clients our outreach caused over money actually spent, whole history. */
+  realized: {
+    roiMultiple: number | null;
+    closedWonCount: number | null;
+    closedWonRevenueUsd: number | null;
+    spentUsd: number | null;
+    nullReason: RecapReturnNullReason | null;
+    scopes: Array<{ brandId: string; offerId: string | null; roiMultiple: number | null; closedWonCount: number | null; closedWonRevenueUsd: number | null; spentUsd: number | null }>;
+  };
+}
+
+/**
+ * PURE. The two returns the recap may state (ROI-CONSISTENCY-1103: a return exists only where a value lands),
+ * each read off the offer bodies of the brands that SENT in the window, never recomputed. Expected: one value
+ * across every scope, else null (never a blend). Realized: one scope only: a brand's campaign-less spend joins
+ * every offer's body in full, so two scopes' spends never add.
+ */
+export function recapReturnsOf(senders: ReadonlyArray<{ brandId: string; returns: OfferReturnRead[] | null }>): RecapReturns {
+  const expectedScopes: RecapReturns["expected"]["scopes"] = [];
+  const realizedScopes: RecapReturns["realized"]["scopes"] = [];
+  for (const b of senders) {
+    if (b.returns === null || b.returns.length === 0) {
+      expectedScopes.push({ brandId: b.brandId, offerId: null, roiMultiple: null, basis: null, unavailableReason: "return_unavailable" });
+      realizedScopes.push({ brandId: b.brandId, offerId: null, roiMultiple: null, closedWonCount: null, closedWonRevenueUsd: null, spentUsd: null });
+      continue;
+    }
+    for (const r of b.returns) {
+      expectedScopes.push({
+        brandId: b.brandId,
+        offerId: r.offerId,
+        roiMultiple: r.expected?.roiMultiple ?? null,
+        basis: r.expected?.basis ?? null,
+        unavailableReason: r.expected ? r.expected.unavailableReason : "expected_return_not_served",
+      });
+      realizedScopes.push({
+        brandId: b.brandId,
+        offerId: r.offerId,
+        roiMultiple: r.realized?.roiMultiple ?? null,
+        closedWonCount: r.realized?.closedWonCount ?? null,
+        closedWonRevenueUsd: r.realized?.closedWonRevenueUsd ?? null,
+        spentUsd: r.realized?.spentUsd ?? null,
+      });
+    }
+  }
+  let expected: RecapReturns["expected"] = { roiMultiple: null, basis: null, nullReason: null, scopes: expectedScopes };
+  if (senders.length === 0) expected.nullReason = "nothing_sent";
+  else if (expectedScopes.some((x) => x.roiMultiple === null)) expected.nullReason = "return_unavailable";
+  else if (new Set(expectedScopes.map((x) => x.roiMultiple)).size > 1) expected.nullReason = "return_differs_across_scopes";
+  else {
+    const bases = new Set(expectedScopes.map((x) => x.basis));
+    expected = { ...expected, roiMultiple: expectedScopes[0].roiMultiple, basis: bases.size === 1 ? expectedScopes[0].basis : null };
+  }
+  let realized: RecapReturns["realized"] = { roiMultiple: null, closedWonCount: null, closedWonRevenueUsd: null, spentUsd: null, nullReason: null, scopes: realizedScopes };
+  if (senders.length === 0) realized.nullReason = "nothing_sent";
+  else if (realizedScopes.some((x) => x.closedWonCount === null)) realized.nullReason = "return_unavailable";
+  else if (realizedScopes.length > 1) realized.nullReason = "several_scopes";
+  else {
+    const only = realizedScopes[0];
+    realized = { ...realized, roiMultiple: only.roiMultiple, closedWonCount: only.closedWonCount, closedWonRevenueUsd: only.closedWonRevenueUsd, spentUsd: only.spentUsd };
+  }
+  return { expected, realized };
 }
 
 /** One dated outcome series as the revenue body serves it (`buildSignalSeries`). */
@@ -251,6 +330,8 @@ export interface OrgPeriodRecap {
     revenueMultiple: number | null;
     nullReason: RecapNullReason | null;
   };
+  /** The ONLY returns the recap states to a client (ROI-CONSISTENCY-1103). `expectedReturn` and `budgetIncrease` above are retired: no reader once billing reads this. */
+  returns: RecapReturns;
   brands: RecapBrand[];
   fleetPositiveReplyRate: FleetReplyRate | null;
 }
@@ -550,6 +631,7 @@ export function buildOrgPeriodRecap(input: RecapInputs): OrgPeriodRecap {
       revenueMultiple: roiMultiple !== null && hasSpend ? round((spendUsd + BUDGET_INCREASE_USD) / spendUsd, 2) : null,
       nullReason: returnReason ?? (hasSpend ? repliesReason : "no_spend_in_window"),
     },
+    returns: recapReturnsOf(senders.map((b) => ({ brandId: b.brandId, returns: b._returns }))),
     brands: brands.map(({ _rawReplies: _a, _returns: _b, _ltrNullReason: _d, _enrolled: _e, ...rest }): RecapBrand => rest),
     fleetPositiveReplyRate: input.fleetRate,
   };
