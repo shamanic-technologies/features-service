@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -173,7 +174,7 @@ function mockFetch(fixture: Fixture): void {
     if (url.includes("/public/stats")) return json(PLATFORM_STATS);
     if (url.includes("/orgs/leads")) {
       // lead-service scopes by campaign when asked, else serves the brand's whole page.
-      return json({ leads: cid ? fixture.leads.filter((l) => l.campaignId === cid) : fixture.leads });
+      return json({ leads: cid ? leadServiceCampaignRead(fixture.leads, fixture.campaigns, cid) : fixture.leads });
     }
     if (url.includes("/orgs/stats") && fixture.emailByCampaign) {
       if (url.includes("groupBy=campaignId")) {

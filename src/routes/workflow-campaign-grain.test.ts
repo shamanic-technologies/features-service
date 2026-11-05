@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -229,7 +230,7 @@ function mockFetch(options: Options = {}): FetchImpl {
     }
     if (url.pathname.includes("/orgs/leads")) {
       const campaignId = q.get("campaignId");
-      return json({ leads: campaignId ? LEADS.filter((l) => l.campaignId === campaignId) : LEADS });
+      return json({ leads: campaignId ? leadServiceCampaignRead(LEADS, CAMPAIGNS, campaignId) : LEADS });
     }
     if (url.pathname.includes("/orgs/stats")) {
       const campaignId = q.get("campaignId");

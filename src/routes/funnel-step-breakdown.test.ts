@@ -19,6 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -195,10 +196,8 @@ function installFetch(fixture: Fixture): void {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
-    if (path.endsWith("/campaigns")) {
-      const narrowed = q.get("featureSlug");
-      return json({
-        campaigns: Object.entries(fixture.campaigns)
+    const campaignRowsOf = (narrowed: string | null) =>
+      Object.entries(fixture.campaigns)
           .filter(([, row]) => !narrowed || row.featureSlug === narrowed)
           .map(([id, row]) => ({
             id,
@@ -211,8 +210,9 @@ function installFetch(fixture: Fixture): void {
             offerId: row.offerId,
             status: "ongoing",
             createdAt: "2026-01-01T00:00:00.000Z",
-          })),
-      });
+          }));
+    if (path.endsWith("/campaigns")) {
+      return json({ campaigns: campaignRowsOf(q.get("featureSlug")) });
     }
     if (path.includes("/offer-economics")) {
       // Wave C1: the brand's leg rates (what its funnels stated) and every offer its campaigns sell.
@@ -261,7 +261,7 @@ function installFetch(fixture: Fixture): void {
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
-      return json({ leads: only ? fixture.leads.filter((l) => l.campaignId === only) : fixture.leads });
+      return json({ leads: only ? leadServiceCampaignRead(fixture.leads, campaignRowsOf(null), only) : fixture.leads });
     }
 
     // WHAT A HUMAN STATED — the only evidence "Meeting attended" has anywhere in the fleet.

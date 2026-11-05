@@ -19,6 +19,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -187,14 +188,11 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesF
     const json = (b: unknown) =>
       new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
 
-    if (url.includes("/campaigns?")) {
-      return json({
-        campaigns: [
-          ...MEMBERS.map((id) => campaignRow(id, FUNNEL, VISIT_LEG)),
-          campaignRow(OUTSIDER, "sales_meetings_from_conversation", "start_to_conversation"),
-        ],
-      });
-    }
+    const campaignRows = [
+      ...MEMBERS.map((id) => campaignRow(id, FUNNEL, VISIT_LEG)),
+      campaignRow(OUTSIDER, "sales_meetings_from_conversation", "start_to_conversation"),
+    ];
+    if (url.includes("/campaigns?")) return json({ campaigns: campaignRows });
     if (url.includes("/public/workflows")) return json({ workflows: WORKFLOWS });
     if (url.includes("/daily-budget")) {
       return json({ brandId: "b1", legKey: VISIT_LEG, dailyBudgetCents: "5000", updatedAt: null, funnels: [], channels: [], offers: [], legs: [] });
@@ -262,7 +260,10 @@ function mockFetch(): { timeseriesCampaignIds: Array<string | null>; timeseriesF
       return json({ groups: ids.map((id) => row({ campaignId: id, costName: "email-send" }, cents(id))) });
     }
 
-    if (url.includes("/orgs/leads")) return json({ leads: leadRows() });
+    if (url.includes("/orgs/leads")) {
+      const only = new URL(url).searchParams.get("campaignId");
+      return json({ leads: only ? leadServiceCampaignRead(leadRows() as Array<{ campaignId?: string | null }>, campaignRows, only) : leadRows() });
+    }
     if (url.includes("/orgs/status")) return json({ results: statusResults() });
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     void cid;

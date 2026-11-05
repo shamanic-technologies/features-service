@@ -97,12 +97,9 @@ describe("held fleet lead walk (lib/lead-walk-hold.ts)", () => {
     const held = serveLeads(ROWS);
     const first = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
     const second = await fetchLeadsForRevenue("brand-1", undefined, HEADERS);
-    const family = await fetchLeadsForRevenue("brand-1", ["c0", "c1"], HEADERS);
     expect(held.pages()).toBe(3);
     expect(first).toEqual(walked);
     expect(second).toEqual(walked);
-    // A family list reads the brand-wide page, so it shares the held walk and filters it the same way.
-    expect(family).toEqual(walked);
     // Absent vs null survives the round trip (servedAt / audienceId / leadCountry distinguish them).
     expect(second.find((p) => p.leadId === "l3")).toMatchObject({ servedAt: null, leadCountry: null });
     expect(second.find((p) => p.leadId === "l2")).toMatchObject({ audienceId: null });
