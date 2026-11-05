@@ -28,6 +28,27 @@ describe("plays (owner 2026-10-13)", () => {
     expect(m.get("orion")!.get("catch-all")).toBe(false);
   });
 
+  it("UPGRADE-WINDOW-1105: a new version not judged YET on a tactic keeps its dynasty's newest older verdict", () => {
+    const T = (slug: string, version: number, active: boolean, tacticId: string, verdict: boolean): TacticVerdictRow => ({ ...V(slug, "algenib", version, active, verdict), tacticId });
+    // Prod 2026-11-05 17:45:24: v36 judged on answers-leads-only only, v35 (just deprecated) judged on both.
+    const rows = [T("a35", 35, false, "answers-leads-only", true), T("a35", 35, false, "skips-people-who-already-wrote", false), T("a34", 34, false, "skips-people-who-already-wrote", true), T("a36", 36, true, "answers-leads-only", true)];
+    const m = currentTacticsByDynasty(rows).get("algenib")!;
+    expect(m.get("answers-leads-only")).toBe(true);
+    expect(m.get("skips-people-who-already-wrote")).toBe(false);
+    const LEADS: Strategy = { id: "leads-only", name: "Leads only", description: "c", requiresTacticIds: ["answers-leads-only"], excludesTacticIds: ["skips-people-who-already-wrote"], createdBy: "t", createdAt: "" };
+    expect(strategyVerdict(LEADS, m, name).allowed).toBe(true);
+    // Once judged, the current version's own verdict wins over the inherited one.
+    const judged = currentTacticsByDynasty([...rows, T("a36", 36, true, "skips-people-who-already-wrote", true)]).get("algenib")!;
+    expect(judged.get("skips-people-who-already-wrote")).toBe(true);
+    expect(strategyVerdict(LEADS, judged, name).allowed).toBe(false);
+  });
+
+  it("UPGRADE-WINDOW-1105: never inherits from a NEWER version, and a brand-new dynasty stays unjudged", () => {
+    const m = currentTacticsByDynasty([V("o2", "orion", 2, true, false), { ...V("o3", "orion", 3, false, true), tacticId: "other" }]);
+    expect(m.get("orion")!.get("other")).toBeUndefined();
+    expect(currentTacticsByDynasty([{ ...V("n1", "nova", 1, true, true), tacticId: "other" }]).get("nova")!.get("catch-all")).toBeUndefined();
+  });
+
   it("requires = judged yes; excludes = judged no; NOT judged = not allowed either way (owner 2026-10-13)", () => {
     expect(strategyVerdict(CATCH, new Map([["catch-all", true]]), name).allowed).toBe(true);
     expect(strategyVerdict(CATCH, new Map([["catch-all", false]]), name)).toMatchObject({ allowed: false });

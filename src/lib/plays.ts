@@ -162,7 +162,12 @@ export function strategyOfFunnelLeg(funnelId: string, channelSlug: string, legKe
 
 /**
  * PURE: the tactics a DYNASTY carries, read on its CURRENT version (the active one, highest number; else the highest):
- * the version a run would execute. A tactic not judged on that version is absent from its map.
+ * the version a run would execute. A tactic not judged YET on that version keeps the verdict of the dynasty's newest
+ * OLDER version judged on it, until Jev judges the current one (UPGRADE-WINDOW-1105, owner: an upgrade is a non-event
+ * for the campaigns running the script). Prod 2026-11-05: the 8 ai-follow-up-email dynasties were upgraded at 17:35,
+ * their new versions judged from 17:45:15 to 17:45:58, tactic by tactic; a Lead event read at 17:45:24 found algenib v36
+ * judged on `answers-leads-only` but not yet on `skips-people-who-already-wrote`, so the play allowed nothing and the
+ * reply to James Barnett was skipped. A dynasty with no older verdict on a tactic (a brand-new script) stays unjudged.
  */
 export function currentTacticsByDynasty(rows: readonly TacticVerdictRow[]): Map<string, Map<string, boolean>> {
   const current = new Map<string, { slug: string; version: number; active: boolean }>();
@@ -171,13 +176,19 @@ export function currentTacticsByDynasty(rows: readonly TacticVerdictRow[]): Map<
     const better = !c || (r.versionActive && !c.active) || (r.versionActive === c.active && r.version > c.version);
     if (better) current.set(r.workflowDynastySlug, { slug: r.workflowSlug, version: r.version, active: r.versionActive });
   }
-  const out = new Map<string, Map<string, boolean>>();
+  // Per dynasty x tactic: the current version's own verdict, else the newest older version's.
+  const best = new Map<string, Map<string, { version: number; own: boolean; verdict: boolean }>>();
   for (const r of rows) {
-    if (current.get(r.workflowDynastySlug)?.slug !== r.workflowSlug) continue;
-    const m = out.get(r.workflowDynastySlug) ?? new Map<string, boolean>();
-    m.set(r.tacticId, r.verdict);
-    out.set(r.workflowDynastySlug, m);
+    const c = current.get(r.workflowDynastySlug)!;
+    const own = r.workflowSlug === c.slug;
+    if (!own && r.version >= c.version) continue;
+    const m = best.get(r.workflowDynastySlug) ?? new Map<string, { version: number; own: boolean; verdict: boolean }>();
+    const b = m.get(r.tacticId);
+    if (!b || (own && !b.own) || (own === b.own && r.version > b.version)) m.set(r.tacticId, { version: r.version, own, verdict: r.verdict });
+    best.set(r.workflowDynastySlug, m);
   }
+  const out = new Map<string, Map<string, boolean>>();
+  for (const [d, m] of best) out.set(d, new Map([...m].map(([t, b]) => [t, b.verdict])));
   return out;
 }
 
