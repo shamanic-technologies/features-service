@@ -8,7 +8,7 @@ const unitOf = vi.fn();
 const scriptsOf = vi.fn();
 const playOf = vi.fn();
 const catalogueOf = vi.fn();
-vi.mock("../lib/fleet-leg-campaigns.js", () => ({ fetchCampaignUnit: (id: string) => unitOf(id) }));
+vi.mock("../lib/fleet-leg-campaigns.js", () => ({ fetchCampaignPipe: (id: string) => unitOf(id) }));
 vi.mock("../lib/script-catalogue-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/script-catalogue-client.js")>()), readRunnableScripts: () => scriptsOf() }));
 vi.mock("./workflow-projection.js", () => ({ playOfLegRead: (...a: unknown[]) => playOf(...a) }));
 vi.mock("../lib/plays-store.js", () => ({ loadPlayCatalogue: () => catalogueOf() }));

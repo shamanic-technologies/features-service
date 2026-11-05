@@ -5,6 +5,7 @@
  *
  *   GET /public/stats/leg-writer-ranking?featureSlug=&leg=[&strategyId=]   both rankings of one pipe (no identity)
  *   GET /internal/writer-pick?workflowSlug=[&campaignId=]                    what a run writes with (api key, workflow-service)
+ *   GET /internal/writer-pick?campaignId=                                    the same for an Engine run (no workflow): the campaign's pipe
  *
  * Evidence = the Research page's template and model bars (`generationBuckets`): every person the pipe's campaigns emailed
  * is filed under the template and the model that wrote their sequence (content-generation-service's record, the fleet
@@ -44,9 +45,10 @@ import { templateTacticsFrom, type TemplateTactics, type TemplateTacticsReason }
 import { withTemplateRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "../lib/plays.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
-import { fetchCampaignSalesFunnelId } from "../lib/fleet-leg-campaigns.js";
+import { fetchCampaignPipe, fetchCampaignSalesFunnelId } from "../lib/fleet-leg-campaigns.js";
 import { fetchFleetLegSlugEvidence } from "./public.js";
 import { playOfLegRead } from "./workflow-projection.js";
+import { readOutOfCreditProvidersSoft } from "../lib/vendor-credit-client.js";
 import { postWriterBars, ZERO_POST_FIGURES, type PostFigures, type PostWriterBars } from "../lib/post-writer-evidence.js";
 import { readPostPipeEvidence } from "../lib/post-writer-evidence-io.js";
 
@@ -562,12 +564,34 @@ async function pipeOfWorkflow(workflowSlug: string): Promise<{ featureSlug: stri
 }
 
 /**
+ * PURE (WRITER-PICK-VENDOR-CREDIT-1105). An LLM whose vendor chat-service states out of credit NOW is not selectable for
+ * this pick (`vendor_out_of_credit`): the next ranked one is picked, none left = the usual `no_selectable_candidate`. The
+ * vendor is the row's provider (or the provider of every active writer alias it runs under). Read at pick time, never stored in the build.
+ */
+export function withVendorCredit(p: LegWriterRankingPayload, outOfCredit: ReadonlySet<string> | null): LegWriterRankingPayload {
+  if (!outOfCredit || outOfCredit.size === 0) return p;
+  const out = (provider: string | null | undefined) => !!provider && outOfCredit.has(provider.toLowerCase());
+  const vendorOut = (c: LegWriterRankingPayload["llms"]["candidates"][number]) => {
+    const active = c.aliases.filter((a) => a.status === "active");
+    return out(c.provider) || (active.length > 0 && active.every((a) => out(a.provider)));
+  };
+  const candidates = p.llms.candidates.map((c) => (c.selectable && vendorOut(c) ? { ...c, selectable: false, notSelectableReason: "vendor_out_of_credit" } : c));
+  return { ...p, llms: { ...p.llms, candidates } };
+}
+
+/**
  * What a run of the pipe writes with today (BEST-TPL-LLM-1022): rank 1 template and rank 1 LLM under the play its campaign
  * unit names (`salesFunnelId`; null = the pipe's default play). Null = the pipe's writer ranking is not built yet.
  */
 export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000) {
-  const [catalogue, played, p] = await Promise.all([loadPlayCatalogue(), playOfLegRead(featureSlug, legKey, salesFunnelId), readLegWriterRanking(featureSlug, legKey, waitMs)]);
-  if (!p) return null;
+  const [catalogue, played, built, outOfCredit] = await Promise.all([
+    loadPlayCatalogue(),
+    playOfLegRead(featureSlug, legKey, salesFunnelId),
+    readLegWriterRanking(featureSlug, legKey, waitMs),
+    readOutOfCreditProvidersSoft(`writer pick ${featureSlug}|${legKey}`),
+  ]);
+  if (!built) return null;
+  const p = withVendorCredit(built, outOfCredit);
   const strategy = played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null;
   // A play the pipe does not catalogue rules out every workflow on the ladder; here it rules out every writer too.
   const unknownPlay = played !== null && !strategy;
@@ -589,11 +613,43 @@ export async function pickPipeWriters(featureSlug: string, legKey: string, sales
   };
 }
 
+type PickedWriters = NonNullable<Awaited<ReturnType<typeof pickPipeWriters>>>;
+
+/** The pick's body, shared by both callers (a workflow run, a campaign-only Engine run): the same figures, same keys. */
+function pickBody(picked: PickedWriters) {
+  const { payload: p, template: t, llm: l, alias } = picked;
+  const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
+  return {
+    legKey: p.legKey,
+    pipeId: p.pipeId,
+    strategyId: picked.strategyId,
+    computedAt: p.computedAt,
+    template: t ? { templateDynastySlug: t.templateDynastySlug, head: t.head, name: t.label, ...figures(t) } : null,
+    templateUnavailableReason: picked.templateUnavailableReason,
+    // `llmDynastySlug` names the dynasty rank 1 is (LLM-DYNASTY-1022-FS: chat-service runs its head when called by the slug).
+    llm: l && alias ? { model: alias.alias, llmDynastySlug: l.llmDynastySlug, headModelId: l.headModelId, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
+    llmUnavailableReason: picked.llmUnavailableReason,
+  };
+}
+
+const notComputed = (res: Response, featureSlug: string, legKey: string) =>
+  bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${legKey} is being built: write nothing and retry in a few minutes (no default writer)`);
+
 router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Response) => {
   const workflowSlug = typeof req.query.workflowSlug === "string" ? req.query.workflowSlug : "";
   const campaignId = typeof req.query.campaignId === "string" && req.query.campaignId ? req.query.campaignId : null;
-  if (!workflowSlug) return bad(res, 400, "workflow_slug_required", "workflowSlug is required");
+  if (!workflowSlug && !campaignId) return bad(res, 400, "workflow_slug_or_campaign_id_required", "workflowSlug or campaignId is required");
   try {
+    if (!workflowSlug) {
+      // WRITER-PICK-NO-WORKFLOW-1105: an Engine run executes no workflow; its pipe is its CAMPAIGN's own channel and leg
+      // (campaign-service's identity), its play the campaign's sales funnel. The same pick as a workflow on that pipe.
+      const unit = await fetchCampaignPipe(campaignId!);
+      if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
+      if (!unit.featureSlug || !unit.legKey) return bad(res, 422, "campaign_states_no_pipe", `campaign ${campaignId} states no ${unit.featureSlug ? "legKey" : "featureSlug"}: no pipe to pick a writer on`);
+      const picked = await pickPipeWriters(unit.featureSlug, unit.legKey, unit.salesFunnelId);
+      if (!picked) return notComputed(res, unit.featureSlug, unit.legKey);
+      return res.json({ workflowSlug: null, workflowDynastySlug: null, campaignId, featureSlug: unit.featureSlug, ...pickBody(picked) });
+    }
     const pipe = await pipeOfWorkflow(workflowSlug);
     if (!pipe) return bad(res, 404, "workflow_not_on_a_pipe", `${workflowSlug} is active on no pipe (GET /internal/workflow-leg-assignments)`);
     let salesFunnelId: string | null = null;
@@ -604,25 +660,10 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       salesFunnelId = unit.salesFunnelId;
     }
     const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId);
-    if (!picked) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${pipe.featureSlug}|${pipe.legKey} is being built: write nothing and retry in a few minutes (no default writer)`);
-    const { payload: p, template: t, llm: l, alias } = picked;
-    const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
-    res.json({
-      workflowSlug,
-      workflowDynastySlug: pipe.dynasty,
-      featureSlug: pipe.featureSlug,
-      legKey: p.legKey,
-      pipeId: p.pipeId,
-      strategyId: picked.strategyId,
-      computedAt: p.computedAt,
-      template: t ? { templateDynastySlug: t.templateDynastySlug, head: t.head, name: t.label, ...figures(t) } : null,
-      templateUnavailableReason: picked.templateUnavailableReason,
-      // `llmDynastySlug` names the dynasty rank 1 is (LLM-DYNASTY-1022-FS: chat-service runs its head when called by the slug).
-      llm: l && alias ? { model: alias.alias, llmDynastySlug: l.llmDynastySlug, headModelId: l.headModelId, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
-      llmUnavailableReason: picked.llmUnavailableReason,
-    });
+    if (!picked) return notComputed(res, pipe.featureSlug, pipe.legKey);
+    res.json({ workflowSlug, workflowDynastySlug: pipe.dynasty, featureSlug: pipe.featureSlug, ...pickBody(picked) });
   } catch (error) {
-    console.error(`[features-service] writer pick ${workflowSlug} failed:`, error);
+    console.error(`[features-service] writer pick ${workflowSlug || `campaign ${campaignId}`} failed:`, error);
     bad(res, 502, "writer_pick_unreadable", `the writer pick could not be read: ${(error as Error).message}`);
   }
 });

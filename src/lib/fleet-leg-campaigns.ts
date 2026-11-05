@@ -165,14 +165,22 @@ export async function fetchCampaignSalesFunnelId(campaignId: string): Promise<{ 
 }
 
 /**
- * One campaign UNIT as a run-time strategy read needs it (MIGRATE-1105 S0-STRATEGY): what it performs (feature slug + its
- * own stated leg) and the sales funnel it states. `found:false` = campaign-service lists no such campaign. FAIL-LOUD.
+ * The PIPE a campaign performs, by its id alone (WRITER-PICK-NO-WORKFLOW-1105: an Engine run executes no workflow, it
+ * knows only its campaign). campaign-service owns the identity: the channel = the row's `featureSlug`, the leg = its
+ * stated `legKey` (canonical through the funnel table, else verbatim, the `filterLegCampaigns` rule), the play = its
+ * `salesFunnelId`. `found:false` = campaign-service lists no such campaign; a null field = the row states none.
  */
-export async function fetchCampaignUnit(campaignId: string): Promise<{ found: false } | { found: true; featureSlug: string | null; legKey: string | null; salesFunnelId: string | null }> {
-  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown } | undefined;
+export async function fetchCampaignPipe(
+  campaignId: string,
+): Promise<{ found: false } | { found: true; featureSlug: string | null; legKey: string | null; salesFunnelId: string | null }> {
+  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as
+    | { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown }
+    | undefined;
   if (!row) return { found: false };
-  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
-  return { found: true, featureSlug: text(row.featureSlug), legKey: text(row.legKey), salesFunnelId: text(row.salesFunnelId) };
+  const featureSlug = typeof row.featureSlug === "string" && row.featureSlug ? row.featureSlug : null;
+  const legKey = typeof row.legKey === "string" && row.legKey ? (matchFunnelLegKey(row.legKey) ?? row.legKey) : null;
+  const salesFunnelId = typeof row.salesFunnelId === "string" && row.salesFunnelId ? row.salesFunnelId : null;
+  return { found: true, featureSlug, legKey, salesFunnelId };
 }
 
 /** Test seam. */

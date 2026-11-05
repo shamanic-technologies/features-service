@@ -5783,17 +5783,26 @@ registry.registerPath({
   path: "/internal/writer-pick",
   summary: "What one run writes with: the best template dynasty and LLM of its pipe (internal, api-key; workflow-service)",
   description:
-    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. A pipe with no writer on record yet (`writerEvidence: no_sequence_recorded_on_pipe` on the ranking) still picks (WA-PIPE-RESEARCH-1023): every candidate is Learning at $0 (`place: explore`, `isMature: false`), rank 1 goes first and the next once it has spent. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason. STRATEGY refusals (a run must not write): `strategy_excludes_every_candidate` (every candidate a run could write with is ruled out by the play's strategy), `play_not_catalogued_on_pipe`. Nothing pickable / readable: `no_selectable_candidate`, `no_candidate`, `template_dynasties_unreadable`, `writer_models_unreadable`, `model_ids_unreadable`. A caller without a pick (any null `template` / `llm`, or a 503) writes nothing and retries later: there is no default writer, never the workflow's own template or LLM (NO-WRITER-FALLBACK-1030); `internal_pipe_not_measured_per_writer` is no longer served (internal pipes are measured on the follow-up ledger since v0.179.341).",
+    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. A pipe with no writer on record yet (`writerEvidence: no_sequence_recorded_on_pipe` on the ranking) still picks (WA-PIPE-RESEARCH-1023): every candidate is Learning at $0 (`place: explore`, `isMature: false`), rank 1 goes first and the next once it has spent. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason. STRATEGY refusals (a run must not write): `strategy_excludes_every_candidate` (every candidate a run could write with is ruled out by the play's strategy), `play_not_catalogued_on_pipe`. An LLM whose vendor chat-service states out of credit NOW (`GET /internal/vendor-credit`, read live, held 60 s) is not selectable for the pick (WRITER-PICK-VENDOR-CREDIT-1105): the next ranked LLM is answered, none left = `no_selectable_candidate`. Nothing pickable / readable: `no_selectable_candidate`, `no_candidate`, `template_dynasties_unreadable`, `writer_models_unreadable`, `model_ids_unreadable`. A caller without a pick (any null `template` / `llm`, or a 503) writes nothing and retries later: there is no default writer, never the workflow's own template or LLM (NO-WRITER-FALLBACK-1030); `internal_pipe_not_measured_per_writer` is no longer served (internal pipes are measured on the follow-up ledger since v0.179.341).",
   tags: ["Internal"],
-  request: { query: z.object({ workflowSlug: z.string().describe("The VERSION executing (or its dynasty)."), campaignId: z.string().optional() }) },
+  request: {
+    query: z.object({
+      workflowSlug: z.string().optional().describe("The VERSION executing (or its dynasty). Absent = an Engine run with no workflow: `campaignId` alone names the pipe."),
+      campaignId: z
+        .string()
+        .optional()
+        .describe("The campaign UNIT. With `workflowSlug`: its sales funnel names the play. ALONE (WRITER-PICK-NO-WORKFLOW-1105, an Engine run executing a stored script, no workflow): the pipe = the campaign's own `featureSlug` + `legKey` (campaign-service), the play = its sales funnel; the same pick a workflow on that pipe gets."),
+    }),
+  },
   responses: {
     200: {
       description: "The pick",
       content: {
         "application/json": {
           schema: z.object({
-            workflowSlug: z.string(),
-            workflowDynastySlug: z.string(),
+            workflowSlug: z.string().nullable().describe("Null on a campaign-only pick."),
+            workflowDynastySlug: z.string().nullable().describe("Null on a campaign-only pick."),
+            campaignId: z.string().optional().describe("Served on a campaign-only pick (no workflowSlug asked)."),
             featureSlug: z.string(),
             legKey: z.string(),
             pipeId: z.string(),
@@ -5817,8 +5826,9 @@ registry.registerPath({
         },
       },
     },
-    400: { description: "workflow_slug_required" },
-    404: { description: "workflow_not_on_a_pipe | campaign_not_found" },
+    400: { description: "workflow_slug_or_campaign_id_required: neither was given" },
+    404: { description: "workflow_not_on_a_pipe | campaign_not_found (campaign-service lists no such campaign)" },
+    422: { description: "campaign_states_no_pipe: a campaign-only pick on a campaign stating no featureSlug or legKey" },
     502: { description: "writer_pick_unreadable" },
     503: { description: "writer_ranking_not_computed_yet: the pipe's ranking is being built; a caller writes nothing and retries later (no default writer)" },
   },

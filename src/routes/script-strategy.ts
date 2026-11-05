@@ -10,7 +10,7 @@
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
-import { fetchCampaignUnit } from "../lib/fleet-leg-campaigns.js";
+import { fetchCampaignPipe } from "../lib/fleet-leg-campaigns.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
 import { playOfLegRead } from "./workflow-projection.js";
@@ -22,7 +22,7 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
   const outcome = typeof req.query.outcome === "string" ? req.query.outcome.trim() : "";
   if (!campaignId || !outcome) return res.status(400).json({ error: "campaignId and outcome are required", reason: "campaign_and_outcome_required" });
   try {
-    const unit = await fetchCampaignUnit(campaignId);
+    const unit = await fetchCampaignPipe(campaignId);
     if (!unit.found) return res.status(404).json({ error: `campaign-service lists no campaign ${campaignId}`, reason: "campaign_not_found" });
     const [catalogue, scripts, played] = await Promise.all([
       loadPlayCatalogue(),
