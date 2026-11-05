@@ -2965,6 +2965,57 @@
                       "nullable": true,
                       "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
                     },
+                    "causeByOutcome": {
+                      "type": "object",
+                      "properties": {
+                        "meetingBooked": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "meetingAttended": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "purchased": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "signup": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "formSubmission": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        }
+                      },
+                      "description": "WHOSE WIN each outcome on this row was, as lead-service judged it (never re-judged here; the same answer that decides whether the outcome is PRICED under the default `?cause=outreach`). One key per outcome the row REACHED among meetingBooked / meetingAttended / purchased / signup / formSubmission (a key is absent when that flag is false): `outreach` = OUR outreach caused it (ours), `other` = something else of the client's did (a real deal, not ours), `unstated` = undecided (nobody stated it and lead-service's default rule could not answer, or a tracker outcome no statement covers). Several statements about one outcome of one person keep the strongest answer (outreach > other > unstated). Independent of `?cause=`, which only decides what is priced. A consumer reporting \"sales we caused\" counts a `purchased` row only when `causeByOutcome.purchased` is `outreach`. Absent when the row reached none of these outcomes."
+                    },
                     "conversionProbabilityPct": {
                       "type": "number",
                       "description": "LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses."
@@ -9159,6 +9210,57 @@
                       "type": "string",
                       "nullable": true,
                       "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "causeByOutcome": {
+                      "type": "object",
+                      "properties": {
+                        "meetingBooked": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "meetingAttended": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "purchased": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "signup": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "formSubmission": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        }
+                      },
+                      "description": "WHOSE WIN each outcome on this row was, as lead-service judged it (never re-judged here; the same answer that decides whether the outcome is PRICED under the default `?cause=outreach`). One key per outcome the row REACHED among meetingBooked / meetingAttended / purchased / signup / formSubmission (a key is absent when that flag is false): `outreach` = OUR outreach caused it (ours), `other` = something else of the client's did (a real deal, not ours), `unstated` = undecided (nobody stated it and lead-service's default rule could not answer, or a tracker outcome no statement covers). Several statements about one outcome of one person keep the strongest answer (outreach > other > unstated). Independent of `?cause=`, which only decides what is priced. A consumer reporting \"sales we caused\" counts a `purchased` row only when `causeByOutcome.purchased` is `outreach`. Absent when the row reached none of these outcomes."
                     },
                     "conversionProbabilityPct": {
                       "type": "number",
@@ -18367,6 +18469,57 @@
                       "type": "string",
                       "nullable": true,
                       "description": "ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."
+                    },
+                    "causeByOutcome": {
+                      "type": "object",
+                      "properties": {
+                        "meetingBooked": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "meetingAttended": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "purchased": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "signup": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        },
+                        "formSubmission": {
+                          "type": "string",
+                          "enum": [
+                            "outreach",
+                            "other",
+                            "unstated"
+                          ],
+                          "description": "lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided."
+                        }
+                      },
+                      "description": "WHOSE WIN each outcome on this row was, as lead-service judged it (never re-judged here; the same answer that decides whether the outcome is PRICED under the default `?cause=outreach`). One key per outcome the row REACHED among meetingBooked / meetingAttended / purchased / signup / formSubmission (a key is absent when that flag is false): `outreach` = OUR outreach caused it (ours), `other` = something else of the client's did (a real deal, not ours), `unstated` = undecided (nobody stated it and lead-service's default rule could not answer, or a tracker outcome no statement covers). Several statements about one outcome of one person keep the strongest answer (outreach > other > unstated). Independent of `?cause=`, which only decides what is priced. A consumer reporting \"sales we caused\" counts a `purchased` row only when `causeByOutcome.purchased` is `outreach`. Absent when the row reached none of these outcomes."
                     },
                     "conversionProbabilityPct": {
                       "type": "number",

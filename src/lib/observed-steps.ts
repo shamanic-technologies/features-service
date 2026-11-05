@@ -8,6 +8,7 @@ import {
 import {
   DEFAULT_PRICED_CAUSES,
   causeOf,
+  strongerCause,
   zeroCauseTally,
   type OutcomeCause,
 } from "./outcome-cause.js";
@@ -110,6 +111,12 @@ export interface ObservedLeadFacts {
   deadStepSignals: string[];
   /** The rungs in `reached` that NO priced row reached — counted, never priced. */
   unpricedSignals: string[];
+  /**
+   * WHOSE WIN each stated outcome was, per engine signal, as lead-service judged it (the strongest
+   * answer over this lead's rows, `strongerCause`): every signal a statement row named, the website
+   * conversions included. Served on the lead row (`causeByOutcome`), never re-judged here.
+   */
+  causes?: Record<string, OutcomeCause>;
 }
 
 /**
@@ -147,7 +154,7 @@ export async function fetchObservedStepFacts(
   const facts = (email: string): ObservedLeadFacts => {
     let existing = byEmail.get(email);
     if (!existing) {
-      existing = { reached: {}, valueUsd: null, deadStepSignals: [], unpricedSignals: [] };
+      existing = { reached: {}, valueUsd: null, deadStepSignals: [], unpricedSignals: [], causes: {} };
       byEmail.set(email, existing);
     }
     return existing;
@@ -164,6 +171,8 @@ export async function fetchObservedStepFacts(
       if (!row.email) continue;
       const entry = facts(row.email);
       const isPriced = priced.has(cause);
+      const causes = (entry.causes ??= {});
+      causes[STEP_TO_SIGNAL[step]] = strongerCause(causes[STEP_TO_SIGNAL[step]], cause)!;
       if (PRICED_STEPS.includes(step)) {
         const signal = STEP_TO_SIGNAL[step];
         entry.reached[signal] = earliest(entry.reached[signal], row.occurredAt);
