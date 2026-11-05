@@ -5826,6 +5826,46 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/internal/script-strategy",
+  summary: "The scripts a campaign's strategy keeps for one Engine (internal, api-key; workflow-service's Engine runner, per run)",
+  description:
+    "MIGRATE-1105 S0-STRATEGY. The campaign UNIT's own sales funnel names the strategy on the pipe it performs (the writer pick's rule; none = the pipe's default play, a pipe with no default strategy = no strategy). The strategy is read on its SCRIPT tactics only (tactics with `appliesTo: script`, judged by Jev on each runnable script version: its description, its tactics data and its code; an upgraded version keeps the previous version's verdict until judged). A script dynasty is kept when every REQUIRED script tactic is judged yes on it and every EXCLUDED one judged no; a script not judged on a named tactic is NOT kept. No strategy, or one naming no script tactic, keeps every runnable script of the Engine. A play the pipe does not catalogue keeps none. No order is served: the runner's Rating picks among `keptDynasties`. A caller that cannot read this (5xx) runs nothing and retries (never any script).",
+  tags: ["Internal"],
+  request: { query: z.object({ campaignId: z.string().describe("The campaign UNIT the run belongs to."), outcome: z.string().describe("The Engine: the outcome the run makes (workflow-service's script `outcome`).") }) },
+  responses: {
+    200: {
+      description: "The scripts the strategy keeps",
+      content: {
+        "application/json": {
+          schema: z.object({
+            campaignId: z.string(),
+            outcome: z.string(),
+            strategyId: z.string().nullable().describe("Null = no strategy: every script kept."),
+            strategyName: z.string().nullable(),
+            strategySource: z.enum(["sales_funnel", "pipe_default", "retired_play", "no_strategy"]),
+            scriptTacticIds: z.array(z.string()).describe("The script tactics the strategy names (requires + excludes); empty = it narrows no script."),
+            keptDynasties: z.array(z.string()).describe("The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."),
+            scripts: z.array(
+              z.object({
+                dynasty: z.string(),
+                scriptId: z.string().describe("The runnable version judged."),
+                version: z.number(),
+                kept: z.boolean(),
+                reason: z.string().nullable().describe("Why not kept, one sentence; null when kept."),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "campaign_and_outcome_required" },
+    404: { description: "campaign_not_found" },
+    502: { description: "script_strategy_unreadable: run nothing and retry" },
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/public/stats/leg-workflow-ranking",
   summary: "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
   description:
@@ -7697,7 +7737,7 @@ const catalogueTacticRow = z.object({
   name: z.string().describe("Unique (case-insensitive)."),
   description: z.string().describe("Unique (case-insensitive). What Jev judges every workflow version against: as precise as possible."),
   clientLine: z.string().nullable().describe("The plain line a CLIENT reads about this tactic on a message a workflow following it wrote (GET /orgs/leads/{leadId}/written-by), e.g. \"Brand not named in the first email\". Never the judged description. Null = the tactic is not shown to clients."),
-  appliesTo: z.enum(["workflow", "template", "llm"]).describe("What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."),
+  appliesTo: z.enum(["workflow", "template", "llm", "script"]).describe("What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."),
   writersJudged: z.number().int().nullable().describe("A template / LLM tactic: template dynasties or writer aliases Jev judged on it (null on a workflow tactic)."),
   writersFollowing: z.number().int().nullable().describe("Of them, those judged to follow it (null on a workflow tactic)."),
   workflowsJudged: z.number().int().describe("Workflows (current version) Jev judged on it."),
@@ -7841,7 +7881,7 @@ catalogueCreate(
     name: z.string(),
     description: z.string(),
     clientLine: z.string().describe("<= 80 characters: the plain line a client reads (see the row's clientLine). Absent = not shown to clients.").optional(),
-    appliesTo: z.enum(["workflow", "template", "llm"]).describe("What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`.").optional(),
+    appliesTo: z.enum(["workflow", "template", "llm", "script"]).describe("What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`.").optional(),
     createdBy: z.string(),
   }),
   catalogueTacticRow,
@@ -7869,7 +7909,7 @@ registry.registerPath({
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A tactic id") }),
-    body: { content: { "application/json": { schema: z.object({ description: z.string().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent.").optional(), clientLine: z.string().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did).").optional(), appliesTo: z.enum(["workflow", "template", "llm"]).describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`.").optional(), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
+    body: { content: { "application/json": { schema: z.object({ description: z.string().describe("<= 500 characters; what the workflow DOES. Required unless clientLine is sent.").optional(), clientLine: z.string().describe("<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did).").optional(), appliesTo: z.enum(["workflow", "template", "llm", "script"]).describe("RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`.").optional(), updatedBy: z.string().describe("Who makes the edit (the gateway sets it from the authenticated caller).") }) } } },
   },
   responses: {
     200: {

@@ -37,6 +37,7 @@ import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
+import scriptStrategyRoutes from "./routes/script-strategy.js";
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
@@ -138,6 +139,7 @@ app.use(livedSalesPathsRoutes);
 app.use(fleetIndexesRoutes);
 app.use(researchRoutes);
 app.use(legWriterRankingRoutes);
+app.use(scriptStrategyRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 

@@ -49126,6 +49126,141 @@
         }
       }
     },
+    "/internal/script-strategy": {
+      "get": {
+        "summary": "The scripts a campaign's strategy keeps for one Engine (internal, api-key; workflow-service's Engine runner, per run)",
+        "description": "MIGRATE-1105 S0-STRATEGY. The campaign UNIT's own sales funnel names the strategy on the pipe it performs (the writer pick's rule; none = the pipe's default play, a pipe with no default strategy = no strategy). The strategy is read on its SCRIPT tactics only (tactics with `appliesTo: script`, judged by Jev on each runnable script version: its description, its tactics data and its code; an upgraded version keeps the previous version's verdict until judged). A script dynasty is kept when every REQUIRED script tactic is judged yes on it and every EXCLUDED one judged no; a script not judged on a named tactic is NOT kept. No strategy, or one naming no script tactic, keeps every runnable script of the Engine. A play the pipe does not catalogue keeps none. No order is served: the runner's Rating picks among `keptDynasties`. A caller that cannot read this (5xx) runs nothing and retries (never any script).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The campaign UNIT the run belongs to."
+            },
+            "required": true,
+            "description": "The campaign UNIT the run belongs to.",
+            "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The Engine: the outcome the run makes (workflow-service's script `outcome`)."
+            },
+            "required": true,
+            "description": "The Engine: the outcome the run makes (workflow-service's script `outcome`).",
+            "name": "outcome",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The scripts the strategy keeps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaignId": {
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "strategyId": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Null = no strategy: every script kept."
+                    },
+                    "strategyName": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "strategySource": {
+                      "type": "string",
+                      "enum": [
+                        "sales_funnel",
+                        "pipe_default",
+                        "retired_play",
+                        "no_strategy"
+                      ]
+                    },
+                    "scriptTacticIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics the strategy names (requires + excludes); empty = it narrows no script."
+                    },
+                    "keptDynasties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."
+                    },
+                    "scripts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "dynasty": {
+                            "type": "string"
+                          },
+                          "scriptId": {
+                            "type": "string",
+                            "description": "The runnable version judged."
+                          },
+                          "version": {
+                            "type": "number"
+                          },
+                          "kept": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Why not kept, one sentence; null when kept."
+                          }
+                        },
+                        "required": [
+                          "dynasty",
+                          "scriptId",
+                          "version",
+                          "kept",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "campaignId",
+                    "outcome",
+                    "strategyId",
+                    "strategyName",
+                    "strategySource",
+                    "scriptTacticIds",
+                    "keptDynasties",
+                    "scripts"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "campaign_and_outcome_required"
+          },
+          "404": {
+            "description": "campaign_not_found"
+          },
+          "502": {
+            "description": "script_strategy_unreadable: run nothing and retry"
+          }
+        }
+      }
+    },
     "/public/stats/leg-workflow-ranking": {
       "get": {
         "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
@@ -64373,9 +64508,10 @@
                             "enum": [
                               "workflow",
                               "template",
-                              "llm"
+                              "llm",
+                              "script"
                             ],
-                            "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                            "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                           },
                           "writersJudged": {
                             "type": "integer",
@@ -64526,7 +64662,8 @@
                     "enum": [
                       "workflow",
                       "template",
-                      "llm"
+                      "llm",
+                      "script"
                     ],
                     "description": "What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."
                   },
@@ -64578,9 +64715,10 @@
                       "enum": [
                         "workflow",
                         "template",
-                        "llm"
+                        "llm",
+                        "script"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -64713,9 +64851,10 @@
                       "enum": [
                         "workflow",
                         "template",
-                        "llm"
+                        "llm",
+                        "script"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -64889,9 +65028,10 @@
                       "enum": [
                         "workflow",
                         "template",
-                        "llm"
+                        "llm",
+                        "script"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -65109,7 +65249,8 @@
                     "enum": [
                       "workflow",
                       "template",
-                      "llm"
+                      "llm",
+                      "script"
                     ],
                     "description": "RESEARCH-WF-FIGURES-1022: move the tactic to another SUBJECT (what Jev judges it on: a workflow version's DAG, a template dynasty's head, an LLM dynasty's head model). Every reader applies only its subject's tactics, so a strategy naming it narrows that subject from then on. Answer states `previousAppliesTo`. 400 `applies_to_invalid`."
                   },
@@ -65160,9 +65301,10 @@
                       "enum": [
                         "workflow",
                         "template",
-                        "llm"
+                        "llm",
+                        "script"
                       ],
-                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                      "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
                     "writersJudged": {
                       "type": "integer",

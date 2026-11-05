@@ -25,7 +25,8 @@ import { listLegAssignments } from "./workflow-leg-assignments.js";
 import { insertVerdict, insertWriterVerdict, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, recordJudgingSweeps, refreshVersionActive } from "./plays-store.js";
 import { readTemplateDynasties, readTemplateTexts } from "./writer-catalogue-client.js";
 import { readLlmDynasties } from "./llm-dynasties.js";
-import { subjectOfTactic, type Tactic, type TacticJudgingSweep } from "./plays.js";
+import { subjectOfTactic, type Tactic, type TacticJudgingSweep, type WriterSubjectKind } from "./plays.js";
+import { readRunnableScripts, scriptDynastyKey, scriptVersionKey, type RunnableScript } from "./script-catalogue-client.js";
 import { fetchWorkflowDefinitions, type WorkflowDefinition } from "./workflow-definitions-client.js";
 import { TACTIC_JUDGMENT_SUPPORT } from "./platform-caller.js";
 
@@ -259,17 +260,57 @@ export async function sweepTacticJudgments(deps: { judge?: typeof judgeTactic; d
   return result;
 }
 
-/** One template dynasty or LLM dynasty Jev judges a writer tactic on (BEST-TPL-LLM-1022, LLM-DYNASTY-1022-FS). */
+/**
+ * One template dynasty, LLM dynasty or script dynasty Jev judges a tactic of its subject on (BEST-TPL-LLM-1022,
+ * LLM-DYNASTY-1022-FS, MIGRATE-1105 S0-STRATEGY).
+ */
 export interface WriterSubject {
-  kind: "template" | "llm";
+  kind: WriterSubjectKind;
   key: string;
-  /** What the verdict was judged on: the template dynasty's head template, the LLM dynasty's head model. A move re-judges it. */
+  /**
+   * What the verdict was judged on: the template dynasty's head template, the LLM dynasty's head model, the script
+   * dynasty's runnable version. A move re-judges it; the previous verdict serves until then (UPGRADE-WINDOW-1105).
+   */
   version: string;
-  state: Record<string, unknown>;
+  /** What Jev reads, in as many parts as it needs (a script's code over `MAX_DAG_CHARS` is read whole, in parts). */
+  states: Array<Record<string, unknown>>;
 }
 
-/** The yes/no question on a template dynasty or an LLM, from the tactic's own description. */
-export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, kind: "template" | "llm") {
+/**
+ * PURE: what Jev reads for one runnable script version: its Engine, its description, its tactics as data and its code,
+ * never its name alone. Code longer than `maxChars` is read whole in consecutive parts (never cut), each part naming
+ * its place; the script follows a tactic when ONE part shows it doing so (the workflow rule).
+ */
+export function scriptSubjectOf(s: RunnableScript, maxChars = MAX_DAG_CHARS): WriterSubject {
+  const base = { script: `${s.outcome}/${s.dynasty}/v${s.version}`, engine: s.outcome, description: s.description, tactics: s.tactics };
+  const states: Array<Record<string, unknown>> = [];
+  if (s.code.length <= maxChars) states.push({ ...base, code: s.code });
+  else {
+    const count = Math.ceil(s.code.length / maxChars);
+    for (let i = 0; i < count; i++) states.push({ ...base, part: `${i + 1} of ${count}`, code: s.code.slice(i * maxChars, (i + 1) * maxChars) });
+  }
+  return { kind: "script", key: scriptDynastyKey(s), version: scriptVersionKey(s), states };
+}
+
+/** The yes/no question on a script dynasty (MIGRATE-1105 S0-STRATEGY), from the tactic's own description. */
+function scriptTacticQuestion(t: Pick<Tactic, "name" | "description">) {
+  return {
+    type: "noul" as const,
+    instructions:
+      `Does this script follow the tactic "${t.name}"? The tactic: ${t.description} ` +
+      "A script is the code that makes one unit of its engine's outcome; its tactics are data it carries (for example the body it sends to a service). " +
+      "Judge only on what the script actually does: its code, the calls it makes and the tactics data it sends. Ignore its name and any label. " +
+      "When you see one part of a long script (`part`), answer yes when that part shows it doing what the tactic describes.",
+    criteria: {
+      true: `The script, as written and with its tactics data, does exactly what the tactic describes: ${t.description}`,
+      false: "The script does not do what the tactic describes, or does the opposite.",
+    },
+  };
+}
+
+/** The yes/no question on a template dynasty, an LLM or a script, from the tactic's own description. */
+export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, kind: WriterSubjectKind) {
+  if (kind === "script") return scriptTacticQuestion(t);
   const what = kind === "template" ? "email template (the prompt our writer model follows)" : "language model line (the LLM dynasty that writes our messages, run on its newest version)";
   return {
     type: "noul" as const,
@@ -290,29 +331,29 @@ export function writerTacticQuestion(t: Pick<Tactic, "name" | "description">, ki
  * and every chat-service LLM dynasty (judged on its HEAD model). A pipe whose dynasties cannot
  * be read is skipped this sweep (logged, its tactics state the failure).
  */
-export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[]; failures: string[] }> {
-  const failures: string[] = [];
+export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[]; failures: Array<{ kind: WriterSubjectKind; reason: string }> }> {
+  const failures: Array<{ kind: WriterSubjectKind; reason: string }> = [];
   const assignments = await listLegAssignments();
   const pipes = [...new Map(assignments.map((a) => [`${a.featureSlug}|${a.legKey}`, a])).values()];
   const byDynasty = new Map<string, { slug: string; name: string; description: string; head: string | null }>();
   for (const a of pipes) {
     const read = await readTemplateDynasties(a.featureSlug, a.legKey);
     if (typeof read === "string") {
-      failures.push(`the template dynasties of ${a.featureSlug}|${a.legKey} could not be read`);
+      failures.push({ kind: "template", reason: `the template dynasties of ${a.featureSlug}|${a.legKey} could not be read` });
       continue;
     }
     for (const d of read) if (!byDynasty.has(d.slug)) byDynasty.set(d.slug, { slug: d.slug, name: d.name, description: d.description, head: d.head });
   }
   const heads = [...byDynasty.values()].map((d) => d.head).filter((h): h is string => Boolean(h));
   const texts = await readTemplateTexts(heads).catch((error) => {
-    failures.push(`template texts unreadable: ${(error as Error).message}`);
+    failures.push({ kind: "template", reason: `template texts unreadable: ${(error as Error).message}` });
     return new Map<string, string>();
   });
   const subjects: WriterSubject[] = [];
   for (const d of byDynasty.values()) {
     const text = d.head ? texts.get(d.head) : undefined;
     if (!d.head || !text) continue; // judged once its head's text is readable
-    subjects.push({ kind: "template", key: d.slug, version: d.head, state: { templateDynasty: d.slug, name: d.name, description: d.description, headTemplate: d.head, prompt: text } });
+    subjects.push({ kind: "template", key: d.slug, version: d.head, states: [{ templateDynasty: d.slug, name: d.name, description: d.description, headTemplate: d.head, prompt: text }] });
   }
   // An LLM tactic judges a chat-service LLM DYNASTY on its HEAD model (LLM-DYNASTY-1022-FS; the template rule): key = the
   // dynasty slug, version = the head's id, so a new head re-judges it.
@@ -323,18 +364,31 @@ export async function readWriterSubjects(): Promise<{ subjects: WriterSubject[];
         kind: "llm",
         key: d.slug,
         version: d.headModelId,
-        state: { llmDynasty: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModel: head?.displayName ?? d.headModelId, headModelId: d.headModelId, versions: d.models.map((m) => m.displayName) },
+        states: [{ llmDynasty: d.slug, name: d.name, provider: d.provider, capabilityTier: d.capabilityTier, headModel: head?.displayName ?? d.headModelId, headModelId: d.headModelId, versions: d.models.map((m) => m.displayName) }],
       });
     }
   } catch (error) {
-    failures.push(`the LLM dynasties could not be read: ${(error as Error).message}`);
+    failures.push({ kind: "llm", reason: `the LLM dynasties could not be read: ${(error as Error).message}` });
+  }
+  // A script tactic judges every RUNNABLE script version of every Engine (MIGRATE-1105 S0-STRATEGY): key = the dynasty,
+  // version = the runnable version, so an upgrade re-judges it (the previous verdict serves until then).
+  try {
+    for (const s of await readRunnableScripts()) subjects.push(scriptSubjectOf(s));
+  } catch (error) {
+    failures.push({ kind: "script", reason: `the scripts could not be read: ${(error as Error).message}` });
   }
   return { subjects, failures };
 }
 
-async function judgeWriter(t: Tactic, subject: WriterSubject, ask: typeof askOne = askOne): Promise<TacticJudgment> {
-  const a = await ask(subject.state, writerTacticQuestion(t, subject.kind));
-  return { verdict: a.probability >= 0.5, probability: a.probability, model: a.model };
+/** Jev's verdict on one subject: one question per part, p = the highest part's; any part failing fails the judgment. */
+export async function judgeWriter(t: Tactic, subject: WriterSubject, ask: typeof askOne = askOne): Promise<TacticJudgment> {
+  let best: { probability: number; model: string } | null = null;
+  for (const state of subject.states) {
+    const a = await ask(state, writerTacticQuestion(t, subject.kind));
+    if (!best || a.probability > best.probability) best = a;
+  }
+  if (!best) throw new Error(`${subject.kind} ${subject.key}: nothing to judge`);
+  return { verdict: best.probability >= 0.5, probability: best.probability, model: best.model };
 }
 
 /**
@@ -351,7 +405,10 @@ export async function sweepWriterTacticJudgments(deps: { judge?: typeof judgeWri
   if (tactics.length === 0) return result;
   const [{ subjects, failures }, stored] = await Promise.all([(deps.subjects ?? readWriterSubjects)(), listWriterVerdicts()]);
   const done = new Set(stored.map((v) => `${v.subjectKind}|${v.subjectKey}|${v.tacticId}|${v.subjectVersion}|${v.judgedDescription}`));
-  const perTactic = new Map(tactics.map((t) => [t.id, { versions: 0, judged: 0, failed: failures.length, lastFailure: failures[0] ?? null }]));
+  // A subject kind whose catalogue could not be read fails only the tactics of that kind (a script catalogue outage never
+  // marks a template tactic as failing).
+  const failuresOf = (t: Tactic) => failures.filter((f) => f.kind === subjectOfTactic(t)).map((f) => f.reason);
+  const perTactic = new Map(tactics.map((t) => [t.id, { versions: 0, judged: 0, failed: failuresOf(t).length, lastFailure: failuresOf(t)[0] ?? null }]));
   const todo: Array<{ t: Tactic; subject: WriterSubject }> = [];
   for (const t of tactics) {
     for (const subject of subjects.filter((x) => x.kind === subjectOfTactic(t))) {

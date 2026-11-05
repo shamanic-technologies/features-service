@@ -164,6 +164,17 @@ export async function fetchCampaignSalesFunnelId(campaignId: string): Promise<{ 
   return { found: true, salesFunnelId: typeof row.salesFunnelId === "string" && row.salesFunnelId ? row.salesFunnelId : null };
 }
 
+/**
+ * One campaign UNIT as a run-time strategy read needs it (MIGRATE-1105 S0-STRATEGY): what it performs (feature slug + its
+ * own stated leg) and the sales funnel it states. `found:false` = campaign-service lists no such campaign. FAIL-LOUD.
+ */
+export async function fetchCampaignUnit(campaignId: string): Promise<{ found: false } | { found: true; featureSlug: string | null; legKey: string | null; salesFunnelId: string | null }> {
+  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown } | undefined;
+  if (!row) return { found: false };
+  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return { found: true, featureSlug: text(row.featureSlug), legKey: text(row.legKey), salesFunnelId: text(row.salesFunnelId) };
+}
+
 /** Test seam. */
 export function __resetCampaignListShareForTest(): void {
   listShared = null;

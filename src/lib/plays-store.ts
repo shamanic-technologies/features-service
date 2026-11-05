@@ -7,7 +7,7 @@ import { inArray, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts, writerTacticVerdicts } from "../db/schema.js";
 import { DeclarationError } from "./channel-declarations.js";
-import { buildPlayCatalogue, idOfName, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticSubject, type TacticVerdictRow, type WriterTacticVerdictRow } from "./plays.js";
+import { buildPlayCatalogue, idOfName, TACTIC_SUBJECTS, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticSubject, type TacticVerdictRow, type WriterTacticVerdictRow } from "./plays.js";
 
 const SHARE_MS = 30_000;
 let shared: { at: number; value: Promise<PlayCatalogue> } | null = null;
@@ -53,10 +53,10 @@ const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
   updatedBy: r.updatedBy,
   updatedAt: r.updatedAt?.toISOString() ?? null,
   clientLine: r.clientLine,
-  appliesTo: (r.appliesTo === "template" || r.appliesTo === "llm" ? r.appliesTo : "workflow") as TacticSubject,
+  appliesTo: ((TACTIC_SUBJECTS as readonly string[]).includes(r.appliesTo) ? r.appliesTo : "workflow") as TacticSubject,
 });
 const writerVerdictOf = (r: typeof writerTacticVerdicts.$inferSelect): WriterTacticVerdictRow => ({
-  subjectKind: r.subjectKind === "llm" ? "llm" : "template",
+  subjectKind: r.subjectKind === "llm" || r.subjectKind === "script" ? r.subjectKind : "template",
   subjectKey: r.subjectKey,
   tacticId: r.tacticId,
   subjectVersion: r.subjectVersion,

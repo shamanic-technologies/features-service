@@ -42,9 +42,12 @@ export interface Tactic {
 /**
  * What a tactic tags (BEST-TPL-LLM-1022, owner 2026-10-22): a workflow VERSION (its DAG), a template DYNASTY (its head's
  * text) or an LLM (a writer model alias). The three are chosen independently on a pipe; a strategy names tactics of any
- * subject, and each choice reads only the tactics of its own subject.
+ * subject, and each choice reads only the tactics of its own subject. `script` (MIGRATE-1105 S0-STRATEGY, owner
+ * 2026-11-05): a stored Script DYNASTY of an Engine (workflow-service `scripts`), judged on its RUNNABLE version (its
+ * description, its tactics as data and its code); the same requires/excludes rule narrows the scripts a campaign's
+ * Engine may run (`lib/script-strategy.ts`).
  */
-export const TACTIC_SUBJECTS = ["workflow", "template", "llm"] as const;
+export const TACTIC_SUBJECTS = ["workflow", "template", "llm", "script"] as const;
 export type TacticSubject = (typeof TACTIC_SUBJECTS)[number];
 
 export const subjectOfTactic = (t: Pick<Tactic, "appliesTo"> | undefined): TacticSubject => t?.appliesTo ?? "workflow";
@@ -62,9 +65,12 @@ export function strategyOnSubject(strategy: Strategy, subject: TacticSubject, ta
   return { ...strategy, requiresTacticIds: strategy.requiresTacticIds.filter(keep), excludesTacticIds: strategy.excludesTacticIds.filter(keep) };
 }
 
-/** One stored Jev verdict on one template dynasty or LLM alias (`writer_tactic_verdicts`). */
+/** What a `writer_tactic_verdicts` row judges: every subject but a workflow version (which has its own table). */
+export type WriterSubjectKind = Exclude<TacticSubject, "workflow">;
+
+/** One stored Jev verdict on one template dynasty, LLM dynasty or script dynasty (`writer_tactic_verdicts`). */
 export interface WriterTacticVerdictRow {
-  subjectKind: "template" | "llm";
+  subjectKind: WriterSubjectKind;
   subjectKey: string;
   tacticId: string;
   subjectVersion: string;
@@ -76,7 +82,7 @@ export interface WriterTacticVerdictRow {
 }
 
 /** PURE: `<kind>|<key>` -> tactic id -> verdict. */
-export const writerSubjectKey = (kind: "template" | "llm", key: string): string => `${kind}|${key}`;
+export const writerSubjectKey = (kind: WriterSubjectKind, key: string): string => `${kind}|${key}`;
 export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
   const out = new Map<string, Map<string, boolean>>();
   for (const r of rows) {
@@ -319,7 +325,7 @@ export interface StrategyVerdict {
  * workflow in the second before Jev answers; prod: workflow-service's catch-all copies are active on their leg the
  * moment they are created). A strategy naming no tactic allows everything.
  */
-export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string, boolean> | undefined, nameOf: (tacticId: string) => string): StrategyVerdict {
+export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string, boolean> | undefined, nameOf: (tacticId: string) => string, candidate = "workflow"): StrategyVerdict {
   for (const t of strategy.requiresTacticIds) {
     const v = tactics?.get(t);
     if (v === true) continue;
@@ -327,8 +333,8 @@ export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string,
       allowed: false,
       reason:
         v === undefined
-          ? `the strategy "${strategy.name}" requires the tactic "${nameOf(t)}" and this workflow has not been judged on it yet`
-          : `the strategy "${strategy.name}" requires the tactic "${nameOf(t)}" and this workflow does not follow it`,
+          ? `the strategy "${strategy.name}" requires the tactic "${nameOf(t)}" and this ${candidate} has not been judged on it yet`
+          : `the strategy "${strategy.name}" requires the tactic "${nameOf(t)}" and this ${candidate} does not follow it`,
     };
   }
   for (const t of strategy.excludesTacticIds) {
@@ -338,8 +344,8 @@ export function strategyVerdict(strategy: Strategy, tactics: ReadonlyMap<string,
       allowed: false,
       reason:
         v === undefined
-          ? `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this workflow has not been judged on it yet`
-          : `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this workflow follows it`,
+          ? `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this ${candidate} has not been judged on it yet`
+          : `the strategy "${strategy.name}" excludes the tactic "${nameOf(t)}" and this ${candidate} follows it`,
     };
   }
   return { allowed: true, reason: null };
@@ -368,7 +374,7 @@ export interface PlayCatalogue {
   tacticsByDynasty: Map<string, Map<string, boolean>>;
   /** tactic id -> its last full Jev sweep (absent = never swept). */
   sweepsByTactic: Map<string, TacticJudgingSweep>;
-  /** `<template|llm>|<key>` -> tactic id -> verdict (BEST-TPL-LLM-1022). */
+  /** `<template|llm|script>|<key>` -> tactic id -> verdict (BEST-TPL-LLM-1022, MIGRATE-1105 S0-STRATEGY). */
   tacticsByWriter: Map<string, Map<string, boolean>>;
 }
 
