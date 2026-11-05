@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -121,9 +122,7 @@ function mockFetch(fixture: Fixture): void {
     const json = (body: unknown) =>
       new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
-    if (path.endsWith("/campaigns")) {
-      return json({
-        campaigns: Object.entries(fixture.campaigns).map(([id, offerId]) => ({
+    const campaignRows = Object.entries(fixture.campaigns).map(([id, offerId]) => ({
           id,
           orgId: "0e9a0000-0000-4000-8000-000000000001",
           brandId: "b1",
@@ -134,9 +133,8 @@ function mockFetch(fixture: Fixture): void {
           offerId,
           status: "ongoing",
           createdAt: "2026-01-01T00:00:00.000Z",
-        })),
-      });
-    }
+        }));
+    if (path.endsWith("/campaigns")) return json({ campaigns: campaignRows });
     // The offer's terms are the ONLY pricing input (owner 2026-10-05): the funnels stating ECONOMICS,
     // every offer the fixture's campaigns sell carrying the same lifetime revenue.
     if (path.includes("/offer-economics")) {
@@ -175,7 +173,7 @@ function mockFetch(fixture: Fixture): void {
 
     if (path.endsWith("/orgs/leads")) {
       const only = q.get("campaignId");
-      return json({ leads: only ? fixture.leads.filter((l) => l.campaignId === only) : fixture.leads });
+      return json({ leads: only ? leadServiceCampaignRead(fixture.leads, campaignRows, only) : fixture.leads });
     }
     if (path.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (path.endsWith("/orgs/status")) return json({ results: [] });

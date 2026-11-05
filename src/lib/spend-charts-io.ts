@@ -102,8 +102,8 @@ export const isEntryLeg = (leg: ChartLeg): boolean => leg.fromStep === null || l
 
 /**
  * ONE SCOPE's people, overlays applied: the people its campaigns served (one campaign = lead-service's campaign read
- * and that campaign's own event dates, several = the brand's rows of those campaigns, the identity rule every revenue
- * read uses) plus, on a leg from a later step, the people its units were handed (read on the brand's rows).
+ * and that campaign's own event dates, several = one read per campaign identity of the scope, `fetchLeadsForRevenue`)
+ * plus, on a leg from a later step, the people its units were handed (read on the brand's rows).
  */
 export async function readScopePeople(
   brandId: string,
