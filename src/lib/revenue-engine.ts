@@ -1,3 +1,5 @@
+import type { CausedOutcomeFlag, OutcomeCause } from "./outcome-cause.js";
+import { CAUSE_BY_OUTCOME_SIGNALS, strongerCause } from "./outcome-cause.js";
 /**
  * Generic expected-pipeline-revenue engine.
  *
@@ -219,6 +221,12 @@ export interface EnginePerson {
    * falls back to exactly the forecast its other evidence earns. Absent = every reached signal is ours.
    */
   unpricedSignals?: readonly string[];
+  /**
+   * WHOSE WIN each stated outcome of this person was (`lib/outcome-cause.ts`), keyed by engine signal:
+   * lead-service's per-statement `causedByOutreach` (or, for a legacy instantly qualification, the same
+   * delivery rule lead-service applies). Never re-judged here. Absent = no outcome carried an answer.
+   */
+  signalCauses?: Readonly<Record<string, OutcomeCause>>;
 }
 
 export interface TopPerson {
@@ -398,6 +406,15 @@ export interface LeadRow {
   formSubmission: boolean;
   formSubmissionAt: string | null;
   /**
+   * WHOSE WIN each outcome on this row was, as lead-service judged it: one entry per REACHED outcome
+   * among booked / attended / sale / signup / form (`CAUSE_BY_OUTCOME_SIGNALS`), keyed by the row's own
+   * flag name; `outreach` = ours, `other` = the client's own win, `unstated` = undecided (nobody stated
+   * it and the default rule could not answer, or a tracker outcome no statement covers). Absent when
+   * the row reached none of them. Independent of `?cause=` (which decides what is PRICED, not what
+   * happened).
+   */
+  causeByOutcome?: Partial<Record<CausedOutcomeFlag, OutcomeCause>>;
+  /**
    * Lens-only: the lead's conversion probability (0–100) for the requested outcome lens. Present
    * ONLY on a lensed `?lens=` response; ABSENT on the default/grouped responses (keeps them
    * byte-identical). Set by the lens path in `revenue.ts`, never by the engine.
@@ -561,6 +578,23 @@ function personName(p: EnginePerson): string | null {
   return name.length > 0 ? name : null;
 }
 
+/**
+ * WHOSE WIN each REACHED outcome of a person was (`LeadRow.causeByOutcome`): lead-service's answer
+ * when one was carried, else `unstated` (an outcome no statement covers, e.g. a tracker signup).
+ * Undefined when the person reached none of the caused outcomes, so a row with nothing to say carries
+ * nothing.
+ */
+export function causeByOutcomeOf(person: EnginePerson): LeadRow["causeByOutcome"] {
+  const out: Partial<Record<CausedOutcomeFlag, OutcomeCause>> = {};
+  let any = false;
+  for (const [flag, signal] of Object.entries(CAUSE_BY_OUTCOME_SIGNALS) as Array<[CausedOutcomeFlag, string]>) {
+    if (!person.signals[signal]) continue;
+    out[flag] = person.signalCauses?.[signal] ?? "unstated";
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
 /** Merge per-campaign rows of the same lead into one person; OR signals, MIN signal dates. */
 export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
   const byLead = new Map<string, EnginePerson>();
@@ -579,6 +613,11 @@ export function dedupPersonsByLead(rows: EnginePerson[]): EnginePerson[] {
       existing.signals[key] = Boolean(existing.signals[key]) || value;
     }
     existing.unpricedSignals = unpricedSignals;
+    if (row.signalCauses) {
+      const merged: Record<string, OutcomeCause> = { ...(existing.signalCauses ?? {}) };
+      for (const [signal, cause] of Object.entries(row.signalCauses)) merged[signal] = strongerCause(merged[signal], cause)!;
+      existing.signalCauses = merged;
+    }
     if (row.campaignLeadIds && row.campaignLeadIds.length > 0) {
       existing.campaignLeadIds = [...new Set([...(existing.campaignLeadIds ?? []), ...row.campaignLeadIds])];
     }
@@ -973,6 +1012,7 @@ export function computeRevenue(
     signupAt: person.signalDates?.signup ?? null,
     formSubmission: Boolean(person.signals.formSubmission),
     formSubmissionAt: person.signalDates?.formSubmission ?? null,
+    causeByOutcome: causeByOutcomeOf(person),
   }));
   // Default sort: most-advanced status first, then most-recent conversion date, then EV (deterministic).
   leads.sort((a, b) => {
