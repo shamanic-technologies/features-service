@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { declaredFromEconomics, legCampaignRows, offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
+import { leadServiceCampaignRead } from "../lib/lead-service-campaign-read-fixture.js";
 
 // This suite pins the engine's IN-PROCESS figures (pipeline, the ROI pair): the cut each route applies
 // before serving is `lib/retired-returns.test.ts`'s subject (ROI-CONSISTENCY-1103), so it is identity here.
@@ -139,7 +140,7 @@ function mockFetch(fixture: Fixture): void {
     // `ECONOMICS` (`declaredFromEconomics`), walked by the legs the scope's campaigns perform.
     if (url.includes("/offer-economics")) return json(offerEconomicsFromDeclared(declaredFromEconomics(ECONOMICS)));
     if (url.includes("/orgs/leads")) {
-      return json({ leads: cid ? fixture.leads.filter((l) => l.campaignId === cid) : fixture.leads });
+      return json({ leads: cid ? leadServiceCampaignRead(fixture.leads, fixture.campaigns, cid) : fixture.leads });
     }
     if (url.includes("/manual-qualifications")) return json({ qualifications: [] });
     if (url.includes("/orgs/status")) return json({ results: [] });

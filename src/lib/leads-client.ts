@@ -1,4 +1,6 @@
-import type { EnginePerson } from "./revenue-engine.js";
+import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
+import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
+import { buildCampaignFamilies, EMPTY_CAMPAIGN_FAMILIES, type CampaignFamilies } from "./campaign-identity.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { createSlotLimiter } from "./concurrency.js";
 import { campaignFamilySet, singleCampaignId, type CampaignFilter } from "./campaign-scope.js";
@@ -61,7 +63,7 @@ interface LeadRow {
    */
   id?: string;
   leadId: string;
-  /** The campaign the row was served under — the key a campaign family is filtered on. */
+  /** The campaign the row was served under. */
   campaignId?: string | null;
   /**
    * The WORKFLOW the row was served under, as lead-service froze it on the `leads_campaigns` row at
@@ -307,17 +309,76 @@ export async function fetchLeadIdsByStanding(
  */
 export async function fetchLeadsForRevenue(
   brandId: string,
-  // One campaign, or the family sharing one identity (see campaign-identity.ts). lead-service takes
-  // no campaign LIST, so a family reads the brand-wide page and keeps the rows whose `campaignId` is
-  // a member. That is also the RIGHT delivery overlay for a family: brand-scoped status answers "did
-  // this lead ever click for this brand", which is what one campaign's total means once its stopped
-  // ancestors are folded in — and a lead served under two members is ONE lead, deduped downstream by
-  // the engine's `dedupPersonsByLead` rather than counted twice.
+  // The brand (undefined), one campaign, or SEVERAL campaigns (a campaign identity's rows, a funnel
+  // campaign's units, an offer's campaigns). See `fetchSeveralCampaignsLeads` for the several case.
   campaignScope: CampaignFilter,
   headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
 ): Promise<EnginePerson[]> {
-  const campaignId = singleCampaignId(campaignScope);
   const family = campaignFamilySet(campaignScope);
+  if (family) return fetchSeveralCampaignsLeads(brandId, [...family].sort(), headers);
+  return fetchLeadsOfScope(brandId, singleCampaignId(campaignScope), headers);
+}
+
+/**
+ * SEVERAL campaigns' people (CAMPAIGN-TOTAL-POSREPLY-1106). lead-service takes no campaign LIST, and its
+ * brand-wide list keeps ONE row per person: the LATEST serve, whatever campaign made it. Filtering that list
+ * on the scope's campaign ids dropped every person whose latest serve belongs to a campaign OUTSIDE the scope
+ * (prod 2026-11-06, brand 33211c62: the two positive repliers of cold email campaign b93006ef were last served by
+ * an AI Meeting Booking unit of ANOTHER funnel campaign, so the funnel campaign total read 0 positive replies
+ * beside its own cold email chart's 2). So each campaign IDENTITY of the scope is read on its own, through ONE of
+ * its members: lead-service widens a campaign read to the member's identity itself (the single-campaign read,
+ * byte for byte, its rows never filtered again). One walk per identity, never per
+ * row (an identity can hold 48 rows). The identities come from campaign-service (the same rows lead-service
+ * groups on); unreadable = each campaign its own identity, loud. A person reached by two identities is ONE
+ * person: the rows merge (`dedupPersonsByLead`) on the latest serve's campaign, the brand list's own rule.
+ */
+async function fetchSeveralCampaignsLeads(
+  brandId: string,
+  campaignIds: readonly string[],
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<EnginePerson[]> {
+  const identities = await scopeIdentities(brandId, campaignIds, headers);
+  const walks = await Promise.all(
+    // No row filter: a campaign read answers for its identity, the single-campaign read's own population.
+    identities.map(({ readThrough }) => fetchLeadsOfScope(brandId, readThrough, headers)),
+  );
+  if (walks.length === 1) return walks[0];
+  const servedMs = (p: EnginePerson) => (p.servedAt ? Date.parse(p.servedAt) : -Infinity);
+  const rows = walks.flat().sort((a, b) => servedMs(b) - servedMs(a));
+  return dedupPersonsByLead(rows);
+}
+
+/** The campaign identities a scope spans: per identity, the member it is read through. */
+async function scopeIdentities(
+  brandId: string,
+  campaignIds: readonly string[],
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<Array<{ readThrough: string }>> {
+  let families: CampaignFamilies;
+  try {
+    families = buildCampaignFamilies(await fetchBrandCampaignRows(brandId, undefined, headers));
+  } catch (err) {
+    console.error(
+      `[features-service] leads: campaign identities unreadable for brand ${brandId} (each of ${campaignIds.length} campaigns read on its own): ${(err as Error).message}`,
+    );
+    families = EMPTY_CAMPAIGN_FAMILIES;
+  }
+  const byKey = new Map<string, { readThrough: string }>();
+  for (const id of campaignIds) {
+    const identity = families.identityOf(id);
+    const key = identity?.key ?? `campaign:${id}`;
+    if (byKey.has(key)) continue;
+    byKey.set(key, { readThrough: id });
+  }
+  return [...byKey.values()];
+}
+
+/** The brand (no campaign) or ONE campaign, read from lead-service (which widens a campaign to its identity). */
+async function fetchLeadsOfScope(
+  brandId: string,
+  campaignId: string | undefined,
+  headers: { orgId: string; userId?: string; runId?: string; featureSlug?: string },
+): Promise<EnginePerson[]> {
   const url = process.env.LEAD_SERVICE_URL;
   const apiKey = process.env.LEAD_SERVICE_API_KEY;
   if (!url || !apiKey) {
@@ -393,8 +454,7 @@ export async function fetchLeadsForRevenue(
     }
   }
   const members = await membersPromise;
-  const scoped = family ? allRows.filter((row) => row.campaignId && family.has(row.campaignId)) : allRows;
-  const rows = members.size === 0 ? scoped : scoped.filter((row) => !isMemberAddress(row.email, members));
+  const rows = members.size === 0 ? allRows : allRows.filter((row) => !isMemberAddress(row.email, members));
   return rows.map((row) => {
     const org = row.lead?.organization ?? null;
     // A lead whose email BOUNCED, or who UNSUBSCRIBED, can never convert — no forward expected revenue
