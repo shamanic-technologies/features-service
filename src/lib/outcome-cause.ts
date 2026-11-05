@@ -118,6 +118,33 @@ export function causeScopeKeyPart(causes: readonly OutcomeCause[]): string {
   return `priced:${causes.join("+")}`;
 }
 
+/**
+ * The STRONGER of two answers about the same outcome of the same person (several statement rows, or
+ * several campaign rows of one lead): a decided answer beats `unstated`, and `outreach` beats `other`
+ * — the same "one row saying it was ours is enough" rule the pricing merge applies (`mergeUnpriced`),
+ * so the cause a row SHOWS and whether that row is PRICED can never disagree under the default.
+ */
+export function strongerCause(a: OutcomeCause | undefined, b: OutcomeCause | undefined): OutcomeCause | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  const rank = (c: OutcomeCause) => (c === "outreach" ? 2 : c === "other" ? 1 : 0);
+  return rank(b) > rank(a) ? b : a;
+}
+
+/**
+ * The per-lead row flags whose outcome carries a WHOSE-WIN answer, → the engine signal it rides.
+ * Exactly the outcomes lead-service states a cause for (the step statements, booked / attended / sale /
+ * signup / form) — never a click or a reply, which are delivery facts, not a deal someone could own.
+ */
+export const CAUSE_BY_OUTCOME_SIGNALS = {
+  meetingBooked: "meeting",
+  meetingAttended: "meetingAttended",
+  purchased: "closeWin",
+  signup: "signup",
+  formSubmission: "formSubmission",
+} as const;
+export type CausedOutcomeFlag = keyof typeof CAUSE_BY_OUTCOME_SIGNALS;
+
 /** A zeroed tally, one entry per state. */
 export function zeroCauseTally<T>(zero: () => T): Record<OutcomeCause, T> {
   return {

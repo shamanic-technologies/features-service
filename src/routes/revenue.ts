@@ -67,6 +67,7 @@ import {
   type TimeSeriesPoint,
   type EventRow,
   type SignalSeries,
+  causeByOutcomeOf,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
@@ -1151,6 +1152,7 @@ function buildLensBody(
       signupAt: person.signalDates?.signup ?? null,
       formSubmission: Boolean(person.signals.formSubmission),
       formSubmissionAt: person.signalDates?.formSubmission ?? null,
+      causeByOutcome: causeByOutcomeOf(person),
       conversionProbabilityPct: p * 100,
     });
   }

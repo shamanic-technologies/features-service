@@ -492,6 +492,10 @@ const revenueOrganizationSchema = z.object({
   mostAdvancedDate: z.string().nullable().describe("Most-advanced event date. Null until per-event timestamps exist (email-gateway)."),
 });
 
+const outcomeCauseWord = z
+  .enum(["outreach", "other", "unstated"])
+  .describe("lead-service's whose-win word: outreach = ours, other = the client's own win, unstated = undecided.");
+
 const revenueLeadSchema = z.object({
   leadId: z.string(),
   firstName: z.string().nullable(),
@@ -529,6 +533,16 @@ const revenueLeadSchema = z.object({
   signupAt: z.string().nullable().describe("ISO timestamp the signup was recorded. ALWAYS null today: lead-service exposes the matched lead (email) but NOT the conversion timestamp on any endpoint (the column exists internally — dedupe buckets by calendar-day — but is unexposed). Auto-populates when lead-service surfaces the date; no synthesis (borrowing the outreach date would be the wrong signal). features-service#476."),
   formSubmission: z.boolean().describe("True when the lead reached the FORM-SUBMISSION conversion (lead-service conversion tracker, event=form_submission — same matched-email producer attribution as `signup`). The visit-driven sibling of signup. features-service#476."),
   formSubmissionAt: z.string().nullable().describe("ISO timestamp of the form submission. ALWAYS null today (same lead-service date gap as signupAt: matched lead exposed, conversion timestamp not). Auto-populates when lead-service surfaces the date; no synthesis. features-service#476."),
+  causeByOutcome: z
+    .object({
+      meetingBooked: outcomeCauseWord.optional(),
+      meetingAttended: outcomeCauseWord.optional(),
+      purchased: outcomeCauseWord.optional(),
+      signup: outcomeCauseWord.optional(),
+      formSubmission: outcomeCauseWord.optional(),
+    })
+    .describe("WHOSE WIN each outcome on this row was, as lead-service judged it (never re-judged here; the same answer that decides whether the outcome is PRICED under the default `?cause=outreach`). One key per outcome the row REACHED among meetingBooked / meetingAttended / purchased / signup / formSubmission (a key is absent when that flag is false): `outreach` = OUR outreach caused it (ours), `other` = something else of the client's did (a real deal, not ours), `unstated` = undecided (nobody stated it and lead-service's default rule could not answer, or a tracker outcome no statement covers). Several statements about one outcome of one person keep the strongest answer (outreach > other > unstated). Independent of `?cause=`, which only decides what is priced. A consumer reporting \"sales we caused\" counts a `purchased` row only when `causeByOutcome.purchased` is `outreach`. Absent when the row reached none of these outcomes.")
+    .optional(),
   conversionProbabilityPct: z.number().describe("LENS ONLY — the lead's conversion probability (0–100) for the requested ?lens=. Present only on a lensed response; absent on the default/grouped responses.").optional(),
 });
 

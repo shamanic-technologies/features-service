@@ -88,9 +88,11 @@ export function applySignalOverlays(
       if (q.meetingBookedAt) legacy.push(["meeting", q.meetingBookedAt]);
       if (q.closedAt) legacy.push(["closeWin", q.closedAt]);
       for (const [signal, at] of legacy) {
+        const cause = causeByDeliveryRule(at, deliveredAt);
         person.signals[signal] = true;
         person.signalDates[signal] = at;
-        setPriced(person, signal, pricedCauses.includes(causeByDeliveryRule(at, deliveredAt)));
+        setPriced(person, signal, pricedCauses.includes(cause));
+        setCause(person, signal, cause);
       }
     }
   }
@@ -109,6 +111,9 @@ export function applySignalOverlays(
         person.signalDates[signal] = date;
         setPriced(person, signal, !facts.unpricedSignals.includes(signal));
       }
+      // WHOSE WIN each stated outcome was — lead-service's answer, carried to the lead row as is. A
+      // statement supersedes the legacy rule's answer about the same rung, exactly like its pricing.
+      for (const [signal, cause] of Object.entries(facts.causes ?? {})) setCause(person, signal, cause);
       // Website conversions: the rung is set elsewhere, the cause rides the statement rows.
       for (const signal of facts.unpricedSignals) {
         if (!(signal in facts.reached)) setPriced(person, signal, false);
@@ -119,6 +124,10 @@ export function applySignalOverlays(
       }
     }
   }
+}
+
+function setCause(person: EnginePerson, signal: string, cause: OutcomeCause): void {
+  person.signalCauses = { ...(person.signalCauses ?? {}), [signal]: cause };
 }
 
 function setPriced(person: EnginePerson, signal: string, priced: boolean): void {
