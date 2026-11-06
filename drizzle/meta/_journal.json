@@ -428,6 +428,13 @@
       "when": 1794240000000,
       "tag": "0060_box_health_disk",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794326400000,
+      "tag": "0061_outcome_lifecycle_rungs",
+      "breakpoints": true
     }
   ]
 }

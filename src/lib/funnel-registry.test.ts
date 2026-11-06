@@ -33,8 +33,8 @@ describe("sales funnel — legs, milestones, and the declared-set restriction", 
     expect(funnel.resolvePaths({ economics: ECONOMICS, pricedFunnelKeys: [] })).toEqual([]);
   });
 
-  it("contacted / sent / delivered / opened are MILESTONES, and a milestone has no revenue field", () => {
-    expect(funnel.milestones.map((m) => m.tag)).toEqual(["contacted", "sent", "delivered", "opened"]);
+  it("contacted / sent / delivered are MILESTONES (no opened: opens are deprecated), and a milestone has no revenue field", () => {
+    expect(funnel.milestones.map((m) => m.tag)).toEqual(["contacted", "sent", "delivered"]);
     for (const milestone of funnel.milestones) {
       // Not "zeroed" and not "weighted down" — there is nothing on a milestone to price.
       expect(Object.keys(milestone).sort()).toEqual(["signal", "tag"]);
