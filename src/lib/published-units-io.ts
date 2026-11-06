@@ -74,15 +74,6 @@ async function occurrences(params: Record<string, string>): Promise<ServedOccurr
 
 const chunks = <T>(xs: readonly T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
-/**
- * Every occurrence on each of these runs, one paged read per run, 6 runs at a time: a newsletter release run holds tens of
- * thousands of Units, read one after the other they took 132 s (2026-11-06); in parallel a fraction of it.
- */
-async function occurrencesOnRuns(runIds: readonly string[], params: Record<string, string>): Promise<ServedOccurrence[]> {
-  const parts = await mapWithConcurrency([...new Set(runIds)], 6, (runId) => occurrences({ ...params, runIds: runId }));
-  return parts.flat();
-}
-
 async function occurrencesOver(ids: readonly string[], idParam: "runIds" | "subjectIds", params: Record<string, string>): Promise<ServedOccurrence[]> {
   if (ids.length === 0) return [];
   const parts = await mapWithConcurrency(chunks([...new Set(ids)], 500), 4, (c) => occurrences({ ...params, [idParam]: c.join(",") }));
@@ -332,9 +323,10 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
   const keys = [...new Set(handles.map((h) => h.outcomeKey))];
   const singleRuns = [...new Set(single.map((h) => h.runId))];
   const [units, consumedOnRuns, bulkAggs, unitConsumptions] = await Promise.all([
-    Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOnRuns(runIds, { outcomeKey, direction: "produced" }))).then((x) => x.flat()),
+    // One-Unit runs (a post each) are read 500 runs per call: one call per run took 42 s for 38 Threads posts on a loaded box.
+    Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOver(runIds, "runIds", { outcomeKey, direction: "produced" }))).then((x) => x.flat()),
     // What each Unit's production order consumed (its inputs' cost: full absorption).
-    occurrencesOnRuns(singleRuns, { direction: "consumed" }),
+    occurrencesOver(singleRuns, "runIds", { direction: "consumed" }),
     Promise.all(bulk.map((h) => bulkRunAggregate(orgId, h.runId, h.outcomeKey, h.bulkFingerprint!, { waitForFresh: false }).then((agg) => [h.runId, agg] as const))).then((x) => new Map(x)),
     // What consumed the Units: every consumption of the outcome in the org (a click is rare: far fewer rows than the Units).
     handles.length ? Promise.all(keys.map((outcomeKey) => occurrences({ orgId, outcomeKey, direction: "consumed" }))).then((x) => x.flat()) : Promise.resolve([] as ServedOccurrence[]),
