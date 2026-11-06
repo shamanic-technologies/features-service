@@ -74740,6 +74740,351 @@
         }
       }
     },
+    "/brands/{brandId}/published-units/{outcomeKey}": {
+      "get": {
+        "summary": "One published outcome of the brand (Threads posts, X posts, LinkedIn posts, newsletter emails): every Unit with its creative and what it led to",
+        "description": "OUTCOME-FINEST-1106 (customer Outcome pages, hard-coded per outcome, owner 2026-11-06). Rows, newest first: the creative (post text, newsletter subject), its link, date, account (or mailing list), who performed it (`ours` | `client_team`: a hand post imported off a connected account), its Units (1 per post, emails sent per newsletter release), lifetime `views` / `engagements` its platform reports (null = not reported), and the ledger's `spentUsd`, `visits` (website visits that CONSUMED the Unit: a click on its link, never a time window) and `signups` (consuming those visits); null + `ledgerUnavailableReason: not_on_ledger_yet` before its Unit is declared. `totals.all` / `totals.ours`; `costPerSignupUsd` = ours spend / ours signups (null while ours has no signup: `learning`). `daily[]` = one point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X account posts, post metrics), transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); LinkedIn rows are the brand's Units themselves (creative null: no service lists LinkedIn posts with their Unit yet). Held 2 min, served up to 30 min old while re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "threads_post_published",
+                "x_post_published",
+                "linkedin_post_published",
+                "newsletter_email_sent"
+              ]
+            },
+            "required": true,
+            "name": "outcomeKey",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default net."
+            },
+            "required": false,
+            "description": "Default net.",
+            "name": "pricing",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's Units of this outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ]
+                    },
+                    "outcomeKey": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "publishedAt": {
+                            "type": "string"
+                          },
+                          "account": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "performedBy": {
+                            "type": "string",
+                            "enum": [
+                              "ours",
+                              "client_team"
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "url": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "units": {
+                            "type": "number"
+                          },
+                          "views": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "engagements": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "spentUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "visits": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "signups": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "ledgerUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "not_on_ledger_yet",
+                              null
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "publishedAt",
+                          "account",
+                          "performedBy",
+                          "text",
+                          "url",
+                          "units",
+                          "views",
+                          "engagements",
+                          "spentUsd",
+                          "visits",
+                          "signups",
+                          "ledgerUnavailableReason"
+                        ]
+                      }
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "all": {
+                          "type": "object",
+                          "properties": {
+                            "rows": {
+                              "type": "number"
+                            },
+                            "units": {
+                              "type": "number"
+                            },
+                            "views": {
+                              "type": "number"
+                            },
+                            "engagements": {
+                              "type": "number"
+                            },
+                            "visits": {
+                              "type": "number"
+                            },
+                            "signups": {
+                              "type": "number"
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "rows",
+                            "units",
+                            "views",
+                            "engagements",
+                            "visits",
+                            "signups",
+                            "spentUsd"
+                          ]
+                        },
+                        "ours": {
+                          "type": "object",
+                          "properties": {
+                            "rows": {
+                              "type": "number"
+                            },
+                            "units": {
+                              "type": "number"
+                            },
+                            "views": {
+                              "type": "number"
+                            },
+                            "engagements": {
+                              "type": "number"
+                            },
+                            "visits": {
+                              "type": "number"
+                            },
+                            "signups": {
+                              "type": "number"
+                            },
+                            "spentUsd": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "rows",
+                            "units",
+                            "views",
+                            "engagements",
+                            "visits",
+                            "signups",
+                            "spentUsd"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "all",
+                        "ours"
+                      ]
+                    },
+                    "costPerSignupUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "learning": {
+                      "type": "boolean"
+                    },
+                    "daily": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string"
+                          },
+                          "units": {
+                            "type": "number"
+                          },
+                          "oursUnits": {
+                            "type": "number"
+                          },
+                          "views": {
+                            "type": "number"
+                          },
+                          "visits": {
+                            "type": "number"
+                          },
+                          "signups": {
+                            "type": "number"
+                          },
+                          "spentUsd": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "date",
+                          "units",
+                          "oursUnits",
+                          "views",
+                          "visits",
+                          "signups",
+                          "spentUsd"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "pricing",
+                    "outcomeKey",
+                    "computedAt",
+                    "rows",
+                    "totals",
+                    "costPerSignupUsd",
+                    "learning",
+                    "daily"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown outcome or pricing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Brand not found for this org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A read failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/brands/{brandId}/campaign-targets": {
       "get": {
         "summary": "Today: one row per ongoing funnel campaign, on its Target: outcomes to date, $ per outcome, measured return, past per day, projection",

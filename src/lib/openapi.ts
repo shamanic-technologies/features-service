@@ -9428,6 +9428,67 @@ registry.registerPath({
   },
 });
 
+const publishedTotals = z.object({ rows: z.number(), units: z.number(), views: z.number(), engagements: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number() });
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/published-units/{outcomeKey}",
+  summary: "One published outcome of the brand (Threads posts, X posts, LinkedIn posts, newsletter emails): every Unit with its creative and what it led to",
+  description:
+    "OUTCOME-FINEST-1106 (customer Outcome pages, hard-coded per outcome, owner 2026-11-06). Rows, newest first: the creative (post text, newsletter subject), its link, " +
+    "date, account (or mailing list), who performed it (`ours` | `client_team`: a hand post imported off a connected account), its Units (1 per post, emails sent per " +
+    "newsletter release), lifetime `views` / `engagements` its platform reports (null = not reported), and the ledger's `spentUsd`, `visits` (website visits that " +
+    "CONSUMED the Unit: a click on its link, never a time window) and `signups` (consuming those visits); null + `ledgerUnavailableReason: not_on_ledger_yet` before " +
+    "its Unit is declared. `totals.all` / `totals.ours`; `costPerSignupUsd` = ours spend / ours signups (null while ours has no signup: `learning`). `daily[]` = one " +
+    "point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X account posts, post metrics), " +
+    "transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); " +
+    "LinkedIn rows are the brand's Units themselves (creative null: no service lists LinkedIn posts with their Unit yet). Held 2 min, served up to 30 min old while " +
+    "re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere.",
+  tags: ["Stats"],
+  request: {
+    params: z.object({ brandId: z.string(), outcomeKey: z.enum(["threads_post_published", "x_post_published", "linkedin_post_published", "newsletter_email_sent"]) }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Default net.") }),
+  },
+  responses: {
+    200: {
+      description: "The brand's Units of this outcome.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            pricing: z.enum(["gross", "net"]),
+            outcomeKey: z.string(),
+            computedAt: z.string(),
+            rows: z.array(
+              z.object({
+                id: z.string(),
+                publishedAt: z.string(),
+                account: z.string().nullable(),
+                performedBy: z.enum(["ours", "client_team"]),
+                text: z.string().nullable(),
+                url: z.string().nullable(),
+                units: z.number(),
+                views: z.number().nullable(),
+                engagements: z.number().nullable(),
+                spentUsd: z.number().nullable(),
+                visits: z.number().nullable(),
+                signups: z.number().nullable(),
+                ledgerUnavailableReason: z.enum(["not_on_ledger_yet"]).nullable(),
+              }),
+            ),
+            totals: z.object({ all: publishedTotals, ours: publishedTotals }),
+            costPerSignupUsd: z.number().nullable(),
+            learning: z.boolean(),
+            daily: z.array(z.object({ date: z.string(), units: z.number(), oursUnits: z.number(), views: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number() })),
+          }),
+        },
+      },
+    },
+    400: { description: "Unknown outcome or pricing", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Brand not found for this org", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A read failed", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 const campaignTargetValue = z.number().nullable();
 registry.registerPath({
   method: "get",
