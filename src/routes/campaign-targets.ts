@@ -83,6 +83,15 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     const st = stepsOfPipe(u.pipeId);
     return st ? [{ campaignId: u.campaignId, fromStep: st.fromStep, toStep: st.toStep }] : [];
   });
+  // MIGRATE-1105 S5: a unit whose pipe's Engine makes a finer outcome (Threads post published on the leg to Post
+  // published) lands its Units under that outcome; its milestone counts them too (a Unit has ONE outcome: no double count).
+  const ledgerOfMilestone = (step: string, unitCampaignIds: readonly string[]): Map<string, number> => {
+    const keys = new Set([step]);
+    for (const u of row.units) if (unitCampaignIds.includes(u.campaignId)) keys.add(stepsOfPipe(u.pipeId)?.outcome ?? step);
+    const out = new Map<string, number>();
+    for (const k of keys) for (const [day, n] of ledger?.byOutcome.get(k) ?? []) out.set(day, (out.get(day) ?? 0) + n);
+    return out;
+  };
   const chain = milestoneChainOf(edges, targetKey);
   const spendOf = (ids: readonly string[]) => {
     const own = charts.pipes.filter((p) => ids.includes(p.campaignId));
@@ -112,7 +121,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
       step: m.step,
       label: labelOf(m.step),
       lifecycleRung: rungs.get(m.step) ?? null,
-      ledgerByDay: ledger?.byOutcome.get(m.step) ?? new Map(),
+      ledgerByDay: ledgerOfMilestone(m.step, m.unitCampaignIds),
       people:
         landing.length > 0
           ? { cumulativeByDay: sumCumulativeDays(landing.map((p) => p.daily.map((d) => ({ date: d.date, cumulativeOutcomes: d.cumulativeOutcomes })))), count: null }
