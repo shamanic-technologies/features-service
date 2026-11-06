@@ -90,7 +90,7 @@ const pluralWord = (w: string): string => {
 
 /**
  * PURE: the plural of an outcome label, for counts ("12 Leads", "3 Meetings booked"). A label ending on a past
- * participle ("Meeting booked", "Form submitted", "Email sent") pluralises its noun, the first word; any other
+ * participle ("Meeting booked", "Form submitted", "Email sent") pluralises its noun, the word before the participle; any other
  * pluralises its last word ("Positive reply" -> "Positive replies", "Paid client" -> "Paid clients").
  */
 export function pluralLabelOf(label: string): string {
@@ -98,7 +98,8 @@ export function pluralLabelOf(label: string): string {
   if (words.length === 0 || words[0] === "") return label;
   const last = words[words.length - 1];
   const participle = words.length > 1 && (/ed$/i.test(last) || /^(sent|done|won|lost|held|paid|made|seen|shown|built|found|written|given|taken|known|chosen|drawn|grown|sold|bought|kept|told|run)$/i.test(last));
-  if (participle) return [pluralWord(words[0]), ...words.slice(1)].join(" ");
+  // The head noun is the word right before the participle ("X post published" -> "X posts published", OUTCOME-FINEST-1106).
+  if (participle) return [...words.slice(0, -2), pluralWord(words[words.length - 2]), last].join(" ");
   return [...words.slice(0, -1), pluralWord(last)].join(" ");
 }
 
