@@ -6,7 +6,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import express from "express";
 import request from "supertest";
 
+process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
+vi.mock("../lib/channel-declarations-store.js", () => ({ listDeclaredSteps: vi.fn(async () => [{ key: "post_published", label: "Post published" }]) }));
+const copies = vi.fn();
+vi.mock("./agent-catalogue.js", () => ({ funnelCopiesFor: (...a: unknown[]) => copies(...a) }));
+const ledgerOf = vi.fn();
+vi.mock("../lib/campaign-ledger-units-client.js", async (orig) => ({ ...(await orig<object>()), fetchCampaignLedgerUnits: (...a: unknown[]) => ledgerOf(...a) }));
 const fetchSalesFunnelCampaigns = vi.fn();
 vi.mock("../lib/sales-funnel-campaigns-client.js", () => ({ fetchSalesFunnelCampaigns: (...a: unknown[]) => fetchSalesFunnelCampaigns(...a) }));
 vi.mock("../lib/brand-ownership.js", () => ({ assertBrandHeld: vi.fn(async () => undefined), BrandOwnershipError: class BrandOwnershipError extends Error {} }));
@@ -30,7 +36,22 @@ vi.mock("../middleware/auth.js", () => ({
 import router from "./campaign-targets.js";
 
 const app = express().use(router);
-const row = (id: string, status: string) => ({ id, brandId: "b1", offerId: "o1", salesFunnelId: "f", salesFunnelName: `Funnel ${id}`, status, stopReason: null, createdAt: "2026-10-01T00:00:00.000Z", units: [], target: "conversation", mode: "proactive" });
+const row = (id: string, status: string) => ({
+  id,
+  brandId: "b1",
+  offerId: "o1",
+  salesFunnelId: "f",
+  salesFunnelName: `Funnel ${id}`,
+  status,
+  stopReason: null,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  units: [
+    { campaignId: "u-src", pipeId: "p-src", featureSlug: "lead-sourcing", legKey: "start_to_lead_found", status: "ongoing" },
+    { campaignId: "u-mail", pipeId: "p-mail", featureSlug: "cold-email", legKey: "lead_found_to_conversation", status: "ongoing" },
+  ],
+  target: "conversation",
+  mode: "proactive",
+});
 const today = new Date().toISOString().slice(0, 10);
 const day = (n: number) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
 const pipeDaily = [
@@ -45,10 +66,15 @@ beforeEach(() => {
   activity.mockResolvedValue({ funnel: { steps: [{ key: "lead_found", label: "Lead found", kind: "step", people: 100 }, { key: "conversation", label: "Positive reply", kind: "step", people: 2 }] } });
   charts.mockResolvedValue({
     campaign: { daily: pipeDaily, totals: { spendUsd: 30 } },
-    pipes: [{ outcomeStep: "conversation", outcomeUnavailableReason: null, daily: pipeDaily, totals: { spendUsd: 20, outcomes: 2 } }],
+    pipes: [
+      { campaignId: "u-src", outcomeStep: "lead_found", outcomeUnavailableReason: null, daily: [], totals: { spendUsd: 10, outcomes: 0 } },
+      { campaignId: "u-mail", outcomeStep: "conversation", outcomeUnavailableReason: null, daily: pipeDaily, totals: { spendUsd: 20, outcomes: 2 } },
+    ],
   });
   readPlan.mockResolvedValue({ orgId: "org-1", brandId: "b1", offerId: "o1", status: "ok", failure: null, body: planBody(15, "f1"), computedAt: "2026-11-06T09:00:00.000Z" });
   budget.mockResolvedValue(30);
+  copies.mockResolvedValue({ pipeSteps: new Map([["p-src", { fromStep: null, toStep: "lead_found" }], ["p-mail", { fromStep: "lead_found", toStep: "conversation" }]]) });
+  ledgerOf.mockResolvedValue({ byOutcome: new Map(), daysMissing: [] });
 });
 
 describe("GET /brands/:brandId/campaign-targets", () => {
@@ -83,5 +109,29 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     const res = await request(app).get("/brands/b1/campaign-targets?pricing=gross");
     expect(res.body.targets[0].projection.spendPerDaySource).toBe("spend_pace_7d");
     expect((await request(app).get("/brands/b1/campaign-targets?pricing=x")).status).toBe(400);
+  });
+
+  it("one campaign (the campaign page): a card per milestone from Start to its Target, counted from the Units its runs produced (ledger)", async () => {
+    ledgerOf.mockImplementation(async (id: string) =>
+      id === "u-src" ? { byOutcome: new Map([["lead_found", new Map([[day(2), 60], [day(1), 40]])]]), daysMissing: [day(0)] } : { byOutcome: new Map(), daysMissing: [] },
+    );
+    const res = await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c2");
+    expect(res.status).toBe(200);
+    const t = res.body.targets[0];
+    expect(t.salesFunnelCampaignId).toBe("c2");
+    expect(t.milestones.map((m: { step: string }) => m.step)).toEqual(["lead_found", "conversation"]);
+    expect(t.milestones[0]).toMatchObject({ count: 100, countSource: "ledger", costPerUnitUsd: 0.1, conversionToNextPct: 2, lifecycleRung: "lead_found" });
+    // A reply no run of the campaign declares: the campaign's own people, said so.
+    expect(t.milestones[1]).toMatchObject({ isTarget: true, count: 2, countSource: "campaign_people", costPerUnitUsd: 10, costFromStartUsd: 15 });
+    expect(t.targetCountSource).toBe("campaign_people");
+    expect(t.ledgerDaysMissing).toEqual([day(0)]);
+    expect(t.milestones[1].projection.outcomesPerDay).toBe(t.projection.outcomesPerDay);
+    expect((await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=nope")).status).toBe(404);
+  });
+
+  it("a ledger read that fails leaves every milestone on the campaign's own people", async () => {
+    ledgerOf.mockRejectedValue(new Error("runs down"));
+    const t = (await request(app).get("/brands/b1/campaign-targets")).body.targets[0];
+    expect(t.milestones[1]).toMatchObject({ count: 2, countSource: "campaign_people" });
   });
 });
