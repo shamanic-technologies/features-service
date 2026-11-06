@@ -100,6 +100,18 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     expect(res.body.totals.all.units).toBe(3);
   });
 
+  it("LinkedIn: the brand's connected LinkedIn accounts' posts, hand posts as client_team; X posts stay on the X page", async () => {
+    const post = (id: string, platform: string, performedBy: string) => ({ id, platform, orgId: "org-1", brandId: "b1", username: "kevin", externalId: id, text: `t ${id}`, permalink: `https://linkedin.com/feed/${id}`, publishedAt: "2026-11-05T10:00:00.000Z", performedBy, ourSubjectId: null, outcomeKey: `${platform}_post_published`, unitRunId: null, metrics: { views: 10, likes: 2, replies: 1, reposts: null, quotes: null, bookmarks: null } });
+    fetchWithRetry.mockImplementation(async (url: string) => {
+      if (url.startsWith("http://social/internal/account-posts")) return json({ posts: [post("l1", "linkedin", "client_team"), post("x1", "x", "client_team")] });
+      if (url.startsWith("http://runs/internal/outcome-occurrences")) return json({ occurrences: [], nextCursor: null });
+      throw new Error(`unexpected ${url}`);
+    });
+    const res = await request(app).get("/brands/b1/published-units/linkedin_post_published");
+    expect(res.status).toBe(200);
+    expect(res.body.rows).toEqual([expect.objectContaining({ id: "l1", performedBy: "client_team", views: 10, engagements: 3, ledgerUnavailableReason: "not_on_ledger_yet" })]);
+  });
+
   it("refuses an outcome it does not serve, and a foreign brand", async () => {
     expect((await request(app).get("/brands/b1/published-units/post_published")).status).toBe(400);
     expect((await request(app).get("/brands/b1/published-units/x_post_published?pricing=vendor")).status).toBe(400);

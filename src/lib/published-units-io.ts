@@ -5,10 +5,8 @@
  *   - threads_post_published: meta-service `GET /internal/threads/measurable-posts` (every Threads MAIN post of the brand,
  *     ours and imported hand posts; the outcome each one declares is its own `outcomeKey`), views/engagement from
  *     social-service `GET /internal/post-metrics`;
- *   - x_post_published: social-service `GET /internal/account-posts` (every post of the brand's connected X accounts, hand
- *     posts included, with their counts);
- *   - linkedin_post_published: no service lists the brand's LinkedIn posts with their Unit yet, so the rows are the Units
- *     themselves (runs-service occurrences tagged with the brand), creative null;
+ *   - x_post_published / linkedin_post_published: social-service `GET /internal/account-posts` (every post of the
+ *     brand's connected X / LinkedIn accounts, hand posts included, with their counts);
  *   - newsletter_email_sent: transactional-email-service `GET /internal/mailing-list-releases` (one row per release, its
  *     emails sent = its Units; a release stating no brand is the org's newsletter and lists on each of its brands).
  *   - the ledger: runs-service `GET /internal/outcome-occurrences` (each row's produced Units with their cost, the visits
@@ -148,12 +146,13 @@ interface AccountPost {
   metrics: Record<string, number | null>;
 }
 
-async function xRows(orgId: string, brandId: string): Promise<UnitSource[]> {
+/** Every post of the brand's connected accounts on one network, hand posts included (social-service account posts). */
+async function accountPostRows(orgId: string, brandId: string, platform: "x" | "linkedin"): Promise<UnitSource[]> {
   const body = (await socialGet(`/internal/account-posts?${new URLSearchParams({ orgId, brandId, limit: "500" })}`)) as { posts?: AccountPost[] };
   if (!Array.isArray(body.posts)) throw new Error("social-service account-posts: no posts array");
-  if (body.posts.length >= 500) console.error(`[features-service] published units: social-service account-posts answered its 500-post cap for brand ${brandId}, older X posts are not listed`);
+  if (body.posts.length >= 500) console.error(`[features-service] published units: social-service account-posts answered its 500-post cap for brand ${brandId}, older posts are not listed`);
   return body.posts
-    .filter((p) => p.platform === "x" && p.orgId === orgId && p.brandId === brandId)
+    .filter((p) => p.platform === platform && p.orgId === orgId && p.brandId === brandId)
     .map((p) => ({
       id: p.id,
       publishedAt: p.publishedAt,
@@ -168,23 +167,9 @@ async function xRows(orgId: string, brandId: string): Promise<UnitSource[]> {
     }));
 }
 
-async function linkedinRows(orgId: string, brandId: string): Promise<UnitSource[]> {
-  const units = await occurrences({ orgId, outcomeKey: "linkedin_post_published", direction: "produced" });
-  return units
-    .filter((o) => (o.tags?.brandIds ?? []).includes(brandId))
-    .map((o) => ({
-      id: o.id,
-      publishedAt: o.declaredAt ?? "",
-      account: null,
-      performedBy: o.performer?.kind === "client_team" ? ("client_team" as const) : ("ours" as const),
-      text: null,
-      url: null,
-      units: 1,
-      views: null,
-      engagements: null,
-      ledger: { runId: o.runId, outcomeKey: o.outcomeKey, subjectId: o.subjectId },
-    }));
-}
+const xRows = (orgId: string, brandId: string) => accountPostRows(orgId, brandId, "x");
+// LINKEDIN-ACCOUNTS-1106 (social-service v0.1.13): a connected LinkedIn account imports its page's whole history.
+const linkedinRows = (orgId: string, brandId: string) => accountPostRows(orgId, brandId, "linkedin");
 
 interface Release {
   releaseId: string;
