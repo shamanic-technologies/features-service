@@ -9442,9 +9442,18 @@ registry.registerPath({
     "(that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current " +
     "Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, " +
     "else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = now + 24 h ÷ outcomesPerDay; null + `unavailableReason` " +
-    "otherwise. Org-scoped (x-org-id). No open rate anywhere.",
+    "otherwise. `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
+    "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included), else its own people " +
+    "(`countSource`); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
+    "Target's figures on the row = its card's. `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
   tags: ["Sales funnel campaigns"],
-  request: { params: z.object({ brandId: z.string() }), query: z.object({ pricing: z.enum(["gross", "net"]).optional().describe("Default net.") }) },
+  request: {
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      pricing: z.enum(["gross", "net"]).optional().describe("Default net."),
+      salesFunnelCampaignId: z.string().optional().describe("One funnel campaign, any status (the campaign page); absent = every ONGOING campaign (Today). Unknown = 404 `sales_funnel_campaign_not_found`."),
+    }),
+  },
   responses: {
     200: {
       description: "The brand's ongoing campaigns, one row each on its Target, oldest campaign first.",
@@ -9482,6 +9491,33 @@ registry.registerPath({
                   nextExpectedInHours: campaignTargetValue,
                   unavailableReason: z.string().nullable(),
                 }),
+                targetCountSource: z.enum(["ledger", "campaign_people"]).nullable().describe("Where the Target's count comes from (its milestone card's `countSource`)."),
+                milestones: z.array(z.object({
+                    step: z.string(),
+                    label: z.string(),
+                    lifecycleRung: z.string().nullable(),
+                    isTarget: z.boolean(),
+                    count: campaignTargetValue,
+                    countSource: z.enum(["ledger", "campaign_people"]).nullable().describe("`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included); `campaign_people` = no run of the campaign declares this outcome (a reply judged by an org-day run, a signup the client's team makes): its own people count."),
+                    countUnavailableReason: z.string().nullable(),
+                    past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })),
+                    pastUnavailableReason: z.string().nullable(),
+                    costPerUnitUsd: campaignTargetValue.describe("What the units landing on this milestone spent ÷ its count."),
+                    costPerUnitUnavailableReason: z.string().nullable(),
+                    costFromStartUsd: campaignTargetValue.describe("What every unit up to this milestone spent ÷ its count."),
+                    costFromStartUnavailableReason: z.string().nullable(),
+                    conversionToNextPct: campaignTargetValue,
+                    conversionToNextUnavailableReason: z.string().nullable(),
+                    projection: z.object({
+                      outcomesPerDay: campaignTargetValue,
+                      daily: z.array(z.object({ date: z.string(), expectedOutcomes: z.number(), cumulativeExpectedOutcomes: z.number() })),
+                      nextExpectedAt: z.string().nullable(),
+                      nextExpectedInHours: campaignTargetValue,
+                      unavailableReason: z.string().nullable(),
+                    }),
+                  })).describe("One card per milestone of the campaign from Start to its Target (the chain of its own units, never the plan line); the last is the Target and carries the row's count."),
+                milestonesUnavailableReason: z.string().nullable(),
+                ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: their counts may still move."),
               }),
             ),
           }),
@@ -9489,7 +9525,7 @@ registry.registerPath({
       },
     },
     400: { description: "Bad pricing", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Brand not found", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "Brand or campaign not found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "A read failed", content: { "application/json": { schema: errorResponse } } },
   },
 });
