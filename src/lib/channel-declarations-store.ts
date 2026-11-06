@@ -15,6 +15,7 @@ import {
   declaredSalesPaths,
   declaredSteps,
   features,
+  pipeEngineOutcomes,
 } from "../db/schema.js";
 import { registerDeclaredSteps, type ChannelStepKey } from "./acquisition-channels.js";
 import { canonicalTriggerId, withAnyOfMembers } from "./channel-triggers.js";
@@ -26,6 +27,7 @@ export type { RetiredChannel } from "./channel-catalogue.js";
 import { channelShortDescription } from "./channel-short-descriptions.js";
 import { channelTypeOf } from "./channel-types.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
+import { pipeLegKeyOf } from "./funnel-legs.js";
 import {
   mergeDeclarations,
   type ChannelInput,
@@ -149,8 +151,9 @@ export async function loadChannelCatalogue(opts: { publishedOnly: boolean }): Pr
   const declared = { channels, legs, triggers };
   const merged = mergeDeclarations(rows, declared, opts, { shortDescriptionOf: channelShortDescription, channelTypeOfSlug: channelTypeOf });
   const workflowChannelSlugs = new Set(assignments.filter((a) => a.state === "active").map((a) => a.featureSlug));
+  const engineOutcomeOf = engineOutcomeLookup(await listPipeEngineOutcomes());
   return {
-    channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg, workflowChannelSlugs),
+    channels: buildChannelCatalogue(merged.rows, merged.shortDescriptionOf, merged.channelTypeOfSlug, merged.triggerOf, merged.isDraftLeg, workflowChannelSlugs, engineOutcomeOf),
     declared,
   };
 }
@@ -422,4 +425,44 @@ export async function insertLegRate(rate: DeclaredLegRate, createdBy: string): P
 export async function insertSalesPathChain(pathId: string, legKeys: string[], createdBy: string, requestedByOrgId: string | null): Promise<DeclaredSalesPathChain> {
   const [row] = await db.insert(declaredSalesPathChains).values({ pathId, legKeys, createdBy, requestedByOrgId }).returning();
   return { pathId: row.pathId, legKeys: row.legKeys as string[], createdBy: row.createdBy, requestedByOrgId: row.requestedByOrgId, createdAt: row.createdAt.toISOString() };
+}
+
+// ── The outcome a pipe's Engine makes (MIGRATE-1105 S5) ─────────────────────────────────────────────────────────
+
+export interface PipeEngineOutcome {
+  channelSlug: string;
+  /** The pipe's computed leg key (`pipeLegKeyOf`). */
+  legKey: string;
+  outcome: string;
+  declaredBy: string;
+  declaredAt: string;
+}
+
+export async function listPipeEngineOutcomes(): Promise<PipeEngineOutcome[]> {
+  return (await db.select().from(pipeEngineOutcomes).orderBy(asc(pipeEngineOutcomes.channelSlug), asc(pipeEngineOutcomes.legKey))).map((r) => ({
+    ...r,
+    declaredAt: r.declaredAt.toISOString(),
+  }));
+}
+
+/** PURE: the stated Engine outcome of a (channel, leg), either leg spelling; null = none stated (the leg's `to` step). */
+export function engineOutcomeLookup(rows: readonly Pick<PipeEngineOutcome, "channelSlug" | "legKey" | "outcome">[]): (slug: string, legKey: string) => string | null {
+  const by = new Map(rows.map((r) => [`${r.channelSlug}|${pipeLegKeyOf(r.channelSlug, r.legKey)}`, r.outcome]));
+  return (slug, legKey) => by.get(`${slug}|${pipeLegKeyOf(slug, legKey)}`) ?? null;
+}
+
+/** States (or restates) the outcome a pipe's Engine makes. */
+export async function setPipeEngineOutcome(channelSlug: string, legKey: string, outcome: string, declaredBy: string): Promise<void> {
+  const key = pipeLegKeyOf(channelSlug, legKey);
+  await db
+    .insert(pipeEngineOutcomes)
+    .values({ channelSlug, legKey: key, outcome, declaredBy })
+    .onConflictDoUpdate({ target: [pipeEngineOutcomes.channelSlug, pipeEngineOutcomes.legKey], set: { outcome, declaredBy, declaredAt: new Date() } });
+}
+
+/** Drops the statement: the pipe's Engine is its leg's `to` step again. Whether a row was dropped. */
+export async function clearPipeEngineOutcome(channelSlug: string, legKey: string): Promise<boolean> {
+  const key = pipeLegKeyOf(channelSlug, legKey);
+  const rows = await db.delete(pipeEngineOutcomes).where(and(eq(pipeEngineOutcomes.channelSlug, channelSlug), eq(pipeEngineOutcomes.legKey, key))).returning();
+  return rows.length > 0;
 }

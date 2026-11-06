@@ -570,6 +570,23 @@ export const outcomeLifecycleRungs = pgTable("outcome_lifecycle_rungs", {
   statedAt: timestamp("stated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * THE OUTCOME A PIPE'S ENGINE MAKES (MIGRATE-1105 S5, owner 2026-11-06: the outcome is the WHAT, as fine as possible):
+ * stated when finer than the leg's `to` step (Threads post published on the Threads leg to Post published). Keyed on
+ * the pipe's computed leg key (`pipeLegKeyOf`). No row = the Engine is the `to` step. Migration 0062.
+ */
+export const pipeEngineOutcomes = pgTable(
+  "pipe_engine_outcomes",
+  {
+    channelSlug: text("channel_slug").notNull(),
+    legKey: text("leg_key").notNull(),
+    outcome: text("outcome").notNull(),
+    declaredBy: text("declared_by").notNull(),
+    declaredAt: timestamp("declared_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "pipe_engine_outcomes_pk", columns: [table.channelSlug, table.legKey] })],
+);
+
 /** The stated conversion rate of a leg nothing else rates (no industry default, no fleet median): declared with its first pipe or step. */
 export const declaredLegRates = pgTable(
   "declared_leg_rates",
