@@ -115,7 +115,7 @@ import { SALES_PATH_COST_BENCHMARKS } from "./sales-path-cost-benchmarks.js";
 import { faceOf, stableHash, type Face } from "./catalogue-faces.js";
 import { GLYPH_COLORS } from "./catalogue-marks.js";
 import { STEP_SIGNAL } from "./value-added.js";
-import { codedStepLifecycleRungOf, isStepLifecycleRung, type StepLifecycleRung } from "./lifecycle-ladder.js";
+import type { StepLifecycleRung } from "./lifecycle-ladder.js";
 import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug, type PlayBlock } from "./plays.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
@@ -200,8 +200,6 @@ export interface DeclaredStepInput {
   towardStep: string | null;
   towardRatePct: number | null;
   producedBy: string | null;
-  /** Its rung on the lifecycle ladder or `none` (`lib/lifecycle-ladder.ts`); null/absent = never stated. */
-  lifecycleRung?: string | null;
   /** `person` | `object` (`lib/outcome-subject.ts`); null/absent = never stated. */
   subjectKind?: string | null;
 }
@@ -234,6 +232,12 @@ export interface CatalogueInputs {
    */
   scriptChannelOutcomes?: ReadonlySet<string>;
   declaredSteps: readonly DeclaredStepInput[];
+  /**
+   * Every outcome's rung on the ONE lead Lifecycle, read from the catalogue table `outcome_lifecycle_rungs`
+   * (`listOutcomeRungs`, OUTCOME-RUNG-AND-TARGET-1106): coded and declared steps alike. An outcome with no row serves
+   * null (never stated). Absent = nothing read (every rung null): only a read that serves no rung may omit it.
+   */
+  outcomeRungs?: ReadonlyMap<string, StepLifecycleRung>;
   /** Pipe id -> fleet measurement. Absent = nothing measured. */
   measurements: ReadonlyMap<string, PipeMeasurement>;
   /** The fleet median lifetime revenue of an offer, USD (or ONE offer's own, on a per-offer read). Null = nothing anywhere states one. */
@@ -853,7 +857,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
       valueUsd: value === null ? null : round2(value),
       valueVia: via,
       producedBy: d?.producedBy ?? null,
-      lifecycleRung: d ? (isStepLifecycleRung(d.lifecycleRung) ? d.lifecycleRung : null) : (codedStepLifecycleRungOf(key) ?? null),
+      lifecycleRung: inputs.outcomeRungs?.get(key) ?? null,
       subjectKind: d ? (isOutcomeSubjectKind(d.subjectKind) ? d.subjectKind : null) : codedStepSubjectKindOf(key),
       leadState: leadStateOf(key),
     });
@@ -862,7 +866,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
   // lead, never a pipe's leg (LEAD-STATES-1024). A step of the same key declared at run time wins.
   for (const s of NEW_LEAD_STATE_STEPS) {
     if (steps.has(s.key)) continue;
-    steps.set(s.key, { key: s.key, label: s.label, description: s.description, shortDescription: s.shortDescription, icon: s.icon, declared: false, valueUsd: null, valueVia: null, producedBy: "lead-service", lifecycleRung: "engaged", subjectKind: "person", leadState: s.key });
+    steps.set(s.key, { key: s.key, label: s.label, description: s.description, shortDescription: s.shortDescription, icon: s.icon, declared: false, valueUsd: null, valueVia: null, producedBy: "lead-service", lifecycleRung: inputs.outcomeRungs?.get(s.key) ?? null, subjectKind: "person", leadState: s.key });
   }
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);

@@ -1029,7 +1029,7 @@ describe("GET /features/:featureSlug/revenue", () => {
 
   // ── no decay: age never reduces a lead ────────────────────────────────────
 
-  it("maps firstOpenedAt → opened stage (tag opened)", async () => {
+  it("an open moves no lead: an opened lead stands at delivered (opens deprecated, OUTCOME-RUNG-AND-TARGET-1106)", async () => {
     mockFetch({
       economics: ECONOMICS,
       leads: [leadRow({ leadId: "lo", email: "open@x.com", lead: { firstName: "Op", lastName: "En", photoUrl: null, organization: { id: "o1", name: "Org1", logoUrl: null } } })],
@@ -1039,7 +1039,7 @@ describe("GET /features/:featureSlug/revenue", () => {
     expect(res.status).toBe(200);
     expect(res.body.headline.totalPipelineUsd).toBe(0); // an open buys no step of any funnel
     expect(res.body.leads[0].expectedRevenueUsd).toBe(0);
-    expect(res.body.leads[0].tags).toEqual(["opened"]); // still the lead's honest position
+    expect(res.body.leads[0].tags).toEqual(["delivered"]); // its furthest milestone: an open is no position
   });
 
   it("a long-stalled positive reply still counts in full — no `stale` tag, still an organization", async () => {

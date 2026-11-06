@@ -370,14 +370,14 @@ export function formSubmissionRatesDecimal(economics: SalesEconomics): { v2fs: n
 // half-life, no recency multiplier.
 
 /**
- * The pre-funnel delivery markers, ascending. `open` sits between delivered and the first funnel leg.
- * None of them is a step of any funnel in `SALES_FUNNELS`, so none carries a revenue field.
+ * The pre-funnel delivery markers, ascending. None of them is a step of any funnel in `SALES_FUNNELS`, so none carries
+ * a revenue field. No `opened` marker: opens are deprecated owner-wide (OUTCOME-RUNG-AND-TARGET-1106), a lead's position
+ * never rests on a tracking pixel; an opened lead stands at `delivered`.
  */
 const SALES_MILESTONES: readonly FunnelMilestone[] = [
   { tag: "contacted", signal: "contacted" },
   { tag: "sent", signal: "sent" },
   { tag: "delivered", signal: "delivered" },
-  { tag: "opened", signal: "open" },
 ];
 
 /**
