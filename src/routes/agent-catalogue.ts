@@ -2618,7 +2618,8 @@ export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunn
 
 export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   copies: Map<string, FunnelCopy | null>;
-  pipeSteps: Map<string, { fromStep: string | null; toStep: string }>;
+  /** Each pipe's steps, and the outcome its Engine makes (MIGRATE-1105 S5: finer than `toStep` when stated). */
+  pipeSteps: Map<string, { fromStep: string | null; toStep: string; outcome: string }>;
   /** A funnel campaign's path: its funnel's (one channel per leg). */
   pathOf: (id: string) => FunnelPathView | null;
 }> {
@@ -2674,7 +2675,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     });
   }
   // Every pipe's steps, so a caller knows which step each of a campaign's units produces (`lib/value-added.ts`).
-  const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep }] as const));
+  const pipeSteps = new Map([...model.pipes.values()].map((p) => [p.id, { fromStep: p.fromStep, toStep: p.toStep, outcome: p.outcome }] as const));
   const pathOf = (id: string) => {
     const f = found.get(id);
     return f ? funnelPathView(model, f) : null;

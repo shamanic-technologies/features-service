@@ -129,6 +129,18 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     expect((await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=nope")).status).toBe(404);
   });
 
+  // MIGRATE-1105 S5: a pipe whose Engine makes a finer outcome lands its Units under it; its milestone still counts them.
+  it("a milestone counts the Units of the finer outcome its pipe's Engine makes, beside its own step's", async () => {
+    copies.mockResolvedValue({ pipeSteps: new Map([["p-src", { fromStep: null, toStep: "lead_found", outcome: "lead_found" }], ["p-mail", { fromStep: "lead_found", toStep: "conversation", outcome: "email_sequence_sent" }]]) });
+    ledgerOf.mockImplementation(async (id: string) =>
+      id === "u-mail"
+        ? { byOutcome: new Map([["conversation", new Map([[day(2), 1]])], ["email_sequence_sent", new Map([[day(1), 2]])]]), daysMissing: [] }
+        : { byOutcome: new Map(), daysMissing: [] },
+    );
+    const t = (await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c1")).body.targets[0];
+    expect(t.milestones[1]).toMatchObject({ step: "conversation", count: 3, countSource: "ledger" });
+  });
+
   it("a ledger read that fails leaves every milestone on the campaign's own people", async () => {
     ledgerOf.mockRejectedValue(new Error("runs down"));
     const t = (await request(app).get("/brands/b1/campaign-targets")).body.targets[0];
