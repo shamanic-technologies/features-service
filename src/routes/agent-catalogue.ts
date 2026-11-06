@@ -86,8 +86,11 @@ import {
   retireLeg,
   retireSalesPath,
   retireTrigger,
+  setPipeEngineOutcome,
+  clearPipeEngineOutcome,
   type LoadedCatalogue,
 } from "../lib/channel-declarations-store.js";
+import type { PublicChannel } from "../lib/channel-catalogue.js";
 import { campaignsOnTrigger, campaignsRunningFunnel, fetchFleetCampaignRows, fetchFleetLegCampaignsFor, type FleetCampaignRef } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, isTriggerCoded, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
@@ -120,7 +123,7 @@ import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic,
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
-import { readRunnableScriptsForCatalogue, scriptChannelOf, type RunnableScript } from "../lib/script-catalogue-client.js";
+import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
 
 /**
@@ -463,7 +466,7 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     channels: all.channels,
     publishedPipeIds,
     workflowPipeKeys,
-    scriptChannelOutcomes: scriptChannelOutcomesOf(scripts),
+    runnableScripts: scripts,
     declaredSteps,
     outcomeRungs,
     measurements: measurements.byPipe,
@@ -471,7 +474,7 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
     triggers,
-    plays: playInputsOf(playCatalogue, assignments, measurements.byPlay, scripts),
+    plays: playInputsOf(playCatalogue, assignments, measurements.byPlay, scripts, pipeEngineOf(all.channels)),
     retiredPlays: playCatalogue.retiredByPipe,
     triggerHeadedPaths: statedTriggerHeadedPaths(chains, statedFunnels),
   });
@@ -534,12 +537,15 @@ const triggerHeadError = (reason: TriggerHeadRefusal, triggerId: string, legKeys
         ? new DeclarationError(400, reason, `${legKeys[0]} does not leave from the step ${triggerId} starts from: the first leg must leave from it`)
         : new DeclarationError(400, reason, `${legKeys.join("+")}: the legs must chain from the trigger's step to paid_client, each performed by a channel (GET /internal/catalogue/pipes)`);
 
-/** PURE: `<channel slug>|<outcome>` of every runnable script stating its channel (`CatalogueInputs.scriptChannelOutcomes`). */
-export const scriptChannelOutcomesOf = (scripts: readonly RunnableScript[]): Set<string> =>
-  new Set(scripts.flatMap((sc) => {
-    const ch = scriptChannelOf(sc);
-    return ch ? [`${ch}|${sc.outcome}`] : [];
-  }));
+/**
+ * PURE (MIGRATE-1105 S5): the Engine of each pipe by id (served spelling): the outcome it makes (stated finer than its
+ * `to` step, else that step) and whether it is stated. Unknown pipe = null.
+ */
+export const pipeEngineOf = (channels: readonly PublicChannel[]) => {
+  const by = new Map<string, { outcome: string; outcomeStated: boolean }>();
+  for (const c of channels) for (const t of c.stepTransitions) by.set(pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)), { outcome: t.outcome ?? t.to.key, outcomeStated: t.outcome != null });
+  return (pipeId: string) => by.get(pipeId) ?? null;
+};
 
 /**
  * Each cataloguing pipe's plays as the model prices them (`lib/plays.ts`): the default play and the others, each with
@@ -551,6 +557,7 @@ function playInputsOf(
   assignments: readonly LegAssignmentRow[],
   byPlay: ReadonlyMap<string, PipeMeasurement>,
   scripts: readonly RunnableScript[] = [],
+  pipeEngine: (pipeId: string) => { outcome: string; outcomeStated: boolean } | null = () => null,
 ): Map<string, { default: PlayInput | null; others: PlayInput[] }> {
   const nameOf = tacticNameOf(c);
   const judgingOf = tacticJudgingLookup(c);
@@ -558,8 +565,9 @@ function playInputsOf(
   for (const [pipeId, list] of c.playsByPipe) {
     const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
     const onPipe = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg));
-    // The scripts stating this pipe's channel, any outcome (the model keeps those of the pipe's own outcome).
-    const ofChannel = scripts.filter((sc) => scriptChannelOf(sc) === slug);
+    // The scripts working this pipe (MIGRATE-1105 S5: its Engine's outcome; its channel, or none on a pipe naming it).
+    const engine = pipeEngine(pipeId);
+    const ofChannel = engine ? scripts.filter((sc) => scriptWorksPipe(sc, { channelSlug: slug, ...engine })) : [];
     const inputOf = (strategyId: string): PlayInput | null => {
       const st = c.strategies.get(strategyId);
       if (!st) return null;
@@ -1029,6 +1037,7 @@ function pipeDetail(model: CatalogueModel, p: CataloguePipe, name: string) {
     legKey: p.legKey,
     fromStep: p.fromStep,
     toStep: p.toStep,
+    outcome: p.outcome,
     mode: p.mode,
     triggerId: p.triggerId,
     operatedBy: p.operatedBy,
@@ -2330,6 +2339,51 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
     res.status(created ? 201 : 200).json({ created, ...playRowOf(model, play), salesFunnels: await funnelsCarrying(model, names, play) });
   } catch (err) {
     fail(res, err, "create play");
+  }
+});
+
+/**
+ * STAFF (MIGRATE-1105 S5, owner 2026-11-06: the outcome is the WHAT, as fine as possible): the outcome this pipe's ENGINE
+ * makes (`{outcome, decidedBy}`), a step of the catalogue finer than the leg's `to` step (Threads post published on the
+ * Threads leg to Post published). Every campaign of the pipe then runs that Engine, among that outcome's scripts
+ * (campaign-service reads `/public/channels` `stepTransitions[].outcome`). Stating the `to` step itself is refused: no row
+ * already means that. DELETE drops the statement (the Engine is the `to` step again).
+ */
+router.put("/internal/catalogue/pipes/:pipeId/outcome", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const decidedBy = text(body, "decidedBy", 200);
+    const outcome = text(body, "outcome", 64);
+    const pipeId = req.params.pipeId;
+    const { model } = await loadModel();
+    const pipe = model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    if (!model.steps.has(outcome)) throw new DeclarationError(404, "outcome_not_found", `no outcome ${outcome} in the catalogue (GET /internal/catalogue/steps; declare it first)`);
+    if (outcome === pipe.toStep) throw bad("outcome_is_to_step", `${outcome} is the leg's own step: the pipe's Engine already makes it (DELETE to drop a stated outcome)`);
+    await setPipeEngineOutcome(pipe.channelSlug, pipe.computedLegKey, outcome, decidedBy);
+    invalidateChannelCatalogue();
+    const after = (await loadModel()).model.pipes.get(pipeId);
+    console.log(`[features-service] agent catalogue: ${pipeId} Engine outcome ${pipe.outcomeStated ? `${pipe.outcome} -> ` : ""}${outcome} by ${decidedBy}`);
+    res.json({ pipeId, toStep: pipe.toStep, outcome: after?.outcome ?? outcome, previousOutcome: pipe.outcome, runnable: after ? pipeRunnable(after) : null });
+  } catch (err) {
+    fail(res, err, "state pipe outcome");
+  }
+});
+
+router.delete("/internal/catalogue/pipes/:pipeId/outcome", apiKeyOnly, async (req, res) => {
+  const body = (req.body ?? {}) as Body;
+  try {
+    const decidedBy = text(body, "decidedBy", 200);
+    const pipeId = req.params.pipeId;
+    const { model } = await loadModel();
+    const pipe = model.pipes.get(pipeId);
+    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
+    const changed = await clearPipeEngineOutcome(pipe.channelSlug, pipe.computedLegKey);
+    invalidateChannelCatalogue();
+    console.log(`[features-service] agent catalogue: ${pipeId} Engine outcome ${changed ? `${pipe.outcome} dropped` : "already its step"} by ${decidedBy}`);
+    res.json({ pipeId, changed, outcome: pipe.toStep, previousOutcome: pipe.outcome });
+  } catch (err) {
+    fail(res, err, "drop pipe outcome");
   }
 });
 

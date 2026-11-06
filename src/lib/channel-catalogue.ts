@@ -100,6 +100,12 @@ export interface ChannelStepTransitionWire {
   triggerId: string | null;
   /** The minimum monthly budget a customer commits to this (channel × leg) item, whole cents (`lib/channel-leg-minimums.ts`). */
   minimumMonthlyBudgetCents: number;
+  /**
+   * MIGRATE-1105 S5: the outcome this pipe's ENGINE makes, the finest WHAT (`threads_post_published` on the Threads leg
+   * to Post published), when stated finer than `to` (`pipe_engine_outcomes`); null = the Engine is the `to` step. A
+   * campaign of the pipe runs the Engine of `outcome ?? to.key`, among that outcome's scripts.
+   */
+  outcome: string | null;
 }
 
 export interface PublicChannel {
@@ -302,6 +308,8 @@ export function buildChannelCatalogue(
   isDraftLeg?: (slug: string, legKey: string) => boolean,
   // Channels with at least one pipe holding an ACTIVE workflow (`workflow_leg_assignments`): we run them today.
   workflowChannelSlugs: ReadonlySet<string> = new Set(),
+  // MIGRATE-1105 S5: the outcome a pipe's Engine makes when stated finer than its `to` step (`pipe_engine_outcomes`).
+  engineOutcomeOf: (slug: string, legKey: string) => string | null = () => null,
 ): PublicChannel[] {
   const channels: PublicChannel[] = [];
   for (const row of rows) {
@@ -335,6 +343,7 @@ export function buildChannelCatalogue(
         mode: t.mode!,
         triggerId: t.triggerId ?? null,
         minimumMonthlyBudgetCents: channelLegMinimumMonthlyCents({ slug: row.slug, operatedBy: channel.operatedBy, managed }, t.mode === "reactive"),
+        outcome: engineOutcomeOf(row.slug, legKeyFor(t)),
       })),
       producibleSteps: producibleStepsOf(channel.stepTransitions).map(stepWire),
       salesFunnels: sellableFunnelsFor(channel.stepTransitions).map((key) => ({
