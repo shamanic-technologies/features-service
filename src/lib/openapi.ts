@@ -7419,6 +7419,7 @@ const catalogueTacticPlayRow = z.object({
   measuredBasis: z.enum(["mature", "flash"]).nullable(),
   allowedActiveWorkflowCount: z.number().int().nullable(),
   allowedWorkflowDynastySlugs: z.array(z.string()).nullable().describe("WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."),
+  keptScriptDynasties: z.array(z.string()).nullable().describe("MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."),
   ...catalogueRunnableField,
   ...catalogueNotRunnable,
 });
@@ -7435,7 +7436,8 @@ const cataloguePipeDetail = z.object({
       strategyName: z.string(),
       strategyDescription: z.string().describe("Who the play finds or what it does, in one plain line."),
       default: z.boolean().describe("True = the pipe's DEFAULT play: what a funnel naming the bare pipe runs (today's behaviour)."),
-      allowedActiveWorkflowCount: z.number().int().describe("Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."),
+      allowedActiveWorkflowCount: z.number().int().describe("Active workflows of the pipe the strategy allows. 0 with no kept script = nothing can run the play: never runnable."),
+      keptScriptDynasties: z.array(z.string()).describe("MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps. Non-empty = the play runs, workflow or none (the Engine runs it)."),
       excludedWorkflowDynastySlugs: z.array(z.string()).describe("Workflows the strategy rules out on this pipe."),
     })
     .nullable()

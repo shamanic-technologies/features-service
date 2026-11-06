@@ -172,15 +172,28 @@ export async function fetchCampaignSalesFunnelId(campaignId: string): Promise<{ 
  */
 export async function fetchCampaignPipe(
   campaignId: string,
-): Promise<{ found: false } | { found: true; featureSlug: string | null; legKey: string | null; salesFunnelId: string | null }> {
+): Promise<
+  | { found: false }
+  | {
+      found: true;
+      featureSlug: string | null;
+      legKey: string | null;
+      salesFunnelId: string | null;
+      /** The funnel campaign the unit belongs to (its brief decides the play, MIGRATE-1105 S0b), its org and brand. */
+      salesFunnelCampaignId: string | null;
+      orgId: string | null;
+      brandId: string | null;
+    }
+> {
   const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as
-    | { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown }
+    | { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown; salesFunnelCampaignId?: unknown; orgId?: unknown; brandIds?: unknown }
     | undefined;
   if (!row) return { found: false };
-  const featureSlug = typeof row.featureSlug === "string" && row.featureSlug ? row.featureSlug : null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  const featureSlug = str(row.featureSlug);
   const legKey = typeof row.legKey === "string" && row.legKey ? (matchFunnelLegKey(row.legKey) ?? row.legKey) : null;
-  const salesFunnelId = typeof row.salesFunnelId === "string" && row.salesFunnelId ? row.salesFunnelId : null;
-  return { found: true, featureSlug, legKey, salesFunnelId };
+  const brandId = Array.isArray(row.brandIds) ? str(row.brandIds[0]) : null;
+  return { found: true, featureSlug, legKey, salesFunnelId: str(row.salesFunnelId), salesFunnelCampaignId: str(row.salesFunnelCampaignId), orgId: str(row.orgId), brandId };
 }
 
 /** Test seam. */

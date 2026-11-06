@@ -12,12 +12,15 @@ vi.mock("../lib/fleet-leg-campaigns.js", () => ({ fetchCampaignPipe: (id: string
 vi.mock("../lib/script-catalogue-client.js", async (orig) => ({ ...(await orig<typeof import("../lib/script-catalogue-client.js")>()), readRunnableScripts: () => scriptsOf() }));
 vi.mock("./workflow-projection.js", () => ({ playOfLegRead: (...a: unknown[]) => playOf(...a) }));
 vi.mock("../lib/plays-store.js", () => ({ loadPlayCatalogue: () => catalogueOf() }));
+const briefOf = vi.fn();
+vi.mock("./factory-shadow.js", () => ({ briefPlayOfUnit: (...a: unknown[]) => briefOf(...a) }));
 
 import router from "./script-strategy.js";
 import { buildPlayCatalogue, type Strategy } from "../lib/plays.js";
 
 const at = "2026-11-06T00:00:00.000Z";
 const valid: Strategy = { id: "valid-only", name: "Valid only", description: "", requiresTacticIds: [], excludesTacticIds: ["catch-all"], createdBy: "t", createdAt: at };
+const wide: Strategy = { id: "wide", name: "Wide", description: "w", requiresTacticIds: ["catch-all"], excludesTacticIds: [], createdBy: "t", createdAt: at };
 const script = (outcome: string, dynasty: string) => ({ id: `${dynasty}-id`, outcome, dynasty, version: 1, description: "", tactics: {}, code: "" });
 
 function app() {
@@ -33,10 +36,12 @@ beforeEach(() => {
   scriptsOf.mockReset();
   playOf.mockReset();
   catalogueOf.mockReset();
+  briefOf.mockReset();
+  briefOf.mockResolvedValue(null);
   catalogueOf.mockResolvedValue(
     buildPlayCatalogue({
       tactics: [{ id: "catch-all", name: "Catch-all", description: "d", createdBy: "t", createdAt: at, appliesTo: "script" }],
-      strategies: [valid],
+      strategies: [valid, wide],
       plays: [],
       verdicts: [],
       writerVerdicts: [
@@ -57,6 +62,23 @@ describe("GET /internal/script-strategy", () => {
     expect(playOf).toHaveBeenCalledWith("lead-sourcing", "start_to_lead_found", "start_to_lead_found@lead-sourcing~valid-only");
     expect(r.body).toMatchObject({ campaignId: "c1", outcome: "lead_found", strategyId: "valid-only", strategySource: "sales_funnel", keptDynasties: ["dy_valid"], scriptTacticIds: ["catch-all"] });
     expect(r.body.scripts).toHaveLength(2);
+  });
+
+  it("the campaign's BRIEF picks the strategy over the play its funnel names (MIGRATE-1105 S0b)", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: "start_to_lead_found@lead-sourcing~valid-only", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
+    playOf.mockResolvedValue({ answer: { id: "p~valid-only", pipeId: "p", strategyId: "valid-only", strategyName: "Valid only", default: false, source: "sales_funnel" }, excludedReason: () => null });
+    briefOf.mockResolvedValue({ playId: "p~wide", strategyId: "wide", source: "jev", confidence: 0.9 });
+    const r = await get("?campaignId=c1&outcome=lead_found");
+    expect(briefOf).toHaveBeenCalledWith({ salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1", featureSlug: "lead-sourcing", legKey: "start_to_lead_found" });
+    expect(r.body).toMatchObject({ strategyId: "wide", strategySource: "brief", briefPlayId: "p~wide", keptDynasties: ["dy_catch"] });
+  });
+
+  it("a brief that picks nothing on the pipe leaves the funnel's play, and an unjudgeable brief fails closed", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: "start_to_lead_found@lead-sourcing~valid-only", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
+    playOf.mockResolvedValue({ answer: { id: "p~valid-only", pipeId: "p", strategyId: "valid-only", strategyName: "Valid only", default: false, source: "sales_funnel" }, excludedReason: () => null });
+    expect((await get("?campaignId=c1&outcome=lead_found")).body).toMatchObject({ strategyId: "valid-only", strategySource: "sales_funnel", keptDynasties: ["dy_valid"] });
+    briefOf.mockRejectedValue(new Error("chat-service platform-judgments 502"));
+    expect((await get("?campaignId=c1&outcome=lead_found")).status).toBe(502);
   });
 
   it("no strategy on the unit's pipe keeps every script of the Engine", async () => {

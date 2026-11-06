@@ -264,3 +264,13 @@ vi.mock("./lib/ledger-book.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/ledger-book.js")>()),
   ledgerRegime: vi.fn(async () => null),
 }));
+
+/**
+ * Suite-wide default (MIGRATE-1105 S0b): the CATALOGUE's read of workflow-service's runnable scripts
+ * (`readRunnableScriptsForCatalogue`) answers NO script, so every catalogue fixture keeps the runnable pipes and plays
+ * it states through its workflows. Suites about a play run by a script set their own return.
+ */
+vi.mock("./lib/script-catalogue-client.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./lib/script-catalogue-client.js")>()),
+  readRunnableScriptsForCatalogue: vi.fn(async () => []),
+}));

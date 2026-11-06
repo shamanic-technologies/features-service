@@ -381,6 +381,28 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     ]);
   });
 
+  it("a play allowing no workflow runs when its strategy keeps a script of the pipe's Engine stating its channel (MIGRATE-1105 S0b)", async () => {
+    const { readRunnableScriptsForCatalogue } = await import("../lib/script-catalogue-client.js");
+    const script = (id: string, outcome: string, channel: string) => ({ id, outcome, dynasty: `dy_${id}`, version: 1, description: "", tactics: { channel }, code: "" });
+    vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([
+      script("cold", "conversation", "sales-cold-email-outreach"),
+      // Another channel, and another outcome of the same channel: never this pipe's.
+      script("wa", "conversation", "cold-whatsapp-outreach"),
+      script("found", "lead_found", "sales-cold-email-outreach"),
+    ]);
+    try {
+      const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
+      expect(plays.map((p: any) => [p.id, p.allowedActiveWorkflowCount, p.keptScriptDynasties, p.runnable, p.notRunnableReason])).toEqual([
+        [COLD, 1, ["dy_cold"], true, null],
+        [CATCH, 0, ["dy_cold"], true, null],
+      ]);
+      const pipe = (await request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(CATCH)}`).set(KEY)).body;
+      expect(pipe).toMatchObject({ runnable: true, play: { allowedActiveWorkflowCount: 0, keptScriptDynasties: ["dy_cold"] } });
+    } finally {
+      vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([]);
+    }
+  });
+
   it("a play running nothing says why (judging failing / pending / judged out), and its detail lists the funnels carrying it (owner 2026-10-14)", async () => {
     const catchRow = async () => (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows.find((r: any) => r.id === CATCH);
     // orion is judged NOT catch-all: nothing can ever fit Valid + Catch-all until a workflow following it is built.
