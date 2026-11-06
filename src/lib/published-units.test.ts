@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
+import { addInputCosts, creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
 
 const occ = (o: Partial<LedgerOccurrence> & Pick<LedgerOccurrence, "id" | "runId" | "direction" | "outcomeKey">): LedgerOccurrence => ({
   subjectService: "meta-service",
@@ -68,6 +68,20 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
     const none = publishedUnitsOf("x_post_published", rows, () => ({ spentUsd: 1, visits: 0, signups: 0 }));
     expect(none.costPerSignupUsd).toBeNull();
     expect(none.learning).toBe(true);
+  });
+
+  it("full absorption: what the Unit's run consumed is spread over that run's Units of the key", () => {
+    const u = [
+      occ({ id: "e1", runId: "rel", direction: "produced", outcomeKey: "newsletter_email_sent", cost: { grossCents: "0", netCents: "0" } }),
+      occ({ id: "e2", runId: "rel", direction: "produced", outcomeKey: "newsletter_email_sent", cost: { grossCents: "0", netCents: "0" } }),
+    ];
+    const sent = (id: string, cents: string) =>
+      occ({ id, runId: "rel", direction: "consumed", outcomeKey: "message_sent", consumption: { sourceOccurrenceId: null, consumingOutcomes: [{ outcomeKey: "newsletter_email_sent", standardCost: { grossCents: cents, netCents: cents } }] } });
+    const other = occ({ id: "o", runId: "rel", direction: "consumed", outcomeKey: "x", consumption: { sourceOccurrenceId: null, consumingOutcomes: [{ outcomeKey: "something_else", standardCost: { grossCents: "99", netCents: "99" } }] } });
+    const credits = creditsByOccurrence(u, [], [], [], "net");
+    addInputCosts(credits, u, [sent("m1", "1.5"), sent("m2", "1.5"), other], "net");
+    expect(credits.get("e1")!.spentUsd).toBeCloseTo(0.015, 10);
+    expect(credits.get("e2")!.spentUsd).toBeCloseTo(0.015, 10);
   });
 
   it("engagements sum the counts the platform reports; none reported = null", () => {

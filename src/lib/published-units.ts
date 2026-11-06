@@ -97,7 +97,10 @@ export interface LedgerOccurrence {
   subjectService: string;
   subjectId: string;
   cost: { grossCents: string; netCents: string } | null;
-  consumption: { sourceOccurrenceId: string | null; consumingOutcomes: Array<{ outcomeKey: string | null }> } | null;
+  consumption: {
+    sourceOccurrenceId: string | null;
+    consumingOutcomes: Array<{ outcomeKey: string | null; standardCost?: { grossCents: string; netCents: string } | null }>;
+  } | null;
 }
 
 const consumesInto = (o: LedgerOccurrence, key: string) => (o.consumption?.consumingOutcomes ?? []).some((c) => c.outcomeKey === key);
@@ -138,6 +141,38 @@ export function creditsByOccurrence(
   }
   for (const v of signed) out.get(visitUnit.get(v)!)!.signups += 1;
   return out;
+}
+
+/**
+ * PURE. Full absorption: what a Unit's production order CONSUMED is part of its cost (a newsletter email's run is
+ * spend-free, its cost is the `message_sent` it consumes, ~1.5 cents). Per run, the standard cost of every consumption
+ * part going to a Unit key is spread evenly over that run's produced Units of the key, added to their credit.
+ */
+export function addInputCosts(credits: Map<string, LedgerCredit>, units: readonly LedgerOccurrence[], consumedOnRuns: readonly LedgerOccurrence[], pricing: "gross" | "net"): void {
+  const unitsOf = new Map<string, LedgerOccurrence[]>();
+  for (const u of units) {
+    if (u.direction !== "produced") continue;
+    const k = `${u.runId}|${u.outcomeKey}`;
+    unitsOf.set(k, [...(unitsOf.get(k) ?? []), u]);
+  }
+  const inputOf = new Map<string, number>();
+  for (const c of consumedOnRuns) {
+    if (c.direction !== "consumed") continue;
+    for (const part of c.consumption?.consumingOutcomes ?? []) {
+      if (!part.outcomeKey || !part.standardCost) continue;
+      const k = `${c.runId}|${part.outcomeKey}`;
+      if (!unitsOf.has(k)) continue;
+      const cents = Number(pricing === "net" ? part.standardCost.netCents : part.standardCost.grossCents);
+      if (Number.isFinite(cents)) inputOf.set(k, (inputOf.get(k) ?? 0) + cents / 100);
+    }
+  }
+  for (const [k, usd] of inputOf) {
+    const on = unitsOf.get(k)!;
+    for (const u of on) {
+      const c = credits.get(u.id);
+      if (c) c.spentUsd += usd / on.length;
+    }
+  }
 }
 
 /**
