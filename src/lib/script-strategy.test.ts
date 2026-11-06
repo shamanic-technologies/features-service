@@ -69,6 +69,65 @@ describe("scriptsKeptByStrategy (MIGRATE-1105 S0-STRATEGY)", () => {
   });
 });
 
+describe("a strategy naming an AUDIENCE narrows the scripts by who they act for (MIGRATE-1105-S1-AUDIENCE-SCRIPTS)", () => {
+  // The Lead event strategies name a workflow audience tactic AND its script twin; Jev judged each script on what it
+  // states (its claim's relationships, its tactics, its description). A leads-only script answers nobody on a current
+  // clients campaign, so that campaign never keeps it.
+  const paid = (dynasty: string): RunnableScript => ({ ...script(dynasty), outcome: "paid_client" });
+  const judged = (dynasty: string, tacticId: string, v: boolean): WriterTacticVerdictRow => ({ ...verdict(dynasty, tacticId, v), subjectKey: scriptDynastyKey({ outcome: "paid_client", dynasty }) });
+  const leadScripts = [paid("dy_answer_lead_pull"), paid("dy_team_digest")];
+  const audiences = buildPlayCatalogue({
+    tactics: [
+      tactic("answers-leads-only", "workflow"),
+      tactic("current-clients-only", "workflow"),
+      tactic("answers-the-brand-s-team-only", "workflow"),
+      tactic("script-answers-leads-only", "script"),
+      tactic("script-current-clients-only", "script"),
+      tactic("script-answers-the-brand-s-team-only", "script"),
+    ],
+    strategies: [],
+    plays: [],
+    verdicts: [],
+    writerVerdicts: [
+      judged("dy_answer_lead_pull", "script-answers-leads-only", true),
+      judged("dy_answer_lead_pull", "script-current-clients-only", false),
+      judged("dy_answer_lead_pull", "script-answers-the-brand-s-team-only", false),
+      judged("dy_team_digest", "script-answers-leads-only", false),
+      judged("dy_team_digest", "script-current-clients-only", false),
+      judged("dy_team_digest", "script-answers-the-brand-s-team-only", true),
+    ],
+  });
+  const leadsOnly = strategy("leads-only", ["answers-leads-only", "script-answers-leads-only"], ["skips-the-brand-s-team"]);
+  const currentClients = strategy("current-clients", ["current-clients-only", "script-current-clients-only"], []);
+  const brandsTeam = strategy("brand-s-team", ["answers-the-brand-s-team-only", "script-answers-the-brand-s-team-only"], []);
+  const notCurrentClients = strategy("not-current-clients-only", [], ["current-clients-only", "script-current-clients-only"]);
+
+  it("a leads-only strategy keeps the leads-only script, never the team one", () => {
+    const r = scriptsKeptByStrategy(leadScripts, leadsOnly, audiences);
+    expect(r.scriptTacticIds).toEqual(["script-answers-leads-only"]);
+    expect(r.keptDynasties).toEqual(["dy_answer_lead_pull"]);
+  });
+
+  it("a current clients strategy excludes the leads-only script (and keeps no script judged off-audience)", () => {
+    const r = scriptsKeptByStrategy(leadScripts, currentClients, audiences);
+    expect(r.keptDynasties).toEqual([]);
+    expect(r.scripts.find((s) => s.dynasty === "dy_answer_lead_pull")!.reason).toContain("this script does not follow it");
+  });
+
+  it("a brand's team strategy keeps only the script acting for the team", () => {
+    expect(scriptsKeptByStrategy(leadScripts, brandsTeam, audiences).keptDynasties).toEqual(["dy_team_digest"]);
+  });
+
+  it("a strategy EXCLUDING current clients keeps the leads-only script", () => {
+    expect(scriptsKeptByStrategy(leadScripts, notCurrentClients, audiences).keptDynasties).toEqual(["dy_answer_lead_pull", "dy_team_digest"]);
+  });
+
+  it("a script made live before its audience verdicts landed is kept by no audience strategy", () => {
+    const fresh = [paid("dy_new_answerer")];
+    for (const st of [leadsOnly, currentClients, brandsTeam]) expect(scriptsKeptByStrategy(fresh, st, audiences).keptDynasties).toEqual([]);
+  });
+});
+
 describe("script catalogue rows", () => {
   it("keeps only runnable rows with what Jev judges", () => {
     expect(parseRunnableScript({ id: "a", outcome: "lead_found", dynasty: "dy", version: 2, code: "x", runnable: true, tactics: { serve: { acceptedEmails: ["valid"] } }, description: "d" })).toEqual({
