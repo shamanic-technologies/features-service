@@ -58472,7 +58472,14 @@
                         },
                         "allowedActiveWorkflowCount": {
                           "type": "integer",
-                          "description": "Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."
+                          "description": "Active workflows of the pipe the strategy allows. 0 with no kept script = nothing can run the play: never runnable."
+                        },
+                        "keptScriptDynasties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps. Non-empty = the play runs, workflow or none (the Engine runs it)."
                         },
                         "excludedWorkflowDynastySlugs": {
                           "type": "array",
@@ -58489,6 +58496,7 @@
                         "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
+                        "keptScriptDynasties",
                         "excludedWorkflowDynastySlugs"
                       ],
                       "description": "Owner 2026-10-13 (TACTIC = a yes/no tag Jev puts on every workflow version; STRATEGY = tactics it requires and excludes; PLAY = a pipe x a strategy). The play this object IS: a pipe id is its default play, `<pipe id>~<strategy id>` another play. Null = the pipe catalogues no play (every assigned workflow runs, as always). Not the dashboard's Strategy page."
@@ -58573,6 +58581,14 @@
                             },
                             "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                           },
+                          "keptScriptDynasties": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -58611,6 +58627,7 @@
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
                           "allowedWorkflowDynastySlugs",
+                          "keptScriptDynasties",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -58829,7 +58846,14 @@
                         },
                         "allowedActiveWorkflowCount": {
                           "type": "integer",
-                          "description": "Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."
+                          "description": "Active workflows of the pipe the strategy allows. 0 with no kept script = nothing can run the play: never runnable."
+                        },
+                        "keptScriptDynasties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps. Non-empty = the play runs, workflow or none (the Engine runs it)."
                         },
                         "excludedWorkflowDynastySlugs": {
                           "type": "array",
@@ -58846,6 +58870,7 @@
                         "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
+                        "keptScriptDynasties",
                         "excludedWorkflowDynastySlugs"
                       ],
                       "description": "Owner 2026-10-13 (TACTIC = a yes/no tag Jev puts on every workflow version; STRATEGY = tactics it requires and excludes; PLAY = a pipe x a strategy). The play this object IS: a pipe id is its default play, `<pipe id>~<strategy id>` another play. Null = the pipe catalogues no play (every assigned workflow runs, as always). Not the dashboard's Strategy page."
@@ -58930,6 +58955,14 @@
                             },
                             "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                           },
+                          "keptScriptDynasties": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -58968,6 +59001,7 @@
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
                           "allowedWorkflowDynastySlugs",
+                          "keptScriptDynasties",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -59260,7 +59294,14 @@
                         },
                         "allowedActiveWorkflowCount": {
                           "type": "integer",
-                          "description": "Active workflows of the pipe the strategy allows. 0 = nothing can run the play: never runnable."
+                          "description": "Active workflows of the pipe the strategy allows. 0 with no kept script = nothing can run the play: never runnable."
+                        },
+                        "keptScriptDynasties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps. Non-empty = the play runs, workflow or none (the Engine runs it)."
                         },
                         "excludedWorkflowDynastySlugs": {
                           "type": "array",
@@ -59277,6 +59318,7 @@
                         "strategyDescription",
                         "default",
                         "allowedActiveWorkflowCount",
+                        "keptScriptDynasties",
                         "excludedWorkflowDynastySlugs"
                       ],
                       "description": "Owner 2026-10-13 (TACTIC = a yes/no tag Jev puts on every workflow version; STRATEGY = tactics it requires and excludes; PLAY = a pipe x a strategy). The play this object IS: a pipe id is its default play, `<pipe id>~<strategy id>` another play. Null = the pipe catalogues no play (every assigned workflow runs, as always). Not the dashboard's Strategy page."
@@ -59361,6 +59403,14 @@
                             },
                             "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                           },
+                          "keptScriptDynasties": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -59399,6 +59449,7 @@
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
                           "allowedWorkflowDynastySlugs",
+                          "keptScriptDynasties",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -66352,6 +66403,14 @@
                             },
                             "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                           },
+                          "keptScriptDynasties": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                          },
                           "runnable": {
                             "type": "boolean",
                             "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -66390,6 +66449,7 @@
                           "measuredBasis",
                           "allowedActiveWorkflowCount",
                           "allowedWorkflowDynastySlugs",
+                          "keptScriptDynasties",
                           "runnable",
                           "notRunnableReason",
                           "notRunnableDetail"
@@ -66537,6 +66597,14 @@
                       },
                       "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                     },
+                    "keptScriptDynasties": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -66644,6 +66712,7 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "allowedWorkflowDynastySlugs",
+                    "keptScriptDynasties",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -66736,6 +66805,14 @@
                       },
                       "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                     },
+                    "keptScriptDynasties": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -66843,6 +66920,7 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "allowedWorkflowDynastySlugs",
+                    "keptScriptDynasties",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -66975,6 +67053,14 @@
                         "type": "string"
                       },
                       "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
+                    },
+                    "keptScriptDynasties": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
                     },
                     "runnable": {
                       "type": "boolean",
@@ -67203,6 +67289,7 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "allowedWorkflowDynastySlugs",
+                    "keptScriptDynasties",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -67853,6 +67940,14 @@
                       },
                       "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                     },
+                    "keptScriptDynasties": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -67899,6 +67994,7 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "allowedWorkflowDynastySlugs",
+                    "keptScriptDynasties",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -68042,6 +68138,14 @@
                       },
                       "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                     },
+                    "keptScriptDynasties": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                    },
                     "runnable": {
                       "type": "boolean",
                       "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -68089,6 +68193,7 @@
                     "measuredBasis",
                     "allowedActiveWorkflowCount",
                     "allowedWorkflowDynastySlugs",
+                    "keptScriptDynasties",
                     "runnable",
                     "notRunnableReason",
                     "notRunnableDetail",
@@ -68249,6 +68354,14 @@
                           },
                           "description": "WHICH active workflows (dynasty slugs) the play may run, sorted. Null on a pipe cataloguing no play (every assigned workflow runs)."
                         },
+                        "keptScriptDynasties": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "MIGRATE-1105 S0b: the runnable scripts of the pipe's Engine (its outcome, stating its channel) the strategy keeps, sorted. A play allowing no workflow runs when one is kept (the Engine runs it). Null on a pipe cataloguing no play."
+                        },
                         "runnable": {
                           "type": "boolean",
                           "description": "We run it today: published, and worked by the customer's own team or on a MANAGED channel (a workflow exists). An unmanaged channel is listed but campaign-service refuses its launch (409 `no_workflow`). A customer surface shows only `runnable` objects."
@@ -68287,6 +68400,7 @@
                         "measuredBasis",
                         "allowedActiveWorkflowCount",
                         "allowedWorkflowDynastySlugs",
+                        "keptScriptDynasties",
                         "runnable",
                         "notRunnableReason",
                         "notRunnableDetail"

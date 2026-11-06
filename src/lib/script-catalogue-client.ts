@@ -68,7 +68,31 @@ export function readRunnableScripts(): Promise<RunnableScript[]> {
   return value;
 }
 
+/** PURE: the channel a script states (tactic `channel`), or null: a script stating none is asked by other scripts. */
+export const scriptChannelOf = (s: Pick<RunnableScript, "tactics">): string | null =>
+  typeof s.tactics.channel === "string" && s.tactics.channel ? s.tactics.channel : null;
+
+let lastGood: { at: number; scripts: RunnableScript[] } | null = null;
+
+/**
+ * The catalogue's read (MIGRATE-1105 S0b: a play runs on the scripts its strategy keeps): every catalogue read prices
+ * plays, so a workflow-service hiccup must not take the catalogue down. A failed read serves the last good one LOUDLY;
+ * none ever read = throws (fail loud, never "no script").
+ */
+export async function readRunnableScriptsForCatalogue(): Promise<RunnableScript[]> {
+  try {
+    const scripts = await readRunnableScripts();
+    lastGood = { at: Date.now(), scripts };
+    return scripts;
+  } catch (error) {
+    if (!lastGood) throw error;
+    console.error(`[features-service] runnable scripts unreadable, the read of ${new Date(lastGood.at).toISOString()} stands:`, (error as Error).message);
+    return lastGood.scripts;
+  }
+}
+
 /** Test seam. */
 export function __resetRunnableScriptsForTest(): void {
   held = null;
+  lastGood = null;
 }

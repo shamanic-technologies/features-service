@@ -119,6 +119,8 @@ import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic,
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
+import { readRunnableScriptsForCatalogue, scriptChannelOf, type RunnableScript } from "../lib/script-catalogue-client.js";
+import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -436,7 +438,7 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates"> | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels, scripts] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
@@ -449,6 +451,8 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     loadPlayCatalogue(),
     listDeclaredSalesPathChains(),
     listDeclaredSalesPaths(),
+    // MIGRATE-1105 S0b: a pipe (or a play) runs on the scripts of its Engine stating its channel, workflow or none.
+    readRunnableScriptsForCatalogue(),
   ]);
   const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${pipeLegKeyOf(a.featureSlug, a.legKey)}`));
   const { lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
@@ -457,13 +461,14 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     channels: all.channels,
     publishedPipeIds,
     workflowPipeKeys,
+    scriptChannelOutcomes: scriptChannelOutcomesOf(scripts),
     declaredSteps,
     measurements: measurements.byPipe,
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
     triggers,
-    plays: playInputsOf(playCatalogue, assignments, measurements.byPlay),
+    plays: playInputsOf(playCatalogue, assignments, measurements.byPlay, scripts),
     retiredPlays: playCatalogue.retiredByPipe,
     triggerHeadedPaths: statedTriggerHeadedPaths(chains, statedFunnels),
   });
@@ -526,21 +531,39 @@ const triggerHeadError = (reason: TriggerHeadRefusal, triggerId: string, legKeys
         ? new DeclarationError(400, reason, `${legKeys[0]} does not leave from the step ${triggerId} starts from: the first leg must leave from it`)
         : new DeclarationError(400, reason, `${legKeys.join("+")}: the legs must chain from the trigger's step to paid_client, each performed by a channel (GET /internal/catalogue/pipes)`);
 
+/** PURE: `<channel slug>|<outcome>` of every runnable script stating its channel (`CatalogueInputs.scriptChannelOutcomes`). */
+export const scriptChannelOutcomesOf = (scripts: readonly RunnableScript[]): Set<string> =>
+  new Set(scripts.flatMap((sc) => {
+    const ch = scriptChannelOf(sc);
+    return ch ? [`${ch}|${sc.outcome}`] : [];
+  }));
+
 /**
  * Each cataloguing pipe's plays as the model prices them (`lib/plays.ts`): the default play and the others, each with
  * what its strategy excludes among the workflows ASSIGNED to the pipe, read LIVE (a verdict stored a minute ago
  * already counts), and its measurement from the last figures build.
  */
-function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], byPlay: ReadonlyMap<string, PipeMeasurement>): Map<string, { default: PlayInput | null; others: PlayInput[] }> {
+function playInputsOf(
+  c: PlayCatalogue,
+  assignments: readonly LegAssignmentRow[],
+  byPlay: ReadonlyMap<string, PipeMeasurement>,
+  scripts: readonly RunnableScript[] = [],
+): Map<string, { default: PlayInput | null; others: PlayInput[] }> {
   const nameOf = tacticNameOf(c);
   const judgingOf = tacticJudgingLookup(c);
   const out = new Map<string, { default: PlayInput | null; others: PlayInput[] }>();
   for (const [pipeId, list] of c.playsByPipe) {
     const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
     const onPipe = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg));
+    // The scripts stating this pipe's channel, any outcome (the model keeps those of the pipe's own outcome).
+    const ofChannel = scripts.filter((sc) => scriptChannelOf(sc) === slug);
     const inputOf = (strategyId: string): PlayInput | null => {
       const st = c.strategies.get(strategyId);
       if (!st) return null;
+      const outcomeOf = new Map(ofChannel.map((sc) => [sc.id, sc.outcome]));
+      const keptScripts = scriptsKeptByStrategy(ofChannel, st, c)
+        .scripts.filter((r) => r.kept)
+        .map((r) => ({ outcome: outcomeOf.get(r.scriptId)!, dynasty: r.dynasty }));
       const excluded = excludedDynasties(workflowStrategyOf(c, st), onPipe.map((a) => a.workflowDynastySlug), c.tacticsByDynasty, nameOf);
       const active = onPipe.filter((a) => a.state === "active").map((a) => a.workflowDynastySlug);
       return {
@@ -552,6 +575,7 @@ function playInputsOf(c: PlayCatalogue, assignments: readonly LegAssignmentRow[]
         allowedActiveWorkflowCount: onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).length,
         allowedActiveDynasties: [...new Set(onPipe.filter((a) => a.state === "active" && !excluded.has(a.workflowDynastySlug)).map((a) => a.workflowDynastySlug))].sort(),
         excludedDynasties: [...excluded.keys()].sort(),
+        keptScripts,
       };
     };
     const def = list.find((p) => p.isDefault);
@@ -1032,6 +1056,7 @@ const playOf = (p: CataloguePipe) =>
         strategyDescription: p.play.strategyDescription,
         default: p.play.isDefault,
         allowedActiveWorkflowCount: p.play.allowedActiveWorkflowCount,
+        keptScriptDynasties: [...p.play.keptScriptDynasties],
         excludedWorkflowDynastySlugs: p.play.excludedDynasties,
       }
     : null;
@@ -1044,7 +1069,7 @@ function notRunnableOf(p: CataloguePipe): { reason: string; detail: string } | n
   if (pipeRunnable(p)) return null;
   if (!p.published) return { reason: "unpublished", detail: "Staff hid this pipe: nothing runs it." };
   if (p.play?.block) return p.play.block;
-  return { reason: "no_workflow", detail: "No active workflow of ours works this pipe yet, so a campaign on it cannot be launched." };
+  return { reason: "no_workflow", detail: "No active workflow or script of ours works this pipe yet, so a campaign on it cannot be launched." };
 }
 
 /** One play of a pipe as listed: its id (what a sales funnel names), its strategy, its own figures. */
@@ -1060,6 +1085,7 @@ const playRowOf = (m: CatalogueModel, p: CataloguePipe) => ({
   bestWorkflowSlug: p.measurement?.workflowDynastySlug ?? null,
   measuredBasis: p.measurement?.basis ?? null,
   allowedActiveWorkflowCount: p.play?.allowedActiveWorkflowCount ?? null,
+  keptScriptDynasties: p.play ? [...p.play.keptScriptDynasties] : null,
   // WHICH active workflows the play may run (owner ask 2026-10-14: an agent learned it only after launching). Null on a
   // pipe cataloguing no play (every assigned workflow).
   allowedWorkflowDynastySlugs: p.play ? [...p.play.allowedActiveDynasties] : null,
@@ -2527,7 +2553,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   /** A funnel campaign's path: its funnel's (one channel per leg). */
   pathOf: (id: string) => FunnelPathView | null;
 }> {
-  const [all, pub, declaredSteps, names, live, retired, assignments, playCatalogue] = await Promise.all([
+  const [all, pub, declaredSteps, names, live, retired, assignments, playCatalogue, scripts] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
     listDeclaredSteps(),
@@ -2536,6 +2562,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     listRetiredTriggerTypes(),
     listLegAssignments(),
     loadPlayCatalogue(),
+    readRunnableScriptsForCatalogue(),
   ]);
   // A campaign that ran on a trigger retired since still names it and its path (P5.1 follow-up): this read DESCRIBES
   // the funnels campaigns run, so a retired trigger is known here (never offered: the catalogue lists read live ones).
@@ -2551,7 +2578,7 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     measurements: new Map(),
     lifetimeRevenueUsd: null,
     triggers,
-    plays: playInputsOf(playCatalogue, assignments, new Map()),
+    plays: playInputsOf(playCatalogue, assignments, new Map(), scripts),
     retiredPlays: playCatalogue.retiredByPipe,
   });
   // A campaign may run a trigger-headed funnel whose head was never stated (P5.1 follow-up): describe it all the same.
