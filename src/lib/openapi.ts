@@ -9439,9 +9439,9 @@ registry.registerPath({
     "newsletter release), lifetime `views` / `engagements` its platform reports (null = not reported), and the ledger's `spentUsd`, `visits` (website visits that " +
     "CONSUMED the Unit: a click on its link, never a time window) and `signups` (consuming those visits); null + `ledgerUnavailableReason: not_on_ledger_yet` before " +
     "its Unit is declared. `totals.all` / `totals.ours`; `costPerSignupUsd` = ours spend / ours signups (null while ours has no signup: `learning`). `daily[]` = one " +
-    "point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X account posts, post metrics), " +
+    "point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X and LinkedIn account posts, post metrics), " +
     "transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); " +
-    "LinkedIn rows are the brand's Units themselves (creative null: no service lists LinkedIn posts with their Unit yet). Held 2 min, served up to 30 min old while " +
+    "LinkedIn rows come from the brand's connected LinkedIn accounts (social-service account posts, like X). Held 2 min, served up to 30 min old while " +
     "re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere.",
   tags: ["Stats"],
   request: {

@@ -50,6 +50,9 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
       lead_found: "Leads",
     });
     expect(pluralLabelOf("Email sent")).toBe("Emails sent");
+    expect(pluralLabelOf("X post published")).toBe("X posts published");
+    expect(pluralLabelOf("Newsletter email sent")).toBe("Newsletter emails sent");
+    expect(pluralLabelOf("LinkedIn comment drafted")).toBe("LinkedIn comments drafted");
     expect(pluralLabelOf("Industry update video")).toBe("Industry update videos");
     // Irregular participles (declared steps): the noun takes the plural, never the participle.
     expect(pluralLabelOf("Ad shown")).toBe("Ads shown");
