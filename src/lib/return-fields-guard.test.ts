@@ -15,7 +15,8 @@ import { describe, expect, it } from "vitest";
 
 // `returns` = the period recap block holding exactly the expected + realized returns. A field INSIDE an
 // allowed return (its `roiMultiple`, its basis...) is that return's own field, never a second return.
-const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "realizedReturn", "returns"]);
+// `measuredReturn` = a campaign's MEASURED return on its Target (Today, OUTCOME-RUNG-AND-TARGET-1106).
+const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "measuredReturn", "realizedReturn", "returns"]);
 
 // Return-LIKE names that are not a return below a Target, each kept only WHERE it is served today:
 // a sales funnel's / sales path's expected return per paying client (its Target = Paid client), the

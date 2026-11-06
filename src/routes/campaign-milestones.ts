@@ -44,35 +44,35 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/miles
     const row = rows.find((r) => r.id === salesFunnelCampaignId);
     if (!row) return void res.status(404).json({ error: "No sales funnel campaign with this id on this brand", reason: "sales_funnel_campaign_not_found" });
 
-    const stored = await readPlan(row.id);
-    const plan = stored && stored.orgId === auth.orgId ? (stored.body as StoredRunningLine).plan ?? null : null;
-    const line = plan?.running ?? null;
-    if (!line?.legs || line.legs.length === 0) {
-      return void res.json({ salesFunnelCampaignId: row.id, brandId, pricing, target: plan?.target ?? null, planComputedAt: stored?.computedAt ?? null, milestones: [], milestonesUnavailableReason: "plan_not_computed_yet" });
-    }
-    const [activity, charts, { pipeSteps }] = await Promise.all([
+    // Rows = the campaign's OWN funnel up to its Target (stable for its life); the stored plan line only lends expected
+    // figures by step (OUTCOME-RUNG-AND-TARGET-1106: rows built on the plan line moved and dropped past outcomes per tick).
+    const [stored, activity, charts] = await Promise.all([
+      readPlan(row.id),
       funnelCampaignActivity(row, brandId, headers, pricing),
       funnelCampaignSpendCharts(row, brandId, pricing, headers),
-      funnelCopiesFor([row.salesFunnelId]),
     ]);
-    const stepsOfPipe = (pipeId: string) => pipeSteps.get(pipeId) ?? pipeSteps.get(pipeId.split("~")[0]!) ?? null;
-    const figures = new Map((line.figures?.legs ?? []).map((l) => [l.legKey, l]));
-    const legs: MilestoneLegFigures[] = [];
-    for (const l of line.legs) {
-      const steps = stepsOfPipe(l.pipeId);
-      if (!steps) return void res.status(502).json({ error: `pipe ${l.pipeId} of the plan line is not in the catalogue`, reason: "plan_pipe_unknown" });
-      const f = figures.get(l.legKey);
-      legs.push({ legKey: l.legKey, toStep: steps.toStep, costPerOutcomeUsd: f?.costPerOutcomeUsd ?? null, ratePct: f?.ratePct ?? null, outcomesNeededPerPayingClient: f?.outcomesNeededPerPayingClient ?? null, costSource: f?.costSource ?? null });
+    const plan = stored && stored.orgId === auth.orgId ? (stored.body as StoredRunningLine).plan ?? null : null;
+    const line = plan?.running ?? null;
+    const target = row.target ?? plan?.target ?? null;
+    const base = { salesFunnelCampaignId: row.id, brandId, pricing, target, planComputedAt: plan ? stored!.computedAt : null };
+    if (!activity.funnel) return void res.json({ ...base, milestones: [], milestonesUnavailableReason: activity.funnelUnavailableReason ?? "funnel_not_counted" });
+    const planLegs: MilestoneLegFigures[] = [];
+    if (line?.legs && line.legs.length > 0) {
+      const { pipeSteps } = await funnelCopiesFor([row.salesFunnelId]);
+      const stepsOfPipe = (pipeId: string) => pipeSteps.get(pipeId) ?? pipeSteps.get(pipeId.split("~")[0]!) ?? null;
+      const figures = new Map((line.figures?.legs ?? []).map((l) => [l.legKey, l]));
+      for (const l of line.legs) {
+        const steps = stepsOfPipe(l.pipeId);
+        if (!steps) return void res.status(502).json({ error: `pipe ${l.pipeId} of the plan line is not in the catalogue`, reason: "plan_pipe_unknown" });
+        const f = figures.get(l.legKey);
+        planLegs.push({ legKey: l.legKey, toStep: steps.toStep, costPerOutcomeUsd: f?.costPerOutcomeUsd ?? null, ratePct: f?.ratePct ?? null, outcomesNeededPerPayingClient: f?.outcomesNeededPerPayingClient ?? null, costSource: f?.costSource ?? null });
+      }
     }
-    const steps = (activity.funnel?.steps ?? []).filter((s) => s.kind === "step").map((s) => ({ key: s.key, label: s.label, people: s.people }));
+    const steps = activity.funnel.steps.filter((s) => s.kind === "step").map((s) => ({ key: s.key, label: s.label, people: s.people }));
     const pipes = charts.pipes.flatMap((p) => (p.leg ? [{ toStep: p.leg.toStep, spendUsd: p.totals.spendUsd, outcomes: p.totals.outcomes }] : []));
     res.json({
-      salesFunnelCampaignId: row.id,
-      brandId,
-      pricing,
-      target: plan?.target ?? null,
-      planComputedAt: stored?.computedAt ?? null,
-      milestones: milestonesOf({ legs, steps, pipes }),
+      ...base,
+      milestones: milestonesOf({ steps, target, planLegs, planUnavailableReason: planLegs.length > 0 ? null : "plan_not_computed_yet", pipes }),
       milestonesUnavailableReason: null,
     });
   } catch (err) {

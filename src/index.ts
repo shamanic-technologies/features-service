@@ -52,6 +52,7 @@ import salesFunnelCampaignActivityRoutes from "./routes/sales-funnel-campaign-ac
 import campaignNextStepsRoutes from "./routes/campaign-next-steps.js";
 import spendChartsRoutes from "./routes/spend-charts.js";
 import campaignMilestonesRoutes from "./routes/campaign-milestones.js";
+import campaignTargetsRoutes from "./routes/campaign-targets.js";
 import outcomeCostSeriesRoutes from "./routes/outcome-cost-series.js";
 import livedSalesPathsRoutes from "./routes/lived-sales-paths.js";
 import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
@@ -134,6 +135,7 @@ app.use(salesFunnelCampaignActivityRoutes);
 app.use(campaignNextStepsRoutes);
 app.use(spendChartsRoutes);
 app.use(campaignMilestonesRoutes);
+app.use(campaignTargetsRoutes);
 app.use(outcomeCostSeriesRoutes);
 app.use(livedSalesPathsRoutes);
 app.use(fleetIndexesRoutes);
