@@ -15,8 +15,14 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
+import { and, eq } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { featureViewSnapshots } from "../db/schema.js";
 import {
   addInputCosts,
+  bulkVisitCredits,
+  runAggregateOf,
+  type RunAggregate,
   creditOfRow,
   creditsByOccurrence,
   engagementsOf,
@@ -189,6 +195,7 @@ interface Release {
   brandIds: string[];
   unitsRunId: string | null;
   emailsSent: number;
+  unitsDeclared: number;
   firstSentAt: string | null;
   createdAt: string;
 }
@@ -208,7 +215,7 @@ async function newsletterRows(orgId: string, brandId: string): Promise<UnitSourc
       units: r.emailsSent,
       views: null,
       engagements: null,
-      ledger: r.unitsRunId ? { runId: r.unitsRunId, outcomeKey: "newsletter_email_sent", subjectId: null } : null,
+      ledger: r.unitsRunId ? { runId: r.unitsRunId, outcomeKey: "newsletter_email_sent", subjectId: null, bulkFingerprint: String(r.unitsDeclared) } : null,
     }));
 }
 
@@ -219,22 +226,106 @@ const ROWS: Record<PublishedOutcomeKey, (orgId: string, brandId: string) => Prom
   newsletter_email_sent: newsletterRows,
 };
 
+// ---------------------------------------------------------------- bulk runs (a newsletter release: one run, ~20k Units)
+
+/**
+ * A bulk run's total, kept in `feature_view_snapshots` (view `published-unit-run`, derived and rebuildable) with the
+ * fingerprint it was built at. Reading a release's Units off the ledger takes minutes (88k Units took 132 s then
+ * 411 s, 2026-11-06), so it is built once per fingerprint (the producer's count of Units declared) by the sweep below
+ * and by a read that finds it missing, never on every open.
+ */
+const RUN_VIEW = "published-unit-run";
+
+async function loadRunAggregate(scopeKey: string): Promise<{ fingerprint: string; agg: RunAggregate } | null> {
+  try {
+    const [row] = await db
+      .select({ bodyText: featureViewSnapshots.bodyText })
+      .from(featureViewSnapshots)
+      .where(and(eq(featureViewSnapshots.view, RUN_VIEW), eq(featureViewSnapshots.scopeKey, scopeKey)))
+      .limit(1);
+    if (!row || typeof row.bodyText !== "string") return null;
+    return JSON.parse(row.bodyText) as { fingerprint: string; agg: RunAggregate };
+  } catch (err) {
+    console.error(`[features-service] published unit run store read failed (${scopeKey}), building it now:`, err);
+    return null;
+  }
+}
+
+async function storeRunAggregate(scopeKey: string, orgId: string, value: { fingerprint: string; agg: RunAggregate }): Promise<void> {
+  const text = JSON.stringify(value);
+  const now = new Date();
+  try {
+    await db
+      .insert(featureViewSnapshots)
+      .values({ view: RUN_VIEW, scopeKey, orgId, body: { storedAs: "body_text" }, bodyText: text, computedAt: now, lastReadAt: now })
+      .onConflictDoUpdate({ target: [featureViewSnapshots.view, featureViewSnapshots.scopeKey], set: { bodyText: text, computedAt: now, lastReadAt: now } });
+  } catch (err) {
+    console.error(`[features-service] published unit run store write failed (${scopeKey}):`, err);
+  }
+}
+
+const runBuilds = new Map<string, Promise<RunAggregate>>();
+
+/** The bulk run's total at this fingerprint: stored, else built from the ledger (one build in flight per run). */
+export async function bulkRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string): Promise<RunAggregate> {
+  const scopeKey = `${runId}|${outcomeKey}`;
+  const stored = await loadRunAggregate(scopeKey);
+  if (stored && stored.fingerprint === fingerprint) return stored.agg;
+  let build = runBuilds.get(scopeKey);
+  if (!build) {
+    build = Promise.all([occurrences({ runIds: runId, outcomeKey, direction: "produced" }), occurrences({ runIds: runId, direction: "consumed" })])
+      .then(async ([produced, consumed]) => {
+        const agg = runAggregateOf(outcomeKey, produced, consumed);
+        await storeRunAggregate(scopeKey, orgId, { fingerprint, agg });
+        return agg;
+      })
+      .finally(() => runBuilds.delete(scopeKey));
+    runBuilds.set(scopeKey, build);
+  }
+  return build;
+}
+
+/**
+ * Every newsletter release of the fleet with Units gets its run total built ahead of any page (every brand, every
+ * org): a minute after boot, then every 10 minutes, one run at a time; a run whose fingerprint has not moved is not
+ * read again.
+ */
+export async function sweepBulkRuns(): Promise<{ checked: number }> {
+  const body = (await newsletterGet("/internal/mailing-list-releases")) as { releases?: Release[] };
+  if (!Array.isArray(body.releases)) throw new Error("transactional-email-service mailing-list-releases: no releases array");
+  const runs = body.releases.filter((r) => r.unitsRunId && r.emailsSent > 0);
+  for (const r of runs) await bulkRunAggregate(r.orgId, r.unitsRunId!, "newsletter_email_sent", String(r.unitsDeclared));
+  return { checked: runs.length };
+}
+
+let sweepTimer: NodeJS.Timeout | null = null;
+export function startBulkRunSweep(): void {
+  if (sweepTimer) return;
+  const tick = () =>
+    void sweepBulkRuns().catch((err: Error) => console.error(`[features-service] published unit run sweep failed: ${err.message}`));
+  setTimeout(tick, 60_000).unref?.();
+  sweepTimer = setInterval(tick, 10 * 60_000);
+  sweepTimer.unref?.();
+}
+
 // ---------------------------------------------------------------- the ledger
 
 async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: "gross" | "net") {
   const handles = sources.flatMap((s) => (s.ledger ? [s.ledger] : []));
+  const single = handles.filter((h) => h.bulkFingerprint === undefined);
+  const bulk = handles.filter((h) => h.bulkFingerprint !== undefined);
   const byKey = new Map<string, string[]>();
-  for (const h of handles) byKey.set(h.outcomeKey, [...(byKey.get(h.outcomeKey) ?? []), h.runId]);
-  const allRuns = [...new Set(handles.map((h) => h.runId))];
-  const [units, consumedOnRuns] = await Promise.all([
+  for (const h of single) byKey.set(h.outcomeKey, [...(byKey.get(h.outcomeKey) ?? []), h.runId]);
+  const keys = [...new Set(handles.map((h) => h.outcomeKey))];
+  const singleRuns = [...new Set(single.map((h) => h.runId))];
+  const [units, consumedOnRuns, bulkAggs, unitConsumptions] = await Promise.all([
     Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOnRuns(runIds, { outcomeKey, direction: "produced" }))).then((x) => x.flat()),
     // What each Unit's production order consumed (its inputs' cost: full absorption).
-    occurrencesOnRuns(allRuns, { direction: "consumed" }),
+    occurrencesOnRuns(singleRuns, { direction: "consumed" }),
+    Promise.all(bulk.map((h) => bulkRunAggregate(orgId, h.runId, h.outcomeKey, h.bulkFingerprint!).then((agg) => [h.runId, agg] as const))).then((x) => new Map(x)),
+    // What consumed the Units: every consumption of the outcome in the org (a click is rare: far fewer rows than the Units).
+    handles.length ? Promise.all(keys.map((outcomeKey) => occurrences({ orgId, outcomeKey, direction: "consumed" }))).then((x) => x.flat()) : Promise.resolve([] as ServedOccurrence[]),
   ]);
-  // What consumed the Units: every consumption of the outcome in the org (a click is rare: far fewer rows than the Units).
-  const unitConsumptions = units.length
-    ? (await Promise.all([...byKey.keys()].map((outcomeKey) => occurrences({ orgId, outcomeKey, direction: "consumed" })))).flat()
-    : [];
   const visitRuns = [...new Set(unitConsumptions.filter((c) => (c.consumption?.consumingOutcomes ?? []).some((p) => p.outcomeKey === "website_visit")).map((c) => c.runId))];
   const visitsProduced = await occurrencesOver(visitRuns, "runIds", { outcomeKey: "website_visit", direction: "produced" });
   const bySvc = new Map<string, string[]>();
@@ -244,9 +335,17 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
   ).flat();
   const credits = creditsByOccurrence(units, unitConsumptions, visitsProduced, visitConsumptions, pricing);
   addInputCosts(credits, units, consumedOnRuns, pricing);
+  const bulkVisits = bulkVisitCredits(new Set(bulk.map((h) => h.runId)), unitConsumptions, visitsProduced, visitConsumptions);
   const unitsByRun = new Map<string, LedgerOccurrence[]>();
   for (const u of units) unitsByRun.set(u.runId, [...(unitsByRun.get(u.runId) ?? []), u]);
-  return (src: UnitSource) => creditOfRow(src, unitsByRun, credits);
+  return (src: UnitSource) => {
+    if (src.ledger?.bulkFingerprint !== undefined) {
+      const agg = bulkAggs.get(src.ledger.runId)!;
+      const v = bulkVisits.get(src.ledger.runId) ?? { visits: 0, signups: 0 };
+      return { spentUsd: pricing === "net" ? agg.netUsd : agg.grossUsd, visits: v.visits, signups: v.signups };
+    }
+    return creditOfRow(src, unitsByRun, credits);
+  };
 }
 
 /** The brand's Units of one published outcome, computed now. */
