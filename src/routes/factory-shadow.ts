@@ -69,6 +69,9 @@ import { enginePicksOf } from "../lib/engine-picks.js";
 import { withEnginePickMarks, withFactoryEngineMarks, withResearchPlaceMarks } from "../lib/catalogue-mark-serving.js";
 import { CLEAR_WINNER_PCT, enginesOf, placeDailyOf, researchPlacesOf, strategySplitsOf, type PlaceDay, type StoredEnginePlace } from "../lib/research/engine-places.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
+import { splitPlayId } from "../lib/plays.js";
+import { pipeIdOf } from "../lib/agent-catalogue.js";
+import { servedLegKeyOf } from "../lib/funnel-legs.js";
 import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
@@ -650,6 +653,71 @@ async function refreshEngineReplay(engines: EngineMemos, now: Date): Promise<voi
   }
   await storeFleetCell(REPLAY_CELL, JSON.stringify(replay), now.getTime());
   console.log(`[features-service] engine replay: ${replay.families.length} outcome(s), regret today ${replay.totals.todayRegret} vs Engine ${replay.totals.engineRegret}${replay.failure ? `, FAILED ${replay.failure}` : ""}`);
+}
+
+/**
+ * MIGRATE-1105 S0b (owner 2026-11-06, Doc Dinners: a brief rewritten to « Contacted pure prospects » still ran the
+ * funnel's own catch-all find script): THE BRIEF DECIDES THE PLAY A UNIT RUNS. The brief judge above, asked for ONE unit at
+ * run time: its funnel campaign's brief, the plays its pipe may run (`playOptionsOf`, a play run by a kept script
+ * included), the stored verdict reused while the brief and the plays are the same, else Jev asked now and the verdict
+ * stored (the pass reuses it). Answers the strategy the brief picks; null = the brief picks nothing on this pipe (empty
+ * brief, one play, or the pipe's default chosen): the funnel's own play stands. Throws when it cannot be read or judged
+ * (the caller fails closed).
+ */
+export interface BriefPlayPick {
+  playId: string;
+  strategyId: string;
+  /** How it was decided: a stored verdict on this brief, or Jev asked now. */
+  source: "stored" | "jev";
+  confidence: number | null;
+}
+const BRIEF_PLAY_HELD_MS = 60_000;
+const briefPlayHeld = new Map<string, { at: number; value: Promise<BriefPlayPick | null> }>();
+
+export function briefPlayOfUnit(unit: { salesFunnelCampaignId: string; orgId: string; brandId: string; featureSlug: string; legKey: string }): Promise<BriefPlayPick | null> {
+  const key = `${unit.salesFunnelCampaignId}|${unit.featureSlug}|${unit.legKey}`;
+  const hit = briefPlayHeld.get(key);
+  if (hit && Date.now() - hit.at < BRIEF_PLAY_HELD_MS) return hit.value;
+  const value = (async (): Promise<BriefPlayPick | null> => {
+    const rows = await fetchSalesFunnelCampaigns(unit.brandId, null, { orgId: unit.orgId });
+    const row = rows.find((r) => r.id === unit.salesFunnelCampaignId);
+    if (!row) throw new Error(`campaign-service lists no funnel campaign ${unit.salesFunnelCampaignId} for brand ${unit.brandId}`);
+    const c = shadowCampaignOf(row, unit.orgId);
+    const briefHash = briefHashOf(c.brief);
+    if (briefHash === null) return null;
+    const model = await loadCatalogueModelForLifetimeRevenue(null, null);
+    const base = model.pipes.get(pipeIdOf(unit.featureSlug, servedLegKeyOf(unit.featureSlug, unit.legKey)));
+    if (!base) throw new Error(`the catalogue knows no pipe ${unit.featureSlug}|${unit.legKey}`);
+    const options = playOptionsOf(model, base);
+    const stored = (await readJudgments([c.id])).get(`${c.id}|${base.id}`) ?? null;
+    const need = judgingNeed(stored, briefHash, options);
+    if (need.kind === "default") return null;
+    let chosen: { id: string; source: "stored" | "jev"; confidence: number | null };
+    if (need.kind === "stored" && stored && options.some((o) => o.id === stored.chosenPipeId)) {
+      chosen = { id: stored.chosenPipeId, source: "stored", confidence: stored.confidence };
+    } else {
+      const a = await askJev(briefState(model, base, c.brief!), options);
+      await writeJudgment({
+        campaignId: c.id, basePipeId: base.id, briefHash, playsSignature: playsSignatureOf(options), chosenPipeId: a.chosenPipeId, defaultPipeId: options[0]!.id,
+        confidence: a.confidence, probabilities: a.probabilities, model: a.model, source: "jev", judgedAt: new Date().toISOString(), orgId: c.orgId, briefUpdatedAt: c.briefUpdatedAt,
+      });
+      console.log(`[features-service] brief of campaign ${c.id} judged for ${base.id}: ${a.chosenPipeId} (${a.confidence})`);
+      chosen = { id: a.chosenPipeId, source: "jev", confidence: a.confidence };
+    }
+    if (chosen.id === options[0]!.id) return null;
+    const strategyId = splitPlayId(chosen.id).strategyId;
+    return strategyId ? { playId: chosen.id, strategyId, source: chosen.source, confidence: chosen.confidence } : null;
+  })();
+  briefPlayHeld.set(key, { at: Date.now(), value });
+  value.catch(() => {
+    if (briefPlayHeld.get(key)?.value === value) briefPlayHeld.delete(key);
+  });
+  return value;
+}
+
+/** Test seam. */
+export function __resetBriefPlayForTest(): void {
+  briefPlayHeld.clear();
 }
 
 /** 10 minutes after listen (the catalogue figures are warm by then), then every 3 hours. */

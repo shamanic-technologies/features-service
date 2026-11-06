@@ -228,6 +228,11 @@ export interface CatalogueInputs {
    * follows from facts, never a staff click). Absent = none known (the pipe then runs only if its channel is managed).
    */
   workflowPipeKeys?: ReadonlySet<string>;
+  /**
+   * `<channel slug>|<outcome>` of every runnable SCRIPT stating its channel (MIGRATE-1105 S0b): the Engine of that outcome
+   * runs a pipe of that channel ending on it, with no workflow. Absent = none known.
+   */
+  scriptChannelOutcomes?: ReadonlySet<string>;
   declaredSteps: readonly DeclaredStepInput[];
   /** Pipe id -> fleet measurement. Absent = nothing measured. */
   measurements: ReadonlyMap<string, PipeMeasurement>;
@@ -277,6 +282,12 @@ export interface PlayInput {
   excludedDynasties: readonly string[];
   /** Why the play allows no active workflow (`lib/plays.ts` `playBlockOf`); null when one is allowed. */
   block?: PlayBlock | null;
+  /**
+   * MIGRATE-1105 S0b: the runnable SCRIPTS stating the pipe's channel (tactic `channel`) that the strategy keeps
+   * (`lib/script-strategy.ts`, the rule workflow-service's Rating applies per run), any outcome. The model keeps those of
+   * the pipe's own outcome (its `toStep`, the Engine that makes it). Absent = none.
+   */
+  keptScripts?: ReadonlyArray<{ outcome: string; dynasty: string }>;
 }
 
 /** The play a pipe object stands for (null = a pipe cataloguing no play: every assigned workflow). */
@@ -289,6 +300,9 @@ export interface CataloguePlayInfo {
   isDefault: boolean;
   allowedActiveWorkflowCount: number;
   allowedActiveDynasties: readonly string[];
+  /** The scripts of the pipe's Engine (its outcome, its channel) the strategy keeps, sorted (MIGRATE-1105 S0b). A play
+   *  allowing no workflow still runs when one is kept: the Engine runs it. */
+  keptScriptDynasties: readonly string[];
   excludedDynasties: readonly string[];
   block: PlayBlock | null;
 }
@@ -534,29 +548,35 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         triggerId: t.triggerId,
         operatedBy: c.operatedBy,
         managed: c.managed,
-        hasWorkflow: inputs.workflowPipeKeys?.has(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`) ?? false,
+        // A pipe runs on an active workflow OR a runnable script of its Engine stating its channel (MIGRATE-1105 S0b).
+        hasWorkflow: (inputs.workflowPipeKeys?.has(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`) ?? false) || (inputs.scriptChannelOutcomes?.has(`${c.slug}|${toStep}`) ?? false),
         published: inputs.publishedPipeIds.has(id),
         economics,
         measurement,
         expectedCost: null,
-        play: played ? playInfoOf(id, played, true) : null,
+        play: played ? playInfoOf(id, played, true, toStep) : null,
       });
     }
   }
   return out;
 }
 
-const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean): CataloguePlayInfo => ({
-  basePipeId,
-  strategyId: p.strategyId,
-  strategyName: p.strategyName,
-  strategyDescription: p.strategyDescription,
-  isDefault,
-  allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
-  allowedActiveDynasties: p.allowedActiveDynasties ?? [],
-  excludedDynasties: p.excludedDynasties,
-  block: p.block ?? null,
-});
+const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean, toStep: string): CataloguePlayInfo => {
+  const keptScriptDynasties = [...new Set((p.keptScripts ?? []).filter((s) => s.outcome === toStep).map((s) => s.dynasty))].sort();
+  return {
+    basePipeId,
+    strategyId: p.strategyId,
+    strategyName: p.strategyName,
+    strategyDescription: p.strategyDescription,
+    isDefault,
+    allowedActiveWorkflowCount: p.allowedActiveWorkflowCount,
+    allowedActiveDynasties: p.allowedActiveDynasties ?? [],
+    keptScriptDynasties,
+    excludedDynasties: p.excludedDynasties,
+    // A script the strategy keeps runs the play (MIGRATE-1105 S0b): nothing blocks it, whatever its workflows say.
+    block: keptScriptDynasties.length > 0 ? null : (p.block ?? null),
+  };
+};
 
 /** PURE: a pipe's (or a play's) economics from its best workflow's measurement (see the header). */
 function pipeEconomicsOf(
@@ -595,9 +615,9 @@ function buildPlayVariants(inputs: CatalogueInputs, pipes: ReadonlyMap<string, C
         id,
         measurement: p.measurement,
         economics: pipeEconomicsOf(base.operatedBy, p.measurement, valueOf, base.fromStep, base.toStep),
-        hasWorkflow: p.allowedActiveWorkflowCount > 0,
+        hasWorkflow: p.allowedActiveWorkflowCount > 0 || (p.keptScripts ?? []).some((s) => s.outcome === base.toStep),
         expectedCost: null,
-        play: playInfoOf(pipeId, p, false),
+        play: playInfoOf(pipeId, p, false, base.toStep),
       });
     }
   }
@@ -1223,12 +1243,15 @@ export const funnelFirstStep = (legs: readonly FunnelLeg[]): string | null => (l
 /**
  * PURE: a pipe we can run today, from FACTS (owner 2026-10-12, never a staff click): run by the customer's own team
  * (nothing of ours to run: always), or a platform pipe we run (a MANAGED channel: `MANAGED_CHANNEL_SLUGS` + live
- * sourcing origins) or holding an ACTIVE workflow. A platform pipe with neither (LinkedIn posting, ads, agencies) is
+ * sourcing origins) or holding an ACTIVE workflow or a runnable SCRIPT of its Engine stating its channel (MIGRATE-1105 S0b:
+ * a play allowing no workflow runs when its strategy keeps such a script). A platform pipe with none (LinkedIn posting, ads, agencies) is
  * listed but campaign-service answers 409 `no_workflow` on launch. `published` is true for every declaration since
  * 2026-10-12 (created live); it stays only as staff's unpublish switch.
  */
 export const pipeRunnable = (p: CataloguePipe): boolean =>
-  p.published && (p.operatedBy === "customer" || (p.play !== null && p.play.allowedActiveWorkflowCount === 0 ? false : p.managed || p.hasWorkflow));
+  p.published &&
+  (p.operatedBy === "customer" ||
+    (p.play !== null && p.play.allowedActiveWorkflowCount === 0 && p.play.keptScriptDynasties.length === 0 ? false : p.managed || p.hasWorkflow));
 
 /**
  * PURE: a sales funnel's TYPE (owner 2026-10-10): `proactive` when at least one of its pipes is proactive
