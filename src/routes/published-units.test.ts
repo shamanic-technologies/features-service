@@ -54,7 +54,7 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
       if (url.startsWith("http://social/internal/post-metrics")) return json({ posts: [{ subjectId: "p1", publishRunId: "run-p1", metrics: { views: 120 }, engagement: 7 }] });
       if (url.startsWith("http://runs/internal/outcome-occurrences")) {
         const q = new URL(url).searchParams;
-        if (q.get("direction") === "produced" && q.get("outcomeKey") === "post_published" && q.get("runIds") === "run-p1")
+        if (q.get("direction") === "produced" && q.get("outcomeKey") === "post_published" && (q.get("runIds") ?? "").split(",").includes("run-p1"))
           return json({ occurrences: [{ id: "u1", runId: "run-p1", direction: "produced", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: { grossCents: "50", netCents: "25" }, consumption: null }], nextCursor: null });
         if (q.get("direction") === "consumed" && !q.get("runIds") && q.get("outcomeKey") === "post_published")
           return json({ occurrences: [{ id: "c1", runId: "visit-run", direction: "consumed", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: null, consumption: { sourceOccurrenceId: "u1", consumingOutcomes: [{ outcomeKey: "website_visit" }] } }], nextCursor: null });
