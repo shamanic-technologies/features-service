@@ -6,6 +6,7 @@ import {
   currentShapeFingerprints,
   isCurrentShapeKey,
   routeResponseShapeFingerprint,
+  ROUTE_COMPUTE_RULES,
   shapeFingerprint,
   withResponseShape,
   withoutResponseShape,
@@ -98,6 +99,34 @@ describe("routeResponseShapeFingerprint", () => {
   it("fails loud on a route the document does not hold, and resolves the real lead-families route", () => {
     expect(() => routeResponseShapeFingerprint("/nope", "get", routeDoc())).toThrow(/no GET \/nope/);
     expect(routeResponseShapeFingerprint("/brands/{brandId}/lead-families", "get", openApiDocument)).toMatch(/^[0-9a-f]{12}$/);
+  });
+});
+
+describe("ROUTE_COMPUTE_RULES (CAMPAIGN-TOTAL-POSREPLY-1106-B: a computation fix retires the previous build's cells)", () => {
+  const doc = {
+    paths: { "/x": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "integer" } } } } } } } },
+  };
+
+  it("a stated rule moves the route's fingerprint; changing it moves it again; no rule hashes as before", () => {
+    const none = routeResponseShapeFingerprint("/x", "get", doc, {});
+    const v1 = routeResponseShapeFingerprint("/x", "get", doc, { "/x": "fix-a" });
+    const v2 = routeResponseShapeFingerprint("/x", "get", doc, { "/x": "fix-b" });
+    expect(new Set([none, v1, v2]).size).toBe(3);
+    expect(routeResponseShapeFingerprint("/x", "get", doc, { "/other": "fix-a" })).toBe(none);
+  });
+
+  it("an old-rule cell is not current, so it is never served nor counted as held", () => {
+    const path = "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts";
+    const before = routeResponseShapeFingerprint(path, "get", openApiDocument, {});
+    expect(before).not.toBe(routeResponseShapeFingerprint(path));
+    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", before))).toBe(false);
+    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", routeResponseShapeFingerprint(path)))).toBe(true);
+  });
+
+  it("every route named holds a GET in the served document (a typo would bump nothing)", () => {
+    for (const path of Object.keys(ROUTE_COMPUTE_RULES)) {
+      expect(routeResponseShapeFingerprint(path, "get", openApiDocument)).toMatch(/^[0-9a-f]{12}$/);
+    }
   });
 });
 

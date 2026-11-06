@@ -45,6 +45,30 @@ export function responseShapeFingerprint(): string {
 
 const routeMemo = new Map<string, string>();
 
+/**
+ * The version of the COMPUTATION behind a route's body, per GET route (CAMPAIGN-TOTAL-POSREPLY-1106-B).
+ *
+ * Why: a fix that changes what a read RETURNS without changing its SHAPE kept the route's fingerprint, so every
+ * cell computed by the previous build stayed servable and the first read of a cell nobody had opened since the
+ * deploy got the pre-fix body (stale-while-revalidate), the right one only on the read after. Prod 2026-11-06
+ * 15:08 UTC: funnel campaign b255706c's spend charts read 0 positive replies from a cell computed before the
+ * #2266 deploy (2026-11-05 20:14), its refresh 45 s later read 2.
+ *
+ * A route listed here folds its rule into its fingerprint, so changing the rule keys every cell of that route
+ * anew: an old cell is never served again (a miss computes live, the keeper rebuilds the read cells, the same as
+ * a shape change). Bump a route's value in the PR whose fix changes its figures; a route not listed hashes
+ * byte-for-byte as before. Name the fix, never a date alone.
+ */
+export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
+  // Several campaigns' people are read one lead-service walk per campaign identity (CAMPAIGN-TOTAL-POSREPLY-1106).
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "several-campaign-people-1106",
+  "/offers/{offerId}/spend-charts": "several-campaign-people-1106",
+  "/brands/{brandId}/sales-funnel-campaigns": "several-campaign-people-1106",
+  "/offers/{offerId}/outcome-cost-series": "several-campaign-people-1106",
+  "/offers/{offerId}/revenue": "several-campaign-people-1106",
+  "/brands/{brandId}/offers": "several-campaign-people-1106",
+};
+
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */
 function inlineRefs(value: unknown, schemas: Record<string, unknown>, seen: ReadonlySet<string> = new Set()): unknown {
   if (Array.isArray(value)) return value.map((v) => inlineRefs(v, schemas, seen));
@@ -68,17 +92,25 @@ function inlineRefs(value: unknown, schemas: Record<string, unknown>, seen: Read
  * one), that is a blocking miss on the first read after nearly every deploy. A change to THIS route's
  * response still keys the cell anew, so the old shape is never served.
  */
-export function routeResponseShapeFingerprint(path: string, method = "get", document: unknown = openApiDocument): string {
+export function routeResponseShapeFingerprint(
+  path: string,
+  method = "get",
+  document: unknown = openApiDocument,
+  rules: Readonly<Record<string, string>> = ROUTE_COMPUTE_RULES,
+): string {
   const memoKey = `${method} ${path}`;
-  if (document === openApiDocument) {
+  if (document === openApiDocument && rules === ROUTE_COMPUTE_RULES) {
     const hit = routeMemo.get(memoKey);
     if (hit) return hit;
   }
   const doc = document as { paths?: Record<string, Record<string, { responses?: unknown }>>; components?: { schemas?: Record<string, unknown> } };
   const operation = doc.paths?.[path]?.[method];
   if (!operation?.responses) throw new Error(`routeResponseShapeFingerprint: no ${method.toUpperCase()} ${path} in the OpenAPI document`);
-  const fingerprint = shapeFingerprint(inlineRefs(operation.responses, doc.components?.schemas ?? {}));
-  if (document === openApiDocument) routeMemo.set(memoKey, fingerprint);
+  const inlined = inlineRefs(operation.responses, doc.components?.schemas ?? {});
+  // A route with no stated compute rule hashes exactly as before (its cells stay warm).
+  const rule = method === "get" ? rules[path] : undefined;
+  const fingerprint = shapeFingerprint(rule === undefined ? inlined : { responses: inlined, computeRule: rule });
+  if (document === openApiDocument && rules === ROUTE_COMPUTE_RULES) routeMemo.set(memoKey, fingerprint);
   return fingerprint;
 }
 

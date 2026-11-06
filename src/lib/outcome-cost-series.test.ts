@@ -53,7 +53,7 @@ describe("contactedOutcomeDays (OUTCOME-COST-SERIES-1027, owner choice A)", () =
       // Not served by the offer's campaigns, but a follow-up pipe of the offer acted on them: contacted, undated meeting.
       person({ leadId: "e", campaignId: "other", signals: { meeting: true }, signalDates: {} }),
     ];
-    const out = contactedOutcomeDays(persons, new Set(["c1"]), new Set(["e"]), "2026-06-15");
+    const out = contactedOutcomeDays(persons, new Set(["a", "b", "c", "d"]), new Set(["e"]), "2026-06-15");
     expect(out.get("conversation")).toEqual(["2026-07-05"]);
     expect(out.get("meeting_booked")).toEqual(["2026-08-02", null]);
     expect(out.get("signup")).toEqual([]);
