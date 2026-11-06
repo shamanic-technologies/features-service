@@ -55,7 +55,8 @@ const dayOf = (iso: string | null | undefined): string | null => (iso ? iso.slic
  */
 export function contactedOutcomeDays(
   persons: readonly EnginePerson[],
-  servedCampaignIds: ReadonlySet<string>,
+  /** The leads the scope's campaigns served (`ScopePeople.servedLeadIds`), never re-derived from campaign ids. */
+  servedLeadIds: ReadonlySet<string>,
   handedActed: ReadonlySet<string>,
   scopeStart: string | null,
 ): Map<OutcomeCostStep, (string | null)[]> {
@@ -64,7 +65,7 @@ export function contactedOutcomeDays(
   for (const p of persons) {
     if (seen.has(p.leadId)) continue;
     seen.add(p.leadId);
-    const served = p.campaignId != null && servedCampaignIds.has(p.campaignId);
+    const served = servedLeadIds.has(p.leadId);
     if (served) out.get("lead_found")!.push(dayOf(p.servedAt ?? null));
     const contacted = (served && Boolean(p.signals.contacted)) || handedActed.has(p.leadId);
     if (!contacted) continue;

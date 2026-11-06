@@ -100,6 +100,17 @@ const dayOf = (iso: string | null | undefined): string | null => (iso ? iso.slic
 /** Is the leg an ENTRY leg (from nothing or from Lead found): its people enter on their first message. */
 export const isEntryLeg = (leg: ChartLeg): boolean => leg.fromStep === null || leg.fromStep === "lead_found";
 
+/** One scope's people, and which of them its campaigns SERVED (the others were only handed to its units). */
+export interface ScopePeople {
+  persons: EnginePerson[];
+  /**
+   * The leads the scope's own campaign read returned. Never re-derived from `campaignId`: a campaign read answers
+   * for the campaign's IDENTITY, so a person served by an older row of it (a workflow switch) carries that row's id,
+   * which the scope does not list (CAMPAIGN-TOTAL-POSREPLY-1106-B: re-filtering on the ids dropped them).
+   */
+  servedLeadIds: ReadonlySet<string>;
+}
+
 /**
  * ONE SCOPE's people, overlays applied: the people its campaigns served (one campaign = lead-service's campaign read
  * and that campaign's own event dates, several = one read per campaign identity of the scope, `fetchLeadsForRevenue`)
@@ -110,7 +121,7 @@ export async function readScopePeople(
   personCampaignIds: readonly string[],
   handedLeadIds: ReadonlySet<string>,
   headers: Headers,
-): Promise<EnginePerson[]> {
+): Promise<ScopePeople> {
   const single = personCampaignIds.length === 1 ? personCampaignIds[0] : undefined;
   const [served, brandRows] = await Promise.all([
     personCampaignIds.length === 0 ? Promise.resolve([]) : fetchLeadsForRevenue(brandId, single ?? [...personCampaignIds], headers),
@@ -129,7 +140,7 @@ export async function readScopePeople(
     }),
   ]);
   applySignalOverlays(persons, timestamps, observed?.byEmail ?? null);
-  return persons;
+  return { persons, servedLeadIds: servedIds };
 }
 
 /**
@@ -142,7 +153,8 @@ export async function readScopePeople(
 export function chartPersonsOf(
   leg: ChartLeg,
   persons: readonly EnginePerson[],
-  personCampaignIds: ReadonlySet<string>,
+  /** The leads the scope's campaigns served (`ScopePeople.servedLeadIds`), never re-derived from campaign ids. */
+  servedLeadIds: ReadonlySet<string>,
   handed: ReadonlyMap<string, { claimedAt: string | null; actedAt: string | null; acted: boolean }>,
   /**
    * The scope's first day (its first spend): a date before it belongs to another campaign that worked the same person
@@ -150,8 +162,8 @@ export function chartPersonsOf(
    */
   scopeStart: string | null = null,
 ): ChartPerson[] | null {
-  // `persons` is the scope's own read (`readScopePeople`): everybody it served, once.
-  const served = persons.filter((p) => p.campaignId != null && personCampaignIds.has(p.campaignId));
+  // `persons` is the scope's own read (`readScopePeople`): everybody it served, once, plus the people handed to it.
+  const served = persons.filter((p) => servedLeadIds.has(p.leadId));
   if (leg.toStep === "lead_found") {
     return served.map((p) => ({ entered: false, enteredOn: null, converted: true, convertedOn: dayOf(p.servedAt ?? null) }));
   }
@@ -296,9 +308,9 @@ export async function computeSpendChart(args: {
     });
   }
 
-  const persons = leg ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : [];
+  const people = leg ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : null;
   const spendDays = [...spend.byDay.keys()].sort();
-  const chartPersons = leg ? chartPersonsOf(leg, persons, new Set(scope.personCampaignIds), handed, spendDays[0] ?? null) : null;
+  const chartPersons = leg && people ? chartPersonsOf(leg, people.persons, people.servedLeadIds, handed, spendDays[0] ?? null) : null;
   const maturity = leg ? legMaturity(storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey))) : null;
   const daily = buildSpendChartDays({
     spendByDay: spend.byDay,
