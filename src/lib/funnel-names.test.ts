@@ -99,6 +99,10 @@ describe("a sales funnel's name says what it does (owner 2026-10-16, FUNNEL-NAME
     expect(first(due)).toBe("Active Email Replies");
     expect(first(twoMonths)).toBe("Frequent Cold Email");
     expect(first(COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~valid-only-6-months+"))).toBe("Patient Cold Email");
+    // FRESH-NEVER-1106: the never-emailed window names the funnel like any window, the base's who kept.
+    const never = COLD_REPLIES.replace("@lead-sourcing+", "@lead-sourcing~valid-catch-all-never-emailed+");
+    for (const c of funnelNameCandidates(never)) expect(c, c).toMatch(/\bFresh\b/);
+    expect(first(never)).toBe("Fresh Wide Email");
   });
 
   it("the plainest funnel is named first: a lead strategy or a trigger head yields", () => {
