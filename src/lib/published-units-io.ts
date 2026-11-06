@@ -16,6 +16,7 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import {
+  addInputCosts,
   creditOfRow,
   creditsByOccurrence,
   engagementsOf,
@@ -66,6 +67,15 @@ async function occurrences(params: Record<string, string>): Promise<ServedOccurr
 }
 
 const chunks = <T>(xs: readonly T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
+/**
+ * Every occurrence on each of these runs, one paged read per run, 6 runs at a time: a newsletter release run holds tens of
+ * thousands of Units, read one after the other they took 132 s (2026-11-06); in parallel a fraction of it.
+ */
+async function occurrencesOnRuns(runIds: readonly string[], params: Record<string, string>): Promise<ServedOccurrence[]> {
+  const parts = await mapWithConcurrency([...new Set(runIds)], 6, (runId) => occurrences({ ...params, runIds: runId }));
+  return parts.flat();
+}
 
 async function occurrencesOver(ids: readonly string[], idParam: "runIds" | "subjectIds", params: Record<string, string>): Promise<ServedOccurrence[]> {
   if (ids.length === 0) return [];
@@ -215,7 +225,12 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
   const handles = sources.flatMap((s) => (s.ledger ? [s.ledger] : []));
   const byKey = new Map<string, string[]>();
   for (const h of handles) byKey.set(h.outcomeKey, [...(byKey.get(h.outcomeKey) ?? []), h.runId]);
-  const units = (await Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOver(runIds, "runIds", { outcomeKey, direction: "produced" })))).flat();
+  const allRuns = [...new Set(handles.map((h) => h.runId))];
+  const [units, consumedOnRuns] = await Promise.all([
+    Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOnRuns(runIds, { outcomeKey, direction: "produced" }))).then((x) => x.flat()),
+    // What each Unit's production order consumed (its inputs' cost: full absorption).
+    occurrencesOnRuns(allRuns, { direction: "consumed" }),
+  ]);
   // What consumed the Units: every consumption of the outcome in the org (a click is rare: far fewer rows than the Units).
   const unitConsumptions = units.length
     ? (await Promise.all([...byKey.keys()].map((outcomeKey) => occurrences({ orgId, outcomeKey, direction: "consumed" })))).flat()
@@ -228,6 +243,7 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
     await Promise.all([...bySvc].map(([svc, ids]) => occurrencesOver(ids, "subjectIds", { subjectService: svc, outcomeKey: "website_visit", direction: "consumed" })))
   ).flat();
   const credits = creditsByOccurrence(units, unitConsumptions, visitsProduced, visitConsumptions, pricing);
+  addInputCosts(credits, units, consumedOnRuns, pricing);
   const unitsByRun = new Map<string, LedgerOccurrence[]>();
   for (const u of units) unitsByRun.set(u.runId, [...(unitsByRun.get(u.runId) ?? []), u]);
   return (src: UnitSource) => creditOfRow(src, unitsByRun, credits);
@@ -242,30 +258,53 @@ export async function computePublishedUnits(orgId: string, brandId: string, outc
 
 /**
  * Held per (org, brand, outcome, pricing): a newsletter release is tens of thousands of Units, read off the ledger page by
- * page. Fresh for 2 minutes; up to 30 minutes old it is served at once and re-read behind the answer; older, the caller
- * waits for the read. One read in flight per key.
+ * page. Fresh for 2 minutes; up to 6 hours old it is served at once and re-read behind the answer; older, the caller
+ * waits for the read. A key asked in the last day is re-read every 10 minutes. One read in flight per key.
  */
 const FRESH_MS = 2 * 60_000;
-const STALE_MS = 30 * 60_000;
+const STALE_MS = 6 * 60 * 60_000;
+/** A key asked in the last day is re-read every 10 minutes, so a page never waits on a newsletter's whole ledger. */
+const WARM_FOR_MS = 24 * 60 * 60_000;
+const WARM_EVERY_MS = 10 * 60_000;
+const asked = new Map<string, { at: number; args: [string, string, PublishedOutcomeKey, "gross" | "net"] }>();
+let warmer: NodeJS.Timeout | null = null;
+function keepWarm(key: string, args: [string, string, PublishedOutcomeKey, "gross" | "net"]): void {
+  asked.set(key, { at: Date.now(), args });
+  if (warmer) return;
+  warmer = setInterval(() => {
+    for (const [k, a] of asked) {
+      if (Date.now() - a.at > WARM_FOR_MS) {
+        asked.delete(k);
+        continue;
+      }
+      if (flights.has(k)) continue;
+      void readPublishedUnitsNow(k, ...a.args).catch((err: Error) => console.error(`[features-service] published units ${k}: warm re-read failed: ${err.message}`));
+    }
+  }, WARM_EVERY_MS);
+  warmer.unref?.();
+}
 const held = new Map<string, { at: number; body: PublishedUnitsBody & { computedAt: string } }>();
 const flights = new Map<string, Promise<PublishedUnitsBody & { computedAt: string }>>();
 
+function readPublishedUnitsNow(key: string, orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net") {
+  let f = flights.get(key);
+  if (!f) {
+    f = computePublishedUnits(orgId, brandId, outcomeKey, pricing)
+      .then((body) => {
+        const out = { ...body, computedAt: new Date().toISOString() };
+        held.set(key, { at: Date.now(), body: out });
+        return out;
+      })
+      .finally(() => flights.delete(key));
+    flights.set(key, f);
+  }
+  return f;
+}
+
 export async function readPublishedUnits(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net") {
   const key = `${orgId}|${brandId}|${outcomeKey}|${pricing}`;
-  const start = () => {
-    let f = flights.get(key);
-    if (!f) {
-      f = computePublishedUnits(orgId, brandId, outcomeKey, pricing)
-        .then((body) => {
-          const out = { ...body, computedAt: new Date().toISOString() };
-          held.set(key, { at: Date.now(), body: out });
-          return out;
-        })
-        .finally(() => flights.delete(key));
-      flights.set(key, f);
-    }
-    return f;
-  };
+  keepWarm(key, [orgId, brandId, outcomeKey, pricing]);
+  const start = () => readPublishedUnitsNow(key, orgId, brandId, outcomeKey, pricing);
   const h = held.get(key);
   const age = h ? Date.now() - h.at : Infinity;
   if (h && age < FRESH_MS) return h.body;
@@ -280,4 +319,7 @@ export async function readPublishedUnits(orgId: string, brandId: string, outcome
 export function __resetPublishedUnits(): void {
   held.clear();
   flights.clear();
+  asked.clear();
+  if (warmer) clearInterval(warmer);
+  warmer = null;
 }
