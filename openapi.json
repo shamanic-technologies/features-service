@@ -74743,7 +74743,7 @@
     "/brands/{brandId}/campaign-targets": {
       "get": {
         "summary": "Today: one row per ongoing funnel campaign, on its Target: outcomes to date, $ per outcome, measured return, past per day, projection",
-        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = now + 24 h ÷ outcomesPerDay; null + `unavailableReason` otherwise. Org-scoped (x-org-id). No open rate anywhere.",
+        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = now + 24 h ÷ outcomesPerDay; null + `unavailableReason` otherwise. `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included), else its own people (`countSource`); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The Target's figures on the row = its card's. `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
         "tags": [
           "Sales funnel campaigns"
         ],
@@ -74768,6 +74768,16 @@
             "required": false,
             "description": "Default net.",
             "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "One funnel campaign, any status (the campaign page); absent = every ONGOING campaign (Today). Unknown = 404 `sales_funnel_campaign_not_found`."
+            },
+            "required": false,
+            "description": "One funnel campaign, any status (the campaign page); absent = every ONGOING campaign (Today). Unknown = 404 `sales_funnel_campaign_not_found`.",
+            "name": "salesFunnelCampaignId",
             "in": "query"
           }
         ],
@@ -74990,6 +75000,187 @@
                               "nextExpectedInHours",
                               "unavailableReason"
                             ]
+                          },
+                          "targetCountSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "ledger",
+                              "campaign_people",
+                              null
+                            ],
+                            "description": "Where the Target's count comes from (its milestone card's `countSource`)."
+                          },
+                          "milestones": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "step": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "lifecycleRung": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "isTarget": {
+                                  "type": "boolean"
+                                },
+                                "count": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "countSource": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "ledger",
+                                    "campaign_people",
+                                    null
+                                  ],
+                                  "description": "`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included); `campaign_people` = no run of the campaign declares this outcome (a reply judged by an org-day run, a signup the client's team makes): its own people count."
+                                },
+                                "countUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "past": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "date": {
+                                        "type": "string"
+                                      },
+                                      "outcomes": {
+                                        "type": "number"
+                                      },
+                                      "cumulativeOutcomes": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "date",
+                                      "outcomes",
+                                      "cumulativeOutcomes"
+                                    ]
+                                  }
+                                },
+                                "pastUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "costPerUnitUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "What the units landing on this milestone spent ÷ its count."
+                                },
+                                "costPerUnitUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "costFromStartUsd": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "What every unit up to this milestone spent ÷ its count."
+                                },
+                                "costFromStartUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "conversionToNextPct": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "conversionToNextUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "projection": {
+                                  "type": "object",
+                                  "properties": {
+                                    "outcomesPerDay": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "daily": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "date": {
+                                            "type": "string"
+                                          },
+                                          "expectedOutcomes": {
+                                            "type": "number"
+                                          },
+                                          "cumulativeExpectedOutcomes": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "date",
+                                          "expectedOutcomes",
+                                          "cumulativeExpectedOutcomes"
+                                        ]
+                                      }
+                                    },
+                                    "nextExpectedAt": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "nextExpectedInHours": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "unavailableReason": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  },
+                                  "required": [
+                                    "outcomesPerDay",
+                                    "daily",
+                                    "nextExpectedAt",
+                                    "nextExpectedInHours",
+                                    "unavailableReason"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "step",
+                                "label",
+                                "lifecycleRung",
+                                "isTarget",
+                                "count",
+                                "countSource",
+                                "countUnavailableReason",
+                                "past",
+                                "pastUnavailableReason",
+                                "costPerUnitUsd",
+                                "costPerUnitUnavailableReason",
+                                "costFromStartUsd",
+                                "costFromStartUnavailableReason",
+                                "conversionToNextPct",
+                                "conversionToNextUnavailableReason",
+                                "projection"
+                              ]
+                            },
+                            "description": "One card per milestone of the campaign from Start to its Target (the chain of its own units, never the plan line); the last is the Target and carries the row's count."
+                          },
+                          "milestonesUnavailableReason": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "ledgerDaysMissing": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Ledger days runs-service has not computed yet: their counts may still move."
                           }
                         },
                         "required": [
@@ -75005,7 +75196,11 @@
                           "measuredReturn",
                           "past",
                           "pastUnavailableReason",
-                          "projection"
+                          "projection",
+                          "targetCountSource",
+                          "milestones",
+                          "milestonesUnavailableReason",
+                          "ledgerDaysMissing"
                         ]
                       }
                     }
@@ -75040,7 +75235,7 @@
             }
           },
           "404": {
-            "description": "Brand not found",
+            "description": "Brand or campaign not found",
             "content": {
               "application/json": {
                 "schema": {
