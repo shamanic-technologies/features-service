@@ -266,11 +266,24 @@ async function storeRunAggregate(scopeKey: string, orgId: string, value: { finge
 
 const runBuilds = new Map<string, Promise<RunAggregate>>();
 
-/** The bulk run's total at this fingerprint: stored, else built from the ledger (one build in flight per run). */
-export async function bulkRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string): Promise<RunAggregate> {
+/**
+ * The bulk run's total at this fingerprint: stored, else built from the ledger (one build in flight per run). A page
+ * read (`waitForFresh: false`) never waits on a rebuild once a total is stored: a release still declaring its Units
+ * moves its fingerprint every minute, and a rebuild is minutes; it serves the stored total and the rebuild runs behind
+ * (the sweep catches it within 10 minutes). Only a run never built is built on the read.
+ */
+export async function bulkRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, opts: { waitForFresh?: boolean } = {}): Promise<RunAggregate> {
   const scopeKey = `${runId}|${outcomeKey}`;
   const stored = await loadRunAggregate(scopeKey);
   if (stored && stored.fingerprint === fingerprint) return stored.agg;
+  if (stored && opts.waitForFresh === false) {
+    if (!runBuilds.has(scopeKey)) void buildRunAggregate(orgId, runId, outcomeKey, fingerprint, scopeKey).catch((err: Error) => console.error(`[features-service] published unit run ${scopeKey}: background rebuild failed: ${err.message}`));
+    return stored.agg;
+  }
+  return buildRunAggregate(orgId, runId, outcomeKey, fingerprint, scopeKey);
+}
+
+function buildRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, scopeKey: string): Promise<RunAggregate> {
   let build = runBuilds.get(scopeKey);
   if (!build) {
     build = Promise.all([occurrences({ runIds: runId, outcomeKey, direction: "produced" }), occurrences({ runIds: runId, direction: "consumed" })])
@@ -322,7 +335,7 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
     Promise.all([...byKey].map(([outcomeKey, runIds]) => occurrencesOnRuns(runIds, { outcomeKey, direction: "produced" }))).then((x) => x.flat()),
     // What each Unit's production order consumed (its inputs' cost: full absorption).
     occurrencesOnRuns(singleRuns, { direction: "consumed" }),
-    Promise.all(bulk.map((h) => bulkRunAggregate(orgId, h.runId, h.outcomeKey, h.bulkFingerprint!).then((agg) => [h.runId, agg] as const))).then((x) => new Map(x)),
+    Promise.all(bulk.map((h) => bulkRunAggregate(orgId, h.runId, h.outcomeKey, h.bulkFingerprint!, { waitForFresh: false }).then((agg) => [h.runId, agg] as const))).then((x) => new Map(x)),
     // What consumed the Units: every consumption of the outcome in the org (a click is rare: far fewer rows than the Units).
     handles.length ? Promise.all(keys.map((outcomeKey) => occurrences({ orgId, outcomeKey, direction: "consumed" }))).then((x) => x.flat()) : Promise.resolve([] as ServedOccurrence[]),
   ]);
