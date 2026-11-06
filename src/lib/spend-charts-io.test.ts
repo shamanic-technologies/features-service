@@ -21,7 +21,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
         p("b", "u1", { contacted: false }, {}),
         p("c", "other", { contacted: true, positiveReply: true }, { contacted: "2026-10-01T09:00:00Z", positiveReply: "2026-10-02T10:00:00Z" }),
       ],
-      new Set(["u1"]),
+      new Set(["a", "b"]),
       new Map(),
     );
     expect(out).toEqual([
@@ -39,7 +39,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
         // Emailed by this scope Oct 16, replied Oct 18, RE-served Oct 19 (servedAt is the latest serve): still its reply.
         p("b", "u1", { contacted: true, positiveReply: true }, { contacted: "2026-10-16T09:00:00Z", positiveReply: "2026-10-18T10:00:00Z" }, "2026-10-19T08:00:00Z"),
       ],
-      new Set(["u1"]),
+      new Set(["a", "b"]),
       new Map(),
       "2026-10-16",
     );
@@ -54,7 +54,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     const out = chartPersonsOf(
       meeting,
       [p("a", "u1", { positiveReply: true, meeting: true }, { positiveReply: "2026-10-01T00:00:00Z", meeting: "2026-10-04T00:00:00Z" })],
-      new Set(["mb"]),
+      new Set<string>(),
       new Map([["a", { claimedAt: "2026-10-02T00:00:00Z", actedAt: "2026-10-02T01:00:00Z", acted: true }]]),
     );
     expect(out).toEqual([{ entered: true, enteredOn: "2026-10-02", converted: true, convertedOn: "2026-10-04" }]);
@@ -64,7 +64,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     const out = chartPersonsOf(
       { channelSlug: "lead-sourcing", legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found" },
       [p("a", "u1", {}, {}, "2026-10-03T00:00:00Z")],
-      new Set(["u1"]),
+      new Set(["a"]),
       new Map(),
     );
     expect(out).toEqual([{ entered: false, enteredOn: null, converted: true, convertedOn: "2026-10-03" }]);

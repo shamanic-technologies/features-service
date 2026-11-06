@@ -95,8 +95,8 @@ export async function computeOutcomeCostSeries(
   const firstSpendDay = [...spendByDay.entries()].filter(([, v]) => v !== 0).map(([d]) => d).sort()[0] ?? null;
   const handedActed = new Set(handedRows.filter((r) => r.actedCount > 0).map((r) => r.leadId));
   const handedAll = new Set(handedRows.map((r) => r.leadId));
-  const persons = await readScopePeople(brandId, scope.personCampaignIds, handedAll, headers);
-  const outcomeDays = contactedOutcomeDays(persons, new Set(scope.personCampaignIds), handedActed, firstSpendDay);
+  const { persons, servedLeadIds } = await readScopePeople(brandId, scope.personCampaignIds, handedAll, headers);
+  const outcomeDays = contactedOutcomeDays(persons, servedLeadIds, handedActed, firstSpendDay);
 
   // The learning bar of a step: the maturity rule of the offer's leg landing on it, else the default rule.
   const barByStep = new Map<string, number>();

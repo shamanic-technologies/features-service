@@ -30,11 +30,12 @@ vi.mock("../lib/spend-charts-io.js", async (orig) => ({
   ]),
   readScopePeople: vi.fn(async (...args: unknown[]) => {
     peopleCalls.push(args);
-    return [
+    const persons = [
       { leadId: "a", campaignId: "u1", servedAt: "2026-07-03T00:00:00Z", signals: { contacted: true, positiveReply: true }, signalDates: { positiveReply: "2026-07-09T00:00:00Z" } },
       { leadId: "h", campaignId: "u1", servedAt: "2026-07-04T00:00:00Z", signals: { contacted: true, positiveReply: true, meeting: true }, signalDates: { positiveReply: "2026-07-20T00:00:00Z", meeting: "2026-08-05T00:00:00Z" } },
       { leadId: "x", campaignId: "u1", servedAt: "2026-07-04T00:00:00Z", signals: { signup: true }, signalDates: { signup: "2026-08-06T00:00:00Z" } },
     ];
+    return { persons, servedLeadIds: new Set(persons.map((p) => p.leadId)) };
   }),
 }));
 vi.mock("./agent-catalogue.js", () => ({
