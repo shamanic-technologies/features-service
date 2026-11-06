@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addInputCosts, creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
+import { addInputCosts, bulkVisitCredits, runAggregateOf, creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
 
 const occ = (o: Partial<LedgerOccurrence> & Pick<LedgerOccurrence, "id" | "runId" | "direction" | "outcomeKey">): LedgerOccurrence => ({
   subjectService: "meta-service",
@@ -82,6 +82,19 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
     addInputCosts(credits, u, [sent("m1", "1.5"), sent("m2", "1.5"), other], "net");
     expect(credits.get("e1")!.spentUsd).toBeCloseTo(0.015, 10);
     expect(credits.get("e2")!.spentUsd).toBeCloseTo(0.015, 10);
+  });
+
+  it("a bulk run (newsletter release): its total cost, visits through any of its Units, signups from those visits", () => {
+    const produced = [1, 2, 3].map((i) => occ({ id: `n${i}`, runId: "rel", direction: "produced", outcomeKey: "newsletter_email_sent", cost: { grossCents: "0", netCents: "0" } }));
+    const consumed = [1, 2, 3].map((i) =>
+      occ({ id: `m${i}`, runId: "rel", direction: "consumed", outcomeKey: "message_sent", consumption: { sourceOccurrenceId: null, consumingOutcomes: [{ outcomeKey: "newsletter_email_sent", standardCost: { grossCents: "2", netCents: "1.5" } }] } }),
+    );
+    expect(runAggregateOf("newsletter_email_sent", produced, consumed)).toEqual({ units: 3, netUsd: 0.045, grossUsd: 0.06 });
+    const click = occ({ id: "c", runId: "vr", direction: "consumed", outcomeKey: "newsletter_email_sent", consumption: { sourceOccurrenceId: "n2", sourceRunId: "rel", consumingOutcomes: [{ outcomeKey: "website_visit" }] } });
+    const elsewhere = occ({ id: "c2", runId: "vr2", direction: "consumed", outcomeKey: "newsletter_email_sent", consumption: { sourceOccurrenceId: "z", sourceRunId: "other", consumingOutcomes: [{ outcomeKey: "website_visit" }] } });
+    const visit = occ({ id: "w", runId: "vr", direction: "produced", outcomeKey: "website_visit" });
+    const signup = consumed[0] && occ({ id: "s", runId: "sr", direction: "consumed", outcomeKey: "website_visit", consumption: { sourceOccurrenceId: "w", consumingOutcomes: [{ outcomeKey: "signup" }] } });
+    expect(bulkVisitCredits(new Set(["rel"]), [click, elsewhere], [visit], [signup!]).get("rel")).toEqual({ visits: 1, signups: 1 });
   });
 
   it("engagements sum the counts the platform reports; none reported = null", () => {
