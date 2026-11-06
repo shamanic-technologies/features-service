@@ -37,7 +37,16 @@ export interface UnitSource {
   views: number | null;
   engagements: number | null;
   /** The ledger handles: the run the Unit(s) are produced on and the outcome key they carry (null = not on the ledger yet). */
-  ledger: { runId: string; outcomeKey: string; subjectId: string | null } | null;
+  ledger: {
+    runId: string;
+    outcomeKey: string;
+    subjectId: string | null;
+    /**
+     * A row of many Units (a newsletter release, tens of thousands of emails): its run is credited as a whole from a
+     * stored per-run total, rebuilt only when this fingerprint (the producer's count of Units declared) moves.
+     */
+    bulkFingerprint?: string;
+  } | null;
 }
 
 /** The ledger's credit of one row: spend, visits through its link, signups from those visits. */
@@ -99,6 +108,7 @@ export interface LedgerOccurrence {
   cost: { grossCents: string; netCents: string } | null;
   consumption: {
     sourceOccurrenceId: string | null;
+    sourceRunId?: string | null;
     consumingOutcomes: Array<{ outcomeKey: string | null; standardCost?: { grossCents: string; netCents: string } | null }>;
   } | null;
 }
@@ -173,6 +183,67 @@ export function addInputCosts(credits: Map<string, LedgerCredit>, units: readonl
       if (c) c.spentUsd += usd / on.length;
     }
   }
+}
+
+/** A bulk run's stored total: its Units and their cost on both bases (own cost + what the run consumed into them). */
+export interface RunAggregate {
+  units: number;
+  netUsd: number;
+  grossUsd: number;
+}
+
+/** PURE. A bulk run's total from its produced Units of the key and everything the run consumed (full absorption). */
+export function runAggregateOf(outcomeKey: string, produced: readonly LedgerOccurrence[], consumed: readonly LedgerOccurrence[]): RunAggregate {
+  let units = 0;
+  let net = 0;
+  let gross = 0;
+  for (const u of produced) {
+    if (u.direction !== "produced" || u.outcomeKey !== outcomeKey) continue;
+    units += 1;
+    net += Number(u.cost?.netCents ?? 0) || 0;
+    gross += Number(u.cost?.grossCents ?? 0) || 0;
+  }
+  for (const c of consumed) {
+    if (c.direction !== "consumed") continue;
+    for (const part of c.consumption?.consumingOutcomes ?? []) {
+      if (part.outcomeKey !== outcomeKey || !part.standardCost) continue;
+      net += Number(part.standardCost.netCents) || 0;
+      gross += Number(part.standardCost.grossCents) || 0;
+    }
+  }
+  return { units, netUsd: round(net / 100), grossUsd: round(gross / 100) };
+}
+
+/**
+ * PURE. Visits and signups of bulk runs: a website visit consumed one of the run's Units (its consumption names the
+ * Unit's run), a signup consumed that visit (once per visit).
+ */
+export function bulkVisitCredits(
+  bulkRuns: ReadonlySet<string>,
+  unitConsumptions: readonly LedgerOccurrence[],
+  visitsProduced: readonly LedgerOccurrence[],
+  visitConsumptions: readonly LedgerOccurrence[],
+): Map<string, { visits: number; signups: number }> {
+  const out = new Map([...bulkRuns].map((r) => [r, { visits: 0, signups: 0 }]));
+  const visitRunOf = new Map<string, string>();
+  for (const c of unitConsumptions) {
+    const src = c.consumption?.sourceRunId;
+    if (c.direction === "consumed" && src && bulkRuns.has(src) && consumesInto(c, "website_visit")) visitRunOf.set(c.runId, src);
+  }
+  const visitRun = new Map<string, string>();
+  for (const v of visitsProduced) {
+    const run = visitRunOf.get(v.runId);
+    if (!run || v.direction !== "produced" || v.outcomeKey !== "website_visit") continue;
+    visitRun.set(v.id, run);
+    out.get(run)!.visits += 1;
+  }
+  const signed = new Set<string>();
+  for (const c of visitConsumptions) {
+    const src = c.consumption?.sourceOccurrenceId;
+    if (c.direction === "consumed" && c.outcomeKey === "website_visit" && src && visitRun.has(src) && consumesInto(c, "signup")) signed.add(src);
+  }
+  for (const v of signed) out.get(visitRun.get(v)!)!.signups += 1;
+  return out;
 }
 
 /**

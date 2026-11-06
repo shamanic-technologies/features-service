@@ -54,6 +54,7 @@ import spendChartsRoutes from "./routes/spend-charts.js";
 import campaignMilestonesRoutes from "./routes/campaign-milestones.js";
 import campaignTargetsRoutes from "./routes/campaign-targets.js";
 import publishedUnitsRoutes from "./routes/published-units.js";
+import { startBulkRunSweep } from "./lib/published-units-io.js";
 import outcomeCostSeriesRoutes from "./routes/outcome-cost-series.js";
 import livedSalesPathsRoutes from "./routes/lived-sales-paths.js";
 import { registerChannelTriggerTypes, registerSeedFeatures } from "./seed/register.js";
@@ -237,6 +238,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // GTM Factory step 1, shadow only (routes/factory-shadow.ts): the brief judge + shadow plan of every live funnel campaign,
         // ten minutes in, then every 3 hours; never computed on a read.
         startFactoryShadowLoop();
+        // Every newsletter release's run total (published Units, OUTCOME-FINEST-1106), built ahead of any Outcome page.
+        startBulkRunSweep();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()
