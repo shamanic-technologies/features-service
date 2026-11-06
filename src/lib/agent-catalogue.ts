@@ -119,6 +119,7 @@ import type { StepLifecycleRung } from "./lifecycle-ladder.js";
 import { PLAY_SEPARATOR, playIdOf, splitPlayId, splitPlaySlug, type PlayBlock } from "./plays.js";
 import { CHANNEL_TRIGGER_TYPES, INLINE_TRIGGER_IDS } from "./channel-triggers.js";
 import { LEAD_SOURCING_SLUG, SOURCE_LEG_KEY, SOURCING_ORIGINS_BY_CHANNEL, isSourcingChannel } from "./sourcing-origins.js";
+import { scriptWorksPipe, type RunnableScript } from "./script-catalogue-client.js";
 
 /**
  * PURE: the value a pipe ADDS per outcome (owner 2026-10-11, `lib/value-added.ts`): its outcome step's value minus
@@ -227,10 +228,10 @@ export interface CatalogueInputs {
    */
   workflowPipeKeys?: ReadonlySet<string>;
   /**
-   * `<channel slug>|<outcome>` of every runnable SCRIPT stating its channel (MIGRATE-1105 S0b): the Engine of that outcome
-   * runs a pipe of that channel ending on it, with no workflow. Absent = none known.
+   * Every runnable SCRIPT (MIGRATE-1105 S0b, S5): a pipe one of them works (`scriptWorksPipe`: its Engine's outcome, its
+   * channel or a pipe naming that outcome) runs with no workflow. Absent = none known.
    */
-  scriptChannelOutcomes?: ReadonlySet<string>;
+  runnableScripts?: ReadonlyArray<Pick<RunnableScript, "outcome" | "tactics">>;
   declaredSteps: readonly DeclaredStepInput[];
   /**
    * Every outcome's rung on the ONE lead Lifecycle, read from the catalogue table `outcome_lifecycle_rungs`
@@ -287,9 +288,9 @@ export interface PlayInput {
   /** Why the play allows no active workflow (`lib/plays.ts` `playBlockOf`); null when one is allowed. */
   block?: PlayBlock | null;
   /**
-   * MIGRATE-1105 S0b: the runnable SCRIPTS stating the pipe's channel (tactic `channel`) that the strategy keeps
-   * (`lib/script-strategy.ts`, the rule workflow-service's Rating applies per run), any outcome. The model keeps those of
-   * the pipe's own outcome (its `toStep`, the Engine that makes it). Absent = none.
+   * MIGRATE-1105 S0b, S5: the runnable SCRIPTS working the pipe (`scriptWorksPipe`) that the strategy keeps
+   * (`lib/script-strategy.ts`, the rule workflow-service's Rating applies per run). The model keeps those of the pipe's
+   * Engine outcome (`CataloguePipe.outcome`). Absent = none.
    */
   keptScripts?: ReadonlyArray<{ outcome: string; dynasty: string }>;
 }
@@ -367,6 +368,10 @@ export interface CataloguePipe {
   computedLegKey: string;
   fromStep: string | null;
   toStep: string;
+  /** MIGRATE-1105 S5: the outcome the pipe's Engine makes (stated finer than `toStep`, else `toStep`). */
+  outcome: string;
+  /** Whether `outcome` is stated for the pipe (`pipe_engine_outcomes`) rather than read off `toStep`. */
+  outcomeStated: boolean;
   mode: "proactive" | "reactive";
   triggerId: string | null;
   operatedBy: "platform" | "customer";
@@ -538,6 +543,7 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
       const id = pipeIdOf(c.slug, legKey);
       const measurement = inputs.measurements.get(id) ?? null;
       const toStep = t.to.key;
+      const outcome = t.outcome ?? toStep;
       const economics = pipeEconomicsOf(c.operatedBy, measurement, valueOf, respelled ? "lead_found" : (t.from?.key ?? null), toStep);
       const played = inputs.plays?.get(id)?.default ?? null;
       out.set(id, {
@@ -548,25 +554,29 @@ function buildPipes(inputs: CatalogueInputs, valueOf: (step: string) => number |
         computedLegKey: t.legKey,
         fromStep: respelled ? "lead_found" : (t.from?.key ?? null),
         toStep,
+        outcome,
+        outcomeStated: t.outcome != null,
         mode: t.mode,
         triggerId: t.triggerId,
         operatedBy: c.operatedBy,
         managed: c.managed,
-        // A pipe runs on an active workflow OR a runnable script of its Engine stating its channel (MIGRATE-1105 S0b).
-        hasWorkflow: (inputs.workflowPipeKeys?.has(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`) ?? false) || (inputs.scriptChannelOutcomes?.has(`${c.slug}|${toStep}`) ?? false),
+        // A pipe runs on an active workflow OR a runnable script working it (MIGRATE-1105 S0b, S5: `scriptWorksPipe`).
+        hasWorkflow:
+          (inputs.workflowPipeKeys?.has(`${c.slug}|${pipeLegKeyOf(c.slug, t.legKey)}`) ?? false) ||
+          (inputs.runnableScripts ?? []).some((s) => scriptWorksPipe(s, { channelSlug: c.slug, outcome, outcomeStated: t.outcome != null })),
         published: inputs.publishedPipeIds.has(id),
         economics,
         measurement,
         expectedCost: null,
-        play: played ? playInfoOf(id, played, true, toStep) : null,
+        play: played ? playInfoOf(id, played, true, outcome) : null,
       });
     }
   }
   return out;
 }
 
-const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean, toStep: string): CataloguePlayInfo => {
-  const keptScriptDynasties = [...new Set((p.keptScripts ?? []).filter((s) => s.outcome === toStep).map((s) => s.dynasty))].sort();
+const playInfoOf = (basePipeId: string, p: PlayInput, isDefault: boolean, outcome: string): CataloguePlayInfo => {
+  const keptScriptDynasties = [...new Set((p.keptScripts ?? []).filter((s) => s.outcome === outcome).map((s) => s.dynasty))].sort();
   return {
     basePipeId,
     strategyId: p.strategyId,
@@ -619,9 +629,9 @@ function buildPlayVariants(inputs: CatalogueInputs, pipes: ReadonlyMap<string, C
         id,
         measurement: p.measurement,
         economics: pipeEconomicsOf(base.operatedBy, p.measurement, valueOf, base.fromStep, base.toStep),
-        hasWorkflow: p.allowedActiveWorkflowCount > 0 || (p.keptScripts ?? []).some((s) => s.outcome === base.toStep),
+        hasWorkflow: p.allowedActiveWorkflowCount > 0 || (p.keptScripts ?? []).some((s) => s.outcome === base.outcome),
         expectedCost: null,
-        play: playInfoOf(pipeId, p, false, base.toStep),
+        play: playInfoOf(pipeId, p, false, base.outcome),
       });
     }
   }

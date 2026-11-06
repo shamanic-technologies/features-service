@@ -72,6 +72,21 @@ export function readRunnableScripts(): Promise<RunnableScript[]> {
 export const scriptChannelOf = (s: Pick<RunnableScript, "tactics">): string | null =>
   typeof s.tactics.channel === "string" && s.tactics.channel ? s.tactics.channel : null;
 
+/**
+ * PURE (MIGRATE-1105 S5, owner 2026-11-06: the outcome is the WHAT, as fine as possible): whether a runnable script works
+ * a pipe. It makes the outcome of the pipe's Engine, and either states the pipe's channel (tactic `channel`, a script not
+ * yet re-homed onto its fine outcome) or states none on a pipe that names its Engine outcome (`outcomeStated`). A script
+ * stating no channel on a pipe naming none is asked by other scripts, never the pipe's own.
+ */
+export function scriptWorksPipe(
+  s: Pick<RunnableScript, "outcome" | "tactics">,
+  pipe: { channelSlug: string; outcome: string; outcomeStated: boolean },
+): boolean {
+  if (s.outcome !== pipe.outcome) return false;
+  const channel = scriptChannelOf(s);
+  return channel !== null ? channel === pipe.channelSlug : pipe.outcomeStated;
+}
+
 let lastGood: { at: number; scripts: RunnableScript[] } | null = null;
 
 /**
