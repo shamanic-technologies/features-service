@@ -30112,6 +30112,11 @@
                 "minimumMonthlyBudgetCents": {
                   "type": "integer",
                   "description": "The MINIMUM monthly budget a customer commits to this (channel × leg) item, whole cents (owner 2026-10-04). Channel we run, entry (proactive) leg: 9900 ($99/month, cold email on start_to_website_visit and start_to_conversation). Channel we run, reactive leg (ai-meeting-booking, ai-instant-call): 0, its spend follows the leads earlier legs deliver so no monthly floor can be enforced. Channel we do not run yet (managed false): 150000 ($1,500/month) on every leg. Customer-operated (your-team-*): 0. Billing enforces it and the dashboard renders it; nobody hard-codes the figures."
+                },
+                "outcome": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "MIGRATE-1105 S5 (owner 2026-11-06: the outcome is the WHAT, as fine as possible): the outcome this pipe's ENGINE makes when stated finer than `to` (e.g. `threads_post_published` on the Threads leg to Post published). Null = the Engine is the `to` step. A campaign of this pipe runs the Engine of `outcome ?? to.key`, whose scripts compete for it."
                 }
               },
               "required": [
@@ -30124,7 +30129,8 @@
                 "reactive",
                 "mode",
                 "triggerId",
-                "minimumMonthlyBudgetCents"
+                "minimumMonthlyBudgetCents",
+                "outcome"
               ]
             },
             "description": "Every LEG this channel performs: which step it moves a lead FROM and which step it moves it TO. A funnel is sold leg by leg, not only end to end — booking a meeting, getting it held, and closing it are three separate things to buy. `from: null` means the channel moves a lead from nothing onto the funnel's first step."
