@@ -1,4 +1,4 @@
-import { leadStateFamilyOf, leadStateRankOf } from "../lib/lead-states.js";
+import { leadStateFamilyOf, leadStateRankOf, NEW_LEAD_STATE_STEPS } from "../lib/lead-states.js";
 import { Router, type Request, type Response } from "express";
 import { isOutcomeSubjectKind, OUTCOME_SUBJECT_KINDS, type OutcomeSubjectKind } from "../lib/outcome-subject.js";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -66,7 +66,8 @@ import {
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
 import { getPipeStats, type PipeStatsPipe, type PipeStatsScope } from "../lib/pipe-stats.js";
 import { matchChannelStepKey, CHANNEL_STEPS } from "../lib/acquisition-channels.js";
-import { codedStepLifecycleRungOf, isStepLifecycleRung, lifecycleRankOf, LIFECYCLE_RUNG_VALUES, servedLifecycleLadder, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
+import { isStepLifecycleRung, lifecycleRankOf, LIFECYCLE_RUNG_VALUES, servedLifecycleLadder, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
+import { listOutcomeRungs, setOutcomeRung } from "../lib/outcome-rungs-store.js";
 import {
   insertLeg,
   insertLegRate,
@@ -438,7 +439,7 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates"> | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels, scripts] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels, scripts, outcomeRungs] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
@@ -453,6 +454,7 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     listDeclaredSalesPaths(),
     // MIGRATE-1105 S0b: a pipe (or a play) runs on the scripts of its Engine stating its channel, workflow or none.
     readRunnableScriptsForCatalogue(),
+    listOutcomeRungs(),
   ]);
   const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${pipeLegKeyOf(a.featureSlug, a.legKey)}`));
   const { lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
@@ -463,6 +465,7 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     workflowPipeKeys,
     scriptChannelOutcomes: scriptChannelOutcomesOf(scripts),
     declaredSteps,
+    outcomeRungs,
     measurements: measurements.byPipe,
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
@@ -1550,11 +1553,13 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
       towardStep,
       towardRatePct,
       producedBy,
-      lifecycleRung,
+      // The rung lives in the outcome rung catalogue (`outcome_lifecycle_rungs`), never on this row.
+      lifecycleRung: null,
       subjectKind,
       createdBy,
       requestedByOrgId,
     });
+    if (lifecycleRung !== null) await setOutcomeRung(created.key, lifecycleRung, createdBy);
     await registerStepDeclarations();
     invalidateChannelCatalogue();
     console.log(`[features-service] agent catalogue: step ${key} declared by ${createdBy} (${towardStep ? `toward ${towardStep} at ${towardRatePct}%` : "leads to no step: no value"})`);
@@ -1566,7 +1571,10 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
   }
 });
 
-/** States a DECLARED step's lifecycle rung and/or subject kind (a coded step's are code: `lib/lifecycle-ladder.ts`, `lib/outcome-subject.ts`). */
+/**
+ * States ANY step's lifecycle rung (the outcome rung catalogue `outcome_lifecycle_rungs`, coded steps included:
+ * OUTCOME-RUNG-AND-TARGET-1106) and/or a DECLARED step's subject kind (a coded step's is code, `lib/outcome-subject.ts`).
+ */
 router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
@@ -1575,17 +1583,23 @@ router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
     const hasRung = body.lifecycleRung !== undefined && body.lifecycleRung !== null;
     const hasKind = body.subjectKind !== undefined && body.subjectKind !== null;
     if (!hasRung && !hasKind) throw bad("lifecycleRung_required", "lifecycleRung or subjectKind is required");
-    const set = { ...(hasRung ? { lifecycleRung: lifecycleRungOf(body.lifecycleRung) } : {}), ...(hasKind ? { subjectKind: subjectKindOf(body.subjectKind) } : {}) };
+    const rung = hasRung ? lifecycleRungOf(body.lifecycleRung) : null;
+    const kind = hasKind ? subjectKindOf(body.subjectKind) : null;
+    const set = { ...(rung ? { lifecycleRung: rung } : {}), ...(kind ? { subjectKind: kind } : {}) };
     const key = req.params.id;
-    if (codedStepLifecycleRungOf(key) !== null) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its lifecycle rung and subject kind are set in code`);
-    const updated = await updateDeclaredStep(key, set);
-    if (!updated) throw new DeclarationError(404, "step_not_found", `no declared step ${key}`);
+    const { steps: declared } = await registerStepDeclarations();
+    const isDeclared = declared.some((d) => d.key === key);
+    const isCoded = !isDeclared && (Object.hasOwn(CHANNEL_STEPS, key) || NEW_LEAD_STATE_STEPS.some((l) => l.key === key));
+    if (!isDeclared && !isCoded) throw new DeclarationError(404, "step_not_found", `no step ${key}`);
+    if (kind && isCoded) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its subject kind is set in code`);
+    if (kind) await updateDeclaredStep(key, { subjectKind: kind });
+    if (rung) await setOutcomeRung(key, rung, updatedBy);
     await registerStepDeclarations();
     invalidateChannelCatalogue();
     console.log(`[features-service] agent catalogue: step ${key} set ${JSON.stringify(set)} by ${updatedBy}`);
     const { model } = await loadModel();
     const s = model.steps.get(key)!;
-    res.json({ object: "step", id: s.key, name: s.label, declared: true, ...lifecycleWire(s) });
+    res.json({ object: "step", id: s.key, name: s.label, declared: s.declared, ...lifecycleWire(s) });
   } catch (err) {
     fail(res, err, "update step");
   }
@@ -2422,13 +2436,14 @@ router.get("/public/catalogue/mark-icons", (_req, res) => {
 
 router.get("/public/catalogue/steps", async (_req, res) => {
   try {
-    const [all, pub, declaredSteps] = await Promise.all([
+    const [all, pub, declaredSteps, outcomeRungs] = await Promise.all([
       loadChannelCatalogue({ publishedOnly: false }),
       loadChannelCatalogue({ publishedOnly: true }),
       listDeclaredSteps(),
+      listOutcomeRungs(),
     ]);
     const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
-    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, measurements: new Map(), lifetimeRevenueUsd: null });
+    const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, outcomeRungs, measurements: new Map(), lifetimeRevenueUsd: null });
     const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, ...lifecycleWire(s) }));
     res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, lifecycleLadder: servedLifecycleLadder(), rows });
   } catch (err) {

@@ -557,6 +557,19 @@ export const declaredSteps = pgTable("declared_steps", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * EVERY OUTCOME'S RUNG on the ONE generic lead Lifecycle (OUTCOME-RUNG-AND-TARGET-1106, owner 2026-11-06: « chaque outcome
+ * de l'infra doit exister dans une table catalogue, et dire à quel lead Lifecycle générique ça le rattache »): coded and
+ * declared steps alike, `none` for an outcome about no lead (a post, a template). The only source of a step's rung
+ * (`lib/lifecycle-ladder.ts`); `declared_steps.lifecycle_rung` is no longer read. Migration 0061 seeded it.
+ */
+export const outcomeLifecycleRungs = pgTable("outcome_lifecycle_rungs", {
+  outcomeKey: text("outcome_key").primaryKey(),
+  lifecycleRung: text("lifecycle_rung").notNull(),
+  statedBy: text("stated_by").notNull(),
+  statedAt: timestamp("stated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** The stated conversion rate of a leg nothing else rates (no industry default, no fleet median): declared with its first pipe or step. */
 export const declaredLegRates = pgTable(
   "declared_leg_rates",

@@ -922,7 +922,13 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect(patched.body).toMatchObject({ lifecycleRung: "none", lifecycleRank: null });
     expect(rungs((await request(app).get("/public/catalogue/steps")).body.rows).get("ping_sent")).toBe("none");
 
-    expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(409);
+    // OUTCOME-RUNG-AND-TARGET-1106: a coded step's rung is catalogue data too (its subject kind stays code).
+    const codedPatch = await request(app).patch("/internal/catalogue/steps/booking_call").set(KEY).send({ lifecycleRung: "meeting_booked", createdBy: "staff" });
+    expect(codedPatch.status).toBe(200);
+    expect(codedPatch.body).toMatchObject({ lifecycleRung: "meeting_booked", lifecycleRank: 5, declared: false });
+    expect(rungs((await request(app).get("/public/catalogue/steps")).body.rows).get("booking_call")).toBe("meeting_booked");
+    await request(app).patch("/internal/catalogue/steps/booking_call").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" });
+    expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ subjectKind: "object", createdBy: "staff" })).status).toBe(409);
     expect((await request(app).patch("/internal/catalogue/steps/nope").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(404);
     expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ createdBy: "staff" })).body.reason).toBe("lifecycleRung_required");
   });

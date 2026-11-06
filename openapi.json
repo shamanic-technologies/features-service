@@ -56284,7 +56284,7 @@
       },
       "patch": {
         "summary": "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
-        "description": "Sets where a step DECLARED at run time stands on the lifecycle ladder and/or what one occurrence is about, live, no deploy; an absent field is unchanged. A coded step's are code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
+        "description": "Sets where ANY step (coded or declared) stands on the lifecycle ladder, a row of the outcome rung catalogue `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106), and/or what one occurrence of a DECLARED step is about, live, no deploy; an absent field is unchanged. A coded step's subject kind is code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
         "tags": [
           "Internal"
         ],

@@ -6,12 +6,11 @@
  *   Lead found < Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client
  *
  * "Engaged" groups the interest signals nobody can order between themselves (post engaged, positive reply, website
- * visit); Signup and Form submitted share one rung. A step on no rung (purely technical) states `none`. A coded step's
- * rung lives here; a step declared at run time states its own (`declared_steps.lifecycle_rung`), never a code change.
+ * visit); Signup and Form submitted share one rung. A step on no rung (purely technical) states `none`. EVERY step's rung,
+ * coded or declared, is DATA in the catalogue table `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106,
+ * `lib/outcome-rungs-store.ts`), never a map in code; this file holds the ladder itself.
  * No per-campaign / per-brand / per-channel ladder: there is exactly one.
  */
-import type { ChannelStepKey } from "./acquisition-channels.js";
-
 export const LIFECYCLE_RUNGS = [
   { key: "lead_found", rank: 1, label: "Lead found" },
   { key: "contacted", rank: 2, label: "Contacted" },
@@ -29,26 +28,6 @@ export type StepLifecycleRung = LifecycleRungKey | "none";
 export const LIFECYCLE_RUNG_VALUES: readonly StepLifecycleRung[] = [...LIFECYCLE_RUNGS.map((r) => r.key), "none"];
 
 export const isStepLifecycleRung = (v: unknown): v is StepLifecycleRung => typeof v === "string" && (LIFECYCLE_RUNG_VALUES as readonly string[]).includes(v);
-
-/** Every CODED step's rung. A Record over the coded keys: a new coded step fails the build until it states one. */
-export const CODED_STEP_LIFECYCLE_RUNGS: Readonly<Record<ChannelStepKey, StepLifecycleRung>> = {
-  lead_found: "lead_found",
-  conversation: "engaged",
-  website_visit: "engaged",
-  // The phone call right after a positive reply, before any meeting is booked: still an interest signal.
-  booking_call: "engaged",
-  signup: "signup_or_form",
-  form_submitted: "signup_or_form",
-  meeting_booked: "meeting_booked",
-  meeting_attended: "meeting_attended",
-  // A checkout on the brand's own site: the buyer paid.
-  purchase: "paid_client",
-  paid_client: "paid_client",
-};
-
-/** A CODED step's rung; null for any other key (a declared step states its own). */
-export const codedStepLifecycleRungOf = (key: string): StepLifecycleRung | null =>
-  Object.hasOwn(CODED_STEP_LIFECYCLE_RUNGS, key) ? CODED_STEP_LIFECYCLE_RUNGS[key as ChannelStepKey] : null;
 
 /** The rank of a rung (1 = lowest); null for `none` or an unstated rung. */
 export const lifecycleRankOf = (rung: StepLifecycleRung | null): number | null =>

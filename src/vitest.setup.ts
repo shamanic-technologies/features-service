@@ -274,3 +274,20 @@ vi.mock("./lib/script-catalogue-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/script-catalogue-client.js")>()),
   readRunnableScriptsForCatalogue: vi.fn(async () => []),
 }));
+
+/**
+ * Suite-wide default: the outcome rung catalogue (`outcome_lifecycle_rungs`, OUTCOME-RUNG-AND-TARGET-1106) lives in
+ * memory, seeded from migration 0061's own SQL (the one place the coded steps' rungs are written), so a route suite
+ * reads every step's rung as production does, and a write is read back.
+ */
+vi.mock("./lib/outcome-rungs-store.js", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { seededOutcomeRungs } = await import("./lib/outcome-rungs-seed.js");
+  const seed = () => seededOutcomeRungs(readFileSync(new URL("../drizzle/0061_outcome_lifecycle_rungs.sql", import.meta.url), "utf8"));
+  let rungs = seed();
+  return {
+    listOutcomeRungs: vi.fn(async () => new Map(rungs)),
+    setOutcomeRung: vi.fn(async (key: string, rung: string) => void rungs.set(key, rung)),
+    __resetOutcomeRungsMemory: vi.fn(() => void (rungs = seed())),
+  };
+});
