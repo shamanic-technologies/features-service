@@ -7,6 +7,9 @@
  * again (a re-contact window shorter or longer than Lead Sourcing's default 3 months). One table per strategy BASE; a
  * window variant is read off the id's `-<n>-months` suffix, so `valid-only-2-months` or a future `valid-catch-all-6-months`
  * needs no line here. A strategy this table does not know adds nothing (it reads like its pipe's default).
+ * A `-never-emailed` suffix (FRESH-NEVER-1106, owner 2026-11-06: a cold first email goes only to people the brand NEVER
+ * emailed) is the third window: never re-contacted. Its base is the part before it (`valid-catch-all-never-emailed` reads
+ * `valid-catch-all`'s who), its name word is "Fresh" and its sentence says "never emailed before". Any base, no line here.
  *
  * Copy rules (humanizer): plain English, no dash, no internal word (catch-all, strategy, play, pipe). A NAME word is one
  * word and carries no digit; the SENTENCE may state the window in figures ("every 2 months").
@@ -57,14 +60,24 @@ const BASES: Readonly<Record<string, StrategyWords>> = {
 
 export interface ParsedStrategy {
   base: string;
-  /** The re-contact window the id states, null when it states none. */
+  /** The re-contact window the id states, null when it states none (or states "never emailed"). */
   recontactMonths: number | null;
+  /** True when the id states the people reached were never emailed by the brand (`-never-emailed`). */
+  neverEmailed: boolean;
 }
 
-/** PURE: `valid-catch-all-2-months` -> base `valid-catch-all`, window 2. */
+/** The name word of the "never emailed" window: the people are new to the brand's emails. */
+export const NEVER_EMAILED_NAME_WORD = "Fresh";
+/** What the sentence adds for the "never emailed" window. */
+export const NEVER_EMAILED_SENTENCE = "never emailed before";
+
+/** PURE: `valid-catch-all-2-months` -> base `valid-catch-all`, window 2; `valid-catch-all-never-emailed` -> base
+ * `valid-catch-all`, never emailed. */
 export function parseStrategyId(id: string): ParsedStrategy {
+  const never = /^(.+)-never-emailed$/.exec(id);
+  if (never) return { base: never[1], recontactMonths: null, neverEmailed: true };
   const m = /^(.*)-(\d+)-months?$/.exec(id);
-  return m ? { base: m[1], recontactMonths: Number(m[2]) } : { base: id, recontactMonths: null };
+  return m ? { base: m[1], recontactMonths: Number(m[2]), neverEmailed: false } : { base: id, recontactMonths: null, neverEmailed: false };
 }
 
 /** PURE: the one name word of a re-contact window ("Frequent" sooner than the default, "Patient" later), no digit. */
@@ -76,14 +89,15 @@ export function windowNameWord(months: number | null): string | null {
 /** PURE: the name words of a strategy: who it reaches and when it writes again (each null when unchanged). */
 export function strategyNameWords(id: string | null): { who: string | null; window: string | null } {
   if (id === null) return { who: null, window: null };
-  const { base, recontactMonths } = parseStrategyId(id);
-  return { who: BASES[base]?.nameWho ?? null, window: windowNameWord(recontactMonths) };
+  const { base, recontactMonths, neverEmailed } = parseStrategyId(id);
+  return { who: BASES[base]?.nameWho ?? null, window: neverEmailed ? NEVER_EMAILED_NAME_WORD : windowNameWord(recontactMonths) };
 }
 
 /** PURE: who the sentence names under a strategy, from the default who ("new buyers"). */
 export function strategySentenceWho(id: string | null, defaultWho: string): string {
   if (id === null) return defaultWho;
-  const { base, recontactMonths } = parseStrategyId(id);
+  const { base, recontactMonths, neverEmailed } = parseStrategyId(id);
   const who = BASES[base]?.sentenceWho?.(defaultWho) ?? defaultWho;
+  if (neverEmailed) return `${who}, ${NEVER_EMAILED_SENTENCE}`;
   return recontactMonths !== null && recontactMonths !== DEFAULT_RECONTACT_MONTHS ? `${who}, every ${recontactMonths} months` : who;
 }
