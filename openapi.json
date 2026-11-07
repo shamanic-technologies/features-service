@@ -24092,7 +24092,7 @@
               "actualUnavailableReason": {
                 "type": "string",
                 "nullable": true,
-                "description": "no_unit_of_ours_yet | not_on_ledger_yet | not_made_by_our_campaigns | spend_unreadable."
+                "description": "no_unit_of_ours_yet | no_unit_yet | units_declared_outside_these_campaigns (the brand's ledger holds Units of the outcome, but every one was declared on a run outside the campaigns making it, e.g. lead-service's own campaign-less recording run) | not_on_ledger_yet | not_made_by_our_campaigns | spend_unreadable."
               },
               "expectedUsd": {
                 "type": "number",
@@ -24109,7 +24109,8 @@
               },
               "expectedUnavailableReason": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "leg_cost_unavailable | outcome_not_on_route | start_step_not_priced_on_route (the step the route leaves from, e.g. Lead found: no leg of the route makes it)."
               },
               "variance": {
                 "type": "object",
@@ -24544,7 +24545,7 @@
                     "unavailableReason": {
                       "type": "string",
                       "nullable": true,
-                      "description": "step_not_on_expected_path | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."
+                      "description": "step_not_on_expected_path | start_step_not_priced_on_route | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."
                     }
                   },
                   "required": [
@@ -24565,7 +24566,7 @@
                     "unavailableReason": {
                       "type": "string",
                       "nullable": true,
-                      "description": "step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."
+                      "description": "step_not_on_expected_path | start_step_not_priced_on_route | leg_rate_unavailable | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."
                     }
                   },
                   "required": [

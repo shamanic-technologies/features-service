@@ -87,7 +87,35 @@ export function expectedRouteFigures(legs: readonly RouteLeg[], step: string, li
     netValuePerUnitUsd: null,
     netValueUnavailableReason: "outcome_not_on_route",
   };
-  if (at < 0) return empty;
+  if (at < 0) {
+    // OUTCOME-ACCOUNTING-GAPS-1107: the step the route LEAVES FROM (Lead found on a path from Lead found) is on the route:
+    // its next milestone is the route's first leg, never "final". No leg of the route makes it, so its cost is not priced
+    // here (`start_step_not_priced_on_route`); its value walks back through the first leg like any other step.
+    const first = legs[0];
+    if (!first || first.fromStep !== step) return empty;
+    const startReason = "start_step_not_priced_on_route";
+    const v = expectedRouteFigures(legs, first.toStep, lifetimeRevenueUsd);
+    let value: number | null = null;
+    let valueReason: string | null = v.netValueUnavailableReason;
+    if (v.netValuePerUnitUsd !== null) {
+      if (first.ratePct === null) valueReason = "leg_rate_unavailable";
+      else if (first.costPerUnitUsd === null) valueReason = "leg_cost_unavailable";
+      else value = Math.max(0, (first.ratePct / 100) * (v.netValuePerUnitUsd - first.costPerUnitUsd));
+    }
+    return {
+      route: [step],
+      costPerUnitUsd: null,
+      costPerUnitBasis: null,
+      costPerUnitUnavailableReason: startReason,
+      costFromStartUsd: null,
+      costFromStartUnavailableReason: startReason,
+      rolledYieldPct: 100,
+      rolledYieldFromStep: step,
+      next: { step: first.toStep, ratePct: first.ratePct, rateBasis: first.rateBasis, legKey: first.legKey ?? null, costPerUnitUsd: first.costPerUnitUsd },
+      netValuePerUnitUsd: value === null ? null : round(value, 8),
+      netValueUnavailableReason: value === null ? valueReason : null,
+    };
+  }
   const own = legs[at]!;
   // Cost forward from Start: C(first) = c_first, C(to) = C(from) / y + c (c = the leg's cost per Unit, i.e. c / y of the
   // framework). The rolled yield is Π y from the route's first step to the outcome.

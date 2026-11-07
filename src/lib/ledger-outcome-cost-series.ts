@@ -37,14 +37,18 @@ export function withLedgerStepSeries(
     months,
     outcomesUnavailableReason: lacks ? brand.reason : null,
     producerGap: brand.producerGap,
-    accounting: st.accounting ? ledgerAccounting(st.accounting, sinceInception.costPerOutcomeUsd, landing, landingSpendUsd, target, targetSpendUsd) : null,
+    accounting: st.accounting ? ledgerAccounting(st.accounting, sinceInception.costPerOutcomeUsd, brand, landing, landingSpendUsd, target, targetSpendUsd) : null,
   };
 }
 
-function ledgerAccounting(a: OutcomeAccounting, costFromStartUsd: number | null, landing: LedgerCount | null, landingSpendUsd: number | null, target: LedgerCount | null, targetSpendUsd: number | null): OutcomeAccounting {
+function ledgerAccounting(a: OutcomeAccounting, costFromStartUsd: number | null, brand: LedgerCount, landing: LedgerCount | null, landingSpendUsd: number | null, target: LedgerCount | null, targetSpendUsd: number | null): OutcomeAccounting {
   const units = landing?.units ?? null;
   const actualUsd = per(landingSpendUsd, units);
-  const actualReason = landing === null ? "not_made_by_our_campaigns" : units === null ? landing.reason : landingSpendUsd === null ? "spend_unreadable" : units === 0 ? "no_unit_yet" : null;
+  // OUTCOME-ACCOUNTING-GAPS-1107: the brand's ledger holds Units of the outcome but none on a run of the campaigns making
+  // it = they were declared on runs outside those campaigns (prod 2026-11-07: lead-service records a meeting or a signup
+  // on its own campaign-less run), never "no Unit yet".
+  const zeroReason = (brand.units ?? 0) > 0 ? "units_declared_outside_these_campaigns" : "no_unit_yet";
+  const actualReason = landing === null ? "not_made_by_our_campaigns" : units === null ? landing.reason : landingSpendUsd === null ? "spend_unreadable" : units === 0 ? zeroReason : null;
   const valuePer = a.returns.expected.valuePerUnitUsd;
   const tUnits = target?.units ?? null;
   const measured = !a.returns.isCampaignTarget

@@ -378,6 +378,8 @@ describe("resolveLegChannelCost", () => {
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_booking_call", "ai-instant-call"))).toBe(true);
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("conversation_to_meeting_booked", "ai-meeting-booking"))).toBe(true);
     expect(DEFAULT_COST_PER_OUTCOME_USD.has(priceKey("start_to_conversation", "sales-cold-email-outreach"))).toBe(true);
+    // OUTCOME-ACCOUNTING-GAPS-1107: the AI follow-up email's Website visit -> Signup leg was unpriced (no spend recorded).
+    expect(DEFAULT_COST_PER_OUTCOME_USD.get(priceKey("website_visit_to_signup", "ai-follow-up-email"))).toBe(50);
   });
 });
 
