@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { campaignTargetRowOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetInput } from "./campaign-targets.js";
+import { campaignTargetRowOf, offerTargetsOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetInput } from "./campaign-targets.js";
 
 const NOW = "2026-11-06T12:00:00.000Z";
 const base: CampaignTargetInput = {
@@ -78,5 +78,96 @@ describe("campaign Targets (OUTCOME-RUNG-AND-TARGET-1106)", () => {
       { date: "2026-11-02", cumulativeOutcomes: 6 },
       { date: "2026-11-03", cumulativeOutcomes: 7 },
     ]);
+  });
+});
+
+describe("one entry per (offer, Target) (TARGET-ROWS-UNIQUE-1107)", () => {
+  const member = (i: CampaignTargetInput) => ({ input: i, row: campaignTargetRowOf(i) });
+  const paid = { key: "paid_client", label: "Paid client", lifecycleRung: "paid_client" };
+
+  it("a brand with one campaign per Target: each entry equals its campaign row figure for figure", () => {
+    const a = member(base);
+    const b = member({ ...base, salesFunnelCampaignId: "c2", name: "Other", target: paid, targetValueUsd: 2000 });
+    const entries = offerTargetsOf([a, b]);
+    expect(entries).toHaveLength(2);
+    for (const [entry, m] of [[entries[0]!, a], [entries[1]!, b]] as const) {
+      const { salesFunnelCampaignId, name: _n, projection, ...figures } = m.row;
+      expect(entry).toEqual({ ...figures, salesFunnelCampaignIds: [salesFunnelCampaignId], projection: { ...projection, unprojectedCampaignIds: [] } });
+      expect(entry).not.toHaveProperty("name");
+    }
+  });
+
+  it("two campaigns on the same Target: ONE entry, sums, $ each and ROI recomputed on the sums (never averaged)", () => {
+    // c1: 3 outcomes for $300 ($100 each, 4x). c2: 1 outcome for $20 ($20 each, 20x), budget $40/day at $40 per Target.
+    const c2: CampaignTargetInput = {
+      ...base,
+      salesFunnelCampaignId: "c2",
+      name: "Wider Email Replies",
+      targetDays: [{ date: "2026-11-05", cumulativeOutcomes: 1 }],
+      spentUsd: 20,
+      spendByDay: [{ date: "2026-11-05", spendUsd: 20 }],
+      plan: { computedAt: "2026-11-06T10:00:00.000Z", funnelId: "f9", costPerTargetUsd: 40, basis: "measured", unavailableReason: null },
+      dailyBudgetUsd: 40,
+    };
+    const [entry, ...rest] = offerTargetsOf([member(base), member(c2)]);
+    expect(rest).toHaveLength(0);
+    expect(entry).toMatchObject({ offerId: "o1", target: base.target, salesFunnelCampaignIds: ["c1", "c2"], outcomesToDate: 4, spentUsd: 320, costPerOutcomeUsd: 80 });
+    // 4 × $400 ÷ $320 = 5x (the average of 4x and 20x would read 12x).
+    expect(entry!.measuredReturn).toEqual({ roiMultiple: 5, valueUsd: 1600, spentUsd: 320, unavailableReason: null });
+    expect(entry!.past.map((p) => [p.date, p.outcomes, p.cumulativeOutcomes])).toEqual([
+      ["2026-11-03", 0, 0],
+      ["2026-11-04", 1, 1],
+      ["2026-11-05", 1, 2],
+      ["2026-11-06", 2, 4],
+    ]);
+    // 2/day + 1/day = 3/day; $140/day ÷ 3 = $46.6667 per Target; next in 8 hours.
+    expect(entry!.projection).toMatchObject({
+      outcomesPerDay: 3,
+      spendPerDayUsd: 140,
+      costPerTargetUsd: 46.6667,
+      spendPerDaySource: "daily_budget",
+      costPerTargetBasis: "mixed",
+      planComputedAt: "2026-11-06T10:00:00.000Z",
+      planFunnelId: null,
+      nextExpectedInHours: 8,
+      unavailableReason: null,
+      unprojectedCampaignIds: [],
+    });
+    expect(entry!.projection.daily[0]).toEqual({ date: "2026-11-07", expectedOutcomes: 3, cumulativeExpectedOutcomes: 7 });
+  });
+
+  it("a $0 campaign beside a spending one on the same Target: spend is the spender's, the idle one projects nothing and is named", () => {
+    const idle: CampaignTargetInput = { ...base, salesFunnelCampaignId: "c0", targetDays: [{ date: "2026-11-06", cumulativeOutcomes: 0 }], spentUsd: 0, spendByDay: [], dailyBudgetUsd: null };
+    const [entry] = offerTargetsOf([member(idle), member(base)]);
+    expect(entry).toMatchObject({ salesFunnelCampaignIds: ["c0", "c1"], outcomesToDate: 3, spentUsd: 300, costPerOutcomeUsd: 100 });
+    expect(entry!.projection).toMatchObject({ outcomesPerDay: 2, spendPerDaySource: "daily_budget", unprojectedCampaignIds: ["c0"] });
+  });
+
+  it("an undated campaign's count rides the last day; an unreadable spend makes the sum unreadable", () => {
+    const undated = member({ ...base, salesFunnelCampaignId: "c2", targetDays: null, undatedTargetCount: 2 });
+    const [entry] = offerTargetsOf([member(base), undated]);
+    expect(entry!.outcomesToDate).toBe(5);
+    expect(entry!.past[entry!.past.length - 1]).toEqual({ date: "2026-11-06", outcomes: 4, cumulativeOutcomes: 5 });
+    const [blind] = offerTargetsOf([member(base), member({ ...base, salesFunnelCampaignId: "c2", spentUsd: null })]);
+    expect(blind).toMatchObject({ spentUsd: null, costPerOutcomeUsd: null, costPerOutcomeUnavailableReason: "spend_unreadable" });
+  });
+
+  it("two campaigns on different Targets stay two entries; campaigns with no Target share one entry per offer", () => {
+    const meeting = member(base);
+    const paidRow = member({ ...base, salesFunnelCampaignId: "c2", target: paid });
+    // No Target = nothing counted on one (the route reads no Target card).
+    const noTarget = { target: null, targetDays: null, undatedTargetCount: null };
+    const none1 = member({ ...base, ...noTarget, salesFunnelCampaignId: "c3" });
+    const none2 = member({ ...base, ...noTarget, salesFunnelCampaignId: "c4" });
+    const otherOffer = member({ ...base, salesFunnelCampaignId: "c5", offerId: "o2" });
+    const entries = offerTargetsOf([meeting, none1, paidRow, none2, otherOffer]);
+    expect(entries.map((e) => [e.offerId, e.target?.key ?? null, e.salesFunnelCampaignIds])).toEqual([
+      ["o1", "meeting_booked", ["c1"]],
+      ["o1", null, ["c3", "c4"]],
+      ["o1", "paid_client", ["c2"]],
+      ["o2", "meeting_booked", ["c5"]],
+    ]);
+    expect(entries[1]).toMatchObject({ outcomesToDate: null, spentUsd: 600, outcomesUnavailableReason: "campaign_states_no_target", costPerOutcomeUsd: null, projection: { outcomesPerDay: null, unavailableReason: "campaign_states_no_target" } });
+    expect(entries[1]!.measuredReturn.roiMultiple).toBeNull();
   });
 });

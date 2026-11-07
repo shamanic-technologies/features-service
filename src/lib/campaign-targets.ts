@@ -90,6 +90,20 @@ const addDays = (day: string, n: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
+/** PURE: the next PROJECTION_DAYS days at `outcomesPerDay` from today's count, and when the next one is due. */
+function paceOf(outcomesPerDay: number | null, outcomesToDate: number | null, now: string) {
+  const today = now.slice(0, 10);
+  const daily: CampaignTargetRow["projection"]["daily"] = [];
+  if (outcomesPerDay !== null) {
+    for (let k = 1; k <= PROJECTION_DAYS; k += 1) {
+      daily.push({ date: addDays(today, k), expectedOutcomes: round(outcomesPerDay, 4), cumulativeExpectedOutcomes: round((outcomesToDate ?? 0) + outcomesPerDay * k, 2) });
+    }
+  }
+  const nextExpectedInHours = outcomesPerDay !== null ? round(24 / outcomesPerDay, 2) : null;
+  const nextExpectedAt = nextExpectedInHours !== null ? new Date(Date.parse(now) + nextExpectedInHours * 3_600_000).toISOString() : null;
+  return { daily, nextExpectedAt, nextExpectedInHours };
+}
+
 /** PURE: one campaign's Target row. */
 export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
   const today = i.now.slice(0, 10);
@@ -142,14 +156,7 @@ export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
             ? "no_daily_budget_and_no_recent_spend"
             : null;
   const outcomesPerDay = projectionReason === null ? spendPerDayUsd! / costPerTarget! : null;
-  const daily: CampaignTargetRow["projection"]["daily"] = [];
-  if (outcomesPerDay !== null) {
-    for (let k = 1; k <= PROJECTION_DAYS; k += 1) {
-      daily.push({ date: addDays(today, k), expectedOutcomes: round(outcomesPerDay, 4), cumulativeExpectedOutcomes: round((outcomesToDate ?? 0) + outcomesPerDay * k, 2) });
-    }
-  }
-  const nextExpectedInHours = outcomesPerDay !== null ? round(24 / outcomesPerDay, 2) : null;
-  const nextExpectedAt = nextExpectedInHours !== null ? new Date(Date.parse(i.now) + nextExpectedInHours * 3_600_000).toISOString() : null;
+  const { daily, nextExpectedAt, nextExpectedInHours } = paceOf(outcomesPerDay, outcomesToDate, i.now);
 
   return {
     salesFunnelCampaignId: i.salesFunnelCampaignId,
@@ -191,4 +198,126 @@ export function sumCumulativeDays(series: ReadonlyArray<readonly TargetDayCount[
       return a + v;
     }, 0),
   }));
+}
+
+/**
+ * TARGET-ROWS-UNIQUE-1107 (owner 2026-11-07, « Les rows target doivent etre unique. Si deux campagnes ont la mm target il
+ * faut merger les rows »): ONE entry per (offer, Target) over every campaign of that offer on that Target (campaigns with
+ * no Target share one entry per offer). Counts, spend, past and expected outcomes per day are SUMMED; $ each and the
+ * return are recomputed on the summed inputs (never averaged), so one campaign = its row figure for figure. A person
+ * reaching the Target under two campaigns counts in both: the per-campaign counts carry no person id.
+ */
+export type OfferTargetEntry = Omit<CampaignTargetRow, "salesFunnelCampaignId" | "name" | "projection"> & {
+  /** The campaigns merged into this entry, oldest first (ids only: Today names no campaign). */
+  salesFunnelCampaignIds: string[];
+  projection: Omit<CampaignTargetRow["projection"], "spendPerDaySource" | "costPerTargetBasis"> & {
+    spendPerDaySource: CampaignTargetRow["projection"]["spendPerDaySource"] | "mixed";
+    costPerTargetBasis: string | null;
+    /** Campaigns of the entry with no projection of their own (they add no expected outcome). */
+    unprojectedCampaignIds: string[];
+  };
+};
+
+export interface OfferTargetMember {
+  input: CampaignTargetInput;
+  row: CampaignTargetRow;
+}
+
+const sameOrNull = <T>(values: readonly T[]): T | null => (values.length > 0 && values.every((v) => v === values[0]) ? values[0]! : null);
+
+/** PURE: the members' rows (already oldest first) merged per (offer, Target), in order of each group's first campaign. */
+export function offerTargetsOf(members: readonly OfferTargetMember[]): OfferTargetEntry[] {
+  const groups = new Map<string, OfferTargetMember[]>();
+  for (const m of members) {
+    const key = `${m.row.offerId}\u0000${m.row.target?.key ?? ""}`;
+    groups.set(key, [...(groups.get(key) ?? []), m]);
+  }
+  return [...groups.values()].map(mergeGroup);
+}
+
+function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
+  const ids = group.map((m) => m.row.salesFunnelCampaignId);
+  if (group.length === 1) {
+    // Picked field by field: the route's rows carry more (milestones) than an entry serves.
+    const r = group[0]!.row;
+    return {
+      offerId: r.offerId,
+      target: r.target,
+      salesFunnelCampaignIds: ids,
+      outcomesToDate: r.outcomesToDate,
+      outcomesUnavailableReason: r.outcomesUnavailableReason,
+      spentUsd: r.spentUsd,
+      costPerOutcomeUsd: r.costPerOutcomeUsd,
+      costPerOutcomeUnavailableReason: r.costPerOutcomeUnavailableReason,
+      measuredReturn: r.measuredReturn,
+      past: r.past,
+      pastUnavailableReason: r.pastUnavailableReason,
+      projection: { ...r.projection, unprojectedCampaignIds: r.projection.outcomesPerDay === null ? ids : [] },
+    };
+  }
+  const first = group[0]!;
+  const now = first.input.now;
+
+  // ── The past: every campaign's Target outcomes summed per day; an undated campaign's count rides the last day. ──
+  const anyUncounted = group.some((m) => m.row.outcomesToDate === null);
+  const dated = group.filter((m) => m.input.targetDays !== null && m.row.pastUnavailableReason === null);
+  const undatedSum = group.filter((m) => !dated.includes(m)).reduce((a, m) => a + (m.row.outcomesToDate ?? 0), 0);
+  let targetDays: TargetDayCount[] | null = null;
+  if (!anyUncounted && dated.length > 0) {
+    targetDays = sumCumulativeDays(dated.map((m) => m.input.targetDays!));
+    if (undatedSum > 0 && targetDays.length > 0) {
+      const last = targetDays[targetDays.length - 1]!;
+      targetDays[targetDays.length - 1] = { date: last.date, cumulativeOutcomes: last.cumulativeOutcomes + undatedSum };
+    }
+  }
+  const spendByDay = new Map<string, number>();
+  for (const m of group) for (const d of m.input.spendByDay) spendByDay.set(d.date, (spendByDay.get(d.date) ?? 0) + d.spendUsd);
+  const valued = group.find((m) => m.input.targetValueUsd !== null);
+  const measured = campaignTargetRowOf({
+    ...first.input,
+    targetDays,
+    undatedTargetCount: anyUncounted ? null : targetDays === null ? undatedSum : null,
+    spentUsd: group.every((m) => m.input.spentUsd !== null) ? group.reduce((a, m) => a + m.input.spentUsd!, 0) : null,
+    spendByDay: [...spendByDay].sort(([a], [b]) => a.localeCompare(b)).map(([date, spendUsd]) => ({ date, spendUsd })),
+    targetValueUsd: valued?.input.targetValueUsd ?? null,
+    targetValueUnavailableReason: valued ? null : first.input.targetValueUnavailableReason,
+    plan: null,
+    dailyBudgetUsd: null,
+  });
+
+  // ── The projection: each campaign's own expected outcomes per day, summed; $ per Target = Σ spend per day ÷ Σ outcomes per day. ──
+  const projected = group.filter((m) => m.row.projection.outcomesPerDay !== null && m.row.projection.spendPerDayUsd !== null && (m.row.projection.costPerTargetUsd ?? 0) > 0);
+  const spendPerDay = projected.reduce((a, m) => a + m.row.projection.spendPerDayUsd!, 0);
+  const outcomesPerDay = projected.length > 0 ? projected.reduce((a, m) => a + m.row.projection.spendPerDayUsd! / m.row.projection.costPerTargetUsd!, 0) : null;
+  const pace = paceOf(outcomesPerDay, measured.outcomesToDate, now);
+  const planDates = group.map((m) => m.row.projection.planComputedAt).filter((d): d is string => d !== null).sort();
+  const scope = projected.length > 0 ? projected : group;
+  const sources = scope.map((m) => m.row.projection.spendPerDaySource);
+  const bases = scope.map((m) => m.row.projection.costPerTargetBasis);
+
+  return {
+    offerId: first.row.offerId,
+    target: first.row.target,
+    salesFunnelCampaignIds: ids,
+    outcomesToDate: measured.outcomesToDate,
+    outcomesUnavailableReason: measured.outcomesUnavailableReason,
+    spentUsd: measured.spentUsd,
+    costPerOutcomeUsd: measured.costPerOutcomeUsd,
+    costPerOutcomeUnavailableReason: measured.costPerOutcomeUnavailableReason,
+    measuredReturn: measured.measuredReturn,
+    past: measured.past,
+    pastUnavailableReason: measured.pastUnavailableReason,
+    projection: {
+      planComputedAt: planDates.length > 0 ? planDates[planDates.length - 1]! : null,
+      planFunnelId: sameOrNull(group.map((m) => m.row.projection.planFunnelId)),
+      costPerTargetUsd: outcomesPerDay !== null && outcomesPerDay > 0 ? round(spendPerDay / outcomesPerDay, 4) : null,
+      costPerTargetBasis: projected.length === 0 ? null : sameOrNull(bases) ?? "mixed",
+      spendPerDayUsd: projected.length > 0 ? round(spendPerDay, 4) : null,
+      spendPerDaySource: projected.length === 0 ? null : sameOrNull(sources) ?? "mixed",
+      outcomesPerDay: outcomesPerDay !== null ? round(outcomesPerDay, 4) : null,
+      ...pace,
+      unavailableReason: outcomesPerDay !== null ? null : first.row.projection.unavailableReason,
+      unprojectedCampaignIds: group.filter((m) => !projected.includes(m)).map((m) => m.row.salesFunnelCampaignId),
+    },
+  };
 }

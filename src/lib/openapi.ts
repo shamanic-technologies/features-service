@@ -9538,7 +9538,8 @@ registry.registerPath({
     "otherwise. `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
     "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included), else its own people " +
     "(`countSource`); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
-    "Target's figures on the row = its card's. `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
+    "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = the same figures ONE entry per (offer, Target), its campaigns merged. " +
+    "`?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
   tags: ["Sales funnel campaigns"],
   request: {
     params: z.object({ brandId: z.string() }),
@@ -9612,7 +9613,42 @@ registry.registerPath({
                 milestonesUnavailableReason: z.string().nullable(),
                 ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: their counts may still move."),
               }),
-            ),
+            ).describe("One row PER CAMPAIGN (the campaign page). Today reads `offerTargets`."),
+            offerTargets: z
+              .array(
+                z.object({
+                  offerId: z.string(),
+                  target: z.object({ key: z.string(), label: z.string(), lifecycleRung: z.string().nullable() }).nullable().describe("null = the offer's campaigns that state no Target, merged into one entry."),
+                  salesFunnelCampaignIds: z.array(z.string()).describe("The campaigns merged into this entry, oldest first (ids only: Today names no campaign)."),
+                  outcomesToDate: z.number().nullable().describe("Σ the campaigns' Target outcomes (null when one campaign's count is unreadable). A person reaching the Target under two campaigns counts in both: the per-campaign counts carry no person id."),
+                  outcomesUnavailableReason: z.string().nullable(),
+                  spentUsd: z.number().nullable().describe("Σ every unit's spend of every campaign (null when one is unreadable)."),
+                  costPerOutcomeUsd: z.number().nullable().describe("spentUsd ÷ outcomesToDate, on the sums (never an average of the campaigns' $ each)."),
+                  costPerOutcomeUnavailableReason: z.string().nullable(),
+                  measuredReturn: z.object({ roiMultiple: campaignTargetValue, valueUsd: campaignTargetValue, spentUsd: campaignTargetValue, unavailableReason: z.string().nullable() }).describe("outcomesToDate × the Target's value ÷ spentUsd, on the sums."),
+                  past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })).describe("Σ per UTC day; a campaign whose Target is undated adds its count on the last day."),
+                  pastUnavailableReason: z.string().nullable(),
+                  projection: z.object({
+                    planComputedAt: z.string().nullable().describe("The most recent plan computation among the campaigns."),
+                    planFunnelId: z.string().nullable().describe("The plan line's funnel when every campaign's is the same, else null."),
+                    costPerTargetUsd: campaignTargetValue.describe("Σ spendPerDayUsd ÷ Σ outcomesPerDay of the projected campaigns."),
+                    costPerTargetBasis: z.string().nullable().describe("The campaigns' common basis, `mixed` when they differ."),
+                    spendPerDayUsd: campaignTargetValue,
+                    spendPerDaySource: z.enum(["daily_budget", "spend_pace_7d", "mixed"]).nullable(),
+                    outcomesPerDay: campaignTargetValue.describe("Σ each projected campaign's own expected outcomes per day."),
+                    daily: z.array(z.object({ date: z.string(), expectedOutcomes: z.number(), cumulativeExpectedOutcomes: z.number() })),
+                    nextExpectedAt: z.string().nullable(),
+                    nextExpectedInHours: campaignTargetValue,
+                    unavailableReason: z.string().nullable().describe("null as soon as one campaign projects; else the oldest campaign's reason."),
+                    unprojectedCampaignIds: z.array(z.string()).describe("Campaigns of the entry with no projection of their own (they add no expected outcome)."),
+                  }),
+                }),
+              )
+              .describe(
+                "TARGET-ROWS-UNIQUE-1107 (owner 2026-11-07, « Les rows target doivent etre unique »): ONE entry per (offer, Target), every campaign of `targets` sharing it " +
+                  "merged, in order of each entry's oldest campaign. Counts, spend, past and expected outcomes per day are summed; $ each and ROI are recomputed on the sums. " +
+                  "An entry of one campaign equals its `targets` row figure for figure.",
+              ),
           }),
         },
       },
