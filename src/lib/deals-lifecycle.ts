@@ -183,6 +183,28 @@ export interface LifecycleBoardInput {
   pricedCauses: readonly string[];
 }
 
+/**
+ * One OFFER's pricing of its people (BRAND-GRAIN-READS-1107): its lead population and the paths and lifetime revenue
+ * its declared funnels price on. A brand board is priced on several (one per offer), each person on ITS offer's terms.
+ */
+export interface LifecyclePricingScope {
+  persons: readonly EnginePerson[];
+  paths: ResolvedPath[];
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueSource: OfferLifetimeRevenueSource | null;
+}
+
+/** The board's inputs over several pricing scopes (`priceLifecycleBoardScopes`). */
+export interface LifecycleBoardScopesInput
+  extends Omit<LifecycleBoardInput, "persons" | "paths" | "lifetimeRevenueUsd" | "lifetimeRevenueSource"> {
+  scopes: readonly LifecyclePricingScope[];
+  /**
+   * The won column's value when the caller prices it (a brand whose offers state different lifetime revenues: each
+   * offer's Paid client Units x its own). Omitted → the ledger's OUR Paid client Units x the scopes' one lifetime revenue.
+   */
+  wonUsd?: number | null;
+}
+
 /** PURE. Every board rung's value from the engine's inputs and lead-service's lifecycle rows. */
 export function priceLifecycleColumns(input: LifecycleBoardInput): DealsLifecycleResult {
   return priceLifecycleBoard(input).board;
@@ -197,22 +219,46 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
   board: DealsLifecycleResult;
   organizationValues: Map<string, number>;
 } {
-  const ltr = input.lifetimeRevenueUsd;
-  const unvaluedReason = ltr === null ? "no_economics" : !(ltr > 0) ? "no_client_value" : null;
-  const byLead = new Map(input.persons.map((p) => [p.leadId, p] as const));
+  const { persons, paths, lifetimeRevenueUsd, lifetimeRevenueSource, ...rest } = input;
+  return priceLifecycleBoardScopes({ ...rest, scopes: [{ persons, paths, lifetimeRevenueUsd, lifetimeRevenueSource }] });
+}
+
+/**
+ * PURE. The board over several pricing scopes (BRAND-GRAIN-READS-1107: a brand = every offer's people, each person
+ * priced on its own offer's paths and lifetime revenue). One scope = `priceLifecycleBoard` byte for byte. A person
+ * several offers served is priced on each; its card holds the MAX, and an organisation still counts ONCE (the
+ * pipeline's MAX over members), so a brand never adds a person twice. A scope with no economics prices nobody; the
+ * board is unvalued only when no scope is valued.
+ */
+export function priceLifecycleBoardScopes(input: LifecycleBoardScopesInput): {
+  board: DealsLifecycleResult;
+  organizationValues: Map<string, number>;
+} {
+  const ltrs = input.scopes.map((s) => s.lifetimeRevenueUsd);
+  const valuedOf = (s: LifecyclePricingScope): boolean => s.lifetimeRevenueUsd !== null && s.lifetimeRevenueUsd > 0;
+  const unvaluedReason: DealsLifecycleResult["unvaluedReason"] = input.scopes.some(valuedOf)
+    ? null
+    : ltrs.some((l) => l !== null)
+      ? "no_client_value"
+      : "no_economics";
+  /** The scopes' one lifetime revenue (null when they state different ones, or none). */
+  const ltr = ltrs.length > 0 && ltrs.every((l) => l === ltrs[0]) ? ltrs[0]! : null;
+  const sources = [...new Set(input.scopes.map((s) => s.lifetimeRevenueSource).filter((x): x is OfferLifetimeRevenueSource => Boolean(x)))];
+  const byLead = new Map<string, Array<{ p: EnginePerson; s: LifecyclePricingScope }>>();
+  for (const s of input.scopes) for (const p of s.persons) byLead.set(p.leadId, [...(byLead.get(p.leadId) ?? []), { p, s }]);
   const pricing = input.contactedPricing;
   const cutoff = pricing.lastSentOnOrAfter;
 
-  const engagedValue = (p: EnginePerson): PersonValue => {
+  const engagedValue = (p: EnginePerson, s: LifecyclePricingScope): PersonValue => {
     // The pipeline's own value of the person, contacted pricing included: someone lead-service places further along
     // than the engine sees them (no priced step yet) is worth exactly what the pipeline prices them at.
-    const v = expectedValueOfPerson(p, input.paths, ltr!, pricing);
+    const v = expectedValueOfPerson(p, s.paths, s.lifetimeRevenueUsd!, pricing);
     const zero: LifecycleCardZeroReason | null =
       v !== 0 ? null : isRuledOut(p) ? "ruled_out" : reachedNotOurs(p) ? "not_ours" : "step_not_priced";
     return { v, zero, source: null, entry: null };
   };
 
-  const valueOf = (p: EnginePerson, rung: BoardRungKey): PersonValue => {
+  const valueOf = (p: EnginePerson, s: LifecyclePricingScope, rung: BoardRungKey): PersonValue => {
     if (rung === "paid_client") {
       // Won value = a sale OURS by the realized return's own predicate (`isClosedWonOurs`: closed, priced to our
       // outreach, not ruled dead), so the board's won column and "N paid clients" are the same deals
@@ -223,9 +269,9 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
       // Units x LTR, on the rung; no card carries it (the ledger names no card).
       return { v: 0, zero: "won_counted_on_ledger", source: null, entry: null };
     }
-    if (rung !== "contacted") return engagedValue(p);
+    if (rung !== "contacted") return engagedValue(p, s);
     // Contacted: the engine may already know more (an engaged lead is priced as one, never guessed down).
-    if (ENGAGED_SIGNALS.some((s) => p.signals[s])) return engagedValue(p);
+    if (ENGAGED_SIGNALS.some((sig) => p.signals[sig])) return engagedValue(p, s);
     if (p.signals.bounced || p.signals.unsubscribed) return { v: 0, zero: "cannot_convert", source: null, entry: null };
     if (!p.signals.contacted) return { v: 0, zero: "not_sent", source: null, entry: null };
     if (isRuledOut(p)) return { v: 0, zero: "ruled_out", source: null, entry: null };
@@ -233,13 +279,11 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
     if (contactedExpired(p, cutoff)) return { v: 0, zero: "expired", source: null, entry: entry?.source ?? null };
     if (!entry) return { v: 0, zero: "step_not_priced", source: null, entry: null };
     // The byte-same function and pricing the pipeline values this lead with.
-    const v = contactedLeadValue(p, input.paths, ltr!, pricing);
+    const v = contactedLeadValue(p, s.paths, s.lifetimeRevenueUsd!, pricing);
     return { v, zero: v === 0 ? "step_not_priced" : null, source: null, entry: entry.source };
   };
 
-  const ltrAssumption: LifecycleAssumption[] = input.lifetimeRevenueSource
-    ? [{ input: "lifetime_revenue", source: input.lifetimeRevenueSource }]
-    : [];
+  const ltrAssumption: LifecycleAssumption[] = sources.map((source) => ({ input: "lifetime_revenue", source }));
 
   let outOfScopeCardCount = 0;
   /** Per rung, each organisation's MAX over its members on that rung (before the cross-rung count-once). */
@@ -259,16 +303,16 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
     let allStated = true;
     const entrySources = new Set<EntryRateSource>();
     for (const row of rows) {
-      const held = [...new Set(row.leadIds)].sort().map((id) => byLead.get(id)).filter((p): p is EnginePerson => p !== undefined);
+      const held = [...new Set(row.leadIds)].sort().flatMap((id) => byLead.get(id) ?? []);
       if (held.length === 0) {
         outOfScopeCardCount += 1;
         continue;
       }
       let best: PersonValue | null = null;
-      for (const p of held) {
+      for (const { p, s } of held) {
         leadIds.add(p.leadId);
-        if (unvaluedReason !== null) continue;
-        const pv = valueOf(p, key);
+        if (unvaluedReason !== null || !valuedOf(s)) continue;
+        const pv = valueOf(p, s, key);
         byOrg.set(orgKey(p), Math.max(byOrg.get(orgKey(p)) ?? 0, pv.v));
         if (best === null || pv.v > best.v) best = pv;
       }
@@ -278,7 +322,7 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
         humanId: row.humanId,
         companyKey: row.companyKey,
         relationKey: row.relationKey,
-        leadIds: held.map((p) => p.leadId),
+        leadIds: [...new Set(held.map(({ p }) => p.leadId))],
         valueUsd: best === null ? null : round(best.v),
         zeroValueReason: best?.zero ?? null,
         valueSource: best?.source ?? null,
@@ -329,7 +373,16 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
     for (const r of pipelineRungs) r.valueUsd = round(perRung.get(r.key) ?? 0);
     const won = rungs.find((r) => r.key === "paid_client");
     // Won value = OUR Paid clients × LTR (another factory's are counted in `units`, worth nothing of ours).
-    if (won) won.valueUsd = won.ourUnits === null ? null : round(won.ourUnits * ltr!);
+    if (won) {
+      won.valueUsd =
+        input.wonUsd !== undefined
+          ? input.wonUsd === null
+            ? null
+            : round(input.wonUsd)
+          : won.ourUnits === null || ltr === null
+            ? null
+            : round(won.ourUnits * ltr);
+    }
   }
 
   // A rung the ledger cannot value (won Units unknown) makes every total including it unknown, never a partial sum.
@@ -338,7 +391,7 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
   const board: DealsLifecycleResult = {
     columns: "lifecycle",
     lifetimeRevenueUsd: ltr,
-    lifetimeRevenueSource: input.lifetimeRevenueSource,
+    lifetimeRevenueSource: sources.length === 1 && input.scopes.every((s) => s.lifetimeRevenueSource === sources[0]) ? sources[0]! : null,
     pricedCauses: [...input.pricedCauses],
     unvaluedReason,
     totalUsd: sum(rungs),

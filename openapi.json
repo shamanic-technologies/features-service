@@ -24483,6 +24483,469 @@
           "offer"
         ]
       },
+      "BrandSpendChartsResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "offerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every offer the chart covers: each offer any campaign of the brand states."
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "salesFunnelCampaignIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every sales funnel campaign of every offer of the brand."
+          },
+          "brand": {
+            "type": "object",
+            "properties": {
+              "leg": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "channelSlug": {
+                    "type": "string",
+                    "description": "The channel performing the leg."
+                  },
+                  "legKey": {
+                    "type": "string",
+                    "description": "The leg as the campaign stores it."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Null = from nothing (Start)."
+                  },
+                  "toStep": {
+                    "type": "string"
+                  },
+                  "maturityDays": {
+                    "type": "integer",
+                    "description": "Days a cohort needs before it is read as mature (lib/maturity)."
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: mature outcomes needed."
+                  }
+                },
+                "required": [
+                  "channelSlug",
+                  "legKey",
+                  "fromStep",
+                  "toStep",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+              },
+              "outcomeStep": {
+                "type": "string",
+                "nullable": true,
+                "description": "The step counted as the outcome (the leg's TO step)."
+              },
+              "outcomeUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "description": "no_leg | outcome_step_not_counted | outcome_not_declared_in_ledger | no_producer_declares_outcome | ledger_unreadable (LEDGER-ONLY-1107)."
+              },
+              "conversionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "description": "no_leg | no_entry_population | a ledger reason of the outcome or the leg's FROM step."
+              },
+              "daily": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "description": "UTC day, YYYY-MM-DD. One point per day from the scope's first activity to today, gaps filled."
+                    },
+                    "spendUsd": {
+                      "type": "number",
+                      "description": "Committed spend that day (the scope's own dated spend)."
+                    },
+                    "cumulativeSpendUsd": {
+                      "type": "number"
+                    },
+                    "cumulativeOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "LEDGER-ONLY-1107: the brand's ledger Units of the outcome step dated on or before the day. Null = the ledger lacks the outcome (outcomeUnavailableReason)."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "ACTUAL cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes (ledger Units). Null with no Unit or nothing spent."
+                    },
+                    "entered": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Ledger Units of the leg's FROM step that day."
+                    },
+                    "cohortOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Always null: the entry-cohort conversion is not a ledger figure (LEDGER-ONLY-1107)."
+                    },
+                    "cohortConversionPct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "cohortOutcomes / entered x 100. Null with nobody entered."
+                    },
+                    "cohortMature": {
+                      "type": "boolean",
+                      "description": "The day's cohort has had the leg's whole maturity duration (leg.maturityDays) to convert. A recent cohort reads low and is flagged, never dropped."
+                    },
+                    "cumulativeEntered": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Ledger Units of the leg's FROM step on or before the day."
+                    },
+                    "cumulativeConverted": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Ledger Units of the outcome step on or before the day (= cumulativeOutcomes)."
+                    },
+                    "conversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The ledger yield: cumulativeConverted / cumulativeEntered x 100."
+                    },
+                    "matureConversionRatePct": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Always null (not a ledger figure)."
+                    },
+                    "matureOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Always null (not a ledger figure)."
+                    },
+                    "learning": {
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "cumulativeOutcomes below the leg's Learning bar; null when the ledger lacks the outcome."
+                    },
+                    "byAction": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "enum": [
+                              "prospects_found",
+                              "first_contacts",
+                              "follow_ups",
+                              "messages_written",
+                              "replies_read",
+                              "notifications",
+                              "other"
+                            ],
+                            "description": "The action, the same for every channel: prospects_found (finding, revealing, verifying and handing out new prospects), first_contacts (a first message of a sequence, or a call placed), follow_ups (step 2 and later of a sequence), messages_written (writing and researching the messages), replies_read (judging replies and leads), notifications, other."
+                          },
+                          "label": {
+                            "type": "string",
+                            "description": "The action in the customer's words (\"New prospects found\", \"Follow-ups\")."
+                          },
+                          "step": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The funnel step the action works toward: lead_found (a new prospect), contacted (a first contact or a follow-up). Null for the work around a step."
+                          },
+                          "unit": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "What `actions` counts (\"prospect\", \"first contact\", \"follow-up\"); null when the action has no countable unit (spend only)."
+                          },
+                          "spendUsd": {
+                            "type": "number",
+                            "description": "Committed spend on this action that day, on the read's pricing basis."
+                          },
+                          "actions": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "How many actions that day (runs that carried committed cost). Null when the action has no countable unit."
+                          },
+                          "costPerActionUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "spendUsd / actions: \"$0.06 per follow-up\". Null with no countable unit or no action that day."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "label",
+                          "step",
+                          "unit",
+                          "spendUsd",
+                          "actions",
+                          "costPerActionUsd"
+                        ]
+                      },
+                      "description": "What the day's spend bought, per action (only actions with spend). Sum of spendUsd = the day's spend from the task read."
+                    },
+                    "byActionGapUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "spendUsd - sum of byAction[].spendUsd: 0 when the two reads agree. Null when the task read failed (spendByActionUnavailableReason)."
+                    }
+                  },
+                  "required": [
+                    "date",
+                    "spendUsd",
+                    "cumulativeSpendUsd",
+                    "cumulativeOutcomes",
+                    "costPerOutcomeUsd",
+                    "entered",
+                    "cohortOutcomes",
+                    "cohortConversionPct",
+                    "cohortMature",
+                    "cumulativeEntered",
+                    "cumulativeConverted",
+                    "conversionRatePct",
+                    "matureConversionRatePct",
+                    "matureOutcomes",
+                    "learning",
+                    "byAction",
+                    "byActionGapUsd"
+                  ]
+                }
+              },
+              "spendByActionUnavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "spend_by_action_unreadable",
+                  null
+                ]
+              },
+              "totals": {
+                "type": "object",
+                "properties": {
+                  "spendUsd": {
+                    "type": "number"
+                  },
+                  "outcomes": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "The brand's ledger Units of the outcome step: the SAME count as Today's Target row (campaign-targets offerTargets[].outcomesToDate). Null = the ledger lacks it."
+                  },
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "ACTUAL: spendUsd / OUR Units of the outcome (outcomes minus otherFactoryUnits.total)."
+                  },
+                  "standardCostPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "STANDARD: the ledger's every-path unit cost of the outcome (= offerTargets[].costPerOutcomeUsd)."
+                  },
+                  "otherFactoryUnits": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "total": {
+                        "type": "integer"
+                      },
+                      "anotherFactory": {
+                        "type": "integer",
+                        "description": "Reached by the client's CRM, team or site, or before our first touch."
+                      },
+                      "noProof": {
+                        "type": "integer",
+                        "description": "No proof our outreach caused it."
+                      }
+                    },
+                    "required": [
+                      "total",
+                      "anotherFactory",
+                      "noProof"
+                    ],
+                    "description": "LEDGER-OTHER-FACTORY-1107: the Units of `outcomes` another factory produced (in the count, in no $ / outcome)."
+                  },
+                  "entered": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "Ledger Units of the leg's FROM step."
+                  },
+                  "converted": {
+                    "type": "integer",
+                    "nullable": true,
+                    "description": "= outcomes when entered is served."
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The ledger yield: outcomes / entered x 100."
+                  },
+                  "learning": {
+                    "type": "boolean",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "spendUsd",
+                  "outcomes",
+                  "costPerOutcomeUsd",
+                  "standardCostPerOutcomeUsd",
+                  "otherFactoryUnits",
+                  "entered",
+                  "converted",
+                  "conversionRatePct",
+                  "learning"
+                ]
+              },
+              "expected": {
+                "type": "object",
+                "properties": {
+                  "costPerOutcomeUsd": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                  },
+                  "costPerOutcomeBasis": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "measured | stated | fleet | default."
+                  },
+                  "costPerOutcomeUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionRatePct": {
+                    "type": "number",
+                    "nullable": true,
+                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                  },
+                  "conversionBasis": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionSource": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "conversionUnavailableReason": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "costPerOutcomeUsd",
+                  "costPerOutcomeBasis",
+                  "costPerOutcomeUnavailableReason",
+                  "conversionRatePct",
+                  "conversionBasis",
+                  "conversionSource",
+                  "conversionUnavailableReason"
+                ]
+              },
+              "ledger": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "brand"
+                    ]
+                  },
+                  "outcomeKeys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "entryKeys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "producerGap": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "declaredElsewhereBy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The services that declare this outcome for other scopes (empty = no service declares it anywhere)."
+                      },
+                      "undeclaredConsumptions": {
+                        "type": "number",
+                        "description": "Occurrences the scope consumed that no run declared producing."
+                      }
+                    },
+                    "required": [
+                      "declaredElsewhereBy",
+                      "undeclaredConsumptions"
+                    ],
+                    "description": "Who must declare the outcome in the ledger (runs-service), when the ledger lacks it."
+                  },
+                  "ledgerDaysMissing": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "scope",
+                  "outcomeKeys",
+                  "entryKeys",
+                  "producerGap",
+                  "ledgerDaysMissing"
+                ],
+                "description": "LEDGER-ONLY-1107: where the outcome figures come from (the brand's general ledger, runs-service)."
+              }
+            },
+            "required": [
+              "leg",
+              "outcomeStep",
+              "outcomeUnavailableReason",
+              "conversionUnavailableReason",
+              "daily",
+              "spendByActionUnavailableReason",
+              "totals",
+              "expected",
+              "ledger"
+            ],
+            "description": "BRAND-GRAIN-READS-1107: every campaign of every offer as one scope for SPEND (GET /offers/{offerId}/spend-charts' rule one level up: the union of the offers' scopes); OUTCOMES and conversion are the brand's ledger Units. Expected figures are the picked offer model's (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer chart byte for byte."
+          }
+        },
+        "required": [
+          "brandId",
+          "offerIds",
+          "pricing",
+          "costBasis",
+          "salesFunnelCampaignIds",
+          "brand"
+        ]
+      },
       "OutcomeAccounting": {
         "type": "object",
         "properties": {
@@ -25095,6 +25558,260 @@
           "costBasis",
           "firstSpendDay",
           "steps"
+        ]
+      },
+      "BrandOutcomeCostSeriesResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "pricing": {
+            "type": "string",
+            "enum": [
+              "gross",
+              "net"
+            ]
+          },
+          "costBasis": {
+            "type": "string",
+            "enum": [
+              "charged"
+            ]
+          },
+          "firstSpendDay": {
+            "type": "string",
+            "nullable": true,
+            "description": "The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "stepKey": {
+                  "type": "string",
+                  "enum": [
+                    "paid_client",
+                    "meeting_attended",
+                    "meeting_booked",
+                    "signup",
+                    "form_submitted",
+                    "conversation",
+                    "website_visit",
+                    "lead_found"
+                  ]
+                },
+                "learningOutcomesRequired": {
+                  "type": "integer",
+                  "description": "Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."
+                },
+                "sinceInception": {
+                  "type": "object",
+                  "properties": {
+                    "spendUsd": {
+                      "type": "number"
+                    },
+                    "outcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                    },
+                    "undatedOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Always 0 on the ledger (every Unit is dated); null with outcomes."
+                    },
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."
+                    },
+                    "learning": {
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "Null with outcomes."
+                    }
+                  },
+                  "required": [
+                    "spendUsd",
+                    "outcomes",
+                    "undatedOutcomes",
+                    "costPerOutcomeUsd",
+                    "learning"
+                  ]
+                },
+                "outcomesUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."
+                },
+                "producerGap": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ],
+                  "description": "Who must declare the step's Units when the ledger lacks them."
+                },
+                "expected": {
+                  "type": "object",
+                  "properties": {
+                    "costPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "Expected cost of one outcome of this step on the offer's expected sales path: the platform cost of every leg up to the step per paying client, divided by the step's outcomes needed per paying client (a step's cost carries the lower steps it needed). Null with unavailableReason."
+                    },
+                    "basis": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Weakest input of the expected model (measured, stated, fleet, default). Null with unavailableReason."
+                    },
+                    "combinationKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The sales path the figure is read off."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "step_not_on_expected_path | start_step_not_priced_on_route | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."
+                    }
+                  },
+                  "required": [
+                    "costPerOutcomeUsd",
+                    "basis",
+                    "combinationKey",
+                    "unavailableReason"
+                  ]
+                },
+                "value": {
+                  "type": "object",
+                  "properties": {
+                    "valuePerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "What one outcome of this step is worth to the client, NET (OUTCOME-ACCOUNTING-1107), on the SAME expected sales path as expected.costPerOutcomeUsd: V(paid client) = the offer's lifetime revenue, V(s) = max(0, y x V(next) - c). Null with unavailableReason."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "step_not_on_expected_path | start_step_not_priced_on_route | leg_rate_unavailable | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."
+                    }
+                  },
+                  "required": [
+                    "valuePerOutcomeUsd",
+                    "unavailableReason"
+                  ],
+                  "description": "P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."
+                },
+                "months": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "month": {
+                        "type": "string",
+                        "description": "YYYY-MM (UTC)."
+                      },
+                      "spendUsd": {
+                        "type": "number",
+                        "description": "What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."
+                      },
+                      "outcomes": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
+                      },
+                      "costPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "spendUsd / outcomes. Null at 0 outcomes (never the spend as a floor)."
+                      },
+                      "cumulativeSpendUsd": {
+                        "type": "number"
+                      },
+                      "cumulativeOutcomes": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "cumulativeCostPerOutcomeUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."
+                      },
+                      "learning": {
+                        "type": "boolean",
+                        "nullable": true,
+                        "description": "True while cumulativeOutcomes is below learningOutcomesRequired. Null with the outcomes."
+                      }
+                    },
+                    "required": [
+                      "month",
+                      "spendUsd",
+                      "outcomes",
+                      "costPerOutcomeUsd",
+                      "cumulativeSpendUsd",
+                      "cumulativeOutcomes",
+                      "cumulativeCostPerOutcomeUsd",
+                      "learning"
+                    ]
+                  },
+                  "description": "Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."
+                },
+                "accounting": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/OutcomeAccounting"
+                    },
+                    {
+                      "nullable": true,
+                      "description": "OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "stepKey",
+                "learningOutcomesRequired",
+                "sinceInception",
+                "outcomesUnavailableReason",
+                "producerGap",
+                "expected",
+                "value",
+                "months",
+                "accounting"
+              ]
+            },
+            "description": "One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."
+          },
+          "offerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every offer the series covers: each offer any campaign of the brand states."
+          }
+        },
+        "required": [
+          "brandId",
+          "pricing",
+          "costBasis",
+          "firstSpendDay",
+          "steps",
+          "offerIds"
         ]
       },
       "BrandConversionRatesResponse": {
@@ -26721,6 +27438,492 @@
           "rungs",
           "organizations",
           "outOfScopeRowCount"
+        ]
+      },
+      "BrandDealsLifecycleResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "string",
+            "enum": [
+              "lifecycle"
+            ]
+          },
+          "lifetimeRevenueUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The offers' one lifetime revenue; null when they state different ones (see `offers[]`) or none."
+          },
+          "lifetimeRevenueSource": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "offer_stated",
+              "fleet_median",
+              null
+            ],
+            "description": "The offers' one lifetime-revenue source; null when they differ or none."
+          },
+          "pricedCauses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every cause (`outreach`, `other`, `unstated`): a deal's value to the customer, not our share."
+          },
+          "unvaluedReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_economics",
+              "no_client_value",
+              null
+            ],
+            "description": "Set only when the offer prices on nothing: every value is then null (people still listed)."
+          },
+          "totalUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Σ `rungs[].valueUsd`, exactly."
+          },
+          "expectedPipelineUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Σ of every rung but Paid client: the expected pipeline (the board's title)."
+          },
+          "wonUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "The Paid client rung's value = the brand ledger's Paid client Units x the offer's lifetime revenue (LEDGER-ONLY-1107-P2; null when the ledger lacks Paid client Units, then `totalUsd` is null too). `expectedPipelineUsd + wonUsd = totalUsd`."
+          },
+          "outOfScopeCardCount": {
+            "type": "number",
+            "description": "Unibox rows on a board rung none of whose leads this scope served (not on this board)."
+          },
+          "rungs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "contacted",
+                    "engaged",
+                    "signup_or_form",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "paid_client"
+                  ],
+                  "description": "The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."
+                },
+                "rank": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "valueKind": {
+                  "type": "string",
+                  "enum": [
+                    "contacted_expected_value",
+                    "expected_value",
+                    "won_value"
+                  ],
+                  "description": "`contacted_expected_value`: P(entry step | contacted) × the value at that step (the pipeline's own contacted pricing: the measured group rate, else the seeded entry benchmark; expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (on the pipeline's causes: what our pipes caused; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."
+                },
+                "valueUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."
+                },
+                "expected": {
+                  "type": "boolean",
+                  "description": "True unless every card is a human-stated sale: the figure is an expectation."
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "input": {
+                        "type": "string",
+                        "enum": [
+                          "lifetime_revenue",
+                          "entry_rate"
+                        ]
+                      },
+                      "source": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "input",
+                      "source"
+                    ]
+                  },
+                  "description": "What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."
+                },
+                "cardCount": {
+                  "type": "number",
+                  "description": "Cards listed on the rung (records)."
+                },
+                "leadCount": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."
+                },
+                "organizationCount": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."
+                },
+                "units": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: the brand ledger's TOTAL Units of the rung's outcome, every source (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."
+                },
+                "unitsUnavailableReason": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "ourUnits": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (Paid client's won value = these × LTR)."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                },
+                "cards": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "humanId": {
+                        "type": "string",
+                        "description": "lead-service's Unibox row: the person (with `companyKey`, the row's identity)."
+                      },
+                      "companyKey": {
+                        "type": "string"
+                      },
+                      "relationKey": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "leadIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "The row's leads this scope holds (the ones priced)."
+                      },
+                      "valueUsd": {
+                        "type": "number",
+                        "nullable": true,
+                        "description": "What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."
+                      },
+                      "zeroValueReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "ruled_out",
+                          "step_not_priced",
+                          "not_ours",
+                          "expired",
+                          "cannot_convert",
+                          "not_sent",
+                          "won_counted_on_ledger",
+                          null
+                        ],
+                        "description": "Why the card reads exactly 0: `won_counted_on_ledger` (Paid client: the won value is the ledger's Units x LTR on the rung, LEDGER-ONLY-1107-P2),  `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
+                      },
+                      "valueSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "stated_amount",
+                          "lifetime_revenue",
+                          null
+                        ],
+                        "description": "Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."
+                      },
+                      "entryRateSource": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "measured",
+                          "default_entry",
+                          null
+                        ],
+                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
+                      }
+                    },
+                    "required": [
+                      "humanId",
+                      "companyKey",
+                      "relationKey",
+                      "leadIds",
+                      "valueUsd",
+                      "zeroValueReason",
+                      "valueSource",
+                      "entryRateSource"
+                    ]
+                  },
+                  "description": "One card per Unibox row on the rung, ordered by humanId then companyKey."
+                }
+              },
+              "required": [
+                "key",
+                "rank",
+                "label",
+                "valueKind",
+                "valueUsd",
+                "expected",
+                "assumptions",
+                "cardCount",
+                "leadCount",
+                "organizationCount",
+                "units",
+                "unitsUnavailableReason",
+                "ourUnits",
+                "otherFactoryUnits",
+                "cards"
+              ]
+            },
+            "description": "Every board rung, ladder order, always all six."
+          },
+          "offerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every offer the board covers: each offer any campaign of the brand states."
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "offerId": {
+                  "type": "string"
+                },
+                "lifetimeRevenueUsd": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "lifetimeRevenueSource": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "offer_stated",
+                    "fleet_median",
+                    null
+                  ]
+                }
+              },
+              "required": [
+                "offerId",
+                "lifetimeRevenueUsd",
+                "lifetimeRevenueSource"
+              ]
+            },
+            "description": "Each offer priced, on its own terms: its people are valued on its paths and lifetime revenue."
+          },
+          "wonValuedAs": {
+            "type": "string",
+            "enum": [
+              "ledger_units_x_lifetime_revenue",
+              "per_offer"
+            ],
+            "description": "`ledger_units_x_lifetime_revenue`: every offer states one lifetime revenue, won = the brand ledger's OUR Paid client Units x it (the offer board's rule). `per_offer`: won = Σ each offer's campaigns' OUR Paid client Units x its own lifetime revenue."
+          }
+        },
+        "required": [
+          "brandId",
+          "columns",
+          "lifetimeRevenueUsd",
+          "lifetimeRevenueSource",
+          "pricedCauses",
+          "unvaluedReason",
+          "totalUsd",
+          "expectedPipelineUsd",
+          "wonUsd",
+          "outOfScopeCardCount",
+          "rungs",
+          "offerIds",
+          "offers",
+          "wonValuedAs"
+        ]
+      },
+      "BrandCompanyLifecycleResponse": {
+        "type": "object",
+        "properties": {
+          "brandId": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "string",
+            "enum": [
+              "company_lifecycle"
+            ]
+          },
+          "organizationCount": {
+            "type": "number",
+            "description": "Organisations listed: every company of the offer's lead population (grouped exactly as GET /offers/{offerId}/revenue groups its `organizations[]`), plus each company-less lead that stands on a rung (a row of its own, as on the revenue read)."
+          },
+          "withoutCompanyCount": {
+            "type": "number",
+            "description": "Of `organizationCount`, company-less leads."
+          },
+          "noRungOrganizationCount": {
+            "type": "number",
+            "description": "Organisations none of whose people stands on a rung (their `lifecycle` is null)."
+          },
+          "rungs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "lead_found",
+                    "contacted",
+                    "engaged",
+                    "signup_or_form",
+                    "meeting_booked",
+                    "meeting_attended",
+                    "paid_client"
+                  ],
+                  "description": "The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`)."
+                },
+                "rank": {
+                  "type": "number",
+                  "description": "1 = Lead found … 7 = Paid client."
+                },
+                "label": {
+                  "type": "string"
+                },
+                "organizationCount": {
+                  "type": "number",
+                  "description": "Organisations whose HIGHEST rung is this one. Each counts once: Σ rungs[].organizationCount + noRungOrganizationCount = organizationCount. (The lifecycle Deals board counts an organisation on every rung one of its people stands on, so its counts can exceed these.)"
+                },
+                "withoutCompanyCount": {
+                  "type": "number",
+                  "description": "Of them, company-less leads."
+                }
+              },
+              "required": [
+                "key",
+                "rank",
+                "label",
+                "organizationCount",
+                "withoutCompanyCount"
+              ]
+            },
+            "description": "Every rung of the ladder, in order, always all seven (0 when nobody stands there)."
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "organizationKey": {
+                  "type": "string",
+                  "description": "`org:<orgId>`, or `lead:<leadId>` for a company-less lead: the join key of GET /offers/{offerId}/revenue `organizations[].organizationKey`."
+                },
+                "orgId": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The company (the revenue read's `organizations[].orgId`); null for a company-less lead."
+                },
+                "lifecycle": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "lead_found",
+                        "contacted",
+                        "engaged",
+                        "signup_or_form",
+                        "meeting_booked",
+                        "meeting_attended",
+                        "paid_client"
+                      ],
+                      "description": "The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`)."
+                    },
+                    "rank": {
+                      "type": "number",
+                      "description": "1 = Lead found … 7 = Paid client."
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "rank",
+                    "label"
+                  ],
+                  "description": "The highest rung any of the organisation's people reached, a person's rung being lead-service's served Unibox `lifecycle` (read, never re-derived). Null = none of them stands on a rung."
+                }
+              },
+              "required": [
+                "organizationKey",
+                "orgId",
+                "lifecycle"
+              ]
+            },
+            "description": "One row per organisation, highest rung first, then organizationKey."
+          },
+          "outOfScopeRowCount": {
+            "type": "number",
+            "description": "Unibox rows on a rung none of whose leads the offer served (the brand's people, not this offer's)."
+          },
+          "offerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every offer covered: the organisations are every offer's lead population (every campaign stating an offer)."
+          }
+        },
+        "required": [
+          "brandId",
+          "columns",
+          "organizationCount",
+          "withoutCompanyCount",
+          "noRungOrganizationCount",
+          "rungs",
+          "organizations",
+          "outOfScopeRowCount",
+          "offerIds"
         ]
       },
       "OfferPipelineGeneratedResponse": {
@@ -45709,6 +46912,148 @@
         }
       }
     },
+    "/brands/{brandId}/spend-charts": {
+      "get": {
+        "summary": "Daily spend and convergence chart of a whole brand (every offer, every campaign)",
+        "description": "Why a day costs what it costs and whether it is converging (owner 2026-10-19). One point per UTC day since the scope's first activity: the measured cost per outcome (served while Learning, flagged), the conversion by entry cohort (a positive reply 5 days after the send counts for the send day; recent cohorts flagged not mature), the Learning flag, what the day's spend bought per action (new prospects found, first contacts, follow-ups, writing, reading replies; spend, count and cost per action), and the expected values the lines converge to. Same rule for every channel. `pricing=net` = what the org pays. Org-scoped (`x-org-id`). BRAND-GRAIN-READS-1107: GET /offers/{offerId}/spend-charts at the BRAND grain, every offer of the brand as one scope.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross; the dashboard sends net."
+            },
+            "required": false,
+            "description": "Default gross; the dashboard sends net.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brand's chart.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandSpendChartsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "pricing unrecognised (pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found, or brand_has_no_campaigns (no sales funnel campaign sells an offer).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A spend or people read failed: no chart is guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/offers/{offerId}/outcome-cost-series": {
       "get": {
         "summary": "Cost of one outcome per month and since inception, every outcome step of an offer",
@@ -45822,6 +47167,148 @@
           },
           "404": {
             "description": "brand_not_found, or offer_has_no_campaigns.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "A spend or people read failed: no figure is guessed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/outcome-cost-series": {
+      "get": {
+        "summary": "Cost of one outcome per month and since inception, every outcome step of a whole brand (every offer)",
+        "description": "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross; the dashboard sends net."
+            },
+            "required": false,
+            "description": "Default gross; the dashboard sends net.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One series per outcome step.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandOutcomeCostSeriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "pricing unrecognised (pricing_unrecognised).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found, or brand_has_no_campaigns (no campaign sells an offer).",
             "content": {
               "application/json": {
                 "schema": {
@@ -46147,8 +47634,8 @@
     },
     "/brands/{brandId}/deals-value": {
       "get": {
-        "summary": "The dollar value of each Deals-board column (lead-service standing), per column and per card",
-        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on the pipeline's causes (what our pipes caused), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
+        "summary": "The dollar value of each Deals-board column (lead-service standing), per column and per card; `columns=lifecycle` / `company_lifecycle` = the offer read's lifecycle modes for the WHOLE brand",
+        "description": "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on the pipeline's causes (what our pipes caused), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.\n\nBRAND-GRAIN-READS-1107: `columns=lifecycle` answers BrandDealsLifecycleResponse and `columns=company_lifecycle` BrandCompanyLifecycleResponse: GET /offers/{offerId}/deals-value's modes for EVERY offer of the brand (each offer any campaign states, every campaign of each). The lifecycle board prices each offer's people exactly as that offer's board does (its campaigns, declared funnels, lifetime revenue, Disqualified marks); a person several offers served is one card (its MAX) and an organisation counts once. Won = the brand ledger's OUR Paid client Units x the offers' one lifetime revenue, or, when offers state different ones, each offer's campaigns' Paid client Units x its own (`wonValuedAs`). A brand selling ONE offer reads its offer's body byte for byte (but `offerIds` and no `offerId`/`campaignId`).",
         "tags": [
           "Stats"
         ],
@@ -46160,6 +47647,21 @@
             "required": true,
             "name": "brandId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "standing",
+                "lifecycle",
+                "company_lifecycle"
+              ],
+              "description": "Which body: `standing` (default), `lifecycle` (the board on the lifecycle ladder, every offer) or `company_lifecycle` (each organisation's rung, every offer)."
+            },
+            "required": false,
+            "description": "Which body: `standing` (default), `lifecycle` (the board on the lifecycle ladder, every offer) or `company_lifecycle` (each organisation's rung, every offer).",
+            "name": "columns",
+            "in": "query"
           },
           {
             "schema": {
@@ -46207,17 +47709,45 @@
         ],
         "responses": {
           "200": {
-            "description": "The brand's Deals column values",
+            "description": "BrandDealsValueResponse (standing), BrandDealsLifecycleResponse (`columns=lifecycle`) or BrandCompanyLifecycleResponse (`columns=company_lifecycle`)",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BrandDealsValueResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BrandDealsValueResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BrandDealsLifecycleResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BrandCompanyLifecycleResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid columns value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
           },
           "404": {
-            "description": "reason='brand_has_no_channels'",
+            "description": "reason='brand_has_no_channels' (standing), or reason='brand_has_no_offer_campaigns' (lifecycle modes: no campaign sells an offer)",
             "content": {
               "application/json": {
                 "schema": {
@@ -46235,7 +47765,7 @@
             }
           },
           "409": {
-            "description": "reason='brand_channels_price_differently'",
+            "description": "reason='brand_channels_price_differently' (standing), or reason='offer_channels_price_differently' (lifecycle: one offer is sold through channels pricing on different funnels)",
             "content": {
               "application/json": {
                 "schema": {

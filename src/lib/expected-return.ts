@@ -341,6 +341,21 @@ export function expectedForBrand(models: readonly OfferExpectedModel[]): Expecte
 }
 
 /**
+ * PURE (BRAND-GRAIN-READS-1107): the ONE offer model a brand-grain chart (`/brands/:id/spend-charts`,
+ * `/brands/:id/outcome-cost-series`) reads its expected figures off: the model
+ * `expectedForBrand` takes its figure from (best ROI of the offers running a funnel campaign, else of all), else the
+ * first offer's (by id) so an unpriced brand still names its offer's own reason. One offer = that offer's model.
+ */
+export function pickBrandModel(models: readonly OfferExpectedModel[]): OfferExpectedModel | null {
+  const running = models.filter((m) => !m.notRunning);
+  const pool = (running.length > 0 ? running : models)
+    .map((m) => ({ m, e: expectedForOffer(m) }))
+    .filter(({ e }) => e.roiMultiple !== null);
+  pool.sort((a, b) => b.e.roiMultiple! - a.e.roiMultiple! || (a.e.combinationKey ?? "").localeCompare(b.e.combinationKey ?? ""));
+  return pool[0]?.m ?? [...models].sort((a, b) => a.offerId.localeCompare(b.offerId))[0] ?? null;
+}
+
+/**
  * PURE: the measured rung first. A scope whose own return is MATURE serves it (`basis: "measured"`); else the
  * model's figure. The model's cost per outcome rides along either way (it is the expected one).
  */

@@ -63,7 +63,9 @@ import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.
 import {
   BOARD_RUNG_KEYS,
   priceLifecycleBoard,
+  priceLifecycleBoardScopes,
   type BoardRungKey,
+  type LifecyclePricingScope,
   type DealsLifecycleResult,
   type LifecycleBoardRow,
 } from "../lib/deals-lifecycle.js";
@@ -85,7 +87,7 @@ export type OfferContactedValueResult = ContactedValueResult & {
 };
 
 /** The offer's pricing inputs, read once to key the cache and handed to the compute. */
-async function offerPricing(offerId: string, brandId: string, headers: DownstreamHeaders, channels: OfferChannel[]) {
+export async function offerPricing(offerId: string, brandId: string, headers: DownstreamHeaders, channels: OfferChannel[]) {
   // Fails loud on several funnels BEFORE the population loader asks the brand-worded question.
   resolveOfferFunnel(offerId, channels);
   const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId), assertBrandHeld(brandId, headers)]);
@@ -198,6 +200,80 @@ async function priceOfferLifecycleBoard(
     pricedCauses: DEFAULT_PRICED_CAUSES,
   });
   return { ...priced, persons: population.persons, ledger };
+}
+
+/** One offer of a brand, as the brand-grain lifecycle board prices it (its campaigns and its own pricing inputs). */
+export interface BrandOfferPricing {
+  offerId: string;
+  campaignIds: string[];
+  pre: Parameters<typeof loadBrandPricedPopulation>[2];
+}
+
+export type BrandDealsLifecycleResult = DealsLifecycleResult & {
+  /** Every offer the board prices, each on its own terms: its people are priced on its paths and lifetime revenue. */
+  offers: Array<{ offerId: string; lifetimeRevenueUsd: number | null; lifetimeRevenueSource: DealsLifecycleResult["lifetimeRevenueSource"] }>;
+  /** How the won column is valued: `ledger_units_x_lifetime_revenue` (every offer states one lifetime revenue: the brand's
+   * Paid client Units x it, the offer read's rule) or `per_offer` (each offer's campaigns' Paid client Units x its own). */
+  wonValuedAs: "ledger_units_x_lifetime_revenue" | "per_offer";
+};
+
+/**
+ * THE BRAND'S LIFECYCLE BOARD (BRAND-GRAIN-READS-1107): every offer of the brand, every campaign of each, as ONE board.
+ * Each offer's people are loaded and priced exactly as `/offers/:offerId/deals-value?columns=lifecycle` loads and
+ * prices them (its campaigns, its declared funnels, its lifetime revenue, its Disqualified marks); the Unibox rows,
+ * the contacted pricing and the ledger are the brand's, as on every offer board. A person two offers served is one
+ * card (its MAX), an organisation counts once. So a brand selling ONE offer reads its offer's board byte for byte.
+ */
+export async function computeBrandDealsLifecycle(brandId: string, headers: DownstreamHeaders, offers: readonly BrandOfferPricing[]): Promise<BrandDealsLifecycleResult> {
+  const [populations, uniboxRows, contactedPricing, ledger] = await Promise.all([
+    Promise.all(
+      offers.map((o) => loadBrandPricedPopulation(brandId, headers, o.pre, { pricedCauses: DEFAULT_PRICED_CAUSES, campaignIds: o.campaignIds, offerId: o.offerId })),
+    ),
+    fetchUniboxLifecycleRows(brandId, BOARD_RUNG_KEYS, headers),
+    contactedPricingOf(brandId, headers),
+    readLedgerScope(brandId, "net", null, "brand deals lifecycle board"),
+  ]);
+  const scopes: LifecyclePricingScope[] = offers.map((o, i) => ({
+    persons: populations[i]!.persons,
+    paths: populations[i]!.paths,
+    lifetimeRevenueUsd: populations[i]!.lifetimeRevenueUsd,
+    lifetimeRevenueSource: priceOnDeclaredFunnel(o.pre.declared).economics.lifetimeRevenueSource ?? null,
+  }));
+  // Won: the brand's ledger Units x the one lifetime revenue its offers state (the offer read's rule); offers stating
+  // different ones → each offer's campaigns' OUR Paid client Units x its own, summed (unknown Units = unknown won).
+  const ltrs = scopes.map((s) => s.lifetimeRevenueUsd);
+  const oneLtr = ltrs.every((l) => l === ltrs[0]);
+  let wonUsd: number | null | undefined;
+  if (!oneLtr) {
+    const perOffer = await Promise.all(
+      offers.map(async (o, i) => {
+        const units = ledgerUnitsOfRung(await readLedgerScope(brandId, "net", o.campaignIds, "brand deals lifecycle board (offer won)"), "paid_client").ourUnits;
+        const l = scopes[i]!.lifetimeRevenueUsd;
+        if (units === null) return null;
+        if (units === 0) return 0;
+        return l !== null && l > 0 ? units * l : null;
+      }),
+    );
+    wonUsd = perOffer.some((v) => v === null) ? null : perOffer.reduce((a: number, v) => a + v!, 0);
+  }
+  const rungs = new Set<string>(BOARD_RUNG_KEYS);
+  const rows: LifecycleBoardRow[] = uniboxRows
+    .filter((r) => rungs.has(r.rung))
+    .map((r) => ({ humanId: r.humanId, companyKey: r.companyKey, relationKey: r.relationKey, leadIds: r.leadIds, rung: r.rung as BoardRungKey }));
+  const { board } = priceLifecycleBoardScopes({
+    ledgerUnitsOf: (rung) => ledgerUnitsOfRung(ledger, rung),
+    rows,
+    scopes,
+    contactedPricing,
+    statedWonAmountUsdByEmail: null,
+    pricedCauses: DEFAULT_PRICED_CAUSES,
+    ...(wonUsd !== undefined ? { wonUsd } : {}),
+  });
+  return {
+    ...board,
+    offers: offers.map((o, i) => ({ offerId: o.offerId, lifetimeRevenueUsd: scopes[i]!.lifetimeRevenueUsd, lifetimeRevenueSource: scopes[i]!.lifetimeRevenueSource })),
+    wonValuedAs: oneLtr ? "ledger_units_x_lifetime_revenue" : "per_offer",
+  };
 }
 
 /**

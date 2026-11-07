@@ -18,13 +18,13 @@ import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelCampaignRow } from "../lib/sales-funnel-campaigns-client.js";
 import { fetchOfferChannelMap, type OfferChannel } from "../lib/offer-channels.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
-import { groupScope } from "./spend-charts.js";
+import { brandChartScope, groupScope } from "./spend-charts.js";
 import { fetchFollowupActionRows, readScopePeople, utcToday } from "../lib/spend-charts-io.js";
 import { fetchBrandCommittedSpendByDay } from "../lib/brand-spend-by-day-client.js";
 import { addBrandLevelByDay, fetchBrandLevelSpend } from "../lib/brand-level-spend.js";
 import { legMaturity } from "../lib/maturity.js";
 import { pipeLegKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
-import { expectedForOffer, offerExpectedModel, ExpectedModelComputing } from "../lib/expected-return.js";
+import { expectedForOffer, offerExpectedModel, pickBrandModel, ExpectedModelComputing, type OfferExpectedModel } from "../lib/expected-return.js";
 import type { SalesPath } from "../lib/offer-sales-paths.js";
 import { expectedRouteFigures } from "../lib/outcome-accounting.js";
 import {
@@ -59,6 +59,12 @@ export interface OutcomeCostSeriesBody {
   ledger: { basis: "ledger"; scope: "brand"; unavailableReason: string | null; ledgerDaysMissing: string[] };
 }
 
+/** BRAND-GRAIN-READS-1107: the offer body one level up (every offer of the brand); `offerIds` instead of `offerId`. */
+export type BrandOutcomeCostSeriesBody = Omit<OutcomeCostSeriesBody, "offerId"> & {
+  /** Every offer the series covers: each offer any campaign of the brand states. */
+  offerIds: string[];
+};
+
 interface ExpectedPerStep {
   costs: Map<string, StepExpectedCost>;
   values: Map<string, StepValue>;
@@ -71,17 +77,30 @@ interface ExpectedPerStep {
 }
 
 /** The expected cost AND value per step, off the offer's expected model's path. Soft: unreadable = every step null + reason. */
-async function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<ExpectedPerStep> {
+function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<ExpectedPerStep> {
+  return expectedCostsOfModel(() => offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS), `offer ${offerId}`);
+}
+
+/** The same, off the brand's picked offer model (`pickBrandModel`): one offer = that offer's model. */
+function brandExpectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerIds: readonly string[]): Promise<ExpectedPerStep> {
+  const identity = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
+  return expectedCostsOfModel(
+    async () => pickBrandModel((await Promise.all(offerIds.map((o) => offerExpectedModel(identity, brandId, o, EXPECTED_COLD_WAIT_MS)))).filter((m): m is OfferExpectedModel => m !== null)),
+    `brand ${brandId}`,
+  );
+}
+
+async function expectedCostsOfModel(load: () => Promise<OfferExpectedModel | null>, what: string): Promise<ExpectedPerStep> {
   const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason), path: null, paths: [], basis: null, lifetimeRevenueSource: null });
   try {
-    const m = await offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS);
+    const m = await load();
     if (m === null) return none("expected_model_unavailable");
     const e = expectedForOffer(m);
     const path = e.combinationKey ? (m.body.paths.find((p) => p.combinationKey === e.combinationKey) ?? null) : null;
     return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason), path, paths: [...m.body.paths].sort((a, b) => a.rank - b.rank), basis: e.basis, lifetimeRevenueSource: m.lifetimeRevenueSource };
   } catch (err) {
     if (err instanceof ExpectedModelComputing) return none("expected_model_computing");
-    console.error(`[features-service] outcome cost series: expected model unreadable (offer ${offerId}): ${(err as Error).message}`);
+    console.error(`[features-service] outcome cost series: expected model unreadable (${what}): ${(err as Error).message}`);
     return none("expected_model_unavailable");
   }
 }
@@ -95,6 +114,39 @@ export async function computeOutcomeCostSeries(
   headers: DownstreamHeaders,
   today: string = utcToday(),
 ): Promise<OutcomeCostSeriesBody> {
+  const body = await computeScopeOutcomeCostSeries(brandId, rows, offerChannels, pricing, headers, expectedCostsSoft(headers, brandId, offerId), `offer ${offerId}`, today);
+  return { offerId, ...body };
+}
+
+/**
+ * THE BRAND'S SERIES (BRAND-GRAIN-READS-1107): every sales funnel campaign of every offer and every campaign each offer
+ * ran as ONE scope (the brand spend chart's), computed exactly like the offer series; expected figures off the picked
+ * offer model (`pickBrandModel`). A brand selling one offer reads its offer's series byte for byte (but `offerIds`).
+ */
+export async function computeBrandOutcomeCostSeries(
+  brandId: string,
+  offerIds: readonly string[],
+  rows: readonly SalesFunnelCampaignRow[],
+  channels: readonly OfferChannel[],
+  pricing: Pricing,
+  headers: DownstreamHeaders,
+  today: string = utcToday(),
+): Promise<BrandOutcomeCostSeriesBody> {
+  const body = await computeScopeOutcomeCostSeries(brandId, rows, channels, pricing, headers, brandExpectedCostsSoft(headers, brandId, offerIds), `brand ${brandId}`, today);
+  const { brandId: _brand, ...rest } = body;
+  return { brandId, offerIds: [...offerIds], ...rest };
+}
+
+async function computeScopeOutcomeCostSeries(
+  brandId: string,
+  rows: readonly SalesFunnelCampaignRow[],
+  offerChannels: readonly OfferChannel[],
+  pricing: Pricing,
+  headers: DownstreamHeaders,
+  expectedRead: Promise<ExpectedPerStep>,
+  what: string,
+  today: string,
+): Promise<Omit<OutcomeCostSeriesBody, "offerId">> {
   const scope = groupScope(rows, null, offerChannels);
   const unitIds = rows.flatMap((r) => r.units.map((u) => u.campaignId));
   const [ownByDay, brandLevel, handedRows, { pipeSteps }, expected] = await Promise.all([
@@ -104,7 +156,7 @@ export async function computeOutcomeCostSeries(
     fetchBrandLevelSpend({ brandId, orgId: headers.orgId, pricing, featureScope: scope.featureSlugs, campaignScoped: true }),
     unitIds.length > 0 ? fetchFollowupActionRows(brandId, unitIds) : Promise.resolve([]),
     funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]),
-    expectedCostsSoft(headers, brandId, offerId),
+    expectedRead,
   ]);
   const spendByDay = addBrandLevelByDay(ownByDay, brandLevel);
   const firstSpendDay = [...spendByDay.entries()].filter(([, v]) => v !== 0).map(([d]) => d).sort()[0] ?? null;
@@ -146,7 +198,7 @@ export async function computeOutcomeCostSeries(
       const byDay = await fetchBrandCommittedSpendByDay(brandId, [...new Set(ids)], [...new Set(slugs)].sort(), headers, pricing);
       return [...byDay.entries()].filter(([d]) => d <= today).reduce((a, [, v]) => a + v, 0);
     } catch (err) {
-      console.error(`[features-service] outcome cost series: unit spend unreadable (offer ${offerId}): ${(err as Error).message}`);
+      console.error(`[features-service] outcome cost series: unit spend unreadable (${what}): ${(err as Error).message}`);
       return null;
     }
   };
@@ -214,7 +266,6 @@ export async function computeOutcomeCostSeries(
     await Promise.all([...targetsByStep].map(async ([step, ts]) => [step, ledgerCountOfStep(await readLedgerScope(brandId, ledgerBasisOf(pricing), ts.flatMap((t) => t.unitCampaignIds), "outcome cost series target"), step)] as const)),
   );
   return {
-    offerId,
     brandId,
     pricing,
     costBasis: "charged",
@@ -225,6 +276,38 @@ export async function computeOutcomeCostSeries(
     ledger: { basis: "ledger", scope: "brand", unavailableReason: brandLedger.unavailableReason, ledgerDaysMissing: [...(brandLedger.ledger?.daysMissing ?? [])] },
   };
 }
+
+router.get("/brands/:brandId/outcome-cost-series", apiKeyAuth, async (req, res) => {
+  try {
+    const auth = req as AuthenticatedRequest & { params: { brandId: string } };
+    const { brandId } = auth.params;
+    const pricing = parsePricing(req.query.pricing);
+    if (pricing === null) return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
+    const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
+    const { rows, offerIds, channels } = await brandChartScope(brandId, headers);
+    if (rows.length === 0 && channels.length === 0) {
+      return void res.status(404).json({ error: "This brand runs no campaign selling an offer", reason: "brand_has_no_campaigns" });
+    }
+    const body = await servedCached({
+      view: "brand-outcome-cost-series",
+      scopeKey: buildScopeKey(brandId, {
+        orgId: headers.orgId,
+        offers: offerIds.join("+"),
+        units: rows.flatMap((r) => r.units.map((u) => `${u.campaignId}:${u.legKey}`)).sort().join("+"),
+        campaigns: channels.map((c) => `${c.featureSlug}>${c.campaignIds.join("+")}`).join(","),
+        pricing,
+      }),
+      orgId: headers.orgId,
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/outcome-cost-series"),
+      compute: () => computeBrandOutcomeCostSeries(brandId, offerIds, rows, channels, pricing, headers),
+    });
+    res.json(body);
+  } catch (err) {
+    if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
+    console.error("[features-service] brand outcome cost series error:", err);
+    res.status(502).json({ error: "Failed to read the brand's outcome cost series" });
+  }
+});
 
 router.get("/offers/:offerId/outcome-cost-series", apiKeyAuth, async (req, res) => {
   try {

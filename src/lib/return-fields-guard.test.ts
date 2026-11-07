@@ -25,7 +25,8 @@ const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "measuredReturn", "
 // dashboard visit frequency (a "return" visit, no money).
 const KEPT: Record<string, ReadonlySet<string>> = {
   dashboardReturnFrequency: new Set(["#CustomerHealthResponse"]),
-  expectedPipelineUsd: new Set(["#OfferDealsLifecycleResponse"]),
+  // BRAND-GRAIN-READS-1107: the same board for the whole brand.
+  expectedPipelineUsd: new Set(["#OfferDealsLifecycleResponse", "#BrandDealsLifecycleResponse"]),
   roi: new Set([
     "#FactoryShadowPlan",
     "#LivedSalesPaths",
