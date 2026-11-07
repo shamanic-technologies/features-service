@@ -7,9 +7,9 @@
  * and the pick stayed on rank 1 forever. Here each RUN (one post) is filed under the template dynasty and the LLM dynasty
  * that wrote it (its latest generation), and carries what the ledger credits to it:
  *   - spend = the run's whole subtree cost (writing call, web reads, the publish), billed basis, published or not;
- *   - posts = the run produced `post_published`;
+ *   - posts = the run produced the pipe's outcome (its leg's step / Engine outcome, e.g. `threads_post_published`);
  *   - views / engagements = social-service's latest counts of that post;
- *   - visits = `website_visit` occurrences consuming that `post_published`;
+ *   - visits = `website_visit` occurrences consuming that post;
  *   - signups = signups credited on those visits (a consumption of the visit occurrence by a signup).
  * The ranking's outcome is the SIGNUP (the campaign target), never views: `rankWriters` reads spend + signups, so a
  * template is never ranked on views. Pooled per dynasty across versions (the key is the dynasty). Maturity = the leg's rule.
