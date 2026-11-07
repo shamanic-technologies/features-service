@@ -50,3 +50,9 @@ export const BRIEF_JUDGMENT_SUPPORT: PlatformSupport = {
   kind: "product_feature",
   reason: "features-service GTM Factory brief judge (shadow): picks the play a campaign's brief asks for on each pipe, changes nothing that runs, produces no outcome",
 };
+
+/** A campaign's strategy per Engine (MIGRATE-1105 S6): the brief judge keeps one of the Engine's strategies, or none. */
+export const ENGINE_STRATEGY_SUPPORT: PlatformSupport = {
+  kind: "product_feature",
+  reason: "features-service brief judge: keeps the strategy a campaign's brief asks for on one Engine, judged once per brief and stored, produces no outcome",
+};

@@ -17,6 +17,7 @@ import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
 import { playOfLegRead } from "./workflow-projection.js";
 import { briefPlayOfUnit } from "./factory-shadow.js";
+import { engineStrategyOfCampaign } from "../lib/engine-strategy-io.js";
 
 const router = Router();
 
@@ -27,6 +28,23 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
   try {
     const unit = await fetchCampaignPipe(campaignId);
     if (!unit.found) return res.status(404).json({ error: `campaign-service lists no campaign ${campaignId}`, reason: "campaign_not_found" });
+    // MIGRATE-1105 S6: the strategy the campaign keeps on THIS Engine, stored on the campaign (judged from its brief). The
+    // pipe / play / sales funnel read below serves only a campaign that holds no verdict on the Engine yet.
+    const stored = unit.salesFunnelCampaignId && unit.orgId && unit.brandId
+      ? await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome })
+      : ({ kind: "legacy" } as const);
+    if (stored.kind === "kept") {
+      const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+      return res.json({
+        campaignId,
+        outcome,
+        strategyId: stored.strategy?.id ?? null,
+        strategyName: stored.strategy?.name ?? null,
+        strategySource: `campaign_engine_${stored.row.source}`,
+        briefPlayId: null,
+        ...scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue),
+      });
+    }
     const pipe = unit.featureSlug && unit.legKey ? { featureSlug: unit.featureSlug, legKey: unit.legKey } : null;
     const [catalogue, scripts, played, briefed] = await Promise.all([
       loadPlayCatalogue(),
