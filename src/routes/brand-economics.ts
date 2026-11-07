@@ -73,7 +73,7 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { fetchPerOfferPricing, perOfferFingerprint } from "../lib/per-offer-pricing.js";
 import { Router } from "express";
-import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
+import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";

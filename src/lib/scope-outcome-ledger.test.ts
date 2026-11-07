@@ -144,3 +144,29 @@ describe("rebaseSpendChartOnLedger (LEDGER-ONLY-1107)", () => {
     expect(r.daily.every((p) => p.cumulativeOutcomes === null)).toBe(true);
   });
 });
+
+describe("withLedgerRealHalf (LEDGER-ONLY-1107 x REVENUE-GENERATED-1107)", () => {
+  const rg = {
+    realUsd: 7000, paidClientCount: 7, realUnavailableReason: null, undatedRealUsd: 0, spentUsd: 400, expectedToDateUsd: 800, expectedUsd: 900,
+    expectedUnavailableReason: null, expectedHorizonDays: 30, dailySpendPaceUsd: 10, expectedFlatReason: null, offerRunning: true, firstDay: "2026-11-02", today: "2026-11-03",
+    points: [
+      { date: "2026-11-02", kind: "measured" as const, realUsd: 0, realCumulativeUsd: 0, expectedCumulativeUsd: 400 },
+      { date: "2026-11-03", kind: "measured" as const, realUsd: 7000, realCumulativeUsd: 7000, expectedCumulativeUsd: 800 },
+      { date: "2026-11-04", kind: "expected" as const, realUsd: null, realCumulativeUsd: null, expectedCumulativeUsd: 820 },
+    ],
+  };
+  it("the real half = ledger Paid client Units × LTR per day; Units dated before the chart land on its first day", async () => {
+    const { withLedgerRealHalf } = await import("./revenue-generated.js");
+    const paid = { units: 2, unitsUnavailableReason: null, past: [{ date: "2026-11-01", units: 1, cumulativeUnits: 1 }, { date: "2026-11-02", units: 0, cumulativeUnits: 1 }, { date: "2026-11-03", units: 1, cumulativeUnits: 2 }] };
+    const r = withLedgerRealHalf(rg, paid, 1000);
+    expect(r).toMatchObject({ realUsd: 2000, paidClientCount: 2, realUnavailableReason: null, spentUsd: 400, expectedToDateUsd: 800 });
+    expect(r.points.map((p) => [p.realUsd, p.realCumulativeUsd, p.expectedCumulativeUsd])).toEqual([[1000, 1000, 400], [1000, 2000, 800], [null, null, 820]]);
+  });
+  it("Paid client not declared in the ledger: every real figure null + the reason; the expected half untouched", async () => {
+    const { withLedgerRealHalf } = await import("./revenue-generated.js");
+    const r = withLedgerRealHalf(rg, { units: null, unitsUnavailableReason: "outcome_not_declared_in_ledger", past: [] }, 1000);
+    expect(r).toMatchObject({ realUsd: null, paidClientCount: null, realUnavailableReason: "outcome_not_declared_in_ledger", expectedToDateUsd: 800 });
+    expect(r.points.every((p) => p.realCumulativeUsd === null)).toBe(true);
+    expect(withLedgerRealHalf(rg, null, 1000).realUnavailableReason).toBe("ledger_unreadable");
+  });
+});

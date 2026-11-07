@@ -1,4 +1,4 @@
-import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
+import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { createHash } from "node:crypto";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";

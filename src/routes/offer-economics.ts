@@ -72,7 +72,7 @@ import { ContactedValueUnavailableError, contactedValueUnavailableBody } from ".
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
-import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
+import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
