@@ -45,6 +45,7 @@ import type { OfferLifetimeRevenueSource as LifetimeRevenueSource } from "./offe
 import type { AudienceStatsEnvelope, ProjectionRatios, ServedProjectionRatios } from "./audience-stats-compute.js";
 import type { MaturityPair } from "./maturity.js";
 import type { CatalogueFunnel } from "./agent-catalogue.js";
+import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 
 /** What an expected figure rests on, weakest last. */
 export type ExpectedBasis = "measured" | "stated" | "fleet" | "default";
@@ -409,11 +410,108 @@ interface Entry {
   pending?: Promise<OfferExpectedModel | null>;
   /** The last computation failed (no value to serve): when, and why. */
   failed?: { at: number; error: Error };
+  /** The value is the LAST GOOD build persisted by a previous process (served whatever its age until this process builds). */
+  restored?: boolean;
 }
 const entries = new Map<string, Entry>();
+/** One store read per key and process (LEDGER-LOAD-1107-ROI-BOOT). */
+const restoring = new Map<string, Promise<void>>();
 
 export function __resetExpectedReturnMemo(): void {
   entries.clear();
+  restoring.clear();
+}
+
+// ── The last good model, persisted (LEDGER-LOAD-1107-ROI-BOOT) ───────────────────────────────────────────────────
+//
+// The memo lives in the process. A restart (every deploy) emptied it, and on a loaded box the first computation of an
+// offer's model (every leg ladder of the offer, the fleet leg costs) took up to ~50 min to land in the refresher: every
+// revenue read served `expected_model_computing` meanwhile (prod 2026-11-07 18:09-19:02, Distribute.you, 0.41x
+// measured / $175.96 per positive reply → blank). Each successful build is now stored (`lib/fleet-cell-store.ts`, one
+// row per (org, brand, offer)) and a process with no model in memory serves the stored one, then rebuilds behind it.
+// The stored model IS a build of the same computation (same figures, same provenance: its `computedAt` is kept); a
+// failed or never-finishing rebuild never replaces it.
+
+/** `-v1`: bump when `OfferExpectedModel` changes structure (an older stored model then reads as absent). */
+const modelCellKey = (key: string): string => `expected-model-v1:${key}`;
+
+interface StoredModel {
+  offerId: string;
+  body: OfferSalesPathsBody;
+  selected: string[];
+  lifetimeRevenueSource: LifetimeRevenueSource | null;
+  notRunning: boolean;
+  inputs: {
+    lifetimeRevenueUsd: number | null;
+    rates: EffectiveArrowRate[];
+    prices: Array<[string, LegChannelPrice]>;
+    fleetPrices: Array<[string, number]>;
+  } | null;
+}
+
+/** PURE: a model as stored text (its Maps flattened to entry arrays; a jsonb Map would read back as `{}`). */
+export function serializeOfferExpectedModel(m: OfferExpectedModel): string {
+  const stored: StoredModel = {
+    offerId: m.offerId,
+    body: m.body,
+    selected: [...m.selected],
+    lifetimeRevenueSource: m.lifetimeRevenueSource,
+    notRunning: m.notRunning,
+    inputs: m.inputs
+      ? {
+          lifetimeRevenueUsd: m.inputs.lifetimeRevenueUsd,
+          rates: [...m.inputs.rates],
+          prices: [...m.inputs.prices],
+          fleetPrices: [...m.inputs.fleetPrices],
+        }
+      : null,
+  };
+  return JSON.stringify(stored);
+}
+
+/** PURE: the stored text back as a model; throws on a text this module did not write. */
+export function parseStoredOfferExpectedModel(text: string): OfferExpectedModel {
+  const s = JSON.parse(text) as StoredModel;
+  if (typeof s?.offerId !== "string" || typeof s.body !== "object" || s.body === null || !Array.isArray(s.selected)) {
+    throw new Error("stored expected model is not one this build wrote");
+  }
+  return {
+    offerId: s.offerId,
+    body: s.body,
+    selected: s.selected,
+    lifetimeRevenueSource: s.lifetimeRevenueSource,
+    notRunning: s.notRunning,
+    ...(s.inputs
+      ? {
+          inputs: {
+            lifetimeRevenueUsd: s.inputs.lifetimeRevenueUsd,
+            rates: s.inputs.rates,
+            prices: new Map(s.inputs.prices),
+            fleetPrices: new Map(s.inputs.fleetPrices),
+          },
+        }
+      : {}),
+  };
+}
+
+/** Load the persisted model of `key` into the memo when this process holds none (once per key; a failure = none). */
+function restoreModel(key: string): Promise<void> {
+  const existing = restoring.get(key);
+  if (existing) return existing;
+  const p = loadFleetCell(modelCellKey(key)).then((stored) => {
+    if (!stored) return;
+    const entry = entries.get(key);
+    if (entry && "value" in entry) return;
+    try {
+      const value = parseStoredOfferExpectedModel(stored.text);
+      entries.set(key, { ...(entry ?? {}), at: stored.computedAt, value, restored: true, failed: undefined });
+      console.log(`[features-service] expected return: serving the persisted model of ${key} built ${new Date(stored.computedAt).toISOString()} while this process rebuilds it`);
+    } catch (error) {
+      console.error(`[features-service] expected return: persisted model of ${key} unreadable, computing:`, error);
+    }
+  });
+  restoring.set(key, p);
+  return p;
 }
 
 const inputsOf = (m: { lifetimeRevenue: { usd: number | null }; rates: EffectiveArrowRate[]; prices: ReadonlyMap<string, LegChannelPrice>; fleetPrices: ReadonlyMap<string, number> }): CombinationInputs => ({
@@ -451,6 +549,7 @@ export async function offerExpectedModel(
   coldWaitMs: number = COLD_WAIT_MS,
 ): Promise<OfferExpectedModel | null> {
   const key = `${identity.orgId}|${brandId}|${offerId}`;
+  if (!entries.get(key) || !("value" in entries.get(key)!)) await restoreModel(key);
   const now = Date.now();
   const entry = entries.get(key);
   const start = (): Promise<OfferExpectedModel | null> => {
@@ -459,14 +558,17 @@ export async function offerExpectedModel(
     entries.set(key, e);
     pending.then(
       (value) => {
-        entries.set(key, { at: Date.now(), value });
+        const at = Date.now();
+        entries.set(key, { at, value });
         while (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
+        // Null = the offer is not the brand's: nothing to serve after a restart either.
+        if (value) void storeFleetCell(modelCellKey(key), serializeOfferExpectedModel(value), at);
       },
       (error) => {
         console.error(`[features-service] expected return: model of offer ${offerId} (brand ${brandId}) failed: ${(error as Error).message}`);
         const prev = entries.get(key);
         if (prev?.pending === pending) {
-          if ("value" in prev) entries.set(key, { at: prev.at, value: prev.value });
+          if ("value" in prev) entries.set(key, { at: prev.at, value: prev.value, ...(prev.restored ? { restored: true } : {}) });
           else entries.set(key, { at: 0, failed: { at: Date.now(), error: error as Error } });
         }
       },
@@ -476,7 +578,8 @@ export async function offerExpectedModel(
   if (entry && "value" in entry) {
     const age = now - entry.at;
     if (age <= FRESH_MS) return entry.value!;
-    if (age <= STALE_MS) {
+    // A persisted last good build is served whatever its age until this process lands its own (never blank on boot).
+    if (age <= STALE_MS || entry.restored) {
       if (!entry.pending) start().catch(() => {});
       return entry.value!;
     }
@@ -624,14 +727,18 @@ async function catalogueExpected(identity: ExpectedIdentity, brandId: string, m:
   }
 }
 
-/** Soft: any failure is a named null figure, logged, never a failed read. */
-async function soft(what: string, run: () => Promise<ExpectedReturn>): Promise<ExpectedReturn> {
+/**
+ * Soft: any failure is a named null figure, logged, never a failed read. A scope that is MATURE keeps its measured return
+ * even while the model computes or failed (LEDGER-LOAD-1107-ROI-BOOT): the measured rung reads no model, only its cost
+ * per outcome does (null until the model lands).
+ */
+async function soft(what: string, measured: MeasuredReturnPair | null | undefined, run: () => Promise<ExpectedReturn>): Promise<ExpectedReturn> {
   try {
     return await run();
   } catch (error) {
-    if (error instanceof ExpectedModelComputing) return unavailableExpectedReturn("expected_model_computing");
+    if (error instanceof ExpectedModelComputing) return withMeasuredReturn(unavailableExpectedReturn("expected_model_computing"), measured);
     console.error(`[features-service] expected return (${what}) unavailable: ${(error as Error).message}`);
-    return unavailableExpectedReturn("expected_model_unavailable");
+    return withMeasuredReturn(unavailableExpectedReturn("expected_model_unavailable"), measured);
   }
 }
 
@@ -643,7 +750,7 @@ const modelOrThrow = async (identity: ExpectedIdentity, brandId: string, offerId
 
 /** An offer scope (`/offers/:id/revenue`, an `?offerId=` read). */
 export function expectedReturnForOffer(identity: ExpectedIdentity, brandId: string, offerId: string, measured: MeasuredReturnPair | null | undefined): Promise<ExpectedReturn> {
-  return soft(`offer ${offerId}`, async () => withMeasuredReturn(expectedForOffer(await modelOrThrow(identity, brandId, offerId)), measured));
+  return soft(`offer ${offerId}`, measured, async () => withMeasuredReturn(expectedForOffer(await modelOrThrow(identity, brandId, offerId)), measured));
 }
 
 /** A sales funnel campaign row (a table row: never waits on a cold model unless told otherwise, `TABLE_COLD_WAIT_MS`). */
@@ -655,7 +762,7 @@ export function expectedReturnForFunnelCampaign(
   measured: MeasuredReturnPair | null | undefined,
   coldWaitMs: number = TABLE_COLD_WAIT_MS,
 ): Promise<ExpectedReturn> {
-  return soft(`funnel campaign ${salesFunnelId}`, async () => {
+  return soft(`funnel campaign ${salesFunnelId}`, measured, async () => {
     const m = await modelOrThrow(identity, brandId, offerId, coldWaitMs);
     const own = expectedForCombination(m, salesFunnelId);
     // A path the offer's sales-path model cannot price (a play, a trigger head, a declared leg, a pipe its ladder does
@@ -674,14 +781,14 @@ export function expectedReturnForCampaign(
 ): Promise<ExpectedReturn> {
   if (!campaign.offerId) return expectedReturnForBrand(identity, brandId, measured);
   const offerId = campaign.offerId;
-  return soft(`campaign on offer ${offerId}`, async () =>
+  return soft(`campaign on offer ${offerId}`, measured, async () =>
     withMeasuredReturn(expectedForCampaign(await modelOrThrow(identity, brandId, offerId), campaign.featureSlug, campaign.legKeys), measured),
   );
 }
 
 /** A brand scope (`/brands/:id/revenue`, a brand-wide feature read): every offer of the brand. */
 export function expectedReturnForBrand(identity: ExpectedIdentity, brandId: string, measured: MeasuredReturnPair | null | undefined): Promise<ExpectedReturn> {
-  return soft(`brand ${brandId}`, async () => {
+  return soft(`brand ${brandId}`, measured, async () => {
     const { fetchBrandLegEconomics } = await import("./brand-leg-economics-client.js");
     const offers = (await fetchBrandLegEconomics(brandId, identity.orgId)).offers;
     const models = (await Promise.all(offers.map((o) => offerExpectedModel(identity, brandId, o.offerId)))).filter(
