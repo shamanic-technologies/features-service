@@ -389,3 +389,22 @@ describe("GET /public/channel-outcome-economics (wave C4)", () => {
     expect(Object.keys(cat.body).sort()).toEqual(["channels", "emailDelivery", "emailDeliveryByVerdict", "funnels", "legKeyCorrespondence", "legs", "meetingBookingBeforeAfter", "meetingBookingGain", "outcomes", "retiredChannels", "steps", "triggerAliases", "triggers"]);
   });
 });
+
+describe("GET /public/channels serves the same bytes from its cached text (BOX-LOAD-1107)", () => {
+  it("a repeat read, each variant, is byte-identical to the res.json walk of the same build", async () => {
+    mockRows();
+    const { servedJsonText } = await import("../lib/served-leg-keys.js");
+    const first = await request(app).get("/public/channels?includeInline=true");
+    const again = await request(app).get("/public/channels?includeInline=true");
+    const entry = await request(app).get("/public/channels");
+    const entryAgain = await request(app).get("/public/channels");
+    expect(first.status).toBe(200);
+    expect(again.text).toBe(first.text);
+    expect(entryAgain.text).toBe(entry.text);
+    expect(first.headers["content-type"]).toBe("application/json; charset=utf-8");
+    expect(entry.headers["content-type"]).toBe("application/json; charset=utf-8");
+    // The cached text is the very text res.json's walk produces for that body.
+    const body = JSON.parse(first.text) as { triggers: unknown[] };
+    expect(servedJsonText(body)).toBe(first.text);
+  });
+});
