@@ -3621,11 +3621,11 @@ const outcomeAccountingRef = registry.register(
         actualUnits: z.number(),
         actualSpentUsd: z.number(),
         actualBasis: z.literal("ledger_full_absorption"),
-        actualUnavailableReason: z.string().nullable().describe("no_unit_of_ours_yet | not_on_ledger_yet | not_made_by_our_campaigns | spend_unreadable."),
+        actualUnavailableReason: z.string().nullable().describe("no_unit_of_ours_yet | no_unit_yet | units_declared_outside_these_campaigns (the brand's ledger holds Units of the outcome, but every one was declared on a run outside the campaigns making it, e.g. lead-service's own campaign-less recording run) | units_not_proven_ours (every Unit of the brand's ledger was made by another factory, the client's CRM / team / site, or carries no proof of ours) | not_on_ledger_yet | not_made_by_our_campaigns | spend_unreadable."),
         expectedUsd: z.number().nullable().describe("EXPECTED: the Plan's cost of one more Unit on the route it prices (c / y of the Engine making it); on a published outcome no route leg prices, the cost per Unit to date over the Units carrying a declared cost (own_spend)."),
         expectedBasis: z.string().nullable(),
         expectedSource: z.string().nullable(),
-        expectedUnavailableReason: z.string().nullable(),
+        expectedUnavailableReason: z.string().nullable().describe("leg_cost_unavailable | outcome_not_on_route | start_step_not_priced_on_route (the step the route leaves from, e.g. Lead found: no leg of the route makes it)."),
         variance: z
           .object({
             usd: z.number().nullable().describe("actual - expected (positive = adverse)."),
@@ -3694,7 +3694,7 @@ const outcomeCostExpectedSchema = z.object({
   costPerOutcomeUsd: z.number().nullable().describe("Expected cost of one outcome of this step on the offer's expected sales path: the platform cost of every leg up to the step per paying client, divided by the step's outcomes needed per paying client (a step's cost carries the lower steps it needed). Null with unavailableReason."),
   basis: z.string().nullable().describe("Weakest input of the expected model (measured, stated, fleet, default). Null with unavailableReason."),
   combinationKey: z.string().nullable().describe("The sales path the figure is read off."),
-  unavailableReason: z.string().nullable().describe("step_not_on_expected_path | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."),
+  unavailableReason: z.string().nullable().describe("step_not_on_expected_path | start_step_not_priced_on_route | leg_cost_unavailable | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when costPerOutcomeUsd is served."),
 });
 const outcomeCostMonthSchema = z.object({
   month: z.string().describe("YYYY-MM (UTC)."),
@@ -3732,7 +3732,7 @@ const outcomeCostSeriesResponseRef = registry.register(
           value: z
             .object({
               valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, NET (OUTCOME-ACCOUNTING-1107), on the SAME expected sales path as expected.costPerOutcomeUsd: V(paid client) = the offer's lifetime revenue, V(s) = max(0, y x V(next) - c). Null with unavailableReason."),
-              unavailableReason: z.string().nullable().describe("step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
+              unavailableReason: z.string().nullable().describe("step_not_on_expected_path | start_step_not_priced_on_route | leg_rate_unavailable | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
             })
             .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
           months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),

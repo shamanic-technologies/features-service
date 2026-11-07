@@ -120,6 +120,11 @@ export interface StepExpectedCost {
   unavailableReason: string | null;
 }
 
+/** Why a step has no figure on a path no leg of which lands on it: the step the path LEAVES FROM is on it, unpriced. */
+function notOnPathReason(path: SalesPath, step: string): string {
+  return path.legs[0]?.fromStep?.key === step ? "start_step_not_priced_on_route" : "step_not_on_expected_path";
+}
+
 /**
  * PURE. The expected cost of one outcome of each step ON ONE PRICED SALES PATH (the offer's expected model's path):
  * the platform cost of every leg up to the step, per paying client (`costPerPayingClientUsd`), ÷ the step's outcomes
@@ -129,7 +134,7 @@ export interface StepExpectedCost {
 export function expectedStepCosts(path: SalesPath | null, basis: string | null, unavailableReason: string | null): Map<string, StepExpectedCost> {
   const out = new Map<string, StepExpectedCost>();
   const none = (reason: string): StepExpectedCost => ({ costPerOutcomeUsd: null, basis: null, combinationKey: path?.combinationKey ?? null, unavailableReason: reason });
-  for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? "step_not_on_expected_path" : (unavailableReason ?? "no_priced_sales_path")));
+  for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? notOnPathReason(path, step) : (unavailableReason ?? "no_priced_sales_path")));
   if (!path) return out;
   let cumulative: number | null = 0;
   for (const leg of path.legs) {
@@ -173,11 +178,12 @@ export function pathRouteLegs(path: SalesPath): RouteLeg[] {
 export function stepValues(path: SalesPath | null, unavailableReason: string | null): Map<string, StepValue> {
   const out = new Map<string, StepValue>();
   const none = (reason: string): StepValue => ({ valuePerOutcomeUsd: null, unavailableReason: reason });
-  for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? "step_not_on_expected_path" : (unavailableReason ?? "no_priced_sales_path")));
+  for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? notOnPathReason(path, step) : (unavailableReason ?? "no_priced_sales_path")));
   if (!path) return out;
   const legs = pathRouteLegs(path);
-  for (const leg of path.legs) {
-    const step = leg.toStep.key;
+  // The step the path leaves from is valued too, back through the first leg (`expectedRouteFigures`).
+  const start = path.legs[0]?.fromStep?.key ?? null;
+  for (const step of [...(start ? [start] : []), ...path.legs.map((l) => l.toStep.key)]) {
     if (!out.has(step)) continue;
     const f = expectedRouteFigures(legs, step, path.lifetimeRevenueUsd);
     out.set(step, f.netValuePerUnitUsd === null ? none(f.netValueUnavailableReason ?? "step_has_no_value") : { valuePerOutcomeUsd: round2(f.netValuePerUnitUsd), unavailableReason: null });
