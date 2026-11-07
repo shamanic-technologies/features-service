@@ -23,7 +23,18 @@ import { fetchSalesFunnelCampaigns, type SalesFunnelCampaignRow, type SalesFunne
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
-import { expectedReturnForCampaign, expectedReturnForFunnelCampaign, expectedReturnForOffer, type ExpectedReturn } from "../lib/expected-return.js";
+import {
+  expectedForOffer,
+  expectedReturnForCampaign,
+  expectedReturnForFunnelCampaign,
+  expectedReturnForOffer,
+  ExpectedModelComputing,
+  offerExpectedModel,
+  pickBrandModel,
+  unavailableExpectedReturn,
+  type ExpectedReturn,
+  type OfferExpectedModel,
+} from "../lib/expected-return.js";
 import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { computeSpendChart, fetchFollowupActionRows, type ChartLeg, type ChartScope, type SpendChart } from "../lib/spend-charts-io.js";
 import type { FollowupActionRow } from "../lib/followup-actions-client.js";
@@ -52,6 +63,17 @@ export interface FunnelCampaignSpendChartsBody {
   costBasis: "charged";
   campaign: LedgerSpendChart;
   pipes: PipeChart[];
+}
+
+export interface BrandSpendChartsBody {
+  brandId: string;
+  /** Every offer the chart covers: each offer any campaign of the brand states. */
+  offerIds: string[];
+  pricing: Pricing;
+  costBasis: "charged";
+  salesFunnelCampaignIds: string[];
+  /** Every campaign of every offer as one scope (the offer chart's rule, one level up). */
+  brand: LedgerSpendChart;
 }
 
 export interface OfferSpendChartsBody {
@@ -239,27 +261,84 @@ export async function computeOfferSpendCharts(
   headers: DownstreamHeaders,
 ): Promise<OfferSpendChartsBody> {
   const identity = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
+  const offer = await groupSpendChart(brandId, rows, offerChannels, expectedReturnForOffer(identity, brandId, offerId, null), pricing, headers, "offer");
+  return { offerId, brandId, pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), offer };
+}
+
+/**
+ * The brand chart's expected return: the picked offer model's (`pickBrandModel`), soft like `expectedReturnForOffer`
+ * (a failure is a named unavailable figure, never a failed chart). One offer = `expectedReturnForOffer` exactly.
+ */
+async function brandChartExpected(brandId: string, offerIds: readonly string[], headers: DownstreamHeaders): Promise<ExpectedReturn> {
+  const identity = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
+  try {
+    const models = (await Promise.all(offerIds.map((o) => offerExpectedModel(identity, brandId, o)))).filter((m): m is OfferExpectedModel => m !== null);
+    const m = pickBrandModel(models);
+    if (m === null) throw new Error(`no offer of ${offerIds.join(",")} is an offer of brand ${brandId}`);
+    return expectedForOffer(m);
+  } catch (error) {
+    if (error instanceof ExpectedModelComputing) return unavailableExpectedReturn("expected_model_computing");
+    console.error(`[features-service] expected return (brand ${brandId} chart) unavailable: ${(error as Error).message}`);
+    return unavailableExpectedReturn("expected_model_unavailable");
+  }
+}
+
+/** PURE. Several offers' channels as one channel list: per channel, every campaign of every offer (ascending). */
+export function mergeOfferChannels(lists: ReadonlyArray<readonly OfferChannel[]>): OfferChannel[] {
+  const bySlug = new Map<string, Set<string>>();
+  for (const c of lists.flat()) bySlug.set(c.featureSlug, new Set([...(bySlug.get(c.featureSlug) ?? []), ...c.campaignIds]));
+  return [...bySlug.entries()]
+    .map(([featureSlug, ids]) => ({ featureSlug, campaignIds: [...ids].sort() }))
+    .sort((a, b) => (a.featureSlug < b.featureSlug ? -1 : a.featureSlug > b.featureSlug ? 1 : 0));
+}
+
+/**
+ * THE BRAND'S CHART (BRAND-GRAIN-READS-1107): every sales funnel campaign of every offer and every campaign each offer
+ * ran, as ONE scope, charted exactly like the offer chart (same spend, leg rule, ledger and expected read; the expected
+ * figures are the picked offer model's, `pickBrandModel`). A brand selling one offer reads its offer chart byte for byte.
+ */
+export async function computeBrandSpendCharts(
+  brandId: string,
+  offerIds: readonly string[],
+  rows: readonly SalesFunnelCampaignRow[],
+  channels: readonly OfferChannel[],
+  pricing: Pricing,
+  headers: DownstreamHeaders,
+): Promise<BrandSpendChartsBody> {
+  const brand = await groupSpendChart(brandId, rows, channels, brandChartExpected(brandId, offerIds, headers), pricing, headers, "brand");
+  return { brandId, offerIds: [...offerIds], pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), brand };
+}
+
+/** A set of funnel campaigns (+ every campaign of `channels`) charted as one scope, its outcomes on the brand's ledger. */
+async function groupSpendChart(
+  brandId: string,
+  rows: readonly SalesFunnelCampaignRow[],
+  offerChannels: readonly OfferChannel[],
+  expectedRead: Promise<ExpectedReturn>,
+  pricing: Pricing,
+  headers: DownstreamHeaders,
+  what: "offer" | "brand",
+): Promise<LedgerSpendChart> {
   const [{ pipeSteps }, ctx, expected] = await Promise.all([
     funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]),
     chartContext(brandId, rows.flatMap((r) => r.units.map((u) => u.campaignId)), pricing, headers),
-    expectedReturnForOffer(identity, brandId, offerId, null),
+    expectedRead,
   ]);
   const measured = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps), offerChannels), expected);
   // LEDGER-ONLY-1107: the offer chart's outcomes and conversion are the brand's ledger Units (the count Today's Target
   // row prints), never the people the offer's campaigns reached. Unreadable = every outcome figure null, said so.
   const ledger = await fetchBrandOutcomeLedger(brandId, pricing === "gross" ? "gross" : "net").catch((err: Error) => {
-    console.error(`[features-service] offer spend charts: brand ledger of ${brandId} unreadable (outcomes null): ${err.message}`);
+    console.error(`[features-service] ${what} spend charts: brand ledger of ${brandId} unreadable (outcomes null): ${err.message}`);
     return null;
   });
   const step = measured.outcomeStep;
   const from = measured.leg?.fromStep ?? null;
-  const offer = rebaseSpendChartOnLedger(
+  return rebaseSpendChartOnLedger(
     measured,
     step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(ledgerScopeOf(ledger), step).row,
     from === null || ledger === null ? null : ledgerCountOfStep(ledgerScopeOf(ledger), from).row,
     measured.leg?.learningOutcomesRequired ?? 10,
   );
-  return { offerId, brandId, pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), offer };
 }
 
 const pricingOrRefuse = (raw: unknown): Pricing | null => parsePricing(raw);
@@ -279,6 +358,52 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/spend
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] funnel campaign spend charts error:", err);
     res.status(502).json({ error: "Failed to read the campaign's spend charts" });
+  }
+});
+
+/**
+ * The brand's scope for its charts (BRAND-GRAIN-READS-1107): every offer any campaign states, every sales funnel
+ * campaign selling one of them, and every campaign of each offer per channel (the offer chart's inception rule).
+ */
+export async function brandChartScope(brandId: string, headers: DownstreamHeaders) {
+  const [rows, channelMap] = await Promise.all([
+    fetchSalesFunnelCampaigns(brandId, null, headers),
+    fetchOfferChannelMap(brandId, headers),
+    assertBrandHeld(brandId, headers),
+  ]);
+  const ofOffers = rows.filter((r) => Boolean(r.offerId));
+  const offerIds = [...new Set([...channelMap.offerIds, ...ofOffers.map((r) => r.offerId)])].sort();
+  const channels = mergeOfferChannels(offerIds.map((o) => channelMap.channelsOf(o)));
+  return { rows: ofOffers, offerIds, channels };
+}
+
+router.get("/brands/:brandId/spend-charts", apiKeyAuth, async (req, res) => {
+  try {
+    const auth = req as AuthenticatedRequest & { params: { brandId: string } };
+    const { brandId } = auth.params;
+    const pricing = pricingOrRefuse(req.query.pricing);
+    if (pricing === null) return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
+    const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
+    const { rows, offerIds, channels } = await brandChartScope(brandId, headers);
+    if (rows.length === 0) return void res.status(404).json({ error: "This brand runs no sales funnel campaign", reason: "brand_has_no_campaigns" });
+    const body = await servedCached({
+      view: "brand-spend-charts",
+      scopeKey: buildScopeKey(brandId, {
+        orgId: headers.orgId,
+        offers: offerIds.join("+"),
+        units: rows.flatMap((r) => r.units.map((u) => `${u.campaignId}:${u.legKey}`)).sort().join("+"),
+        campaigns: `inception:${channels.map((c) => `${c.featureSlug}>${c.campaignIds.join("+")}`).join(",")}`,
+        pricing,
+      }),
+      orgId: headers.orgId,
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/spend-charts"),
+      compute: () => computeBrandSpendCharts(brandId, offerIds, rows, channels, pricing, headers),
+    });
+    res.json(body);
+  } catch (err) {
+    if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
+    console.error("[features-service] brand spend charts error:", err);
+    res.status(502).json({ error: "Failed to read the brand's spend charts" });
   }
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BOARD_RUNG_KEYS, priceLifecycleBoard, priceLifecycleColumns, type LifecycleBoardRow } from "./deals-lifecycle.js";
+import { BOARD_RUNG_KEYS, priceLifecycleBoard, priceLifecycleBoardScopes, priceLifecycleColumns, type LifecycleBoardRow } from "./deals-lifecycle.js";
 import { contactedExpiryCutoffIso, contactedLeadValue, expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
 import { LIFECYCLE_RUNGS } from "./lifecycle-ladder.js";
 
@@ -285,5 +285,63 @@ describe("priceLifecycleBoard organisation values (PIPELINE-GENERATED-1107)", ()
   });
   it("no economics: no organisation value", () => {
     expect(priceLifecycleBoard(args({ lifetimeRevenueUsd: null })).organizationValues.size).toBe(0);
+  });
+});
+
+describe("priceLifecycleBoardScopes (BRAND-GRAIN-READS-1107: a brand board over every offer)", () => {
+  const scopesArgs = (scopes: Parameters<typeof priceLifecycleBoardScopes>[0]["scopes"], wonUsd?: number | null) => {
+    const { persons: _p, paths: _a, lifetimeRevenueUsd: _l, lifetimeRevenueSource: _s, ...rest } = args();
+    return priceLifecycleBoardScopes({ ...rest, scopes, ...(wonUsd !== undefined ? { wonUsd } : {}) }).board;
+  };
+  const half = (from: number, to: number) => PERSONS.slice(from, to);
+
+  it("one scope = the offer board, byte for byte", () => {
+    expect(scopesArgs([{ persons: PERSONS, paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" }])).toEqual(run());
+  });
+
+  it("two offers with the same terms, people split between them = the one-offer board on everyone", () => {
+    const two = scopesArgs([
+      { persons: half(0, 5), paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+      { persons: half(5, PERSONS.length), paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+    ]);
+    expect(two).toEqual(run());
+  });
+
+  it("a person two offers served is ONE card at its MAX, and its organisation counts once", () => {
+    const cheap: ResolvedPath[] = PATHS.map((p) => ({ ...p, expectedRevenueUsd: p.expectedRevenueUsd / 10 }));
+    const both = scopesArgs([
+      { persons: PERSONS, paths: cheap, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+      { persons: PERSONS, paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+    ]);
+    expect(card(both, "engaged", "h-e1").leadIds).toEqual(["e-reply-1"]);
+    expect(card(both, "engaged", "h-e1").valueUsd).toBe(card(run(), "engaged", "h-e1").valueUsd);
+    expect(both.expectedPipelineUsd).toBe(run().expectedPipelineUsd);
+  });
+
+  it("offers stating different lifetime revenues: no single LTR, the won column is the caller's per-offer sum", () => {
+    const b = scopesArgs(
+      [
+        { persons: half(0, 5), paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+        { persons: half(5, PERSONS.length), paths: PATHS, lifetimeRevenueUsd: 2 * LTR, lifetimeRevenueSource: "offer_stated" },
+      ],
+      3000,
+    );
+    expect(b.lifetimeRevenueUsd).toBeNull();
+    expect(b.lifetimeRevenueSource).toBeNull();
+    expect(b.unvaluedReason).toBeNull();
+    expect(rung(b, "paid_client").valueUsd).toBe(3000);
+    expect(b.totalUsd).toBe(b.expectedPipelineUsd! + 3000);
+    // The scope with no economics prices nobody; a valued one still serves the board.
+    const partial = scopesArgs(
+      [
+        { persons: half(0, 5), paths: PATHS, lifetimeRevenueUsd: LTR, lifetimeRevenueSource: "fleet_median" },
+        { persons: half(5, PERSONS.length), paths: [], lifetimeRevenueUsd: null, lifetimeRevenueSource: null },
+      ],
+      null,
+    );
+    expect(partial.unvaluedReason).toBeNull();
+    expect(card(partial, "meeting_booked", "h-m").valueUsd).toBeNull();
+    expect(partial.wonUsd).toBeNull();
+    expect(scopesArgs([{ persons: PERSONS, paths: [], lifetimeRevenueUsd: null, lifetimeRevenueSource: null }]).unvaluedReason).toBe("no_economics");
   });
 });

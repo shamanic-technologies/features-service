@@ -3566,6 +3566,17 @@ const offerSpendChartsResponseRef = registry.register(
     offer: ledgerSpendChartSchema.describe("Every campaign of the offer as one scope for SPEND; its OUTCOMES and conversion are the brand's ledger Units (LEDGER-ONLY-1107)."),
   }),
 );
+const brandSpendChartsResponseRef = registry.register(
+  "BrandSpendChartsResponse",
+  z.object({
+    brandId: z.string(),
+    offerIds: z.array(z.string()).describe("Every offer the chart covers: each offer any campaign of the brand states."),
+    pricing: z.enum(["gross", "net"]),
+    costBasis: z.literal("charged"),
+    salesFunnelCampaignIds: z.array(z.string()).describe("Every sales funnel campaign of every offer of the brand."),
+    brand: ledgerSpendChartSchema.describe("BRAND-GRAIN-READS-1107: every campaign of every offer as one scope for SPEND (GET /offers/{offerId}/spend-charts' rule one level up: the union of the offers' scopes); OUTCOMES and conversion are the brand's ledger Units. Expected figures are the picked offer model's (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer chart byte for byte."),
+  }),
+);
 const spendChartsDescription =
   "Why a day costs what it costs and whether it is converging (owner 2026-10-19). One point per UTC day since the scope's first activity: the measured cost per outcome (served while Learning, flagged), the conversion by entry cohort (a positive reply 5 days after the send counts for the send day; recent cohorts flagged not mature), the Learning flag, what the day's spend bought per action (new prospects found, first contacts, follow-ups, writing, reading replies; spend, count and cost per action), and the expected values the lines converge to. Same rule for every channel. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).";
 
@@ -3603,6 +3614,25 @@ registry.registerPath({
     200: { description: "The offer's chart.", content: { "application/json": { schema: offerSpendChartsResponseRef } } },
     400: { description: "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "brand_not_found, or offer_has_no_campaigns.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A spend or people read failed: no chart is guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/spend-charts",
+  summary: "Daily spend and convergence chart of a whole brand (every offer, every campaign)",
+  description: `${spendChartsDescription} BRAND-GRAIN-READS-1107: GET /offers/{offerId}/spend-charts at the BRAND grain, every offer of the brand as one scope.`,
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).describe("Default gross; the dashboard sends net.").optional() }),
+  },
+  responses: {
+    200: { description: "The brand's chart.", content: { "application/json": { schema: brandSpendChartsResponseRef } } },
+    400: { description: "pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found, or brand_has_no_campaigns (no sales funnel campaign sells an offer).", content: { "application/json": { schema: errorResponse } } },
     502: { description: "A spend or people read failed: no chart is guessed.", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -3706,40 +3736,44 @@ const outcomeCostMonthSchema = z.object({
   cumulativeCostPerOutcomeUsd: z.number().nullable().describe("Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."),
   learning: z.boolean().nullable().describe("True while cumulativeOutcomes is below learningOutcomesRequired. Null with the outcomes."),
 });
-const outcomeCostSeriesResponseRef = registry.register(
-  "OfferOutcomeCostSeriesResponse",
-  z.object({
-    offerId: z.string(),
-    brandId: z.string(),
-    pricing: z.enum(["gross", "net"]),
-    costBasis: z.literal("charged"),
-    firstSpendDay: z.string().nullable().describe("The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."),
-    steps: z
-      .array(
-        z.object({
-          stepKey: z.enum(["paid_client", "meeting_attended", "meeting_booked", "signup", "form_submitted", "conversation", "website_visit", "lead_found"]),
-          learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
-          sinceInception: z.object({
-            spendUsd: z.number(),
-            outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."),
-            undatedOutcomes: z.number().int().nullable().describe("Always 0 on the ledger (every Unit is dated); null with outcomes."),
-            costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."),
-            learning: z.boolean().nullable().describe("Null with outcomes."),
-          }),
-          outcomesUnavailableReason: z.string().nullable().describe("LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."),
-          producerGap: z.object({ declaredElsewhereBy: z.array(z.string()), undeclaredConsumptions: z.number() }).nullable().describe("Who must declare the step's Units when the ledger lacks them."),
-          expected: outcomeCostExpectedSchema,
-          value: z
-            .object({
-              valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, NET (OUTCOME-ACCOUNTING-1107), on the SAME expected sales path as expected.costPerOutcomeUsd: V(paid client) = the offer's lifetime revenue, V(s) = max(0, y x V(next) - c). Null with unavailableReason."),
-              unavailableReason: z.string().nullable().describe("step_not_on_expected_path | start_step_not_priced_on_route | leg_rate_unavailable | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
-            })
-            .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
-          months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
-          accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."),
+const outcomeCostSeriesResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  pricing: z.enum(["gross", "net"]),
+  costBasis: z.literal("charged"),
+  firstSpendDay: z.string().nullable().describe("The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."),
+  steps: z
+    .array(
+      z.object({
+        stepKey: z.enum(["paid_client", "meeting_attended", "meeting_booked", "signup", "form_submitted", "conversation", "website_visit", "lead_found"]),
+        learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
+        sinceInception: z.object({
+          spendUsd: z.number(),
+          outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."),
+          undatedOutcomes: z.number().int().nullable().describe("Always 0 on the ledger (every Unit is dated); null with outcomes."),
+          costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."),
+          learning: z.boolean().nullable().describe("Null with outcomes."),
         }),
-      )
-      .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
+        outcomesUnavailableReason: z.string().nullable().describe("LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."),
+        producerGap: z.object({ declaredElsewhereBy: z.array(z.string()), undeclaredConsumptions: z.number() }).nullable().describe("Who must declare the step's Units when the ledger lacks them."),
+        expected: outcomeCostExpectedSchema,
+        value: z
+          .object({
+            valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, NET (OUTCOME-ACCOUNTING-1107), on the SAME expected sales path as expected.costPerOutcomeUsd: V(paid client) = the offer's lifetime revenue, V(s) = max(0, y x V(next) - c). Null with unavailableReason."),
+            unavailableReason: z.string().nullable().describe("step_not_on_expected_path | start_step_not_priced_on_route | leg_rate_unavailable | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
+          })
+          .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
+        months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
+        accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."),
+      }),
+    )
+    .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
+});
+const outcomeCostSeriesResponseRef = registry.register("OfferOutcomeCostSeriesResponse", outcomeCostSeriesResponseSchema);
+const brandOutcomeCostSeriesResponseRef = registry.register(
+  "BrandOutcomeCostSeriesResponse",
+  outcomeCostSeriesResponseSchema.omit({ offerId: true }).extend({
+    offerIds: z.array(z.string()).describe("Every offer the series covers: each offer any campaign of the brand states."),
   }),
 );
 
@@ -3759,6 +3793,26 @@ registry.registerPath({
     200: { description: "One series per outcome step.", content: { "application/json": { schema: outcomeCostSeriesResponseRef } } },
     400: { description: "brandId missing (brand_id_required) or pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
     404: { description: "brand_not_found, or offer_has_no_campaigns.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A spend or people read failed: no figure is guessed.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/outcome-cost-series",
+  summary: "Cost of one outcome per month and since inception, every outcome step of a whole brand (every offer)",
+  description:
+    "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).describe("Default gross; the dashboard sends net.").optional() }),
+  },
+  responses: {
+    200: { description: "One series per outcome step.", content: { "application/json": { schema: brandOutcomeCostSeriesResponseRef } } },
+    400: { description: "pricing unrecognised (pricing_unrecognised).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found, or brand_has_no_campaigns (no campaign sells an offer).", content: { "application/json": { schema: errorResponse } } },
     502: { description: "A spend or people read failed: no figure is guessed.", content: { "application/json": { schema: errorResponse } } },
   },
 });
@@ -3937,21 +3991,6 @@ const brandDealsValueResponseSchema = z.object({
 });
 const brandDealsValueResponseRef = registry.register("BrandDealsValueResponse", brandDealsValueResponseSchema);
 
-registry.registerPath({
-  method: "get",
-  path: "/brands/{brandId}/deals-value",
-  summary: "The dollar value of each Deals-board column (lead-service standing), per column and per card",
-  description:
-    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on the pipeline's causes (what our pipes caused), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.",
-  tags: ["Stats"],
-  request: { headers: identityHeaders, params: z.object({ brandId: z.string() }) },
-  responses: {
-    200: { description: "The brand's Deals column values", content: { "application/json": { schema: brandDealsValueResponseRef } } },
-    404: { description: "reason='brand_has_no_channels'", content: { "application/json": { schema: errorResponse } } },
-    409: { description: "reason='brand_channels_price_differently'", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "A producer the figure is computed from could not be read", content: { "application/json": { schema: errorResponse } } },
-  },
-});
 
 const offerGrainLeadValueQuery = {
   brandId: z.string().describe("Brand UUID (required) — an offer belongs to a brand."),
@@ -3981,67 +4020,110 @@ const lifecycleCardSchema = z.object({
   valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."),
   entryRateSource: z.enum(["measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
 });
-const offerDealsLifecycleResponseRef = registry.register(
-  "OfferDealsLifecycleResponse",
-  z.object({
-    offerId: z.string(),
-    brandId: z.string(),
-    campaignId: z.string().nullable().describe("The `campaignId` the board was narrowed to; null = the whole offer."),
-    columns: z.literal("lifecycle"),
-    lifetimeRevenueUsd: z.number().nullable(),
-    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
-    pricedCauses: z.array(z.string()).describe("Every cause (`outreach`, `other`, `unstated`): a deal's value to the customer, not our share."),
-    unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Set only when the offer prices on nothing: every value is then null (people still listed)."),
-    totalUsd: z.number().nullable().describe("Σ `rungs[].valueUsd`, exactly."),
-    expectedPipelineUsd: z.number().nullable().describe("Σ of every rung but Paid client: the expected pipeline (the board's title)."),
-    wonUsd: z.number().nullable().describe("The Paid client rung's value = the brand ledger's Paid client Units x the offer's lifetime revenue (LEDGER-ONLY-1107-P2; null when the ledger lacks Paid client Units, then `totalUsd` is null too). `expectedPipelineUsd + wonUsd = totalUsd`."),
-    outOfScopeCardCount: z.number().describe("Unibox rows on a board rung none of whose leads this scope served (not on this board)."),
-    rungs: z.array(z.object({
-      key: z.enum(["contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."),
-      rank: z.number(),
-      label: z.string(),
-      valueKind: z.enum(["contacted_expected_value", "expected_value", "won_value"]).describe("`contacted_expected_value`: P(entry step | contacted) × the value at that step (the pipeline's own contacted pricing: the measured group rate, else the seeded entry benchmark; expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (on the pipeline's causes: what our pipes caused; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."),
-      valueUsd: z.number().nullable().describe("Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."),
-      expected: z.boolean().describe("True unless every card is a human-stated sale: the figure is an expectation."),
-      assumptions: z.array(z.object({ input: z.enum(["lifetime_revenue", "entry_rate"]), source: z.string() })).describe("What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."),
-      cardCount: z.number().describe("Cards listed on the rung (records)."),
-      leadCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."),
-      organizationCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."),
-      units: z.number().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's TOTAL Units of the rung's outcome, every source (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."),
-      unitsUnavailableReason: z.string().nullable(),
-      ourUnits: z.number().nullable().describe("LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (Paid client's won value = these × LTR)."),
-      otherFactoryUnits: otherFactoryUnitsSchema.nullable(),
-      cards: z.array(lifecycleCardSchema).describe("One card per Unibox row on the rung, ordered by humanId then companyKey."),
-    })).describe("Every board rung, ladder order, always all six."),
-  }),
-);
+const offerDealsLifecycleResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  campaignId: z.string().nullable().describe("The `campaignId` the board was narrowed to; null = the whole offer."),
+  columns: z.literal("lifecycle"),
+  lifetimeRevenueUsd: z.number().nullable(),
+  lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
+  pricedCauses: z.array(z.string()).describe("Every cause (`outreach`, `other`, `unstated`): a deal's value to the customer, not our share."),
+  unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Set only when the offer prices on nothing: every value is then null (people still listed)."),
+  totalUsd: z.number().nullable().describe("Σ `rungs[].valueUsd`, exactly."),
+  expectedPipelineUsd: z.number().nullable().describe("Σ of every rung but Paid client: the expected pipeline (the board's title)."),
+  wonUsd: z.number().nullable().describe("The Paid client rung's value = the brand ledger's Paid client Units x the offer's lifetime revenue (LEDGER-ONLY-1107-P2; null when the ledger lacks Paid client Units, then `totalUsd` is null too). `expectedPipelineUsd + wonUsd = totalUsd`."),
+  outOfScopeCardCount: z.number().describe("Unibox rows on a board rung none of whose leads this scope served (not on this board)."),
+  rungs: z.array(z.object({
+    key: z.enum(["contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."),
+    rank: z.number(),
+    label: z.string(),
+    valueKind: z.enum(["contacted_expected_value", "expected_value", "won_value"]).describe("`contacted_expected_value`: P(entry step | contacted) × the value at that step (the pipeline's own contacted pricing: the measured group rate, else the seeded entry benchmark; expiring 30 days after the last send). `expected_value`: each person at the engine's expected value (on the pipeline's causes: what our pipes caused; an observed step replaces the forecast pointing at it). `won_value`: the stated sale, else the lifetime revenue."),
+    valueUsd: z.number().nullable().describe("Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."),
+    expected: z.boolean().describe("True unless every card is a human-stated sale: the figure is an expectation."),
+    assumptions: z.array(z.object({ input: z.enum(["lifetime_revenue", "entry_rate"]), source: z.string() })).describe("What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."),
+    cardCount: z.number().describe("Cards listed on the rung (records)."),
+    leadCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."),
+    organizationCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."),
+    units: z.number().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's TOTAL Units of the rung's outcome, every source (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."),
+    unitsUnavailableReason: z.string().nullable(),
+    ourUnits: z.number().nullable().describe("LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (Paid client's won value = these × LTR)."),
+    otherFactoryUnits: otherFactoryUnitsSchema.nullable(),
+    cards: z.array(lifecycleCardSchema).describe("One card per Unibox row on the rung, ordered by humanId then companyKey."),
+  })).describe("Every board rung, ladder order, always all six."),
+});
+const offerDealsLifecycleResponseRef = registry.register("OfferDealsLifecycleResponse", offerDealsLifecycleResponseSchema);
 
 const companyLifecycleRungSchema = z.object({
   key: z.enum(["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`)."),
   rank: z.number().describe("1 = Lead found … 7 = Paid client."),
   label: z.string(),
 });
-const offerCompanyLifecycleResponseRef = registry.register(
-  "OfferCompanyLifecycleResponse",
-  z.object({
-    offerId: z.string(),
-    brandId: z.string(),
-    columns: z.literal("company_lifecycle"),
-    organizationCount: z.number().describe("Organisations listed: every company of the offer's lead population (grouped exactly as GET /offers/{offerId}/revenue groups its `organizations[]`), plus each company-less lead that stands on a rung (a row of its own, as on the revenue read)."),
-    withoutCompanyCount: z.number().describe("Of `organizationCount`, company-less leads."),
-    noRungOrganizationCount: z.number().describe("Organisations none of whose people stands on a rung (their `lifecycle` is null)."),
-    rungs: z.array(companyLifecycleRungSchema.extend({
-      organizationCount: z.number().describe("Organisations whose HIGHEST rung is this one. Each counts once: Σ rungs[].organizationCount + noRungOrganizationCount = organizationCount. (The lifecycle Deals board counts an organisation on every rung one of its people stands on, so its counts can exceed these.)"),
-      withoutCompanyCount: z.number().describe("Of them, company-less leads."),
-    })).describe("Every rung of the ladder, in order, always all seven (0 when nobody stands there)."),
-    organizations: z.array(z.object({
-      organizationKey: z.string().describe("`org:<orgId>`, or `lead:<leadId>` for a company-less lead: the join key of GET /offers/{offerId}/revenue `organizations[].organizationKey`."),
-      orgId: z.string().nullable().describe("The company (the revenue read's `organizations[].orgId`); null for a company-less lead."),
-      lifecycle: companyLifecycleRungSchema.nullable().describe("The highest rung any of the organisation's people reached, a person's rung being lead-service's served Unibox `lifecycle` (read, never re-derived). Null = none of them stands on a rung."),
-    })).describe("One row per organisation, highest rung first, then organizationKey."),
-    outOfScopeRowCount: z.number().describe("Unibox rows on a rung none of whose leads the offer served (the brand's people, not this offer's)."),
+const offerCompanyLifecycleResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  columns: z.literal("company_lifecycle"),
+  organizationCount: z.number().describe("Organisations listed: every company of the offer's lead population (grouped exactly as GET /offers/{offerId}/revenue groups its `organizations[]`), plus each company-less lead that stands on a rung (a row of its own, as on the revenue read)."),
+  withoutCompanyCount: z.number().describe("Of `organizationCount`, company-less leads."),
+  noRungOrganizationCount: z.number().describe("Organisations none of whose people stands on a rung (their `lifecycle` is null)."),
+  rungs: z.array(companyLifecycleRungSchema.extend({
+    organizationCount: z.number().describe("Organisations whose HIGHEST rung is this one. Each counts once: Σ rungs[].organizationCount + noRungOrganizationCount = organizationCount. (The lifecycle Deals board counts an organisation on every rung one of its people stands on, so its counts can exceed these.)"),
+    withoutCompanyCount: z.number().describe("Of them, company-less leads."),
+  })).describe("Every rung of the ladder, in order, always all seven (0 when nobody stands there)."),
+  organizations: z.array(z.object({
+    organizationKey: z.string().describe("`org:<orgId>`, or `lead:<leadId>` for a company-less lead: the join key of GET /offers/{offerId}/revenue `organizations[].organizationKey`."),
+    orgId: z.string().nullable().describe("The company (the revenue read's `organizations[].orgId`); null for a company-less lead."),
+    lifecycle: companyLifecycleRungSchema.nullable().describe("The highest rung any of the organisation's people reached, a person's rung being lead-service's served Unibox `lifecycle` (read, never re-derived). Null = none of them stands on a rung."),
+  })).describe("One row per organisation, highest rung first, then organizationKey."),
+  outOfScopeRowCount: z.number().describe("Unibox rows on a rung none of whose leads the offer served (the brand's people, not this offer's)."),
+});
+const offerCompanyLifecycleResponseRef = registry.register("OfferCompanyLifecycleResponse", offerCompanyLifecycleResponseSchema);
+const brandDealsLifecycleResponseRef = registry.register(
+  "BrandDealsLifecycleResponse",
+  offerDealsLifecycleResponseSchema.omit({ offerId: true, campaignId: true }).extend({
+    offerIds: z.array(z.string()).describe("Every offer the board covers: each offer any campaign of the brand states."),
+    lifetimeRevenueUsd: z.number().nullable().describe("The offers' one lifetime revenue; null when they state different ones (see `offers[]`) or none."),
+    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().describe("The offers' one lifetime-revenue source; null when they differ or none."),
+    offers: z.array(z.object({
+      offerId: z.string(),
+      lifetimeRevenueUsd: z.number().nullable(),
+      lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
+    })).describe("Each offer priced, on its own terms: its people are valued on its paths and lifetime revenue."),
+    wonValuedAs: z.enum(["ledger_units_x_lifetime_revenue", "per_offer"]).describe("`ledger_units_x_lifetime_revenue`: every offer states one lifetime revenue, won = the brand ledger's OUR Paid client Units x it (the offer board's rule). `per_offer`: won = Σ each offer's campaigns' OUR Paid client Units x its own lifetime revenue."),
   }),
 );
+const brandCompanyLifecycleResponseRef = registry.register(
+  "BrandCompanyLifecycleResponse",
+  offerCompanyLifecycleResponseSchema.omit({ offerId: true }).extend({
+    offerIds: z.array(z.string()).describe("Every offer covered: the organisations are every offer's lead population (every campaign stating an offer)."),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/deals-value",
+  summary: "The dollar value of each Deals-board column (lead-service standing), per column and per card; `columns=lifecycle` / `company_lifecycle` = the offer read's lifecycle modes for the WHOLE brand",
+  description:
+    "A SEPARATE figure, added to no pipeline, ROI or cost figure. Column membership is lead-service's standing (its `?standing=` filter). Interested (`sales_interest`) = each person's expected value exactly as the engine prices them (same paths, LTR, overlays), on the pipeline's causes (what our pipes caused), company-deduped like the pipeline. Won (`customer`) = the stated sale amount, else the lifetime revenue per client. A person lead-service marks Disqualified (its own mark beside the standing) is ruled out: an Interested card at 0, `ruled_out`. The `disqualified` standing column is always empty since 2026-10-13. Disqualified, opted out and not placed state no value, with a reason. The Contacted column's value is GET /brands/{brandId}/contacted-value.\n\n" +
+    "BRAND-GRAIN-READS-1107: `columns=lifecycle` answers BrandDealsLifecycleResponse and `columns=company_lifecycle` BrandCompanyLifecycleResponse: GET /offers/{offerId}/deals-value's modes for EVERY offer of the brand (each offer any campaign states, every campaign of each). The lifecycle board prices each offer's people exactly as that offer's board does (its campaigns, declared funnels, lifetime revenue, Disqualified marks); a person several offers served is one card (its MAX) and an organisation counts once. Won = the brand ledger's OUR Paid client Units x the offers' one lifetime revenue, or, when offers state different ones, each offer's campaigns' Paid client Units x its own (`wonValuedAs`). A brand selling ONE offer reads its offer's body byte for byte (but `offerIds` and no `offerId`/`campaignId`).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      columns: z.enum(["standing", "lifecycle", "company_lifecycle"]).describe("Which body: `standing` (default), `lifecycle` (the board on the lifecycle ladder, every offer) or `company_lifecycle` (each organisation's rung, every offer).").optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "BrandDealsValueResponse (standing), BrandDealsLifecycleResponse (`columns=lifecycle`) or BrandCompanyLifecycleResponse (`columns=company_lifecycle`)",
+      content: { "application/json": { schema: z.union([brandDealsValueResponseRef, brandDealsLifecycleResponseRef, brandCompanyLifecycleResponseRef]) } },
+    },
+    400: { description: "An invalid columns value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "reason='brand_has_no_channels' (standing), or reason='brand_has_no_offer_campaigns' (lifecycle modes: no campaign sells an offer)", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "reason='brand_channels_price_differently' (standing), or reason='offer_channels_price_differently' (lifecycle: one offer is sold through channels pricing on different funnels)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "A producer the figure is computed from could not be read", content: { "application/json": { schema: errorResponse } } },
+  },
+});
 
 const offerPipelineGeneratedResponseRef = registry.register(
   "OfferPipelineGeneratedResponse",
