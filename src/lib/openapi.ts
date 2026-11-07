@@ -9460,7 +9460,40 @@ registry.registerPath({
   },
 });
 
-const publishedTotals = z.object({ rows: z.number(), units: z.number(), views: z.number(), engagements: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number() });
+const engagementBreakdownSchema = z
+  .object({
+    likes: z.number().nullable(),
+    replies: z.number().nullable().describe("Comments."),
+    reposts: z.number().nullable(),
+    quotes: z.number().nullable(),
+    shares: z.number().nullable(),
+    bookmarks: z.number().nullable(),
+    clicks: z.number().nullable().describe("Link clicks the platform reports (none does today: null)."),
+  })
+  .describe("SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`.");
+const publishedMeasuredReturn = z
+  .object({
+    roiMultiple: z.number().nullable(),
+    valueUsd: z.number().nullable(),
+    spentUsd: z.number().nullable(),
+    learning: z.boolean().describe("Fewer Units than the maturity bar (10): show `expectedReturn` instead."),
+    unavailableReason: z.string().nullable().describe("`no_unit_yet`, `unit_has_no_value`, `nothing_spent_yet`."),
+  })
+  .describe("MEASURED return (the campaign Target rule): Units x their value / money actually spent.");
+const publishedTotals = z.object({
+  rows: z.number(),
+  units: z.number(),
+  views: z.number(),
+  engagements: z.number(),
+  visits: z.number(),
+  signups: z.number(),
+  spentUsd: z.number(),
+  viewsReportedRows: z.number().describe("Rows whose platform reports views; `views` sums those only."),
+  engagementBreakdown: engagementBreakdownSchema,
+  rowsEngagementsAboveViews: z.number().describe("Rows flagged `engagements_exceed_views`."),
+  valueUsd: z.number().describe("Σ rows' value produced (yield); rows with no value counted in `unvaluedRows`."),
+  unvaluedRows: z.number(),
+});
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/published-units/{outcomeKey}",
@@ -9474,7 +9507,9 @@ registry.registerPath({
     "point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X and LinkedIn account posts, post metrics), " +
     "transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); " +
     "LinkedIn rows come from the brand's connected LinkedIn accounts (social-service account posts, like X). Held 2 min, served up to 30 min old while " +
-    "re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere.",
+    "re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere. SOCIAL-OUTCOMES-1107: per-kind `engagementBreakdown` (sums to `engagements`), " +
+    "reposts of others' posts excluded (`repostsExcluded`), visits null + reason when the outcome carries no click signal, value produced (`valueUsd`, yield) and the " +
+    "MEASURED / EXPECTED returns overall, per day and per row.",
   tags: ["Stats"],
   request: {
     params: z.object({ brandId: z.string(), outcomeKey: z.enum(["threads_post_published", "x_post_published", "linkedin_post_published", "newsletter_email_sent"]) }),
@@ -9505,19 +9540,68 @@ registry.registerPath({
                 visits: z.number().nullable(),
                 signups: z.number().nullable(),
                 ledgerUnavailableReason: z.enum(["not_on_ledger_yet"]).nullable(),
+                kind: z.string().nullable().optional().describe("The producer's kind (`post`, `quote`); a `repost` never lists (see `repostsExcluded`)."),
+                visitsUnavailableReason: z.enum(["no_visit_attribution_on_outcome", "not_on_ledger_yet"]).nullable(),
+                engagementBreakdown: engagementBreakdownSchema,
+                metricsWarning: z.enum(["engagements_exceed_views"]).nullable().describe("The platform reports more interactions than views: one of the two is not measured."),
+                valuePerUnitUsd: z.number().nullable().describe("What one Unit is worth: the catalogue value of the outcome's step on the offer's lifetime revenue (the Today Target value)."),
+                valueUsd: z.number().nullable().describe("units x valuePerUnitUsd: the value this row produced (yield)."),
+                value: z.object({
+                  valuePerUnitUsd: z.number().nullable(),
+                  step: z.string().nullable(),
+                  offerId: z.string().nullable().describe("The offer of the campaign that produced the Unit; null = none (valued on the fleet median lifetime revenue)."),
+                  lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
+                  unavailableReason: z.string().nullable(),
+                }),
+                measuredReturn: publishedMeasuredReturn,
               }),
             ),
             totals: z.object({ all: publishedTotals, ours: publishedTotals }),
             costPerSignupUsd: z.number().nullable(),
+            costPerSignupUnavailableReason: z.enum(["no_visit_attribution_on_outcome", "no_signup_yet", "nothing_spent_yet"]).nullable(),
             learning: z.boolean(),
-            daily: z.array(z.object({ date: z.string(), units: z.number(), oursUnits: z.number(), views: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number() })),
+            daily: z.array(
+              z.object({
+                date: z.string(),
+                units: z.number(),
+                oursUnits: z.number(),
+                views: z.number(),
+                visits: z.number(),
+                signups: z.number(),
+                spentUsd: z.number(),
+                engagements: z.number(),
+                engagementBreakdown: engagementBreakdownSchema,
+                valueUsd: z.number(),
+                oursSpentUsd: z.number(),
+                oursValueUsd: z.number(),
+                measuredReturn: publishedMeasuredReturn,
+              }),
+            ),
+            repostsExcluded: z.object({ rows: z.number(), engagements: z.number() }).describe("Reposts of someone else's post (X retweet, LinkedIn plain reshare: producer `kind: repost`), left out of every row and total; their engagements are the original post's."),
+            visitsMeasured: z.boolean().describe("False = the org's ledger never credited a website visit to a Unit of this outcome: visits/signups null, never 0."),
+            visitsUnavailableReason: z.enum(["no_visit_attribution_on_outcome"]).nullable(),
+            measuredReturn: publishedMeasuredReturn.describe("OURS (billed to the org): Units x value / spend. Read `expectedReturn` while `learning`."),
+            expectedReturn: z
+              .object({
+                roiMultiple: z.number().nullable(),
+                valuePerUnitUsd: z.number().nullable(),
+                costPerUnitUsd: z.number().nullable(),
+                costSource: z.string().nullable(),
+                basis: z.string().nullable().describe("Weakest input: measured < stated < fleet < default."),
+                pipeId: z.string().nullable(),
+                unavailableReason: z.string().nullable(),
+              })
+              .describe("EXPECTED return of one more Unit: its value / the expected cost of one on the catalogue pipe making the outcome."),
           }),
         },
       },
     },
     400: { description: "Unknown outcome or pricing", content: { "application/json": { schema: errorResponse } } },
     404: { description: "Brand not found for this org", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "A read failed", content: { "application/json": { schema: errorResponse } } },
+    502: {
+      description: "A producer read failed: `reason: producer_unavailable` + `producer`, `producerPath`, `producerStatus`, `detail` name who is down.",
+      content: { "application/json": { schema: errorResponse } },
+    },
   },
 });
 
