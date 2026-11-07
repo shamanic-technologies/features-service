@@ -2389,14 +2389,17 @@
               },
               "signupsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"
               },
               "salesMeetingsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."
               },
               "formSubmissionsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."
               },
               "cpsCents": {
@@ -2416,6 +2419,7 @@
               },
               "salesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"
               },
               "cpSaleCents": {
@@ -2425,6 +2429,7 @@
               },
               "positiveRepliesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"
               },
               "cpprCents": {
@@ -2507,7 +2512,14 @@
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               },
               "maturity": {
-                "$ref": "#/components/schemas/SpendRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SpendRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -2529,6 +2541,7 @@
           },
           "recipientsContacted": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2569,6 +2582,7 @@
           },
           "recipientsOpened": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2609,6 +2623,7 @@
           },
           "recipientsClicked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2649,6 +2664,7 @@
           },
           "recipientsRepliesPositive": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2689,6 +2705,7 @@
           },
           "meetingsBooked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2729,6 +2746,7 @@
           },
           "purchased": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2769,6 +2787,7 @@
           },
           "signups": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -2809,6 +2828,7 @@
           },
           "formSubmissions": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -3504,26 +3524,32 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
+                "nullable": true,
                 "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
               },
               "recipientsBounced": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
               },
               "recipientsUnsubscribed": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
               },
               "recipientsRepliesPositive": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
               },
               "committedSpentCents": {
@@ -3586,6 +3612,7 @@
               },
               "sending": {
                 "type": "object",
+                "nullable": true,
                 "properties": {
                   "recipientsSent": {
                     "type": "integer",
@@ -3597,6 +3624,7 @@
                   },
                   "recipientsBounced": {
                     "type": "integer",
+                    "nullable": true,
                     "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
                   },
                   "recipientsAwaitingDelivery": {
@@ -3647,7 +3675,14 @@
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               },
               "maturity": {
-                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -3808,10 +3843,12 @@
               },
               "contactedRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
               },
               "convertibleRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
@@ -4794,26 +4831,32 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
                     },
                     "recipientsConvertible": {
                       "type": "number",
+                      "nullable": true,
                       "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
                     },
                     "recipientsBounced": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
                     },
                     "recipientsUnsubscribed": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
                     },
                     "recipientsRepliesPositive": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
                     },
                     "committedSpentCents": {
@@ -4876,6 +4919,7 @@
                     },
                     "sending": {
                       "type": "object",
+                      "nullable": true,
                       "properties": {
                         "recipientsSent": {
                           "type": "integer",
@@ -4887,6 +4931,7 @@
                         },
                         "recipientsBounced": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
                         },
                         "recipientsAwaitingDelivery": {
@@ -4937,7 +4982,14 @@
                       "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
                     },
                     "maturity": {
-                      "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -5195,26 +5247,32 @@
                   "properties": {
                     "recipientsContacted": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
                     },
                     "recipientsConvertible": {
                       "type": "number",
+                      "nullable": true,
                       "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
                     },
                     "recipientsBounced": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
                     },
                     "recipientsUnsubscribed": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
                     },
                     "recipientsClicked": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
                     },
                     "recipientsRepliesPositive": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
                     },
                     "committedSpentCents": {
@@ -5277,6 +5335,7 @@
                     },
                     "sending": {
                       "type": "object",
+                      "nullable": true,
                       "properties": {
                         "recipientsSent": {
                           "type": "integer",
@@ -5288,6 +5347,7 @@
                         },
                         "recipientsBounced": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
                         },
                         "recipientsAwaitingDelivery": {
@@ -5338,7 +5398,14 @@
                       "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
                     },
                     "maturity": {
-                      "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -8287,30 +8354,37 @@
                     },
                     "contacted": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                     },
                     "opened": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
                     },
                     "websiteClicks": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
                     },
                     "positiveReplies": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
                     },
                     "formSubmissions": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                     },
                     "signups": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                     },
                     "sales": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                     }
                   },
@@ -8903,14 +8977,17 @@
               },
               "signupsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"
               },
               "salesMeetingsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."
               },
               "formSubmissionsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."
               },
               "cpsCents": {
@@ -8930,6 +9007,7 @@
               },
               "salesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"
               },
               "cpSaleCents": {
@@ -8939,6 +9017,7 @@
               },
               "positiveRepliesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"
               },
               "cpprCents": {
@@ -9021,7 +9100,14 @@
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               },
               "maturity": {
-                "$ref": "#/components/schemas/SpendRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SpendRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -9043,6 +9129,7 @@
           },
           "recipientsContacted": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9083,6 +9170,7 @@
           },
           "recipientsOpened": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9123,6 +9211,7 @@
           },
           "recipientsClicked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9163,6 +9252,7 @@
           },
           "recipientsRepliesPositive": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9203,6 +9293,7 @@
           },
           "meetingsBooked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9243,6 +9334,7 @@
           },
           "purchased": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9283,6 +9375,7 @@
           },
           "signups": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -9323,6 +9416,7 @@
           },
           "formSubmissions": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -10018,26 +10112,32 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
+                "nullable": true,
                 "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
               },
               "recipientsBounced": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
               },
               "recipientsUnsubscribed": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
               },
               "recipientsRepliesPositive": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
               },
               "committedSpentCents": {
@@ -10100,6 +10200,7 @@
               },
               "sending": {
                 "type": "object",
+                "nullable": true,
                 "properties": {
                   "recipientsSent": {
                     "type": "integer",
@@ -10111,6 +10212,7 @@
                   },
                   "recipientsBounced": {
                     "type": "integer",
+                    "nullable": true,
                     "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
                   },
                   "recipientsAwaitingDelivery": {
@@ -10161,7 +10263,14 @@
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               },
               "maturity": {
-                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -10322,10 +10431,12 @@
               },
               "contactedRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
               },
               "convertibleRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
@@ -11762,14 +11873,17 @@
             "properties": {
               "peopleContacted": {
                 "type": "integer",
+                "nullable": true,
                 "description": "Distinct people contacted for the offer."
               },
               "companiesContacted": {
                 "type": "integer",
+                "nullable": true,
                 "description": "Distinct companies those people belong to."
               },
               "contactedWithoutCompanyCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "Contacted people whose company is unknown: in peopleContacted, in no company."
               },
               "ladder": {
@@ -12457,10 +12571,12 @@
                 "properties": {
                   "count": {
                     "type": "integer",
-                    "description": "Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."
+                    "nullable": true,
+                    "description": "LEDGER-ONLY-1107-P2: the brand ledger's Paid client Units (null when the ledger lacks them). Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."
                   },
                   "leadCount": {
-                    "type": "integer"
+                    "type": "integer",
+                    "nullable": true
                   },
                   "valueUsd": {
                     "type": "number",
@@ -12469,6 +12585,7 @@
                   },
                   "otherCausesLeadCount": {
                     "type": "integer",
+                    "nullable": true,
                     "description": "Paying clients counted but not priced (another cause, or unstated)."
                   },
                   "otherFactoryUnits": {
@@ -12944,7 +13061,8 @@
                     "properties": {
                       "count": {
                         "type": "integer",
-                        "description": "Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."
+                        "nullable": true,
+                        "description": "LEDGER-ONLY-1107-P2: null (people are no ledger figure). Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."
                       },
                       "valuedCount": {
                         "type": "integer",
@@ -13896,10 +14014,12 @@
                     "properties": {
                       "people": {
                         "type": "integer",
-                        "description": "Distinct people on a row (contacted row included)."
+                        "nullable": true,
+                        "description": "LEDGER-ONLY-1107-P2: null (people per row are no ledger figure). Distinct people on a row (contacted row included)."
                       },
                       "peopleOnNoRow": {
                         "type": "integer",
+                        "nullable": true,
                         "description": "Served people never contacted and on no step (worth 0)."
                       },
                       "gapUsd": {
@@ -17539,30 +17659,37 @@
                     },
                     "contacted": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                     },
                     "opened": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
                     },
                     "websiteClicks": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
                     },
                     "positiveReplies": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
                     },
                     "formSubmissions": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                     },
                     "signups": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                     },
                     "sales": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                     }
                   },
@@ -18278,14 +18405,17 @@
               },
               "signupsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)"
               },
               "salesMeetingsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0."
               },
               "formSubmissionsCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0."
               },
               "cpsCents": {
@@ -18305,6 +18435,7 @@
               },
               "salesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)"
               },
               "cpSaleCents": {
@@ -18314,6 +18445,7 @@
               },
               "positiveRepliesCount": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"
               },
               "cpprCents": {
@@ -18396,7 +18528,14 @@
                 "description": "WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."
               },
               "maturity": {
-                "$ref": "#/components/schemas/SpendRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SpendRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -18418,6 +18557,7 @@
           },
           "recipientsContacted": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18458,6 +18598,7 @@
           },
           "recipientsOpened": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18498,6 +18639,7 @@
           },
           "recipientsClicked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18538,6 +18680,7 @@
           },
           "recipientsRepliesPositive": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18578,6 +18721,7 @@
           },
           "meetingsBooked": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18618,6 +18762,7 @@
           },
           "purchased": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18658,6 +18803,7 @@
           },
           "signups": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -18698,6 +18844,7 @@
           },
           "formSubmissions": {
             "type": "object",
+            "nullable": true,
             "properties": {
               "total": {
                 "type": "integer",
@@ -19393,26 +19540,32 @@
             "properties": {
               "recipientsContacted": {
                 "type": "number",
+                "nullable": true,
                 "description": "REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."
               },
               "recipientsConvertible": {
                 "type": "number",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."
               },
               "recipientsBounced": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."
               },
               "recipientsUnsubscribed": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."
               },
               "recipientsClicked": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that visited the site off this grain — twin of recipientsClicked.total."
               },
               "recipientsRepliesPositive": {
                 "type": "number",
+                "nullable": true,
                 "description": "Distinct leads that replied positively — twin of recipientsRepliesPositive.total."
               },
               "committedSpentCents": {
@@ -19475,6 +19628,7 @@
               },
               "sending": {
                 "type": "object",
+                "nullable": true,
                 "properties": {
                   "recipientsSent": {
                     "type": "integer",
@@ -19486,6 +19640,7 @@
                   },
                   "recipientsBounced": {
                     "type": "integer",
+                    "nullable": true,
                     "description": "Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."
                   },
                   "recipientsAwaitingDelivery": {
@@ -19536,7 +19691,14 @@
                 "description": "WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."
               },
               "maturity": {
-                "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/OutcomeRatiosMaturity"
+                  },
+                  {
+                    "nullable": true
+                  }
+                ]
               }
             },
             "required": [
@@ -19697,10 +19859,12 @@
               },
               "contactedRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."
               },
               "convertibleRecipients": {
                 "type": "integer",
+                "nullable": true,
                 "description": "THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."
               },
               "steps": {
@@ -22235,7 +22399,8 @@
           "basis": {
             "type": "string",
             "enum": [
-              "people_since_inception"
+              "people_since_inception",
+              "ledger_units_since_inception"
             ],
             "description": "Every count is PEOPLE since inception (no window)."
           },
@@ -22380,18 +22545,22 @@
                   "properties": {
                     "found": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "Leads the pipe holds (lead-service `total`)."
                     },
                     "contacted": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "lead-service's contacted bucket for this unit."
                     },
                     "sent": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "People at least one email was actually sent to."
                     },
                     "delivered": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "People an email reached (sent, no bounce)."
                     },
                     "reachedToStep": {
@@ -22415,10 +22584,12 @@
                   "properties": {
                     "handed": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "Distinct people handed to the pipe since inception."
                     },
                     "actedOn": {
                       "type": "integer",
+                      "nullable": true,
                       "description": "Distinct people it acted on (answered; on a call pipe, called)."
                     },
                     "reached": {
@@ -22442,14 +22613,17 @@
                           },
                           "handed": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."
                           },
                           "actedOn": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "People the pipe first acted on that day (an answer sent; on AI Instant Call, the call placed)."
                           },
                           "reached": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "People reaching the pipe's own `toStep` that day (meeting booked; on a call step, the call placed: the act is the outcome)."
                           }
                         },
@@ -22466,10 +22640,12 @@
                       "type": "object",
                       "properties": {
                         "handed": {
-                          "type": "integer"
+                          "type": "integer",
+                          "nullable": true
                         },
                         "actedOn": {
-                          "type": "integer"
+                          "type": "integer",
+                          "nullable": true
                         },
                         "reached": {
                           "type": "integer"
@@ -22511,26 +22687,31 @@
                       "properties": {
                         "requested": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Every call row recorded (twillio-service), whether or not Twilio accepted it."
                         },
                         "placed": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."
                         },
                         "accepted": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Calls the rep ANSWERED and took (pressed 1). Subset of placed."
                         },
                         "connected": {
                           "type": "integer",
+                          "nullable": true,
                           "description": "Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."
                         },
                         "outcomes": {
                           "type": "object",
+                          "nullable": true,
                           "additionalProperties": {
                             "type": "integer"
                           },
-                          "description": "Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
+                          "description": "LEDGER-ONLY-1107-P2: null (call buckets are no ledger outcome). Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
                         },
                         "billedMinutes": {
                           "type": "number",
@@ -22564,26 +22745,31 @@
                         "properties": {
                           "requested": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "Every call row recorded (twillio-service), whether or not Twilio accepted it."
                           },
                           "placed": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."
                           },
                           "accepted": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "Calls the rep ANSWERED and took (pressed 1). Subset of placed."
                           },
                           "connected": {
                             "type": "integer",
+                            "nullable": true,
                             "description": "Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."
                           },
                           "outcomes": {
                             "type": "object",
+                            "nullable": true,
                             "additionalProperties": {
                               "type": "integer"
                             },
-                            "description": "Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
+                            "description": "LEDGER-ONLY-1107-P2: null (call buckets are no ledger outcome). Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."
                           },
                           "billedMinutes": {
                             "type": "number",
@@ -27254,30 +27440,37 @@
                     },
                     "contacted": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                     },
                     "opened": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
                     },
                     "websiteClicks": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
                     },
                     "positiveReplies": {
                       "type": "number",
+                      "nullable": true,
                       "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
                     },
                     "formSubmissions": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                     },
                     "signups": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                     },
                     "sales": {
                       "type": "number",
+                      "nullable": true,
                       "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                     }
                   },
@@ -41950,30 +42143,37 @@
                               },
                               "contacted": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "Audience-scoped contacted-recipient count from email-gateway broadcast stats."
                               },
                               "opened": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."
                               },
                               "websiteClicks": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."
                               },
                               "positiveReplies": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."
                               },
                               "formSubmissions": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions."
                               },
                               "signups": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups."
                               },
                               "sales": {
                                 "type": "number",
+                                "nullable": true,
                                 "description": "REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales."
                               }
                             },
