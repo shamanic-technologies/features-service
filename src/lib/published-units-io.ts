@@ -42,6 +42,10 @@ import {
   type PublishedUnitsBody,
   type PublishedAccountingInputs,
   type UnitSource,
+  type StoredBulkRun,
+  BULK_RUN_COST_SAMPLE_ROWS,
+  bulkRunCostKeyOf,
+  bulkRunRebuildReason,
 } from "./published-units.js";
 
 function env(name: string): string {
@@ -260,12 +264,13 @@ const ROWS: Record<PublishedOutcomeKey, (orgId: string, brandId: string) => Prom
 /**
  * A bulk run's total, kept in `feature_view_snapshots` (view `published-unit-run`, derived and rebuildable) with the
  * fingerprint it was built at. Reading a release's Units off the ledger takes minutes (88k Units took 132 s then
- * 411 s, 2026-11-06), so it is built once per fingerprint (the producer's count of Units declared) by the sweep below
- * and by a read that finds it missing, never on every open.
+ * 411 s, 2026-11-06), so it is built once per fingerprint by the sweep below and by a read that finds it missing,
+ * never on every open. The fingerprint is the producer's count of Units declared AND the ledger's money on a sample of
+ * the run's rows (NEWSLETTER-COST-1107-FEATURES, `bulkRunRebuildReason`): a re-price in runs-service rebuilds it.
  */
 const RUN_VIEW = "published-unit-run";
 
-async function loadRunAggregate(scopeKey: string): Promise<{ fingerprint: string; agg: RunAggregate } | null> {
+async function loadRunAggregate(scopeKey: string): Promise<StoredBulkRun | null> {
   try {
     const [row] = await db
       .select({ bodyText: featureViewSnapshots.bodyText })
@@ -273,14 +278,14 @@ async function loadRunAggregate(scopeKey: string): Promise<{ fingerprint: string
       .where(and(eq(featureViewSnapshots.view, RUN_VIEW), eq(featureViewSnapshots.scopeKey, scopeKey)))
       .limit(1);
     if (!row || typeof row.bodyText !== "string") return null;
-    return JSON.parse(row.bodyText) as { fingerprint: string; agg: RunAggregate };
+    return JSON.parse(row.bodyText) as StoredBulkRun;
   } catch (err) {
     console.error(`[features-service] published unit run store read failed (${scopeKey}), building it now:`, err);
     return null;
   }
 }
 
-async function storeRunAggregate(scopeKey: string, orgId: string, value: { fingerprint: string; agg: RunAggregate }): Promise<void> {
+async function storeRunAggregate(scopeKey: string, orgId: string, value: StoredBulkRun): Promise<void> {
   const text = JSON.stringify(value);
   const now = new Date();
   try {
@@ -293,35 +298,58 @@ async function storeRunAggregate(scopeKey: string, orgId: string, value: { finge
   }
 }
 
+/**
+ * The ledger money key of a bulk run: its first `BULK_RUN_COST_SAMPLE_ROWS` produced and consumed occurrences (one page
+ * each, ~2 s; a 1000-row consumed page took 17-31 s in prod). Null when unreadable (logged): the stored total is kept.
+ */
+async function bulkRunCostKey(runId: string, outcomeKey: string): Promise<string | null> {
+  try {
+    const page = async (params: Record<string, string>) => {
+      const q = new URLSearchParams({ runIds: runId, ...params, limit: String(BULK_RUN_COST_SAMPLE_ROWS) });
+      const body = (await runsGet(`/internal/outcome-occurrences?${q}`)) as { occurrences?: ServedOccurrence[] };
+      if (!Array.isArray(body.occurrences)) throw new Error("runs-service outcome-occurrences: no occurrences array");
+      return body.occurrences;
+    };
+    const [produced, consumed] = await Promise.all([page({ outcomeKey, direction: "produced" }), page({ direction: "consumed" })]);
+    return bulkRunCostKeyOf(outcomeKey, produced, consumed);
+  } catch (err) {
+    console.error(`[features-service] published unit run ${runId}|${outcomeKey}: ledger money key unreadable, stored total kept: ${(err as Error).message}`);
+    return null;
+  }
+}
+
 const runBuilds = new Map<string, Promise<RunAggregate>>();
 
 /**
- * The bulk run's total at this fingerprint: stored, else built from the ledger (one build in flight per run). A page
- * read (`waitForFresh: false`) never waits on a rebuild once a total is stored: a release still declaring its Units
- * moves its fingerprint every minute, and a rebuild is minutes; it serves the stored total and the rebuild runs behind
- * (the sweep catches it within 10 minutes). Only a run never built is built on the read.
+ * The bulk run's total: stored, else built from the ledger (one build in flight per run). A page read
+ * (`waitForFresh: false`) never waits on a rebuild once a total is stored: a release still declaring its Units moves its
+ * fingerprint every minute, and a rebuild is minutes; it serves the stored total and the rebuild runs behind (the sweep,
+ * which also checks the ledger money, catches it within 10 minutes). Only a run never built is built on the read.
  */
-export async function bulkRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, opts: { waitForFresh?: boolean } = {}): Promise<RunAggregate> {
+export async function bulkRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, opts: { waitForFresh?: boolean; costKey?: string | null } = {}): Promise<RunAggregate> {
   const scopeKey = `${runId}|${outcomeKey}`;
   const stored = await loadRunAggregate(scopeKey);
-  if (stored && stored.fingerprint === fingerprint) return stored.agg;
+  const reason = bulkRunRebuildReason(stored, { fingerprint, costKey: opts.costKey ?? null }, Date.now());
+  if (stored && reason === null) return stored.agg;
   if (stored && opts.waitForFresh === false) {
     if (!runBuilds.has(scopeKey)) void buildRunAggregate(orgId, runId, outcomeKey, fingerprint, scopeKey).catch((err: Error) => console.error(`[features-service] published unit run ${scopeKey}: background rebuild failed: ${err.message}`));
     return stored.agg;
   }
-  return buildRunAggregate(orgId, runId, outcomeKey, fingerprint, scopeKey);
+  if (stored) console.log(`[features-service] published unit run ${scopeKey}: rebuilding (${reason})`);
+  return buildRunAggregate(orgId, runId, outcomeKey, fingerprint, scopeKey, opts.costKey);
 }
 
-function buildRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, scopeKey: string): Promise<RunAggregate> {
+function buildRunAggregate(orgId: string, runId: string, outcomeKey: string, fingerprint: string, scopeKey: string, knownCostKey?: string | null): Promise<RunAggregate> {
   let build = runBuilds.get(scopeKey);
   if (!build) {
-    build = Promise.all([occurrences({ runIds: runId, outcomeKey, direction: "produced" }), occurrences({ runIds: runId, direction: "consumed" })])
-      .then(async ([produced, consumed]) => {
-        const agg = runAggregateOf(outcomeKey, produced, consumed);
-        await storeRunAggregate(scopeKey, orgId, { fingerprint, agg });
-        return agg;
-      })
-      .finally(() => runBuilds.delete(scopeKey));
+    build = (async () => {
+      // The money key is read BEFORE the rows: a re-price landing during the build moves the next key, never hides.
+      const costKey = knownCostKey ?? (await bulkRunCostKey(runId, outcomeKey));
+      const [produced, consumed] = await Promise.all([occurrences({ runIds: runId, outcomeKey, direction: "produced" }), occurrences({ runIds: runId, direction: "consumed" })]);
+      const agg = runAggregateOf(outcomeKey, produced, consumed);
+      await storeRunAggregate(scopeKey, orgId, { fingerprint, costKey, builtAt: new Date().toISOString(), agg });
+      return agg;
+    })().finally(() => runBuilds.delete(scopeKey));
     runBuilds.set(scopeKey, build);
   }
   return build;
@@ -329,14 +357,17 @@ function buildRunAggregate(orgId: string, runId: string, outcomeKey: string, fin
 
 /**
  * Every newsletter release of the fleet with Units gets its run total built ahead of any page (every brand, every
- * org): a minute after boot, then every 10 minutes, one run at a time; a run whose fingerprint has not moved is not
- * read again.
+ * org): a minute after boot, then every 10 minutes, one run at a time; a run whose Units count and ledger money key
+ * have not moved (and built within the ceiling) is not read again.
  */
 export async function sweepBulkRuns(): Promise<{ checked: number }> {
   const body = (await newsletterGet("/internal/mailing-list-releases")) as { releases?: Release[] };
   if (!Array.isArray(body.releases)) throw new Error("transactional-email-service mailing-list-releases: no releases array");
   const runs = body.releases.filter((r) => r.unitsRunId && r.emailsSent > 0);
-  for (const r of runs) await bulkRunAggregate(r.orgId, r.unitsRunId!, "newsletter_email_sent", String(r.unitsDeclared));
+  for (const r of runs) {
+    const costKey = await bulkRunCostKey(r.unitsRunId!, "newsletter_email_sent");
+    await bulkRunAggregate(r.orgId, r.unitsRunId!, "newsletter_email_sent", String(r.unitsDeclared), { costKey });
+  }
   return { checked: runs.length };
 }
 
