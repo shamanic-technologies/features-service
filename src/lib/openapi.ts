@@ -3575,6 +3575,89 @@ registry.registerPath({
   },
 });
 
+// OUTCOME-ACCOUNTING-1107 (owner 2026-11-07, « comptabilité analytique industrielle … les chiffres réels comme les
+// chiffres expected »): ONE report shape for every Outcome page, lead outcomes and published outcomes alike.
+const outcomeAccountingRef = registry.register(
+  "OutcomeAccounting",
+  z
+    .object({
+      outcomeKey: z.string(),
+      step: z.string().nullable().describe("The Plan step the outcome is priced and valued on."),
+      performedBy: z.literal("ours").describe("Only Units performed by Ours enter these figures; the client's team Units are counted apart (cost $0 to us)."),
+      costPerUnit: z.object({
+        actualUsd: z.number().nullable().describe("ACTUAL: ledger cost of our runs that made the Units (own production + materials consumed at their standard cost) / our Units."),
+        actualUnits: z.number(),
+        actualSpentUsd: z.number(),
+        actualBasis: z.literal("ledger_full_absorption"),
+        actualUnavailableReason: z.string().nullable().describe("no_unit_of_ours_yet | not_on_ledger_yet | not_made_by_our_campaigns | spend_unreadable."),
+        expectedUsd: z.number().nullable().describe("EXPECTED: the Plan's cost of one more Unit on the route it prices (c / y of the Engine making it); on a published outcome no route leg prices, the cost per Unit to date over the Units carrying a declared cost (own_spend)."),
+        expectedBasis: z.string().nullable(),
+        expectedSource: z.string().nullable(),
+        expectedUnavailableReason: z.string().nullable(),
+        variance: z
+          .object({
+            usd: z.number().nullable().describe("actual - expected (positive = adverse)."),
+            pct: z.number().nullable(),
+            yieldUsd: z.number().nullable().describe("Yield variance: c_std / y_measured - c_std / y_std, on the yield INTO the outcome."),
+            mixUsd: z.number().nullable().describe("Mix variance: (c_actual - c_std) / y_measured; yieldUsd + mixUsd = usd."),
+            splitUnavailableReason: z.string().nullable().describe("entry_leg_has_no_yield | attempts_not_on_ledger | previous_milestone_not_counted_for_offer | yield_into_outcome_zero_or_unknown | outcome_not_on_route."),
+            unavailableReason: z.string().nullable(),
+          })
+          .describe("Framework §12: actual against standard cost, split into mix and yield."),
+      }),
+      costFromStart: z.object({
+        actualUsd: z.number().nullable().describe("ACTUAL: a lead outcome = the offer's whole spend / its outcomes (full absorption); a published outcome made from Start = its actual cost per Unit."),
+        actualUnavailableReason: z.string().nullable(),
+        expectedUsd: z.number().nullable().describe("EXPECTED: C(to) = (C(from) + c) / y along the route (framework §10)."),
+        expectedUnavailableReason: z.string().nullable(),
+        rolledYieldPct: z.number().nullable().describe("Product of the yields from rolledYieldFromStep to the outcome, in %."),
+        rolledYieldFromStep: z.string().nullable(),
+        route: z.array(z.string()).describe("The route's steps up to the outcome."),
+      }),
+      yieldToNext: z.object({
+        nextStep: z.string().nullable(),
+        measuredPct: z.number().nullable().describe("MEASURED: next-milestone Units credited to our Units / effective trials (an open decision counts for the elapsed share of the next leg's maturity window)."),
+        measuredNextUnits: z.number().nullable(),
+        measuredTrials: z.number().nullable(),
+        measuredUnavailableReason: z.string().nullable().describe("no_visit_attribution_on_outcome | next_milestone_not_tracked_for_outcome | next_milestone_not_counted_for_offer | no_unit_of_ours_yet | every_decision_still_open | final_milestone."),
+        expectedPct: z.number().nullable().describe("EXPECTED (Supplier rating belief): (measured successes + prior x 200) / (measured trials + 200), prior = the route's rate."),
+        priorPct: z.number().nullable(),
+        priorBasis: z.string().nullable(),
+        expectedUnavailableReason: z.string().nullable(),
+        censoringWindowDays: z.number(),
+      }),
+      value: z.object({
+        expectedNetPerUnitUsd: z.number().nullable().describe("EXPECTED only, NET: V(paid client) = lifetime revenue, V(s) = max(0, y x V(next) - c). No measured value below a Target."),
+        basis: z.literal("expected_net"),
+        lifetimeRevenueUsd: z.number().nullable(),
+        lifetimeRevenueSource: z.string().nullable(),
+        unavailableReason: z.string().nullable(),
+      }),
+      returns: z
+        .object({
+          isCampaignTarget: z.boolean(),
+          targetCampaignIds: z.array(z.string()),
+          measured: z.object({
+            roiMultiple: z.number().nullable().describe("Target Units those campaigns made from their own inputs x the Target value / their spend."),
+            targetUnits: z.number().nullable(),
+            valueUsd: z.number().nullable(),
+            spentUsd: z.number().nullable(),
+            learning: z.boolean(),
+            unavailableReason: z.string().nullable(),
+          }),
+          expected: z.object({
+            roiMultiple: z.number().nullable().describe("Target value / expected cost from Start."),
+            valuePerUnitUsd: z.number().nullable(),
+            costFromStartUsd: z.number().nullable(),
+            unavailableReason: z.string().nullable(),
+          }),
+          unavailableReason: z.string().nullable().describe("outcome_is_no_campaign_target | return_only_at_campaign_target: a return exists only at a campaign's Target."),
+        })
+        .describe("Only at a campaign's Target (framework §12); otherwise every figure null with the reason."),
+    })
+    .describe("OUTCOME-ACCOUNTING-1107: the GTM Factory cost-accounting report of one outcome (cost per Unit, cost from Start, yield to the next milestone, net value, return at a Target), actual beside expected."),
+);
+
 const outcomeCostExpectedSchema = z.object({
   costPerOutcomeUsd: z.number().nullable().describe("Expected cost of one outcome of this step on the offer's expected sales path: the platform cost of every leg up to the step per paying client, divided by the step's outcomes needed per paying client (a step's cost carries the lower steps it needed). Null with unavailableReason."),
   basis: z.string().nullable().describe("Weakest input of the expected model (measured, stated, fleet, default). Null with unavailableReason."),
@@ -3614,11 +3697,12 @@ const outcomeCostSeriesResponseRef = registry.register(
           expected: outcomeCostExpectedSchema,
           value: z
             .object({
-              valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, on the SAME expected sales path as expected.costPerOutcomeUsd: the offer's lifetime revenue / the step's outcomes needed per paying client (Paid client = the lifetime revenue). Null with unavailableReason."),
+              valuePerOutcomeUsd: z.number().nullable().describe("What one outcome of this step is worth to the client, NET (OUTCOME-ACCOUNTING-1107), on the SAME expected sales path as expected.costPerOutcomeUsd: V(paid client) = the offer's lifetime revenue, V(s) = max(0, y x V(next) - c). Null with unavailableReason."),
               unavailableReason: z.string().nullable().describe("step_not_on_expected_path | no_lifetime_revenue | zero_conversion_rate | no_priced_sales_path | expected_model_computing | expected_model_unavailable. Null when valuePerOutcomeUsd is served."),
             })
             .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
           months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
+          accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."),
         }),
       )
       .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
@@ -9563,7 +9647,7 @@ const publishedTotals = z.object({
   viewsReportedRows: z.number().describe("Rows whose platform reports views; `views` sums those only."),
   engagementBreakdown: engagementBreakdownSchema,
   rowsEngagementsAboveViews: z.number().describe("Rows flagged `engagements_exceed_views`."),
-  valueUsd: z.number().describe("Σ rows' value produced (yield); rows with no value counted in `unvaluedRows`."),
+  valueUsd: z.number().describe("Σ rows' units x NET expected value per Unit (OUTCOME-ACCOUNTING-1107: expected, never a measured value); rows with no value counted in `unvaluedRows`."),
   unvaluedRows: z.number(),
 });
 registry.registerPath({
@@ -9617,8 +9701,8 @@ registry.registerPath({
                 engagementBreakdown: engagementBreakdownSchema,
                 viewsUnavailableReason: z.enum(["views_not_reported"]).nullable().describe("The platform gives no views: absent, or 0 beside an engagement (nobody engages unseen), then `views` is null."),
                 metricsWarning: z.enum(["engagements_exceed_views"]).nullable().describe("The platform reports more interactions than (non-zero) views: one of the two is not measured."),
-                valuePerUnitUsd: z.number().nullable().describe("What one Unit is worth: the catalogue value of the outcome's step on the offer's lifetime revenue (the Today Target value)."),
-                valueUsd: z.number().nullable().describe("units x valuePerUnitUsd: the value this row produced (yield)."),
+                valuePerUnitUsd: z.number().nullable().describe("EXPECTED NET value of one Unit (OUTCOME-ACCOUNTING-1107): V(s) = max(0, y x V(next) - c) backward from Paid client on the offer's lifetime revenue."),
+                valueUsd: z.number().nullable().describe("units x valuePerUnitUsd (expected)."),
                 value: z.object({
                   valuePerUnitUsd: z.number().nullable(),
                   step: z.string().nullable(),
@@ -9626,10 +9710,12 @@ registry.registerPath({
                   lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(),
                   unavailableReason: z.string().nullable(),
                 }),
-                measuredReturn: publishedMeasuredReturn,
+                measuredReturn: publishedMeasuredReturn.describe("A Unit row is no campaign Target: null with `return_only_at_campaign_target` (OUTCOME-ACCOUNTING-1107)."),
+                accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: this Unit's report; null on a client-team row."),
+                accountingUnavailableReason: z.enum(["performed_by_client_team"]).nullable(),
               }),
             ),
-            totals: z.object({ all: publishedTotals, ours: publishedTotals }),
+            totals: z.object({ all: publishedTotals, ours: publishedTotals, clientTeam: publishedTotals.describe("The client's own Units (hand posts imported): counted apart, in none of our figures.") }),
             costPerSignupUsd: z.number().nullable(),
             costPerSignupUnavailableReason: z.enum(["no_visit_attribution_on_outcome", "no_signup_yet", "nothing_spent_yet"]).nullable(),
             learning: z.boolean(),
@@ -9653,7 +9739,7 @@ registry.registerPath({
             repostsExcluded: z.object({ rows: z.number(), engagements: z.number() }).describe("Reposts of someone else's post (X retweet, LinkedIn plain reshare: producer `kind: repost`), left out of every row and total; their engagements are the original post's."),
             visitsMeasured: z.boolean().describe("False = the org's ledger never credited a website visit to a Unit of this outcome: visits/signups null, never 0."),
             visitsUnavailableReason: z.enum(["no_visit_attribution_on_outcome"]).nullable(),
-            measuredReturn: publishedMeasuredReturn.describe("OURS (billed to the org): Units x value / spend. Read `expectedReturn` while `learning`."),
+            measuredReturn: publishedMeasuredReturn.describe("RE-BASED (OUTCOME-ACCOUNTING-1107): `accounting.returns.measured` when the outcome is a campaign's Target, else null with `outcome_is_no_campaign_target`."),
             expectedReturn: z
               .object({
                 roiMultiple: z.number().nullable(),
@@ -9664,7 +9750,8 @@ registry.registerPath({
                 pipeId: z.string().nullable(),
                 unavailableReason: z.string().nullable(),
               })
-              .describe("EXPECTED return of one more Unit: its value / the expected cost of one on the catalogue pipe making the outcome."),
+              .describe("RE-BASED (OUTCOME-ACCOUNTING-1107): only at a campaign's Target, the Target value / the expected cost from Start (`costPerUnitUsd` holds that cost); else null with `outcome_is_no_campaign_target`."),
+            accounting: outcomeAccountingRef,
           }),
         },
       },

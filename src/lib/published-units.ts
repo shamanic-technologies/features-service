@@ -12,6 +12,8 @@
  * signups, null while ours has no signup (`learning`).
  */
 
+import { accountingReturn, outcomeAccountingOf, yieldToNext, type AccountingReturn, type ExpectedRouteFigures, type OutcomeAccounting } from "./outcome-accounting.js";
+
 /** The four published outcomes this read serves, each with its own row source (hard-coded per outcome, owner). */
 export const PUBLISHED_OUTCOME_KEYS = ["threads_post_published", "x_post_published", "linkedin_post_published", "newsletter_email_sent"] as const;
 export type PublishedOutcomeKey = (typeof PUBLISHED_OUTCOME_KEYS)[number];
@@ -136,7 +138,12 @@ export interface UnitRow extends Omit<UnitSource, "ledger" | "metrics" | "campai
   /** units x valuePerUnitUsd: the value this row produced (yield). */
   valueUsd: number | null;
   value: UnitValue;
+  /** RE-BASED (OUTCOME-ACCOUNTING-1107): a Unit row is no campaign Target, so null with `return_only_at_campaign_target`. */
   measuredReturn: MeasuredReturn;
+  /** OUTCOME-ACCOUNTING-1107: this row's cost-accounting report (`lib/outcome-accounting.ts`); null on a client-team row
+   *  (`performed_by_client_team`: it costs us $0 and enters none of our figures). */
+  accounting: OutcomeAccounting | null;
+  accountingUnavailableReason: "performed_by_client_team" | null;
 }
 
 export interface Totals {
@@ -177,7 +184,8 @@ export interface DayPoint {
 export interface PublishedUnitsBody {
   outcomeKey: PublishedOutcomeKey;
   rows: UnitRow[];
-  totals: { all: Totals; ours: Totals };
+  /** `clientTeam` = the client's own Units (hand posts imported): counted and charted apart, in none of our figures. */
+  totals: { all: Totals; ours: Totals; clientTeam: Totals };
   /** Ours spend ÷ ours signups; null while ours has no signup (`learning: true`) or nothing was spent. */
   costPerSignupUsd: number | null;
   costPerSignupUnavailableReason: "no_visit_attribution_on_outcome" | "no_signup_yet" | "nothing_spent_yet" | null;
@@ -189,9 +197,13 @@ export interface PublishedUnitsBody {
   /** Whether the org's ledger credits website visits to Units of this outcome at all (false = visits/signups null). */
   visitsMeasured: boolean;
   visitsUnavailableReason: "no_visit_attribution_on_outcome" | null;
-  /** OURS (what the org is billed for): Units x value / spend. Read `expectedReturn` while `learning`. */
+  /** RE-BASED (OUTCOME-ACCOUNTING-1107): `accounting.returns`' measured figure when the outcome is a campaign's Target,
+   *  else null with `outcome_is_no_campaign_target` (a return exists only at a campaign's Target). */
   measuredReturn: MeasuredReturn;
+  /** RE-BASED likewise: the Target value ÷ the expected cost from Start, only at a campaign's Target. */
   expectedReturn: ExpectedReturn;
+  /** OUTCOME-ACCOUNTING-1107: the page's cost-accounting report over OUR Units (`lib/outcome-accounting.ts`). */
+  accounting: OutcomeAccounting;
 }
 
 const round = (n: number, d = 6) => Math.round(n * 10 ** d) / 10 ** d;
@@ -474,6 +486,46 @@ export interface PublishedUnitsOptions {
   expected?: ExpectedReturn;
   /** Whether the org's ledger credits website visits to this outcome at all. Default true. */
   visitsMeasured?: boolean;
+  /** OUTCOME-ACCOUNTING-1107: the Plan's route figures for the page (its offer), and what the report needs. */
+  accounting?: PublishedAccountingInputs;
+}
+
+export interface PublishedAccountingInputs {
+  figures: ExpectedRouteFigures;
+  step: string | null;
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueSource: string | null;
+  /** The cost source of the route's expected cost per Unit (`expectedPipeCost` rung). */
+  expectedCostSource: string | null;
+  /** The brand's funnel campaigns whose Target is this outcome, each with the unit campaign ids its runs are tagged with. */
+  targets: ReadonlyArray<{ campaignId: string; unitCampaignIds: readonly string[] }>;
+  /** The next leg's maturity window (days): an open decision counts for its elapsed share. */
+  windowDays: number;
+  today: string;
+}
+
+const NO_ACCOUNTING: PublishedAccountingInputs = {
+  figures: { route: [], costPerUnitUsd: null, costPerUnitBasis: null, costPerUnitUnavailableReason: "not_priced", costFromStartUsd: null, costFromStartUnavailableReason: "not_priced", rolledYieldPct: null, rolledYieldFromStep: null, next: null, netValuePerUnitUsd: null, netValueUnavailableReason: "not_priced" },
+  step: null,
+  lifetimeRevenueUsd: null,
+  lifetimeRevenueSource: null,
+  expectedCostSource: null,
+  targets: [],
+  windowDays: 0,
+  today: new Date().toISOString().slice(0, 10),
+};
+
+/** PURE. A measured return of a row or a day: no return below a campaign's Target, a Unit row is never one. */
+const noReturn = (spentUsd: number | null, reason: string): MeasuredReturn => ({ roiMultiple: null, valueUsd: null, spentUsd, learning: false, unavailableReason: reason });
+
+/** PURE. The page return re-based on the report: measured / expected only at a campaign's Target. */
+function returnsOf(ret: AccountingReturn, expected: ExpectedReturn): { measured: MeasuredReturn; expected: ExpectedReturn } {
+  if (!ret.isCampaignTarget) return { measured: noReturn(null, ret.unavailableReason!), expected: { ...expected, roiMultiple: null, unavailableReason: ret.unavailableReason } };
+  const m = ret.measured;
+  return {
+    measured: { roiMultiple: m.roiMultiple, valueUsd: m.valueUsd, spentUsd: m.spentUsd, learning: m.learning, unavailableReason: m.unavailableReason },
+    expected: { ...expected, roiMultiple: ret.expected.roiMultiple, valuePerUnitUsd: ret.expected.valuePerUnitUsd, costPerUnitUsd: ret.expected.costFromStartUsd, unavailableReason: ret.expected.unavailableReason },
+  };
 }
 
 /** PURE. The page body: rows newest first, totals (all and ours), $ per signup on ours, the day series, value and returns. */
@@ -486,7 +538,7 @@ export function publishedUnitsOf(
   const visitsMeasured = opts.visitsMeasured ?? true;
   const reposts = allSources.filter(isRepost);
   const sources = allSources.filter((s) => !isRepost(s));
-  const rows: UnitRow[] = sources
+  const rows: Array<UnitRow & { campaignId: string | null }> = sources
     .map((s) => {
       const c = creditOf(s);
       const { ledger: _ledger, metrics, campaignId: _campaignId, ...rest } = s;
@@ -514,16 +566,22 @@ export function publishedUnitsOf(
         valuePerUnitUsd: value.valuePerUnitUsd,
         valueUsd,
         value,
-        measuredReturn: measuredReturnOf(s.units, valueUsd, spentUsd, value.valuePerUnitUsd === null),
+        measuredReturn: noReturn(spentUsd, "return_only_at_campaign_target"),
+        accounting: null as OutcomeAccounting | null,
+        accountingUnavailableReason: s.performedBy === "ours" ? null : ("performed_by_client_team" as const),
+        campaignId: s.campaignId ?? null,
       };
     })
     .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt) || a.id.localeCompare(b.id));
+  const acc = opts.accounting ?? NO_ACCOUNTING;
   const all = zero();
   const ours = zero();
+  const clientTeam = zero();
   const days = new Map<string, DayPoint & { oursUnvalued: boolean }>();
   for (const r of rows) {
     add(all, r);
     if (r.performedBy === "ours") add(ours, r);
+    else add(clientTeam, r);
     const date = r.publishedAt.slice(0, 10);
     const d =
       days.get(date) ??
@@ -546,14 +604,54 @@ export function publishedUnitsOf(
   }
   const daily = [...days.values()]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map(({ oursUnvalued, ...d }) => ({ ...d, measuredReturn: measuredReturnOf(d.oursUnits, d.oursUnits > 0 ? d.oursValueUsd : null, d.oursSpentUsd, oursUnvalued) }));
+    // A day is no campaign Target: its return is null (OUTCOME-ACCOUNTING-1107).
+    .map(({ oursUnvalued: _u, ...d }) => ({ ...d, measuredReturn: noReturn(d.oursSpentUsd, "return_only_at_campaign_target") }));
   const costPerSignupUsd = visitsMeasured && ours.signups > 0 && ours.spentUsd > 0 ? round(ours.spentUsd / ours.signups) : null;
   const costPerSignupUnavailableReason = costPerSignupUsd !== null ? null : !visitsMeasured ? "no_visit_attribution_on_outcome" : ours.signups === 0 ? "no_signup_yet" : "nothing_spent_yet";
   const repostBreakdowns = reposts.map((s) => engagementsOfBreakdown(engagementBreakdownOf(s.metrics)) ?? s.engagements ?? 0);
+
+  // OUTCOME-ACCOUNTING-1107: the report, over OUR Units only. The visits are the next milestone only when the route's
+  // next step IS a website visit (a click on the Unit's link); else the next milestone is not tracked for this outcome.
+  const next = acc.figures.next;
+  const yieldReason = !next ? null : next.step !== "website_visit" ? "next_milestone_not_tracked_for_outcome" : visitsMeasured ? null : "no_visit_attribution_on_outcome";
+  const costed = costedUnitsOf(rows);
+  const override = costed.units > 0 && costed.spentUsd > 0 ? { usd: costed.spentUsd / costed.units, basis: "measured", source: "own_spend" } : null;
+  const oursRows = rows.filter((r) => r.performedBy === "ours");
+  const targetUnitIds = new Set(acc.targets.flatMap((t) => [t.campaignId, ...t.unitCampaignIds]));
+  const targetRows = oursRows.filter((r) => r.campaignId !== null && targetUnitIds.has(r.campaignId));
+  const ret = accountingReturn(
+    acc.targets.map((t) => t.campaignId),
+    { targetUnits: targetRows.reduce((a, r) => a + r.units, 0), spentUsd: round(targetRows.reduce((a, r) => a + (r.spentUsd ?? 0), 0)) },
+    acc.figures.netValuePerUnitUsd,
+    acc.figures.costFromStartUsd ?? (acc.figures.route.length === 1 && override ? override.usd : null),
+  );
+  const reportOf = (units: number, spentUsd: number, trials: Parameters<typeof yieldToNext>[1], actualReason: string | null, r: AccountingReturn) =>
+    outcomeAccountingOf({
+      outcomeKey,
+      step: acc.step,
+      route: acc.figures,
+      actual: { units, spentUsd },
+      actualUnavailableReason: actualReason,
+      expectedCostOverride: override,
+      expectedCostSource: acc.expectedCostSource,
+      yield: yieldToNext(next, trials, yieldReason, acc.windowDays, acc.today),
+      yieldInto: null,
+      yieldIntoReason: "attempts_not_on_ledger",
+      lifetimeRevenueUsd: acc.lifetimeRevenueUsd,
+      lifetimeRevenueSource: acc.lifetimeRevenueSource,
+      ret: r,
+    });
+  const trialOf = (r: UnitRow) => ({ day: r.publishedAt.slice(0, 10), nextUnits: r.visits ?? 0, units: r.units });
+  const rowReturn = accountingReturn([], null, null, null);
+  const rowRet: AccountingReturn = { ...rowReturn, unavailableReason: "return_only_at_campaign_target", measured: { ...rowReturn.measured, unavailableReason: "return_only_at_campaign_target" }, expected: { ...rowReturn.expected, unavailableReason: "return_only_at_campaign_target" } };
+  for (const r of oursRows) r.accounting = reportOf(r.units, r.spentUsd ?? 0, [trialOf(r)], r.spentUsd === null ? "not_on_ledger_yet" : null, rowRet);
+  const accounting = reportOf(ours.units, ours.spentUsd, oursRows.filter((r) => r.spentUsd !== null).map(trialOf), null, ret);
+  const returns = returnsOf(ret, withOwnSpendCost(opts.expected ?? expectedReturnOf(null, null, "not_priced"), costed));
+  const servedRows: UnitRow[] = rows.map(({ campaignId: _c, ...r }) => r);
   return {
     outcomeKey,
-    rows,
-    totals: { all, ours },
+    rows: servedRows,
+    totals: { all, ours, clientTeam },
     costPerSignupUsd,
     costPerSignupUnavailableReason,
     learning: ours.signups === 0,
@@ -561,8 +659,9 @@ export function publishedUnitsOf(
     repostsExcluded: { rows: reposts.length, engagements: repostBreakdowns.reduce((a, b) => a + b, 0) },
     visitsMeasured,
     visitsUnavailableReason: visitsMeasured ? null : "no_visit_attribution_on_outcome",
-    measuredReturn: measuredReturnOf(ours.units, ours.units > 0 && ours.unvaluedRows === 0 ? ours.valueUsd : null, ours.spentUsd, ours.unvaluedRows > 0),
-    expectedReturn: withOwnSpendCost(opts.expected ?? expectedReturnOf(null, null, "not_priced"), costedUnitsOf(rows)),
+    measuredReturn: returns.measured,
+    expectedReturn: returns.expected,
+    accounting,
   };
 }
 
