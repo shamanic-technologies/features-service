@@ -427,3 +427,62 @@ describe("GET /offers/:offerId/contacted-value", () => {
     expect(res.body.totalExpectedValueUsd).toBeNull();
   });
 });
+
+describe("GET /brands/:brandId/deals-value?columns=lifecycle|company_lifecycle (BRAND-GRAIN-READS-1107)", () => {
+  /** The offer body minus what only names its grain. */
+  const offerPart = (b: Record<string, unknown>) => {
+    const { offerId: _o, campaignId: _c, brandId: _b, ...rest } = b;
+    return rest;
+  };
+  const brandPart = (b: Record<string, unknown>) => {
+    const { offerIds: _o, offers: _f, wonValuedAs: _w, brandId: _b, ...rest } = b;
+    return rest;
+  };
+
+  it("a brand selling ONE offer reads its offer's lifecycle board and company lifecycle byte for byte", async () => {
+    const saved = CAMPAIGNS["offer-b"];
+    delete CAMPAIGNS["offer-b"];
+    try {
+      const [offerBoard, brandBoard, offerCompanies, brandCompanies] = await Promise.all([
+        get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle"),
+        get("/brands/brand-1/deals-value?columns=lifecycle"),
+        get("/offers/offer-a/deals-value?brandId=brand-1&columns=company_lifecycle"),
+        get("/brands/brand-1/deals-value?columns=company_lifecycle"),
+      ]);
+      expect(brandBoard.status).toBe(200);
+      expect(brandBoard.body.offerIds).toEqual(["offer-a"]);
+      expect(brandBoard.body.wonValuedAs).toBe("ledger_units_x_lifetime_revenue");
+      expect(brandBoard.body.expectedPipelineUsd).toBeGreaterThan(0);
+      // Equality, figure by figure: the difference is 0.
+      expect(brandPart(brandBoard.body)).toEqual(offerPart(offerBoard.body));
+      expect(brandBoard.body.expectedPipelineUsd - offerBoard.body.expectedPipelineUsd).toBe(0);
+      expect(brandCompanies.status).toBe(200);
+      expect(brandPart(brandCompanies.body)).toEqual(offerPart(offerCompanies.body));
+    } finally {
+      CAMPAIGNS["offer-b"] = saved!;
+    }
+  });
+
+  it("a brand selling SEVERAL offers is served: every offer's people on one board, each organisation once", async () => {
+    const [a, b, brand, companies] = await Promise.all([
+      get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle"),
+      get("/offers/offer-b/deals-value?brandId=brand-1&pricing=net&columns=lifecycle"),
+      get("/brands/brand-1/deals-value?columns=lifecycle"),
+      get("/brands/brand-1/deals-value?columns=company_lifecycle"),
+    ]);
+    expect(brand.status).toBe(200);
+    expect(brand.body.offerIds).toEqual(["offer-a", "offer-b"]);
+    expect(brand.body.unvaluedReason).toBeNull();
+    const engaged = (body: { rungs: Array<{ key: string; valueUsd: number; cards: Array<{ leadIds: string[] }> }> }) => body.rungs.find((r) => r.key === "engaged")!;
+    expect(engaged(brand.body).cards.flatMap((c) => c.leadIds).sort()).toEqual(["int-a", "int-b"]);
+    // Disjoint populations (no organisation shared): the brand's pipeline is the offers' pipelines, exactly.
+    expect(brand.body.expectedPipelineUsd).toBeCloseTo(a.body.expectedPipelineUsd + b.body.expectedPipelineUsd, 6);
+    expect(brand.body.outOfScopeCardCount).toBe(0);
+    expect(companies.status).toBe(200);
+    expect(companies.body.organizationCount).toBe(32);
+  });
+
+  it("refuses an unknown columns value", async () => {
+    expect((await get("/brands/brand-1/deals-value?columns=pipeline_generated")).status).toBe(400);
+  });
+});

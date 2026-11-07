@@ -21,6 +21,11 @@ import { loadBrandPricedPopulation, BrandPricesDifferentlyError, type BrandPrici
 import { priceDealsColumns, type DealsValueResult } from "../lib/deals-value.js";
 import { withLedgerDealsColumns } from "../lib/ledger-counts.js";
 import { readLedgerScope } from "../lib/ledger-counts-io.js";
+import { fetchOfferChannelMap, offerCampaignIds, offerFeatureSlugs, type OfferChannelMap } from "../lib/offer-channels.js";
+import { OfferChannelsPriceDifferentlyError } from "./offer-economics.js";
+import { campaignSetKey, computeOfferCompanyLifecycle } from "../lib/company-lifecycle-io.js";
+import type { CompanyLifecycleResult } from "../lib/company-lifecycle.js";
+import { computeBrandDealsLifecycle, offerPricing, type BrandDealsLifecycleResult, type BrandOfferPricing } from "./offer-lead-values.js";
 
 const router = Router();
 
@@ -80,11 +85,76 @@ export async function computeBrandDealsValue(
   ) as DealsValueResult;
 }
 
+/**
+ * BRAND-GRAIN-READS-1107 (owner 2026-11-07: the dashboard reads every brand page at BRAND grain; a brand sells several
+ * offers). The brand's scope for the lifecycle reads = every offer any of its campaigns states, every campaign of each
+ * (the union of the offer grain's scopes), so a brand selling ONE offer reads its offer's body byte for byte.
+ */
+export function brandOfferScope(map: OfferChannelMap): { offerIds: string[]; campaignIds: string[]; featureSlugs: string[] } {
+  const channels = map.offerIds.flatMap((o) => map.channelsOf(o));
+  return {
+    offerIds: map.offerIds,
+    campaignIds: [...new Set(offerCampaignIds(channels))].sort(),
+    featureSlugs: [...new Set(offerFeatureSlugs(channels))].sort(),
+  };
+}
+
+class BrandHasNoOfferCampaignsError extends Error {
+  constructor(readonly brandId: string) {
+    super(`no campaign of brand ${brandId} sells an offer, so its lifecycle has no scope`);
+  }
+}
+
+/** `?columns=lifecycle` / `company_lifecycle` at the BRAND grain (the offer read's modes, every offer of the brand). */
+async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, columns: "lifecycle" | "company_lifecycle") {
+  const [map] = await Promise.all([fetchOfferChannelMap(brandId, headers), assertBrandHeld(brandId, headers)]);
+  const scope = brandOfferScope(map);
+  if (scope.offerIds.length === 0) throw new BrandHasNoOfferCampaignsError(brandId);
+  if (columns === "company_lifecycle") {
+    const result = await servedCached<CompanyLifecycleResult>({
+      view: "brand-company-lifecycle",
+      scopeKey: buildScopeKey(brandId, {
+        orgId: headers.orgId,
+        channels: scope.featureSlugs.join("+"),
+        campaigns: campaignSetKey(scope.campaignIds),
+        m: "company-lifecycle-v1",
+      }),
+      orgId: headers.orgId,
+      compute: () => computeOfferCompanyLifecycle(brandId, headers, scope.campaignIds),
+    });
+    return { offerIds: scope.offerIds, ...result };
+  }
+  const offers: Array<BrandOfferPricing & { keyParts: { decl: string; econ: string } }> = await Promise.all(
+    scope.offerIds.map(async (offerId) => {
+      const channels = map.channelsOf(offerId);
+      const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);
+      return { offerId, campaignIds: offerCampaignIds(channels), pre, keyParts };
+    }),
+  );
+  const result = await servedCached<BrandDealsLifecycleResult>({
+    view: "brand-deals-lifecycle",
+    scopeKey: buildScopeKey(brandId, {
+      orgId: headers.orgId,
+      channels: scope.featureSlugs.join("+"),
+      offers: offers.map((o) => `${o.offerId}>${campaignSetKey(o.campaignIds)}>${o.keyParts.decl}>${o.keyParts.econ}`).join(","),
+      m: "brand-deals-lifecycle-v1",
+    }),
+    orgId: headers.orgId,
+    compute: () => computeBrandDealsLifecycle(brandId, headers, offers),
+  });
+  return { offerIds: scope.offerIds, ...result };
+}
+
 router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
   const req = rawReq as unknown as AuthenticatedRequest;
   const brandId = rawReq.params.brandId as string;
   const headers: DownstreamHeaders = { orgId: req.orgId, userId: req.userId, runId: req.runId };
+  const columns = rawReq.query.columns === undefined ? "standing" : rawReq.query.columns;
+  if (columns !== "standing" && columns !== "lifecycle" && columns !== "company_lifecycle") {
+    return res.status(400).json({ error: "columns must be one of: standing, lifecycle, company_lifecycle" });
+  }
   try {
+    if (columns !== "standing") return res.json({ brandId, ...(await brandLifecycleRead(brandId, headers, columns)) });
     const channels = await resolveBrandChannels(brandId, headers);
     const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), assertBrandHeld(brandId, headers)]);
     const priced = priceOnDeclaredFunnel(declared);
@@ -107,6 +177,12 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
     }
     if (error instanceof BrandPricesDifferentlyError) {
       return res.status(409).json({ error: error.message, reason: "brand_channels_price_differently", brandId });
+    }
+    if (error instanceof BrandHasNoOfferCampaignsError) {
+      return res.status(404).json({ error: error.message, reason: "brand_has_no_offer_campaigns", brandId });
+    }
+    if (error instanceof OfferChannelsPriceDifferentlyError) {
+      return res.status(409).json({ error: error.message, reason: "offer_channels_price_differently", brandId, offerId: error.offerId });
     }
     if (error instanceof ContactedValueUnavailableError) return res.status(503).json(contactedValueUnavailableBody(error));
     console.error(`[features-service] Brand deals value error:`, error);

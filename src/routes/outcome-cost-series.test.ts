@@ -53,7 +53,7 @@ vi.mock("../lib/expected-return.js", async (orig) => ({
   }),
 }));
 
-import { computeOutcomeCostSeries } from "./outcome-cost-series.js";
+import { computeBrandOutcomeCostSeries, computeOutcomeCostSeries } from "./outcome-cost-series.js";
 import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
 
 // LEDGER-ONLY-1107-P2: each step's outcomes are the brand ledger's Units (2 positive replies, 1 meeting booked; a
@@ -150,5 +150,54 @@ describe("computeOutcomeCostSeries (OUTCOME-COST-SERIES-1027)", () => {
     expect(signup.value.valuePerOutcomeUsd).toBe(100);
     // The meeting stays on the expected path: C = 10 / 0.5 + 5 = $25.
     expect(body.steps.find((s) => s.stepKey === "meeting_booked")!.accounting!.costFromStart.expectedUsd).toBe(25);
+  });
+});
+
+describe("computeBrandOutcomeCostSeries (BRAND-GRAIN-READS-1107)", () => {
+  beforeEach(() => {
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValue(LEDGER as never);
+  });
+  const H = { orgId: "org1", userId: "u", runId: "r", featureSlug: undefined };
+  const CH = [
+    { featureSlug: "ai-meeting-booking", campaignIds: ["u2"] },
+    { featureSlug: "sales-cold-email-outreach", campaignIds: ["legacy1", "u1"] },
+  ];
+
+  it("a brand selling ONE offer reads its offer's series byte for byte (expected model unreadable)", async () => {
+    const offer = await computeOutcomeCostSeries("o1", "b1", rows, CH, "net", H, "2026-10-27");
+    const brand = await computeBrandOutcomeCostSeries("b1", ["o1"], rows, CH, "net", H, "2026-10-27");
+    const { offerId: _o, ...offerRest } = offer;
+    const { offerIds, ...brandRest } = brand;
+    expect(offerIds).toEqual(["o1"]);
+    expect(brandRest).toEqual(offerRest);
+  });
+
+  it("…and with a priced expected model (the picked brand model IS the offer's)", async () => {
+    const leg = (from: string, to: string, rate: number | null, cost: number | null) =>
+      ({ legKey: `${from}_to_${to}`, fromStep: { key: from }, toStep: { key: to }, workedBy: "platform", conversionRatePct: rate, costPerOutcomeUsd: cost, rateSource: "default", costSource: "default", outcomesNeededPerPayingClient: null, costPerPayingClientUsd: null }) as never;
+    const meetingPath = { rank: 1, combinationKey: "meet", lifetimeRevenueUsd: 1000, roi: 3, legs: [leg("lead_found", "conversation", null, 10), leg("conversation", "meeting_booked", 50, 5), leg("meeting_booked", "paid_client", 20, 0)] };
+    const model = { offerId: "o1", body: { paths: [meetingPath] }, selected: ["meet"], lifetimeRevenueSource: "offer_stated", notRunning: false } as never;
+    vi.mocked(expectedReturn.offerExpectedModel).mockResolvedValueOnce(model).mockResolvedValueOnce(model);
+    const offer = await computeOutcomeCostSeries("o1", "b1", rows, CH, "net", H, "2026-10-27");
+    const brand = await computeBrandOutcomeCostSeries("b1", ["o1"], rows, CH, "net", H, "2026-10-27");
+    const { offerId: _o, ...offerRest } = offer;
+    const { offerIds: _i, ...brandRest } = brand;
+    expect(offer.steps.find((s) => s.stepKey === "meeting_booked")!.expected.unavailableReason).not.toBe("expected_model_unavailable");
+    expect(brandRest).toEqual(offerRest);
+  });
+});
+
+describe("pickBrandModel (BRAND-GRAIN-READS-1107)", () => {
+  const path = (key: string, roi: number | null) => ({ rank: 1, combinationKey: key, lifetimeRevenueUsd: 1000, roi, legs: [] });
+  const m = (offerId: string, roi: number | null, notRunning = false) =>
+    ({ offerId, body: { paths: [path(`p-${offerId}`, roi)] }, selected: [], lifetimeRevenueSource: "offer_stated", notRunning }) as never;
+  it("one offer = its model; several = the best expected ROI among the running ones; none priced = the first by id", () => {
+    const only = m("o1", null);
+    expect(expectedReturn.pickBrandModel([only])).toBe(only);
+    const a = m("a", 2), b = m("b", 5), c = m("c", 9, true);
+    expect(expectedReturn.pickBrandModel([a, b, c])).toBe(b);
+    const x = m("x", null), y = m("w", null);
+    expect(expectedReturn.pickBrandModel([x, y])).toBe(y);
+    expect(expectedReturn.pickBrandModel([])).toBeNull();
   });
 });
