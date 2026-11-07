@@ -125,6 +125,9 @@ import { MANAGED_CHANNEL_SLUGS, channelLegMinimumMonthlyCents } from "./channel-
  *    the LLM qualification, counting unanswered rings, at our price multiple.
  *  - AI follow-up email → paid client $1: one AI-written warm email (~$0.10 of LLM tokens + send at our price
  *    multiple) per signup, at the 10% default signup -> paid client rate (`lib/default-leg-rates.ts`).
+ *  - AI follow-up email → signup $50: the same one warm email (~$0.10) per website visitor, at the 0.2% default
+ *    website visit -> signup rate (`lib/default-leg-rates.ts`). Was missing (OUTCOME-ACCOUNTING-GAPS-1107): the managed
+ *    leg read `no_spend_recorded`, so every path through it, and the Signup Outcome page's expected cost, was unpriced.
  */
 export const DEFAULT_COST_PER_OUTCOME_USD: ReadonlyMap<string, number> = new Map([
   ["start_to_conversation|sales-cold-email-outreach", 50],
@@ -132,6 +135,7 @@ export const DEFAULT_COST_PER_OUTCOME_USD: ReadonlyMap<string, number> = new Map
   ["conversation_to_meeting_booked|ai-meeting-booking", 5],
   ["conversation_to_booking_call|ai-instant-call", 2],
   ["signup_to_paid_client|ai-follow-up-email", 1],
+  ["website_visit_to_signup|ai-follow-up-email", 50],
 ]);
 
 /** Which rung of the cost cascade priced a candidate. */

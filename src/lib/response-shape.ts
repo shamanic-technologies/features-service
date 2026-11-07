@@ -67,7 +67,8 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-other-factory-1107",
   "/offers/{offerId}/spend-charts": "ledger-other-factory-1107",
   "/brands/{brandId}/sales-funnel-campaigns": "ledger-other-factory-1107",
-  "/offers/{offerId}/outcome-cost-series": "ledger-other-factory-1107",
+  // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
+  "/offers/{offerId}/outcome-cost-series": "outcome-accounting-gaps-1107",
   "/offers/{offerId}/outcomes": "ledger-other-factory-1107",
   "/offers/{offerId}/revenue": "ledger-other-factory-1107",
   "/brands/{brandId}/offers": "ledger-other-factory-1107",

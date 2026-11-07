@@ -74,4 +74,27 @@ describe("outcome accounting (OUTCOME-ACCOUNTING-1107): the framework's two calc
     expect(r.costFromStart).toMatchObject({ actualUsd: 0.018027, expectedUsd: 0.018027, route: ["post"] });
     expect(r.returns.unavailableReason).toBe("outcome_is_no_campaign_target");
   });
+
+  it("the step the route leaves from names the route's first leg as its next milestone (OUTCOME-ACCOUNTING-GAPS-1107)", () => {
+    const fromLead: RouteLeg[] = [
+      { fromStep: "lead_found", toStep: "conversation", ratePct: null, rateBasis: null, costPerUnitUsd: 50, costBasis: "workflow", legKey: "lead_found_to_conversation" },
+      { fromStep: "conversation", toStep: "paid_client", ratePct: 10, rateBasis: "default", costPerUnitUsd: 0, costBasis: "customer_team" },
+    ];
+    const lead = expectedRouteFigures(fromLead, "lead_found", 1000);
+    expect(lead.route).toEqual(["lead_found"]);
+    expect(lead.next).toMatchObject({ step: "conversation", ratePct: null, legKey: "lead_found_to_conversation" });
+    expect(lead.costPerUnitUnavailableReason).toBe("start_step_not_priced_on_route");
+    expect(lead.costFromStartUnavailableReason).toBe("start_step_not_priced_on_route");
+    // The entry leg's rate prices nothing: the value says so, never "final milestone".
+    expect(lead.netValuePerUnitUsd).toBeNull();
+    expect(lead.netValueUnavailableReason).toBe("leg_rate_unavailable");
+    const y = yieldToNext(lead.next, null, "not_measured", 0, "2026-11-07");
+    expect(y.nextStep).toBe("conversation");
+    expect(y.expectedUnavailableReason).toBe("route_rate_unavailable");
+    // A rate on the first leg values the start step back through it: 2% x ($100 - $50) = $1.
+    const rated = expectedRouteFigures([{ ...fromLead[0]!, ratePct: 2 }, fromLead[1]!], "lead_found", 1000);
+    expect(rated.netValuePerUnitUsd).toBe(1);
+    // A step on no leg and not the route's start stays off the route.
+    expect(expectedRouteFigures(fromLead, "signup", 1000).costPerUnitUnavailableReason).toBe("outcome_not_on_route");
+  });
 });
