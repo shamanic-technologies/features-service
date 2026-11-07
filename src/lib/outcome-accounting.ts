@@ -367,7 +367,8 @@ export interface AccountingInputs {
 /** PURE. Assemble the report. */
 export function outcomeAccountingOf(i: AccountingInputs): OutcomeAccounting {
   const actualUsd = i.actualUnavailableReason ? null : i.actual.units > 0 ? round(i.actual.spentUsd / i.actual.units) : null;
-  const actualReason = i.actualUnavailableReason ?? (i.actual.units > 0 ? null : "no_unit_of_ours_yet");
+  // Money spent with no Unit credited yet is not "nothing of ours": its Engine spent and has made none (yet).
+  const actualReason = i.actualUnavailableReason ?? (i.actual.units > 0 ? null : i.actual.spentUsd > 0 ? "spent_no_unit_made_yet" : "no_unit_of_ours_yet");
   const override = i.route.costPerUnitUsd === null ? (i.expectedCostOverride ?? null) : null;
   const expectedUsd = override ? round(override.usd) : i.route.costPerUnitUsd;
   // A route from Start with no milestone before the outcome: its cost from Start IS its cost per Unit.
