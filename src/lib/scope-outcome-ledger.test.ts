@@ -170,3 +170,21 @@ describe("withLedgerRealHalf (LEDGER-ONLY-1107 x REVENUE-GENERATED-1107)", () =>
     expect(withLedgerRealHalf(rg, null, 1000).realUnavailableReason).toBe("ledger_unreadable");
   });
 });
+
+describe("LEDGER-ONLY-1107-P2: the fleet producers read only NAMES a gap", () => {
+  it("unknown producers: a 0 stays a measured 0, never `no_producer_declares_outcome`", async () => {
+    const { scopeOutcomeLedgerRowOf } = await import("./scope-outcome-ledger.js");
+    const input = {
+      producedByDay: new Map(),
+      ownCostUsd: new Map(),
+      unitCosts: new Map(),
+      undeclaredConsumptions: new Map(),
+      fleetProducers: new Map(),
+      fleetProducersKnown: false,
+      daysMissing: [],
+      today: "2026-11-07",
+    };
+    expect(scopeOutcomeLedgerRowOf(["meeting_booked"], input).units).toBe(0);
+    expect(scopeOutcomeLedgerRowOf(["meeting_booked"], { ...input, fleetProducersKnown: true }).unitsUnavailableReason).toBe("no_producer_declares_outcome");
+  });
+});
