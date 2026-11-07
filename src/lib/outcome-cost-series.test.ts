@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOutcomeCostSeries,
   contactedOutcomeDays,
+  leadStepAccounting,
   expectedStepCosts,
   monthsBetween,
   stepValues,
@@ -128,25 +129,26 @@ describe("buildOutcomeCostSeries", () => {
   });
 });
 
-describe("stepValues: one outcome is worth the lifetime revenue ÷ the outcomes one paying client needs", () => {
-  const leg = (toStep: string, outcomesNeededPerPayingClient: number | null) =>
-    ({ legKey: `x_to_${toStep}`, toStep: { key: toStep }, workedBy: "platform", outcomesNeededPerPayingClient }) as unknown as SalesPath["legs"][number];
-  const path = { combinationKey: "p", lifetimeRevenueUsd: 3000, legs: [leg("conversation", 20), leg("meeting_booked", 8), leg("paid_client", 1)] } as unknown as SalesPath;
+describe("stepValues (OUTCOME-ACCOUNTING-1107): one outcome's NET value, V(s) = max(0, y x V(next) - c)", () => {
+  const leg = (fromStep: string | null, toStep: string, conversionRatePct: number | null, costPerOutcomeUsd: number | null, workedBy: "platform" | "human" = "platform") =>
+    ({ legKey: `${fromStep ?? "start"}_to_${toStep}`, fromStep: fromStep ? { key: fromStep } : null, toStep: { key: toStep }, workedBy, conversionRatePct, costPerOutcomeUsd, rateSource: "default", costSource: "default" }) as unknown as SalesPath["legs"][number];
+  // Positive reply (entry, $10 each) -> Meeting booked (40%, $20 each, AI booking) -> Paid client (25%, the client's team: $0).
+  // V(paid) = 3000; V(meeting) = 0.25 x (3000 - 0) = 750; V(reply) = 0.40 x (750 - 20) = 292. The gross read 3000 x 0.4 x 0.25 = 300.
+  const path = { combinationKey: "p", lifetimeRevenueUsd: 3000, legs: [leg("lead_found", "conversation", null, 10), leg("conversation", "meeting_booked", 40, 20), leg("meeting_booked", "paid_client", 25, null, "human")] } as unknown as SalesPath;
 
-  it("values every step on the path, the paying client at the whole lifetime revenue", () => {
+  it("values every step on the path net of what the later milestones cost, the paying client at the whole lifetime revenue", () => {
     const m = stepValues(path, null);
-    expect(m.get("conversation")!.valuePerOutcomeUsd).toBe(150);
-    expect(m.get("meeting_booked")!.valuePerOutcomeUsd).toBe(375);
+    expect(m.get("conversation")!.valuePerOutcomeUsd).toBe(292);
+    expect(m.get("meeting_booked")!.valuePerOutcomeUsd).toBe(750);
     expect(m.get("paid_client")!.valuePerOutcomeUsd).toBe(3000);
     expect(m.get("signup")).toEqual({ valuePerOutcomeUsd: null, unavailableReason: "step_not_on_expected_path" });
   });
 
-  it("no lifetime revenue, a 0% leg or no path each name their reason", () => {
+  it("no lifetime revenue, an unrated leg or no path each name their reason", () => {
     expect(stepValues({ ...path, lifetimeRevenueUsd: null } as SalesPath, null).get("conversation")!.unavailableReason).toBe("no_lifetime_revenue");
-    expect(stepValues({ ...path, legs: [leg("conversation", null)] } as SalesPath, null).get("conversation")!.unavailableReason).toBe("zero_conversion_rate");
+    expect(stepValues({ ...path, legs: [path.legs[0], leg("conversation", "meeting_booked", null, 20), path.legs[2]] } as SalesPath, null).get("conversation")!.unavailableReason).toBe("leg_rate_unavailable");
     expect(stepValues(null, "expected_model_computing").get("paid_client")!.unavailableReason).toBe("expected_model_computing");
   });
-
 });
 
 describe("expectedStepCosts: a step's expected cost carries the lower steps it needed", () => {
@@ -170,5 +172,68 @@ describe("expectedStepCosts: a step's expected cost carries the lower steps it n
     const broken = { ...path, legs: [leg("conversation", "platform", null, 20), ...path.legs.slice(1)] } as SalesPath;
     expect(expectedStepCosts(broken, "default", null).get("meeting_booked")!.unavailableReason).toBe("leg_cost_unavailable");
     expect(expectedStepCosts(null, null, "expected_model_computing").get("conversation")!.unavailableReason).toBe("expected_model_computing");
+  });
+});
+
+describe("leadStepAccounting (OUTCOME-ACCOUNTING-1107): a lead outcome's report on the offer's expected path", () => {
+  const legs = [
+    { fromStep: "lead_found", toStep: "conversation", ratePct: null, rateBasis: null, costPerUnitUsd: 10, costBasis: "workflow", legKey: "lead_found_to_conversation" },
+    { fromStep: "conversation", toStep: "meeting_booked", ratePct: 40, rateBasis: "measured", costPerUnitUsd: 20, costBasis: "workflow", legKey: "conversation_to_meeting_booked" },
+    { fromStep: "meeting_booked", toStep: "paid_client", ratePct: 25, rateBasis: "default", costPerUnitUsd: 0, costBasis: "customer_team", legKey: "meeting_booked_to_paid_client" },
+  ];
+  const at = (entries: Array<[string, string | null]>) => new Map(entries.map(([id, c]) => [id, { day: null, campaignId: c }]));
+  // 10 repliers (8 credited to the booking pipe's input campaign), 4 of them booked by the booking unit, 1 paid.
+  const outcomes = new Map<OutcomeCostStep, Map<string, { day: string | null; campaignId: string | null }>>(OUTCOME_COST_STEPS.map((s) => [s, new Map()]));
+  outcomes.set("conversation", at(Array.from({ length: 10 }, (_, i) => [`l${i}`, "cold"])));
+  outcomes.set("meeting_booked", at([["l0", "book"], ["l1", "book"], ["l2", "book"], ["l3", "book"]]));
+  outcomes.set("paid_client", at([["l0", "book"]]));
+  const base = {
+    outcomes,
+    windowDaysOf: () => 0,
+    lifetimeRevenueUsd: 3000,
+    lifetimeRevenueSource: "offer_stated",
+    expectedBasis: "default",
+    today: "2026-11-07",
+    targets: [],
+    targetSpendUsd: null,
+  };
+
+  it("meeting booked: actual = the booking unit's spend ÷ what it booked, expected = its leg, variance split on the yield into it", async () => {
+    const { expectedRouteFigures } = await import("./outcome-accounting.js");
+    const r = leadStepAccounting({
+      ...base,
+      step: "meeting_booked",
+      figures: expectedRouteFigures(legs, "meeting_booked", 3000),
+      intoLeg: { fromStep: "conversation", ratePct: 40, legKey: "conversation_to_meeting_booked" },
+      landingUnitIds: new Set(["book"]),
+      landingSpendUsd: 100,
+      actualCostFromStartUsd: 250,
+    });
+    expect(r.costPerUnit).toMatchObject({ actualUsd: 25, actualUnits: 4, expectedUsd: 20 });
+    // Measured yield into the step 4/10 = 40% = standard: the whole $5 is mix (more spend per attempt).
+    expect(r.costPerUnit.variance).toMatchObject({ usd: 5, yieldUsd: 0, mixUsd: 5 });
+    // Cost from Start: (10 / 0.4) + 20 = $45 expected; $250 actual (the offer's whole spend ÷ its meetings).
+    expect(r.costFromStart).toMatchObject({ expectedUsd: 45, actualUsd: 250, rolledYieldPct: 40, rolledYieldFromStep: "conversation" });
+    // Next milestone Paid client: 1 of 4 measured, pooled with the 25% prior.
+    expect(r.yieldToNext).toMatchObject({ nextStep: "paid_client", measuredPct: 25, expectedPct: 25 });
+    expect(r.value.expectedNetPerUnitUsd).toBe(750);
+    expect(r.returns).toMatchObject({ isCampaignTarget: false, unavailableReason: "outcome_is_no_campaign_target" });
+  });
+
+  it("paid client as a campaign Target: measured = its Units x LTR ÷ its spend, expected = LTR ÷ cost from Start", async () => {
+    const { expectedRouteFigures } = await import("./outcome-accounting.js");
+    const r = leadStepAccounting({
+      ...base,
+      step: "paid_client",
+      figures: expectedRouteFigures(legs, "paid_client", 3000),
+      intoLeg: { fromStep: "meeting_booked", ratePct: 25, legKey: null },
+      landingUnitIds: new Set(),
+      landingSpendUsd: 0,
+      actualCostFromStartUsd: 1000,
+      targets: [{ campaignId: "fc", unitCampaignIds: ["cold", "book"] }],
+      targetSpendUsd: 1000,
+    });
+    expect(r.costPerUnit.actualUnavailableReason).toBe("not_made_by_our_campaigns");
+    expect(r.returns).toMatchObject({ isCampaignTarget: true, measured: { targetUnits: 1, roiMultiple: 3 }, expected: { costFromStartUsd: 180, roiMultiple: 16.67 } });
   });
 });

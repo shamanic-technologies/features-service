@@ -22,10 +22,14 @@ import { addBrandLevelByDay, fetchBrandLevelSpend } from "../lib/brand-level-spe
 import { legMaturity } from "../lib/maturity.js";
 import { pipeLegKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { expectedForOffer, offerExpectedModel, ExpectedModelComputing } from "../lib/expected-return.js";
+import type { SalesPath } from "../lib/offer-sales-paths.js";
+import { expectedRouteFigures } from "../lib/outcome-accounting.js";
 import {
   buildOutcomeCostSeries,
-  contactedOutcomeDays,
+  contactedOutcomeLeads,
   expectedStepCosts,
+  leadStepAccounting,
+  pathRouteLegs,
   stepValues,
   type OutcomeCostStep,
   type OutcomeCostStepSeries,
@@ -53,17 +57,21 @@ export interface OutcomeCostSeriesBody {
 interface ExpectedPerStep {
   costs: Map<string, StepExpectedCost>;
   values: Map<string, StepValue>;
+  /** The expected sales path the figures are read off (OUTCOME-ACCOUNTING-1107 walks it), its basis and LTR source. */
+  path: SalesPath | null;
+  basis: string | null;
+  lifetimeRevenueSource: string | null;
 }
 
 /** The expected cost AND value per step, off the offer's expected model's path. Soft: unreadable = every step null + reason. */
 async function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<ExpectedPerStep> {
-  const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason) });
+  const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason), path: null, basis: null, lifetimeRevenueSource: null });
   try {
     const m = await offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS);
     if (m === null) return none("expected_model_unavailable");
     const e = expectedForOffer(m);
     const path = e.combinationKey ? (m.body.paths.find((p) => p.combinationKey === e.combinationKey) ?? null) : null;
-    return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason) };
+    return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason), path, basis: e.basis, lifetimeRevenueSource: m.lifetimeRevenueSource };
   } catch (err) {
     if (err instanceof ExpectedModelComputing) return none("expected_model_computing");
     console.error(`[features-service] outcome cost series: expected model unreadable (offer ${offerId}): ${(err as Error).message}`);
@@ -96,7 +104,47 @@ export async function computeOutcomeCostSeries(
   const handedActed = new Set(handedRows.filter((r) => r.actedCount > 0).map((r) => r.leadId));
   const handedAll = new Set(handedRows.map((r) => r.leadId));
   const { persons, servedLeadIds } = await readScopePeople(brandId, scope.personCampaignIds, handedAll, headers);
-  const outcomeDays = contactedOutcomeDays(persons, servedLeadIds, handedActed, firstSpendDay);
+  const outcomes = contactedOutcomeLeads(persons, servedLeadIds, handedActed, firstSpendDay);
+  const outcomeDays = new Map([...outcomes].map(([step, m]) => [step, [...m.values()].map((o) => o.day)] as const));
+
+  // OUTCOME-ACCOUNTING-1107. The Engine making each step = the offer's units whose pipe lands on it (or makes it), and
+  // the funnel campaigns whose Target it is (campaign-service's `target`, else the funnel's last step).
+  const stepsOf = (pipeId: string) => pipeSteps.get(pipeId) ?? pipeSteps.get(pipeId.split("~")[0]!) ?? null;
+  const landing = new Map<string, Array<{ campaignId: string; featureSlug: string }>>();
+  for (const u of rows.flatMap((r) => r.units)) {
+    const st = stepsOf(u.pipeId);
+    if (!st) continue;
+    for (const k of new Set([st.toStep, st.outcome])) landing.set(k, [...(landing.get(k) ?? []), { campaignId: u.campaignId, featureSlug: u.featureSlug }]);
+  }
+  const targetOf = (r: SalesFunnelCampaignRow): string | null => {
+    if (r.target) return r.target;
+    const edges = r.units.map((u) => stepsOf(u.pipeId)).filter((x): x is NonNullable<typeof x> => x !== null);
+    const froms = new Set(edges.map((e) => e.fromStep));
+    return edges.find((e) => !froms.has(e.toStep))?.toStep ?? null;
+  };
+  const targetsByStep = new Map<string, Array<{ campaignId: string; unitCampaignIds: string[]; featureSlugs: string[] }>>();
+  for (const r of rows) {
+    const t = targetOf(r);
+    if (t) targetsByStep.set(t, [...(targetsByStep.get(t) ?? []), { campaignId: r.id, unitCampaignIds: r.units.map((u) => u.campaignId), featureSlugs: r.units.map((u) => u.featureSlug) }]);
+  }
+  // Each spend read is whole-history committed spend of a set of unit campaigns, on the caller's pricing; unreadable =
+  // null (the figure says `spend_unreadable`), never a zero.
+  const spendOf = async (ids: readonly string[], slugs: readonly string[]): Promise<number | null> => {
+    if (ids.length === 0) return 0;
+    try {
+      const byDay = await fetchBrandCommittedSpendByDay(brandId, [...new Set(ids)], [...new Set(slugs)].sort(), headers, pricing);
+      return [...byDay.entries()].filter(([d]) => d <= today).reduce((a, [, v]) => a + v, 0);
+    } catch (err) {
+      console.error(`[features-service] outcome cost series: unit spend unreadable (offer ${offerId}): ${(err as Error).message}`);
+      return null;
+    }
+  };
+  const [landingSpend, targetSpend] = await Promise.all([
+    Promise.all([...landing].map(async ([step, us]) => [step, await spendOf(us.map((u) => u.campaignId), us.map((u) => u.featureSlug))] as const)).then((x) => new Map(x)),
+    Promise.all([...targetsByStep].map(async ([step, ts]) => [step, await spendOf(ts.flatMap((t) => t.unitCampaignIds), ts.flatMap((t) => t.featureSlugs))] as const)).then((x) => new Map(x)),
+  ]);
+  const routeLegs = expected.path ? pathRouteLegs(expected.path) : [];
+  const windowDaysOf = (legKey: string | null) => (legKey ? legMaturity(storedLegKeyOf(legKey)).durationDays : 0);
 
   // The learning bar of a step: the maturity rule of the offer's leg landing on it, else the default rule.
   const barByStep = new Map<string, number>();
@@ -111,6 +159,27 @@ export async function computeOutcomeCostSeries(
     learningBarOf: (step: OutcomeCostStep) => barByStep.get(step) ?? legMaturity(null).outcomesRequired,
     expectedOf: (step: OutcomeCostStep) => expected.costs.get(step)!,
     valueOf: (step: OutcomeCostStep) => expected.values.get(step)!,
+    accountingOf: (step: OutcomeCostStep, costFromStartUsd: number | null) => {
+      const figures = expectedRouteFigures(routeLegs, step, expected.path?.lifetimeRevenueUsd ?? null);
+      const intoAt = routeLegs.findIndex((l) => l.toStep === step);
+      const into = intoAt >= 0 ? routeLegs[intoAt]! : null;
+      return leadStepAccounting({
+        step,
+        figures,
+        intoLeg: into ? { fromStep: intoAt === 0 ? null : into.fromStep, ratePct: into.ratePct, legKey: into.legKey ?? null } : null,
+        outcomes,
+        landingUnitIds: new Set((landing.get(step) ?? []).map((u) => u.campaignId)),
+        landingSpendUsd: landing.has(step) ? (landingSpend.get(step) ?? null) : 0,
+        actualCostFromStartUsd: costFromStartUsd,
+        targets: targetsByStep.get(step) ?? [],
+        targetSpendUsd: targetsByStep.has(step) ? (targetSpend.get(step) ?? null) : null,
+        windowDaysOf,
+        lifetimeRevenueUsd: expected.path?.lifetimeRevenueUsd ?? null,
+        lifetimeRevenueSource: expected.lifetimeRevenueSource,
+        expectedBasis: expected.basis,
+        today,
+      });
+    },
     today,
   });
   return { offerId, brandId, pricing, costBasis: "charged", firstSpendDay, steps };
