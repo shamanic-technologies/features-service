@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { BRIEF_JUDGMENT_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
+import { BRIEF_JUDGMENT_SUPPORT, ENGINE_STRATEGY_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
 
 // PLATFORM-CALLER-RUN-1024: every call to a chat-service platform route states ONE of its own run (x-run-id) or a
 // support function. Each known call site is pinned to its decided choice; a new call site fails until decided here.
@@ -13,6 +13,7 @@ const DECIDED: Record<string, { constant: string; support: PlatformSupport }> = 
   "src/lib/one-leg-per-workflow.ts": { constant: "ONE_LEG_JUDGMENT_SUPPORT", support: ONE_LEG_JUDGMENT_SUPPORT },
   "src/lib/research/niche-grades.ts": { constant: "NICHE_GRADE_SUPPORT", support: NICHE_GRADE_SUPPORT },
   "src/routes/factory-shadow.ts": { constant: "BRIEF_JUDGMENT_SUPPORT", support: BRIEF_JUDGMENT_SUPPORT },
+  "src/lib/engine-strategy-io.ts": { constant: "ENGINE_STRATEGY_SUPPORT", support: ENGINE_STRATEGY_SUPPORT },
 };
 
 function callSiteFiles(): string[] {

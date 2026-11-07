@@ -13,7 +13,7 @@ import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCampaignPipe } from "./fleet-leg-campaigns.js";
 import { pipeLegKeyOf } from "./funnel-legs.js";
-import { BRIEF_JUDGMENT_SUPPORT } from "./platform-caller.js";
+import { ENGINE_STRATEGY_SUPPORT } from "./platform-caller.js";
 import { loadPlayCatalogue } from "./plays-store.js";
 import type { Strategy } from "./plays.js";
 import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
@@ -125,7 +125,7 @@ async function askJev(state: Record<string, unknown>, options: readonly EngineSt
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
-    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { strategy: engineStrategyQuestion(options) }, support: BRIEF_JUDGMENT_SUPPORT }) },
+    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { strategy: engineStrategyQuestion(options) }, support: ENGINE_STRATEGY_SUPPORT }) },
     { timeoutMs: JEV_TIMEOUT_MS },
   );
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
