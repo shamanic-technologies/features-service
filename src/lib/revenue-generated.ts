@@ -21,7 +21,53 @@ import type { ClosedWonDeal } from "./ratio-basis.js";
 /** How far the expected (dotted) continuation runs past today. */
 export const REVENUE_EXPECTED_HORIZON_DAYS = 30;
 
-export type RevenueRealUnavailableReason = "closed_deals_not_read";
+export type RevenueRealUnavailableReason = "closed_deals_not_read" | "outcome_not_declared_in_ledger" | "no_producer_declares_outcome" | "ledger_unreadable" | "lifetime_revenue_not_stated";
+
+/**
+ * PURE. LEDGER-ONLY-1107: the REAL half re-based on the ledger's Paid client Units of the brand (`paid`, null = ledger
+ * unreadable): count = Units, real $ = Units × the offer's lifetime revenue, per day off the Units' dates. The ledger
+ * lacking Paid client Units = every real figure null + the ledger's reason, never the CRM's deals. The expected half
+ * (expected ROI × the same spend) is untouched.
+ */
+export function withLedgerRealHalf(
+  rg: RevenueGenerated,
+  paid: { units: number | null; unitsUnavailableReason: string | null; past: ReadonlyArray<{ date: string; units: number; cumulativeUnits: number }> } | null,
+  lifetimeRevenueUsd: number | null,
+): RevenueGenerated {
+  const reason: RevenueRealUnavailableReason | null =
+    paid === null ? "ledger_unreadable" : paid.units === null ? (paid.unitsUnavailableReason as RevenueRealUnavailableReason) : lifetimeRevenueUsd === null ? "lifetime_revenue_not_stated" : null;
+  if (reason !== null || paid === null || paid.units === null || lifetimeRevenueUsd === null) {
+    return { ...rg, realUsd: null, paidClientCount: null, realUnavailableReason: reason, undatedRealUsd: null, points: rg.points.map((p) => ({ ...p, realUsd: null, realCumulativeUsd: null })) };
+  }
+  const ltr = lifetimeRevenueUsd;
+  const units = paid.units;
+  const cumAt = (day: string) => {
+    let v = 0;
+    for (const p of paid.past) {
+      if (p.date > day) break;
+      v = p.cumulativeUnits;
+    }
+    return v;
+  };
+  const firstPoint = rg.points.find((p) => p.kind === "measured")?.date ?? null;
+  return {
+    ...rg,
+    realUsd: round(units * ltr),
+    paidClientCount: units,
+    realUnavailableReason: null,
+    undatedRealUsd: 0,
+    points: rg.points.map((p) =>
+      p.kind !== "measured"
+        ? { ...p, realUsd: null, realCumulativeUsd: null }
+        : {
+            ...p,
+            // Units dated before the chart's first day land on it, so the curve still ends at the total.
+            realUsd: round(((paid.past.find((x) => x.date === p.date)?.units ?? 0) + (p.date === firstPoint ? cumAt(addDays(p.date, -1)) : 0)) * ltr),
+            realCumulativeUsd: round(cumAt(p.date) * ltr),
+          },
+    ),
+  };
+}
 export type RevenueExpectedUnavailableReason = "expected_return_unavailable" | "nothing_spent_yet";
 export type RevenueExpectedFlatReason = "offer_not_running" | "offer_status_unreadable" | "spend_not_dated";
 

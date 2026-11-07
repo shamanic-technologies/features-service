@@ -291,3 +291,12 @@ vi.mock("./lib/outcome-rungs-store.js", async () => {
     __resetOutcomeRungsMemory: vi.fn(() => void (rungs = seed())),
   };
 });
+
+// LEDGER-ONLY-1107: the brand ledger read (runs-service) is "unreadable" by default, fast (no retry against a missing
+// RUNS_SERVICE_URL); suites asserting ledger figures mock it with their own Units.
+vi.mock("./lib/scope-outcome-ledger-io.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  fetchBrandOutcomeLedger: vi.fn(async () => {
+    throw new Error("brand outcome ledger not mocked in this suite");
+  }),
+}));
