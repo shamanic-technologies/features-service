@@ -21,7 +21,9 @@ import { featureViewSnapshots } from "../db/schema.js";
 import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
 import { fetchBrandLegEconomics } from "./brand-leg-economics-client.js";
 import { offerLifetimeRevenue } from "./offer-lifetime-revenue.js";
-import { outcomeCatalogueFigures } from "./published-unit-value.js";
+import { outcomeCatalogueFigures, type OutcomeCatalogueFigures } from "./published-unit-value.js";
+import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
+import { legMaturity } from "./maturity.js";
 import type { CatalogueModel } from "./agent-catalogue.js";
 import {
   addInputCosts,
@@ -38,6 +40,7 @@ import {
   type LedgerOccurrence,
   type PublishedOutcomeKey,
   type PublishedUnitsBody,
+  type PublishedAccountingInputs,
   type UnitSource,
 } from "./published-units.js";
 
@@ -404,8 +407,35 @@ export async function computePublishedUnits(orgId: string, brandId: string, outc
   const sources = await ROWS[outcomeKey](orgId, brandId);
   const { creditOf, visitsMeasured, campaignOf } = await ledgerOf(orgId, sources, pricing);
   const withCampaigns = sources.map((s) => ({ ...s, campaignId: campaignOf(s) }));
-  const valuation = await valuationOf(orgId, brandId, outcomeKey, withCampaigns);
-  return publishedUnitsOf(outcomeKey, withCampaigns, creditOf, { unitValueOf: valuation.valueOf, expected: valuation.expected, visitsMeasured });
+  const [valuation, targets] = await Promise.all([valuationOf(orgId, brandId, outcomeKey, withCampaigns), targetCampaignsOf(orgId, brandId, outcomeKey)]);
+  const accounting: PublishedAccountingInputs | undefined = valuation.page
+    ? {
+        figures: valuation.page.figures.figures,
+        step: valuation.page.figures.step,
+        lifetimeRevenueUsd: valuation.page.ltrUsd,
+        lifetimeRevenueSource: valuation.page.source,
+        expectedCostSource: valuation.page.figures.cost?.costSource ?? null,
+        targets: targets.filter((t) => t.target === outcomeKey || (valuation.page!.figures.step !== null && t.target === valuation.page!.figures.step)),
+        windowDays: valuation.page.figures.figures.next?.legKey ? legMaturity(valuation.page.figures.figures.next.legKey).durationDays : 0,
+        today: new Date().toISOString().slice(0, 10),
+      }
+    : undefined;
+  return publishedUnitsOf(outcomeKey, withCampaigns, creditOf, { unitValueOf: valuation.valueOf, expected: valuation.expected, visitsMeasured, accounting });
+}
+
+/**
+ * The brand's funnel campaigns (any status) with the step each targets (campaign-service's `target`, else its funnel's
+ * last step) and the unit campaign ids its runs are tagged with: the outcome is a Target only when one names it.
+ * Unreadable = no target known, logged loud (the report then says `outcome_is_no_campaign_target`, never a 502).
+ */
+async function targetCampaignsOf(orgId: string, brandId: string, outcomeKey: string): Promise<Array<{ campaignId: string; target: string | null; unitCampaignIds: string[] }>> {
+  try {
+    const rows = await fetchSalesFunnelCampaigns(brandId, null, { orgId });
+    return rows.map((r) => ({ campaignId: r.id, target: r.target ?? null, unitCampaignIds: r.units.map((u) => u.campaignId) }));
+  } catch (err) {
+    console.error(`[features-service] published units ${brandId} ${outcomeKey}: funnel campaigns unreadable, no Target known: ${(err as Error).message}`);
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------- value (SOCIAL-OUTCOMES-1107)
@@ -423,7 +453,14 @@ export function __setPublishedUnitsModelLoader(f: typeof loadModel): void {
  * page's expected return reads the offer most of OURS Units were valued on, else the fleet median. A read that fails
  * leaves the value null with `value_unreadable` (logged loud), never a 502 of the page and never a guessed value.
  */
-async function valuationOf(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, sources: readonly UnitSource[]): Promise<{ valueOf: (s: UnitSource) => UnitValue; expected: ExpectedReturn }> {
+interface PageValuation {
+  valueOf: (s: UnitSource) => UnitValue;
+  expected: ExpectedReturn;
+  /** The page's figures (the offer most of OURS Units were valued on, else the fleet median), for the report. */
+  page: { figures: OutcomeCatalogueFigures; ltrUsd: number | null; source: "offer_stated" | "fleet_median" | null } | null;
+}
+
+async function valuationOf(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, sources: readonly UnitSource[]): Promise<PageValuation> {
   const unreadable: UnitValue = { valuePerUnitUsd: null, step: null, offerId: null, lifetimeRevenueSource: null, unavailableReason: "value_unreadable" };
   try {
     const needsOffers = sources.some((s) => s.campaignId);
@@ -436,13 +473,13 @@ async function valuationOf(orgId: string, brandId: string, outcomeKey: Published
       const o = s.campaignId ? (offerOfCampaign.get(s.campaignId) ?? null) : null;
       return o && offers.has(o) ? o : null;
     };
-    const figuresByOffer = new Map<string, Promise<{ figures: ReturnType<typeof outcomeCatalogueFigures>; source: "offer_stated" | "fleet_median" | null }>>();
+    const figuresByOffer = new Map<string, Promise<{ figures: OutcomeCatalogueFigures; source: "offer_stated" | "fleet_median" | null; ltrUsd: number | null }>>();
     const figuresFor = (offerId: string | null) => {
       const key = offerId ?? "";
       if (!figuresByOffer.has(key))
         figuresByOffer.set(
           key,
-          offerLifetimeRevenue(offerId ? offers.get(offerId) : null).then(async (ltr) => ({ figures: outcomeCatalogueFigures(await loadModel(ltr.usd, ltr.source), outcomeKey), source: ltr.source })),
+          offerLifetimeRevenue(offerId ? offers.get(offerId) : null).then(async (ltr) => ({ figures: outcomeCatalogueFigures(await loadModel(ltr.usd, ltr.source), outcomeKey), source: ltr.source, ltrUsd: ltr.usd })),
         );
       return figuresByOffer.get(key)!;
     };
@@ -456,10 +493,14 @@ async function valuationOf(orgId: string, brandId: string, outcomeKey: Published
     for (const s of sources) if (s.performedBy === "ours") oursByOffer.set(offerOf(s) ?? "", (oursByOffer.get(offerOf(s) ?? "") ?? 0) + s.units);
     const top = [...oursByOffer].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? "";
     const pageFigures = resolved.get(top) ?? { offerId: null, ...(await figuresFor(null)) };
-    return { valueOf, expected: expectedReturnOf(pageFigures.figures.valuePerUnitUsd, pageFigures.figures.cost, pageFigures.figures.unavailableReason) };
+    return {
+      valueOf,
+      expected: expectedReturnOf(pageFigures.figures.valuePerUnitUsd, pageFigures.figures.cost, pageFigures.figures.unavailableReason),
+      page: { figures: pageFigures.figures, ltrUsd: pageFigures.ltrUsd, source: pageFigures.source },
+    };
   } catch (err) {
     console.error(`[features-service] published units ${brandId} ${outcomeKey}: value unreadable, served null: ${(err as Error).message}`);
-    return { valueOf: () => unreadable, expected: expectedReturnOf(null, null, "value_unreadable") };
+    return { valueOf: () => unreadable, expected: expectedReturnOf(null, null, "value_unreadable"), page: null };
   }
 }
 

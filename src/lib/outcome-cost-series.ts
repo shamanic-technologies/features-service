@@ -20,6 +20,17 @@
  */
 import type { EnginePerson } from "./revenue-engine.js";
 import type { SalesPath } from "./offer-sales-paths.js";
+import {
+  accountingReturn,
+  expectedRouteFigures,
+  outcomeAccountingOf,
+  yieldToNext,
+  effectiveTrials,
+  type ExpectedRouteFigures,
+  type OutcomeAccounting,
+  type RouteLeg,
+  type UnitTrial,
+} from "./outcome-accounting.js";
 
 /** The outcome steps served, most advanced first (every step a lead-state page lists, plus Lead found). */
 export const OUTCOME_COST_STEPS = [
@@ -47,26 +58,33 @@ export const SIGNAL_OF_OUTCOME_STEP: Readonly<Record<Exclude<OutcomeCostStep, "l
 
 const dayOf = (iso: string | null | undefined): string | null => (iso ? iso.slice(0, 10) : null);
 
+/** One counted outcome: the person, the day they first reached the step (null = undated), the campaign credited. */
+export interface CountedOutcome {
+  day: string | null;
+  campaignId: string | null;
+}
+
 /**
- * PURE. Per step, the day each counted outcome was first reached (null = undated), one entry per person.
+ * PURE. Per step, each counted outcome keyed on the person (one per person).
  *   - `served`: the offer's campaigns served this person (`campaignId` in `servedCampaignIds`);
  *   - `handedActed`: the leads a follow-up pipe of the offer ACTED on (we messaged them);
  *   - contacted by us = served AND an email/message went out (`signals.contacted`), or acted on by a follow-up pipe.
  */
-export function contactedOutcomeDays(
+export function contactedOutcomeLeads(
   persons: readonly EnginePerson[],
   /** The leads the scope's campaigns served (`ScopePeople.servedLeadIds`), never re-derived from campaign ids. */
   servedLeadIds: ReadonlySet<string>,
   handedActed: ReadonlySet<string>,
   scopeStart: string | null,
-): Map<OutcomeCostStep, (string | null)[]> {
-  const out = new Map<OutcomeCostStep, (string | null)[]>(OUTCOME_COST_STEPS.map((s) => [s, []]));
+): Map<OutcomeCostStep, Map<string, CountedOutcome>> {
+  const out = new Map<OutcomeCostStep, Map<string, CountedOutcome>>(OUTCOME_COST_STEPS.map((s) => [s, new Map()]));
   const seen = new Set<string>();
   for (const p of persons) {
     if (seen.has(p.leadId)) continue;
     seen.add(p.leadId);
+    const campaignId = p.campaignId ?? null;
     const served = servedLeadIds.has(p.leadId);
-    if (served) out.get("lead_found")!.push(dayOf(p.servedAt ?? null));
+    if (served) out.get("lead_found")!.set(p.leadId, { day: dayOf(p.servedAt ?? null), campaignId });
     const contacted = (served && Boolean(p.signals.contacted)) || handedActed.has(p.leadId);
     if (!contacted) continue;
     const notOurs = new Set(p.unpricedSignals ?? []);
@@ -75,10 +93,21 @@ export function contactedOutcomeDays(
       const day = dayOf(p.signalDates?.[signal] ?? null);
       // An outcome before the offer's first spend day is not the offer's (another campaign, or the client's own).
       if (day !== null && scopeStart !== null && day < scopeStart) continue;
-      out.get(step)!.push(day);
+      out.get(step)!.set(p.leadId, { day, campaignId });
     }
   }
   return out;
+}
+
+/** PURE. Per step, the day each counted outcome was first reached (null = undated), one entry per person. */
+export function contactedOutcomeDays(
+  persons: readonly EnginePerson[],
+  servedLeadIds: ReadonlySet<string>,
+  handedActed: ReadonlySet<string>,
+  scopeStart: string | null,
+): Map<OutcomeCostStep, (string | null)[]> {
+  const leads = contactedOutcomeLeads(persons, servedLeadIds, handedActed, scopeStart);
+  return new Map([...leads].map(([step, m]) => [step, [...m.values()].map((o) => o.day)]));
 }
 
 /** The expected cost of one outcome of a step, when nothing (or too little) is measured yet. */
@@ -122,26 +151,110 @@ export interface StepValue {
   unavailableReason: string | null;
 }
 
+/** PURE. The expected sales path as the route the report walks (framework §10): each leg's yield and cost per Unit. */
+export function pathRouteLegs(path: SalesPath): RouteLeg[] {
+  return path.legs.map((l) => ({
+    fromStep: l.fromStep?.key ?? null,
+    toStep: l.toStep.key,
+    ratePct: l.conversionRatePct,
+    rateBasis: l.rateSource,
+    // The client's team works a human leg: it costs us nothing.
+    costPerUnitUsd: l.workedBy === "human" ? 0 : l.costPerOutcomeUsd,
+    costBasis: l.workedBy === "human" ? "customer_team" : l.costSource,
+    legKey: l.legKey,
+  }));
+}
+
 /**
- * PURE. The value of one outcome of each step on the offer's expected sales path (P5 OUTCOMES-ENTRY, owner 2026-10-31
- * "Go with all": an outcome card states its $ / outcome AND its ROI where the outcome is valued). Paid client = the
- * lifetime revenue; an earlier step = the lifetime revenue ÷ how many of that step one paying client needs.
+ * PURE. The value of one outcome of each step on the offer's expected sales path, NET (OUTCOME-ACCOUNTING-1107, framework
+ * §10: `V(paid client) = lifetime revenue`, `V(s) = max(0, y x V(next) - c)`). Re-bases the gross LTR ÷ outcomes needed
+ * (which never subtracted what the later milestones cost).
  */
 export function stepValues(path: SalesPath | null, unavailableReason: string | null): Map<string, StepValue> {
   const out = new Map<string, StepValue>();
   const none = (reason: string): StepValue => ({ valuePerOutcomeUsd: null, unavailableReason: reason });
   for (const step of OUTCOME_COST_STEPS) out.set(step, none(path ? "step_not_on_expected_path" : (unavailableReason ?? "no_priced_sales_path")));
   if (!path) return out;
-  const ltr = path.lifetimeRevenueUsd;
+  const legs = pathRouteLegs(path);
   for (const leg of path.legs) {
     const step = leg.toStep.key;
     if (!out.has(step)) continue;
-    const needed = leg.outcomesNeededPerPayingClient;
-    if (ltr === null || !(ltr > 0)) out.set(step, none("no_lifetime_revenue"));
-    else if (needed === null || needed <= 0) out.set(step, none("zero_conversion_rate"));
-    else out.set(step, { valuePerOutcomeUsd: round2(ltr / needed), unavailableReason: null });
+    const f = expectedRouteFigures(legs, step, path.lifetimeRevenueUsd);
+    out.set(step, f.netValuePerUnitUsd === null ? none(f.netValueUnavailableReason ?? "step_has_no_value") : { valuePerOutcomeUsd: round2(f.netValuePerUnitUsd), unavailableReason: null });
   }
   return out;
+}
+
+/** What the lead-outcome report of one step reads, beyond the counts the series holds. */
+export interface LeadStepAccountingInputs {
+  step: OutcomeCostStep;
+  /** The expected path's route figures for the step (null = no priced path). */
+  figures: ExpectedRouteFigures;
+  /** The yield INTO the step on the path (its leg's rate) and the step it comes from. */
+  intoLeg: { fromStep: string | null; ratePct: number | null; legKey: string | null } | null;
+  outcomes: ReadonlyMap<OutcomeCostStep, ReadonlyMap<string, CountedOutcome>>;
+  /** The unit campaign ids of the offer whose pipe lands on the step (the Engine making it, ours). */
+  landingUnitIds: ReadonlySet<string>;
+  /** Their committed spend, whole history (null = unreadable). */
+  landingSpendUsd: number | null;
+  /** The offer's whole spend ÷ the step's outcomes (full absorption): the actual cost from Start. */
+  actualCostFromStartUsd: number | null;
+  /** The funnel campaigns whose Target is the step, with their unit ids and spend. */
+  targets: ReadonlyArray<{ campaignId: string; unitCampaignIds: readonly string[] }>;
+  targetSpendUsd: number | null;
+  windowDaysOf: (legKey: string | null) => number;
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueSource: string | null;
+  expectedBasis: string | null;
+  today: string;
+}
+
+/** PURE. Trials of a step toward a next step: every counted Unit at `from`, credited when the same person reached `to`. */
+function trialsBetween(outcomes: LeadStepAccountingInputs["outcomes"], from: string | null, to: string | null): UnitTrial[] | null {
+  const at = from ? outcomes.get(from as OutcomeCostStep) : undefined;
+  const next = to ? outcomes.get(to as OutcomeCostStep) : undefined;
+  if (!at || !next) return null;
+  return [...at].map(([leadId, o]) => ({ day: o.day, nextUnits: next.has(leadId) ? 1 : 0, units: 1 }));
+}
+
+/** PURE. The cost-accounting report of one lead outcome of the offer (framework §10, §12). */
+export function leadStepAccounting(i: LeadStepAccountingInputs): OutcomeAccounting {
+  const at = i.outcomes.get(i.step) ?? new Map<string, CountedOutcome>();
+  // Ours: the step's Units credited to a unit of the Engine making it (its own leg's spend ÷ what that leg made).
+  const made = [...at.values()].filter((o) => o.campaignId !== null && i.landingUnitIds.has(o.campaignId)).length;
+  const next = i.figures.next;
+  const nextTrials = next ? trialsBetween(i.outcomes, i.step, next.step) : null;
+  const nextReason = !next ? null : nextTrials === null ? "next_milestone_not_counted_for_offer" : null;
+  const intoTrials = i.intoLeg?.fromStep ? trialsBetween(i.outcomes, i.intoLeg.fromStep, i.step) : null;
+  const intoMeasured =
+    intoTrials && i.intoLeg ? (() => {
+      const n = effectiveTrials(intoTrials, i.windowDaysOf(i.intoLeg.legKey), i.today);
+      return n > 0 ? (intoTrials.reduce((a, t) => a + t.nextUnits, 0) / n) * 100 : null;
+    })() : null;
+  const targetIds = new Set(i.targets.flatMap((t) => t.unitCampaignIds));
+  const targetUnits = [...at.values()].filter((o) => o.campaignId !== null && targetIds.has(o.campaignId)).length;
+  const ret = accountingReturn(
+    i.targets.map((t) => t.campaignId),
+    i.targetSpendUsd === null ? null : { targetUnits, spentUsd: i.targetSpendUsd },
+    i.step === "paid_client" ? i.lifetimeRevenueUsd : i.figures.netValuePerUnitUsd,
+    i.figures.costFromStartUsd,
+  );
+  return outcomeAccountingOf({
+    outcomeKey: i.step,
+    step: i.step,
+    route: i.figures,
+    actual: { units: made, spentUsd: i.landingSpendUsd ?? 0 },
+    actualUnavailableReason: i.landingUnitIds.size === 0 ? "not_made_by_our_campaigns" : i.landingSpendUsd === null ? "spend_unreadable" : null,
+    actualCostFromStartUsd: i.actualCostFromStartUsd,
+    actualCostFromStartReason: "no_outcome_yet",
+    expectedCostSource: i.expectedBasis,
+    yield: yieldToNext(next, nextTrials, nextReason, i.windowDaysOf(next?.legKey ?? null), i.today),
+    yieldInto: i.intoLeg ? { measuredPct: intoMeasured, standardPct: i.intoLeg.ratePct } : null,
+    yieldIntoReason: !i.intoLeg ? "outcome_not_on_route" : i.intoLeg.fromStep === null || i.intoLeg.ratePct === null ? "entry_leg_has_no_yield" : intoTrials === null ? "previous_milestone_not_counted_for_offer" : null,
+    lifetimeRevenueUsd: i.lifetimeRevenueUsd,
+    lifetimeRevenueSource: i.lifetimeRevenueSource,
+    ret,
+  });
 }
 
 export interface OutcomeCostMonth {
@@ -175,9 +288,11 @@ export interface OutcomeCostStepSeries {
     learning: boolean;
   };
   expected: StepExpectedCost;
-  /** What one outcome of the step is worth (expected path), served beside its cost so a reader never divides. */
+  /** What one outcome of the step is worth (expected path, NET: OUTCOME-ACCOUNTING-1107), served beside its cost. */
   value: StepValue;
   months: OutcomeCostMonth[];
+  /** OUTCOME-ACCOUNTING-1107: the step's cost-accounting report (`lib/outcome-accounting.ts`). */
+  accounting: OutcomeAccounting | null;
 }
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -209,9 +324,11 @@ export function buildOutcomeCostSeries(input: {
   learningBarOf: (step: OutcomeCostStep) => number;
   expectedOf: (step: OutcomeCostStep) => StepExpectedCost;
   valueOf: (step: OutcomeCostStep) => StepValue;
+  /** The step's report, given its since-inception cost per outcome (the actual cost from Start). */
+  accountingOf?: (step: OutcomeCostStep, costFromStartUsd: number | null) => OutcomeAccounting;
   today: string;
 }): OutcomeCostStepSeries[] {
-  const { spendByDay, outcomeDays, learningBarOf, expectedOf, valueOf, today } = input;
+  const { spendByDay, outcomeDays, learningBarOf, expectedOf, valueOf, accountingOf, today } = input;
   // Spend is summed EXACTLY (unrounded) and rounded ONCE on the cumulative, so the last cumulative is the scope's whole
   // spend to the cent (the offer spend chart's total) and each month's spend is the difference of two rounded
   // cumulatives (the months add up to the cumulative exactly).
@@ -276,6 +393,7 @@ export function buildOutcomeCostSeries(input: {
       expected,
       value,
       months: series,
+      accounting: accountingOf ? accountingOf(stepKey, end?.cumulativeCostPerOutcomeUsd ?? null) : null,
     };
   });
 }
