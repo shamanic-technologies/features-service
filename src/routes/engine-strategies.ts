@@ -12,6 +12,9 @@
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { briefHashOf } from "../lib/engine-strategy.js";
+import { loadPlayCatalogue } from "../lib/plays-store.js";
+import { readRunnableScripts } from "../lib/script-catalogue-client.js";
+import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
 import { engineOutcomeOfPipe, listEngineStrategies, readEngineStrategy, writeEngineStrategy } from "../lib/engine-strategy-io.js";
 import { fetchCampaignPipe, fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
@@ -88,8 +91,23 @@ router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request
           playOfLegRead(featureSlug, legKey, pipe.salesFunnelId),
           briefPlayOfUnit({ salesFunnelCampaignId: campaignId, orgId, brandId, featureSlug, legKey }),
         ]);
-        const strategyId = briefed?.strategyId ?? (played ? played.answer.strategyId || null : null);
-        const carriedFrom = briefed?.playId ?? played?.answer.id ?? null;
+        // Zero change for EVERY reader: the scripts read the brief's play first, the writer pick and the workflow pick read
+        // the funnel's play. When the two differ but keep the same scripts of this Engine, carry the funnel's play (scripts
+        // AND writer stay byte-identical); when they keep different scripts, carry the brief's (what scripts run today)
+        // and say the writer differs.
+        const playedId = played ? played.answer.strategyId || null : null;
+        let strategyId = briefed?.strategyId ?? playedId;
+        let carriedFrom = briefed?.playId ?? played?.answer.id ?? null;
+        let writerDiffers: string | null = null;
+        if (briefed && playedId !== briefed.strategyId) {
+          const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+          const own = scripts.filter((s) => s.outcome === engine.outcome);
+          const keptBy = (id: string | null) => scriptsKeptByStrategy(own, id ? (catalogue.strategies.get(id) ?? null) : null, catalogue).keptDynasties.join(",");
+          if (keptBy(playedId) === keptBy(briefed.strategyId)) {
+            strategyId = playedId;
+            carriedFrom = played?.answer.id ?? null;
+          } else writerDiffers = `the writer and workflow picks read ${playedId ?? "no strategy"}, the scripts ${briefed.strategyId}`;
+        }
         const row = { ...base, outcome: engine.outcome, strategyId, carriedFrom };
         if (!briefed && played && played.excludedReason("__probe__")?.includes("not catalogued")) {
           rows.push({ ...row, result: "unknown_play", detail: `the unit's funnel names a play its pipe does not catalogue (${played.answer.id})` });
@@ -110,7 +128,7 @@ router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request
           rows.push({ ...row, result: twin.result, detail: `same Engine as unit ${twin.unitId}` });
           continue;
         }
-        rows.push({ ...row, result: apply ? "pending" : "would_write" });
+        rows.push({ ...row, result: apply ? "pending" : "would_write", detail: writerDiffers });
       } catch (error) {
         rows.push({ ...base, result: "failed", detail: (error as Error).message });
       }
