@@ -3,7 +3,7 @@
  * /internal/stats/outcome-costs?groupBy=outcomeKey,day&campaignId=`, its own inception to today). Any outcome, posts
  * included. Held 60 s per campaign. FAIL-LOUD: the caller decides to degrade.
  */
-import { fetchWithRetry } from "./fetch-retry.js";
+import { campaignLedgerByDayPath, readRunsLedger } from "./runs-ledger-read.js";
 
 export interface CampaignLedgerUnits {
   /** outcome key -> UTC day -> produced occurrences. */
@@ -13,7 +13,6 @@ export interface CampaignLedgerUnits {
 }
 
 const HELD_MS = 60_000;
-const held = new Map<string, { at: number; value: Promise<CampaignLedgerUnits> }>();
 
 interface Wire {
   daysMissing?: string[];
@@ -33,19 +32,21 @@ export function parseCampaignLedgerUnits(body: Wire): CampaignLedgerUnits {
   return { byOutcome, daysMissing: [...(body.daysMissing ?? [])].sort() };
 }
 
-export function fetchCampaignLedgerUnits(campaignId: string): Promise<CampaignLedgerUnits> {
-  const h = held.get(campaignId);
-  if (h && Date.now() - h.at < HELD_MS) return h.value;
-  const value = (async () => {
-    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,day&campaignId=${encodeURIComponent(campaignId)}`, {
-      headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
-    });
-    if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs for campaign ${campaignId} ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    return parseCampaignLedgerUnits((await r.json()) as Wire);
-  })();
-  value.catch(() => held.delete(campaignId));
-  held.set(campaignId, { at: Date.now(), value });
-  return value;
+const parses = new WeakMap<object, CampaignLedgerUnits>();
+
+/**
+ * LEDGER-LOAD-1107: the SAME runs-service read as the campaign's scope ledger (`campaignLedgerByDayPath`), shared
+ * process-wide and held 60 s from its arrival, parsed once per body.
+ */
+export async function fetchCampaignLedgerUnits(campaignId: string): Promise<CampaignLedgerUnits> {
+  const a = await readRunsLedger(campaignLedgerByDayPath(campaignId), HELD_MS);
+  if (!a.ok) throw new Error(`[features-service] runs-service outcome-costs for campaign ${campaignId} ${a.status}: ${a.text.slice(0, 200)}`);
+  const w = a.json as object;
+  const prior = parses.get(w);
+  if (prior) return prior;
+  const parsed = parseCampaignLedgerUnits(a.json as Wire);
+  parses.set(w, parsed);
+  return parsed;
 }
 
 /** PURE. Several campaigns' units summed per outcome and day. */

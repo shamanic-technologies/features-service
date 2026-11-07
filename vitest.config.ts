@@ -15,6 +15,6 @@ export default defineConfig({
     // (lead-copy.test.ts, routes/live-lead-copy.test.ts), which switch it on explicitly.
     // The held fleet walk (src/lib/lead-walk-hold.ts) is module state too: off by default, its own
     // suite (lead-walk-hold.test.ts) switches it on.
-    env: { LEAD_COPY_ENABLED: "false", DOWNSTREAM_READ_SHARE_MS: "0", LEAD_WALK_HOLD_MS: "0" },
+    env: { LEAD_COPY_ENABLED: "false", DOWNSTREAM_READ_SHARE_MS: "0", LEAD_WALK_HOLD_MS: "0", RUNS_LEDGER_SHARE: "false", RUNS_READ_SHARE_MS: "0" },
   },
 });

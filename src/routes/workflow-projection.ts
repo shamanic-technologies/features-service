@@ -1,4 +1,5 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { engineStrategyOfUnit } from "../lib/engine-strategy-io.js";
 import { withEngineDrive, type EngineDriveAnswer } from "../lib/engine-drive.js";
 import { readDrive } from "../lib/engine-drive-store.js";
 import type { GrainLedger } from "../lib/workflow-projection-grains.js";
@@ -1313,7 +1314,7 @@ export interface PlayAnswer {
    * Where the play was read: the campaign's sales funnel names it, the pipe's default (no funnel / bare leg), or the
    * pipe's default because the play the funnel names was RETIRED from the pipe (`retired_play`, PLAY-RETIRE-1022).
    */
-  source: "sales_funnel" | "pipe_default" | "retired_play";
+  source: "sales_funnel" | "pipe_default" | "retired_play" | "campaign_engine";
   /** Workflows of the rows still selectable under the play. 0 = nothing may run: hold, never fall back. */
   allowedWorkflowCount: number;
 }
@@ -1333,9 +1334,24 @@ export async function playOfLegRead(
   featureSlug: string,
   legKey: string,
   salesFunnelId: string | null,
+  campaignId: string | null = null,
 ): Promise<{ answer: Omit<PlayAnswer, "allowedWorkflowCount">; excludedReason: (dynastySlug: string) => string | null } | null> {
   const plays = await loadPlayCatalogue();
   const pipeId = pipeIdOf(featureSlug, servedLegKeyOf(featureSlug, legKey));
+  // MIGRATE-1105 S6: a campaign that keeps a strategy on this unit's Engine runs on it (stored on the campaign, judged from
+  // its brief); no condition = every assigned workflow. Only a campaign holding no verdict yet reads the play below.
+  if (campaignId) {
+    const kept = await engineStrategyOfUnit(campaignId);
+    if (kept.kind === "kept") {
+      const st = kept.strategy;
+      if (!st) return null;
+      const nameOf = tacticNameOf(plays);
+      return {
+        answer: { id: playIdOf(pipeId, st.id), pipeId, strategyId: st.id, strategyName: st.name, default: false, source: "campaign_engine" },
+        excludedReason: (slug) => strategyVerdict(workflowStrategyOf(plays, st), plays.tacticsByDynasty.get(slug), nameOf).reason,
+      };
+    }
+  }
   if (!plays.playsByPipe.has(pipeId)) return null;
   const sameLeg = (a: string, b: string) => pipeLegKeyOf(featureSlug, a) === pipeLegKeyOf(featureSlug, b);
   const named = salesFunnelId ? strategyOfFunnelLeg(salesFunnelId, featureSlug, legKey, sameLeg) : null;
@@ -1411,7 +1427,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       const salesFunnelId = unpricedCampaignId
         ? (await fetchCampaignFamiliesSoft(brandId, featureSlug, { orgId, userId, runId })).salesFunnelIdOf(unpricedCampaignId)
         : null;
-      const played = await playOfLegRead(featureSlug, pipeLegKey, salesFunnelId);
+      const played = await playOfLegRead(featureSlug, pipeLegKey, salesFunnelId, unpricedCampaignId);
       const unpriced = await unpricedPipeProjection(featureSlug, pipeLegKey, maximizeParam.maximize, played);
       return res.json(unpricedCampaignId ? await withEngineDriveOf(unpricedCampaignId, unpriced) : unpriced);
     }
@@ -1814,7 +1830,7 @@ export async function handleWorkflowProjection(req: Request, res: Response, cost
       // A campaign's sales funnel names a play per pipe (a strategy, or the pipe's default play); a workflow the
       // strategy rules out is NOT selectable, so the order, the recommendation and campaign-service's filter
       // (`modelEligibility.eligible`) all skip it, exactly like a deprecated one. Read live, fail-loud.
-      const played = await playOfLegRead(featureSlug, legKey, campaignSalesFunnelId);
+      const played = await playOfLegRead(featureSlug, legKey, campaignSalesFunnelId, campaignId ?? null);
       if (played) {
         legAssignmentByDynasty = new Map(
           [...legAssignmentByDynasty].map(([slug, v]) => {

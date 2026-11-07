@@ -6162,7 +6162,7 @@ registry.registerPath({
             outcome: z.string(),
             strategyId: z.string().nullable().describe("Null = no strategy: every script kept."),
             strategyName: z.string().nullable(),
-            strategySource: z.enum(["sales_funnel", "pipe_default", "retired_play", "no_strategy"]),
+            strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief", "brief", "sales_funnel", "pipe_default", "retired_play", "no_strategy"]).describe("`campaign_engine_*` = the strategy the campaign keeps on this Engine (MIGRATE-1105 S6, stored on the campaign, judged from its brief); the others serve only a campaign holding no verdict on the Engine yet."),
             scriptTacticIds: z.array(z.string()).describe("The script tactics the strategy names (requires + excludes); empty = it narrows no script."),
             keptDynasties: z.array(z.string()).describe("The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."),
             scripts: z.array(
@@ -6182,6 +6182,34 @@ registry.registerPath({
     404: { description: "campaign_not_found" },
     502: { description: "script_strategy_unreadable: run nothing and retry" },
   },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/campaigns/{campaignId}/engine-strategies",
+  summary: "The strategy one campaign keeps on each Engine (internal, api-key)",
+  description: "MIGRATE-1105 S6. One row per Engine (outcome): the strategy the brief judge keeps, or none (every script). `carried` = written by the S6 migration from what the campaign ran that day, held while its brief is unchanged; `judge` = Jev's pick from the brief; `empty_brief` = no brief.",
+  tags: ["Internal"],
+  request: { params: z.object({ campaignId: z.string() }) },
+  responses: { 200: { description: "The verdicts", content: { "application/json": { schema: z.object({ campaignId: z.string(), engines: z.array(z.object({ campaignId: z.string(), outcome: z.string(), orgId: z.string(), strategyId: z.string().nullable().describe("Null = no condition: every script of the Engine."), source: z.enum(["carried", "judge", "empty_brief"]), briefHash: z.string().nullable(), optionsSignature: z.string().nullable(), confidence: z.number().nullable(), model: z.string().nullable(), carriedFrom: z.string().nullable(), judgedAt: z.string() })) }) } } }, 502: { description: "engine_strategies_unreadable" } },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/engine-strategies",
+  summary: "Every stored campaign x Engine strategy (internal, api-key, audit)",
+  tags: ["Internal"],
+  responses: { 200: { description: "The verdicts", content: { "application/json": { schema: z.object({ engines: z.array(z.object({ campaignId: z.string(), outcome: z.string(), orgId: z.string(), strategyId: z.string().nullable().describe("Null = no condition: every script of the Engine."), source: z.enum(["carried", "judge", "empty_brief"]), briefHash: z.string().nullable(), optionsSignature: z.string().nullable(), confidence: z.number().nullable(), model: z.string().nullable(), carriedFrom: z.string().nullable(), judgedAt: z.string() })) }) } } }, 502: { description: "engine_strategies_unreadable" } },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/engine-strategies/carry",
+  summary: "Carry every live campaign's strategy onto its Engines (internal, api-key, staff; MIGRATE-1105 S6 migration)",
+  description: "For every live campaign unit, store the campaign's verdict on the unit's Engine from what it runs today (the brief judge's play, else its funnel's play, else its pipe's default). A verdict already stored is never touched. `apply: false` = dry run. Two units of one campaign on one Engine naming two strategies = `conflict`, nothing written.",
+  tags: ["Internal"],
+  request: { body: { content: { "application/json": { schema: z.object({ apply: z.boolean().optional() }) } } } },
+  responses: { 200: { description: "One row per unit", content: { "application/json": { schema: z.object({ apply: z.boolean(), counts: z.record(z.string(), z.number()), rows: z.array(z.object({ campaignId: z.string(), unitId: z.string(), orgId: z.string(), featureSlug: z.string(), legKey: z.string(), outcome: z.string().nullable(), strategyId: z.string().nullable(), carriedFrom: z.string().nullable(), result: z.string(), detail: z.string().nullable() })) }) } } }, 502: { description: "engine_strategy_carry_failed" } },
 });
 
 registry.registerPath({

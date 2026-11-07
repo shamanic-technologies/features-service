@@ -38,6 +38,7 @@ import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-inde
 import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
 import scriptStrategyRoutes from "./routes/script-strategy.js";
+import engineStrategyRoutes from "./routes/engine-strategies.js";
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
@@ -145,6 +146,7 @@ app.use(fleetIndexesRoutes);
 app.use(researchRoutes);
 app.use(legWriterRankingRoutes);
 app.use(scriptStrategyRoutes);
+app.use(engineStrategyRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 

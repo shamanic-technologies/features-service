@@ -7,7 +7,7 @@
  * support spend apart per support function (payment fees, brand setup, Copilot, a retired product...: spend that produces
  * no outcome by design, marked by its owner), so coverage = declared ÷ (spend − support). FAIL-LOUD: a 422 (too many groups) or any non-OK throws.
  */
-import { fetchWithRetry } from "./fetch-retry.js";
+import { readRunsLedger } from "./runs-ledger-read.js";
 import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
 
 export type LedgerBasis = "gross" | "net" | "vendor";
@@ -137,14 +137,25 @@ export function matureCutParams(runStartUntil?: string): string {
  * `since=2026-01-01`, a month before its ledger starts on 2026-02-02, it counted those 32 days as missing forever and every
  * every-path study read "32 days still computing" over a complete ledger).
  */
+/**
+ * LEDGER-LOAD-1107: the fleet bodies are shared process-wide (`runs-ledger-read.ts`) and held this long from their arrival:
+ * a Research build reads the same since-inception totals for its mature then its flash view, the hourly index recorder
+ * for gross then vendor, each a multi-second runs-service statement. Below Research's 15-min rebuild cadence, so every
+ * build still reads a body at most this old.
+ */
+export const FLEET_LEDGER_HOLD_MS = 10 * 60_000;
+
+const totalsParses = new WeakMap<object, Map<LedgerBasis, OutcomeLedgerTotals>>();
+
 export async function fetchOutcomeLedgerTotals(basis: LedgerBasis, until?: string): Promise<OutcomeLedgerTotals> {
   // `until` (UTC day, inclusive) = the ledger AS OF the end of that day, still since inception (MEETING-COST-METHODS-1024).
   const cut = until ? `&until=${encodeURIComponent(until)}` : "";
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId${cut}`, {
-    headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
-  });
-  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return parseOutcomeLedgerTotals((await r.json()) as WireTotals, basis);
+  const a = await readRunsLedger(`/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId${cut}`, FLEET_LEDGER_HOLD_MS);
+  if (!a.ok) throw new Error(`[features-service] runs-service outcome-costs ${a.status}: ${a.text.slice(0, 200)}`);
+  const w = a.json as object;
+  const byBasis = totalsParses.get(w) ?? totalsParses.set(w, new Map()).get(w)!;
+  if (!byBasis.has(basis)) byBasis.set(basis, parseOutcomeLedgerTotals(a.json as WireTotals, basis));
+  return byBasis.get(basis)!;
 }
 
 /**
@@ -152,11 +163,9 @@ export async function fetchOutcomeLedgerTotals(basis: LedgerBasis, until?: strin
  * an occurrence is dated by its effective declaration time). Null = none yet. One small read (one group per day).
  */
 export async function fetchFirstOutcomeDay(outcomeKey: string): Promise<string | null> {
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=outcomeKey,day&outcomeKey=${encodeURIComponent(outcomeKey)}`, {
-    headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
-  });
-  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs by day ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return firstOutcomeDayOf((await r.json()) as WireTotals, outcomeKey);
+  const a = await readRunsLedger(`/internal/stats/outcome-costs?groupBy=outcomeKey,day&outcomeKey=${encodeURIComponent(outcomeKey)}`, 0);
+  if (!a.ok) throw new Error(`[features-service] runs-service outcome-costs by day ${a.status}: ${a.text.slice(0, 200)}`);
+  return firstOutcomeDayOf(a.json as WireTotals, outcomeKey);
 }
 
 /** PURE. The earliest `day` of a produced group of `outcomeKey` holding an occurrence. */
@@ -200,11 +209,9 @@ export function parseOutcomeLedgerByWorkflow(producedBody: WireTotals, sourcedBo
 /** The fleet reads, since runs-service's own inception (no `since`, RESEARCH-STALE-1024). */
 export async function fetchOutcomeLedgerByWorkflow(basis: LedgerBasis): Promise<OutcomeLedgerByWorkflow> {
   const get = async (groupBy: string) => {
-    const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}`, {
-      headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
-    });
-    if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    return (await r.json()) as WireTotals;
+    const a = await readRunsLedger(`/internal/stats/outcome-costs?groupBy=${groupBy}`, FLEET_LEDGER_HOLD_MS);
+    if (!a.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy}) ${a.status}: ${a.text.slice(0, 200)}`);
+    return a.json as WireTotals;
   };
   const [p, s] = await Promise.all([get("outcomeKey,campaignId,workflowSlug"), get("outcomeKey,sourceWorkflowSlug")]);
   return parseOutcomeLedgerByWorkflow(p, s, basis);
