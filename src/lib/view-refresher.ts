@@ -216,6 +216,17 @@ export function forcedRefresh(
 }
 
 /**
+ * Refresher role: the ONE view (+ key family) this request was replayed to compute, while it is still
+ * unanswered; null in the server role, outside a request, or once answered. A handler reading several
+ * cells (`GET /brands/:brandId/campaign-revenue`, one cell per channel) narrows to the asked one, so a
+ * replay for one channel never recomputes the brand's every other channel beside it.
+ */
+export function pendingRefreshTarget(): { view: string; familyKey: string } | null {
+  const target = replayStore.getStore()?.target;
+  return target ? { view: target.view, familyKey: target.familyKey } : null;
+}
+
+/**
  * The request this async context is answering, as the keeper would replay it: its path + query and its
  * headers minus the api key (never stored — the keeper injects this service's own). `null` outside a
  * GET request. `precompute` is true when the keeper itself sent the request.

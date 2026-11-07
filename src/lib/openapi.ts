@@ -1125,6 +1125,45 @@ registry.registerPath({
   },
 });
 
+// ── GET /brands/:brandId/campaign-revenue (CAMPAIGN-MONEY-ONE-READ-1108) ──────────────────────
+const brandCampaignRevenueChannelErrorSchema = z.object({
+  featureSlug: z.string(),
+  error: z.string(),
+  reason: z.enum(["channel_read_failed", "contacted_value_unavailable"]).describe("channel_read_failed = this channel's read failed (logged); contacted_value_unavailable = a producer the contacted value rests on could not be read."),
+});
+const brandCampaignRevenueResponseSchema = z.object({
+  brandId: z.string(),
+  pricing: z.enum(["gross", "net"]).describe("The pricing basis every channel body below is read on (echo of ?pricing=, default gross)."),
+  channels: z
+    .array(z.union([featureRevenueGroupedResponseRef, brandCampaignRevenueChannelErrorSchema]))
+    .describe("One element per ACQUISITION CHANNEL the brand has campaigns on (from its campaign-service rows; active, not retired for a successor, an acquisition channel), ascending by featureSlug. Each element IS the body `GET /features/{featureSlug}/revenue?brandId=&groupBy=campaignId&pricing=` serves for that channel (the same Gold cell), so every campaign row equals its per-channel row. A channel whose read failed states `{featureSlug, error, reason}` in its slot; the other channels still answer. Nothing is summed across channels: a campaign lives on exactly one."),
+});
+const brandCampaignRevenueResponseRef = registry.register("BrandCampaignRevenueResponse", brandCampaignRevenueResponseSchema);
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/campaign-revenue",
+  summary: "Every campaign's money for one brand, across all of its channels, in one read",
+  description:
+    "The per-campaign money (one lean group per campaign: costEconomics, outcomes, expectedReturn, campaignIdentity) of EVERY acquisition channel the brand runs, in one answer, so the dashboard's campaign list costs one read instead of one `/features/{featureSlug}/revenue?groupBy=campaignId` per channel. " +
+    "The brand-level work (campaign rows, ownership, declared funnels) runs once; each channel's body is served from the SAME Gold cell as its per-channel read, so figures are identical and freshness is the same (stale-while-revalidate). The per-channel read is unchanged.",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string() }),
+    query: z.object({
+      pricing: z.enum(["gross", "net"]).describe("Pricing basis for every money figure, as on the per-channel read. Omit or 'gross' = gross; 'net' = what the org pays (every customer money reader sends net).").optional(),
+      cause: z.string().describe("WHOSE WINS THIS READ PRICES, as on the per-channel read (comma-separated subset of outreach | other | unstated). Omitted = the default priced causes.").optional(),
+    }),
+  },
+  responses: {
+    200: { description: "One grouped-by-campaign body per channel", content: { "application/json": { schema: brandCampaignRevenueResponseRef } } },
+    400: { description: "Invalid pricing or cause value", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The brand is not held by this org (reason: brand_not_found)", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "campaign-service (the brand's campaign rows) or another downstream read failed", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /features/:featureSlug/workflow-projection ─────────────────────────
 
 // 3-grain projection ladder (crossOrg → brand → audience) + a resolved pick, keyed per

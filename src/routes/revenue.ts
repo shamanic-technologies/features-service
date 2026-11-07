@@ -15,7 +15,7 @@ import { fetchPricingFunnels } from "../lib/reading-funnels.js";
 import { funnelLeg, funnelsContainingLeg } from "../lib/funnel-legs.js";
 import { STEP_SIGNAL } from "../lib/value-added.js";
 import { computeTakeoverReturn, type TakeoverReturn } from "../lib/value-added-io.js";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -73,7 +73,9 @@ import {
   causeByOutcomeOf,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
-import { servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { servedCachedJson, sendSnapshotJson, buildScopeKey, SnapshotJson } from "../lib/view-cache.js";
+import { pendingRefreshTarget } from "../lib/view-refresher.js";
+import { servedJsonTextOf } from "../lib/served-leg-keys.js";
 import { expectedReturnForBrand, expectedReturnForCampaign, expectedReturnForOffer } from "../lib/expected-return.js";
 import { servedRevenueBody } from "../lib/retired-returns.js";
 import {
@@ -2261,6 +2263,154 @@ export async function computeFeatureRevenue(
  */
 type RevenueCostBasis = "billed" | "actual";
 
+/**
+ * The pricing context every `/features/:slug/revenue` grain prices on, from the brand's declared funnels
+ * (read ONCE per request; a brand-wide read over several channels reads them once for all of them).
+ * Pure: `econ` + `decl` are the cache-key parts, `pricingForIdentity` narrows to one campaign identity.
+ */
+export function revenuePricingOf(funnel: ReturnType<typeof getFunnel>, declaredFunnels: DeclaredSalesFunnel[]) {
+  const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
+  const econ = brandPriced ? pricedFingerprint(brandPriced) : undefined;
+  // WHICH legs carry value is decided by the declared SET, which is not derivable from the economics
+  // fingerprint (two brands can share rates and declare different funnels), so it rides the key too.
+  const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
+
+  /**
+   * The pricing for one campaign identity. A campaign is offer × LEG × channel (wave C1: the funnel a
+   * campaign row states is no longer read to price it), so a campaign-scoped read is priced on the
+   * brand's reading funnels that contain the campaign's OWN legs — not on the brand's whole set. A
+   * campaign stating no leg,
+   * or one no reading funnel contains, falls back to the brand-level pick. Pure — reuses the one read.
+   */
+  const pricingForIdentity = (identity: { legKeys: string[] } | null | undefined): FunnelPricedEconomics | undefined => {
+    if (!brandPriced) return undefined;
+    const legs = identity?.legKeys ?? [];
+    const own = declaredFunnels.filter((f) => legs.some((leg) => funnelsContainingLeg(leg).includes(f.funnelKey)));
+    if (own.length === 0) return brandPriced;
+    return priceOnDeclaredFunnel(own, own.length === 1 ? own[0].funnelKey : undefined);
+  };
+  return { brandPriced, econ, decl, pricingForIdentity };
+}
+
+/** What one channel's `?groupBy=campaignId` cell needs: the request's identity and pricing context. */
+export interface RevenueByCampaignArgs {
+  featureSlug: string;
+  brandId: string;
+  orgId: string;
+  runId: string;
+  traceHeaders: Request["headers"];
+  headers: DownstreamHeaders;
+  funnel: ReturnType<typeof getFunnel>;
+  econ: string | undefined;
+  decl: string | undefined;
+  pricingForIdentity: ReturnType<typeof revenuePricingOf>["pricingForIdentity"];
+  pricing: Pricing;
+  costBasis: RevenueCostBasis;
+  causes: ReturnType<typeof parseOutcomeCauses> & {};
+  causeKey: ReturnType<typeof causeScopeKeyPart>;
+}
+
+/**
+ * The `?groupBy=campaignId` body of ONE channel (one lean group per campaign), served through its Gold
+ * cell. The per-channel read and the brand-wide `GET /brands/:brandId/campaign-revenue` both serve THIS
+ * cell, so a campaign's row is byte-the-same on both.
+ */
+export async function servedRevenueByCampaign({ featureSlug, brandId, orgId, runId, traceHeaders, headers, funnel, econ, decl, pricingForIdentity, pricing, costBasis, causes, causeKey }: RevenueByCampaignArgs) {
+  const campaignPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
+  const payload = await servedCachedJson({
+    view: costBasis === "actual" ? "revenue-grouped-actual-cost" : "revenue-grouped",
+    responseShape: costBasis === "actual" ? undefined : routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
+    scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing: campaignPricing, econ, decl, cause: causeKey }),
+    orgId,
+    compute: async () => {
+      const [campaignIds, families] = await Promise.all([
+        fetchCampaignIdsWithRuns(brandId, featureSlug, headers),
+        fetchCampaignFamiliesSoft(brandId, featureSlug, headers),
+      ]);
+
+      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, traceHeaders).catch(() => {});
+
+      // ONE compute per IDENTITY, not per campaign row: the members of a family answer to the
+      // same campaign, so recomputing per row would be the same figure N times. Every member id
+      // still gets a group carrying it, so a consumer keyed on any campaign id keeps resolving.
+      // Economics are brand-scoped (identical across campaigns) — resolved ONCE above and shared.
+      const byIdentity = new Map<string, string[]>();
+      for (const cid of campaignIds) {
+        const key = families.identityOf(cid)?.key ?? `campaign:${cid}`;
+        const bucket = byIdentity.get(key);
+        if (bucket) bucket.push(cid);
+        else byIdentity.set(key, [cid]);
+      }
+
+      const groups = (
+        await Promise.all(
+          [...byIdentity.values()].map(async (idsWithRuns) => {
+            // The family's WHOLE membership scopes the compute — a member with no runs of its
+            // own still belongs to the campaign, and dropping it would drop its leads.
+            const identity = families.identityOf(idsWithRuns[0]);
+            const scope = identity?.campaignIds ?? idsWithRuns;
+            // The row of a sales funnel PIPE reads its own spend, exactly as its own `?campaignId=` read does.
+            const pipeAttribution = await resolvePipeSpendAttribution({ brandId, featureSlug, pipeCampaignIds: scope, headers });
+            return withPipeSpendAttribution(pipeAttribution, async () => {
+              const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
+              // A campaign that took its people over is credited only the value it adds (the same block its own read serves).
+              const takeover = costBasis === "actual" ? null : await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), campaignPricing, headers);
+              if (takeover) {
+                body.headline = { ...body.headline, ...takeover.headline };
+                body.costEconomics = takeover.costEconomics;
+                body.maturity = takeover.maturity;
+              }
+              // On the actual-cost basis: the identity's billed spend on rows with no known vendor
+              // cost, read on the same scope its cost was.
+              const unpricedCents =
+                costBasis === "actual"
+                  ? (await fetchRunsCostCents(brandId, scope, featureSlug, headers, "vendorUnpriced")).committedCents
+                  : null;
+              const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
+                unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
+              // NEVER EMPTY (owner 2026-10-11): the identity's mature return, else its sales path's (`lib/expected-return.ts`).
+              const expectedReturn =
+                costBasis === "actual"
+                  ? undefined
+                  : await expectedReturnForCampaign(
+                      headers,
+                      brandId,
+                      { offerId: identity?.offerId ?? null, featureSlug, legKeys: identity?.legKeys ?? [] },
+                      body.costEconomics.maturity,
+                    );
+              // LEDGER-ONLY-1107-P2: the group's outcome counts are its identity's campaigns' ledger Units.
+              const groupLedger = await readLedgerScope(brandId, ledgerBasisOf(campaignPricing), scope, "feature revenue grouped");
+              const ledgerOutcomes = (withLedgerCounts({ outcomes: body.outcomes }, groupLedger, "campaign") as { outcomes: typeof body.outcomes; ledgerCounts: unknown });
+              return idsWithRuns.map((cid) => stamp({
+                campaignId: cid,
+                campaignIdentity: describeIdentity(identity, cid),
+                headline: body.headline,
+                costEconomics: body.costEconomics,
+                ...(expectedReturn ? { expectedReturn } : {}),
+                // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
+                // Totalled over the identity exactly as the money is (the compute above already runs
+                // over the family's WHOLE membership), and deduped inside it, so a lead served under
+                // two member rows is ONE person here as it is one person to the brand. Every member
+                // of an identity therefore carries the identical block, like the money.
+                outcomes: ledgerOutcomes.outcomes,
+                ledgerCounts: ledgerOutcomes.ledgerCounts,
+                // LEDGER-ONLY-1107-P2: per-leg flash / mature person figures are not ledger figures.
+                maturity: null,
+              }));
+            });
+          }),
+        )
+      ).flat();
+
+      traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, traceHeaders).catch(() => {});
+
+      return servedRevenueBody(await withLedgerRealizedReturn({ featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups }, brandId, pricing === "gross" ? "gross" : "net"));
+    },
+  });
+  return payload;
+}
+
+
 async function handleFeatureRevenue(req: Request, res: Response, costBasis: RevenueCostBasis) {
   const { featureSlug } = req.params;
   const { orgId, userId, runId, featureSlug: headerFeatureSlug } = req as AuthenticatedRequest;
@@ -2403,26 +2553,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     const declaredFunnels: DeclaredSalesFunnel[] = funnel
       ? (await Promise.all([fetchDeclaredFunnelsSoft(brandId, orgId, offerId), assertBrandHeld(brandId, headers)]))[0]
       : [];
-    const brandPriced = funnel ? priceOnDeclaredFunnel(declaredFunnels) : undefined;
-    const econ = brandPriced ? pricedFingerprint(brandPriced) : undefined;
-    // WHICH legs carry value is decided by the declared SET, which is not derivable from the economics
-    // fingerprint (two brands can share rates and declare different funnels), so it rides the key too.
-    const decl = funnel ? declaredFunnels.map((f) => f.funnelKey).sort().join("+") || "none" : undefined;
-
-    /**
-     * The pricing for one campaign identity. A campaign is offer × LEG × channel (wave C1: the funnel a
-     * campaign row states is no longer read to price it), so a campaign-scoped read is priced on the
-     * brand's reading funnels that contain the campaign's OWN legs — not on the brand's whole set. A
-     * campaign stating no leg,
-     * or one no reading funnel contains, falls back to the brand-level pick. Pure — reuses the one read.
-     */
-    const pricingForIdentity = (identity: { legKeys: string[] } | null | undefined): FunnelPricedEconomics | undefined => {
-      if (!brandPriced) return undefined;
-      const legs = identity?.legKeys ?? [];
-      const own = declaredFunnels.filter((f) => legs.some((leg) => funnelsContainingLeg(leg).includes(f.funnelKey)));
-      if (own.length === 0) return brandPriced;
-      return priceOnDeclaredFunnel(own, own.length === 1 ? own[0].funnelKey : undefined);
-    };
+    const { brandPriced, econ, decl, pricingForIdentity } = revenuePricingOf(funnel, declaredFunnels);
 
     // ── Grouped: one lean group per WORKFLOW the brand has run ──────────────────
     //
@@ -2598,99 +2729,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
     // ── Grouped: one lean group per campaign (dashboard campaigns list) ──────────
     // Served through the Gold snapshot cache (O(1) read; the fan-out recomputes off-path ~per TTL).
     if (groupBy === "campaignId") {
-      const campaignPricing: Pricing = costBasis === "actual" ? "vendor" : pricing;
-      const payload = await servedCachedJson({
-        view: costBasis === "actual" ? "revenue-grouped-actual-cost" : "revenue-grouped",
-        responseShape: costBasis === "actual" ? undefined : routeResponseShapeFingerprint("/features/{featureSlug}/revenue"),
-        scopeKey: buildScopeKey(featureSlug, { orgId, brandId, groupBy: "campaignId", pricing: campaignPricing, econ, decl, cause: causeKey }),
-        orgId,
-        compute: async () => {
-          const [campaignIds, families] = await Promise.all([
-            fetchCampaignIdsWithRuns(brandId, featureSlug, headers),
-            fetchCampaignFamiliesSoft(brandId, featureSlug, headers),
-          ]);
-
-          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-start", detail: `featureSlug=${featureSlug}, brandId=${brandId}, campaigns=${campaignIds.length}` }, req.headers).catch(() => {});
-
-          // ONE compute per IDENTITY, not per campaign row: the members of a family answer to the
-          // same campaign, so recomputing per row would be the same figure N times. Every member id
-          // still gets a group carrying it, so a consumer keyed on any campaign id keeps resolving.
-          // Economics are brand-scoped (identical across campaigns) — resolved ONCE above and shared.
-          const byIdentity = new Map<string, string[]>();
-          for (const cid of campaignIds) {
-            const key = families.identityOf(cid)?.key ?? `campaign:${cid}`;
-            const bucket = byIdentity.get(key);
-            if (bucket) bucket.push(cid);
-            else byIdentity.set(key, [cid]);
-          }
-
-          const groups = (
-            await Promise.all(
-              [...byIdentity.values()].map(async (idsWithRuns) => {
-                // The family's WHOLE membership scopes the compute — a member with no runs of its
-                // own still belongs to the campaign, and dropping it would drop its leads.
-                const identity = families.identityOf(idsWithRuns[0]);
-                const scope = identity?.campaignIds ?? idsWithRuns;
-                // The row of a sales funnel PIPE reads its own spend, exactly as its own `?campaignId=` read does.
-                const pipeAttribution = await resolvePipeSpendAttribution({ brandId, featureSlug, pipeCampaignIds: scope, headers });
-                return withPipeSpendAttribution(pipeAttribution, async () => {
-                  const body = await computeFeatureRevenue(featureSlug, brandId, scope, funnel, headers, undefined, pricingForIdentity(identity), false, campaignPricing, undefined, undefined, undefined, causes);
-                  // A campaign that took its people over is credited only the value it adds (the same block its own read serves).
-                  const takeover = costBasis === "actual" ? null : await takeoverReturnFor(identity, featureSlug, brandId, pricingForIdentity(identity), campaignPricing, headers);
-                  if (takeover) {
-                    body.headline = { ...body.headline, ...takeover.headline };
-                    body.costEconomics = takeover.costEconomics;
-                    body.maturity = takeover.maturity;
-                  }
-                  // On the actual-cost basis: the identity's billed spend on rows with no known vendor
-                  // cost, read on the same scope its cost was.
-                  const unpricedCents =
-                    costBasis === "actual"
-                      ? (await fetchRunsCostCents(brandId, scope, featureSlug, headers, "vendorUnpriced")).committedCents
-                      : null;
-                  const stamp = <G extends { costEconomics: CostEconomics; outcomes?: object | null }>(g: G) =>
-                    unpricedCents === null ? g : stampVendorGroup(g, unpricedCents);
-                  // NEVER EMPTY (owner 2026-10-11): the identity's mature return, else its sales path's (`lib/expected-return.ts`).
-                  const expectedReturn =
-                    costBasis === "actual"
-                      ? undefined
-                      : await expectedReturnForCampaign(
-                          headers,
-                          brandId,
-                          { offerId: identity?.offerId ?? null, featureSlug, legKeys: identity?.legKeys ?? [] },
-                          body.costEconomics.maturity,
-                        );
-                  // LEDGER-ONLY-1107-P2: the group's outcome counts are its identity's campaigns' ledger Units.
-                  const groupLedger = await readLedgerScope(brandId, ledgerBasisOf(campaignPricing), scope, "feature revenue grouped");
-                  const ledgerOutcomes = (withLedgerCounts({ outcomes: body.outcomes }, groupLedger, "campaign") as { outcomes: typeof body.outcomes; ledgerCounts: unknown });
-                  return idsWithRuns.map((cid) => stamp({
-                    campaignId: cid,
-                    campaignIdentity: describeIdentity(identity, cid),
-                    headline: body.headline,
-                    costEconomics: body.costEconomics,
-                    ...(expectedReturn ? { expectedReturn } : {}),
-                    // The VOLUME half — how much real outcome evidence this row's ROI and %CAC rest on.
-                    // Totalled over the identity exactly as the money is (the compute above already runs
-                    // over the family's WHOLE membership), and deduped inside it, so a lead served under
-                    // two member rows is ONE person here as it is one person to the brand. Every member
-                    // of an identity therefore carries the identical block, like the money.
-                    outcomes: ledgerOutcomes.outcomes,
-                    ledgerCounts: ledgerOutcomes.ledgerCounts,
-                    // LEDGER-ONLY-1107-P2: per-leg flash / mature person figures are not ledger figures.
-                    maturity: null,
-                  }));
-                });
-              }),
-            )
-          ).flat();
-
-          traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
-
-          return servedRevenueBody(await withLedgerRealizedReturn({ featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups }, brandId, pricing === "gross" ? "gross" : "net"));
-        },
-      });
-
-      return sendSnapshotJson(res, payload);
+      return sendSnapshotJson(
+        res,
+        await servedRevenueByCampaign({ featureSlug, brandId, orgId, runId, traceHeaders: req.headers, headers, funnel, econ, decl, pricingForIdentity, pricing, costBasis, causes, causeKey }),
+      );
     }
 
     // ── Overview / lens: single brand-scoped (optionally one-campaign) response ──
@@ -2879,5 +2921,97 @@ router.get("/features/:featureSlug/revenue", apiKeyAuth, (req, res) => handleFea
 router.get("/internal/features/:featureSlug/revenue/actual-cost", apiKeyAuth, (req, res) =>
   handleFeatureRevenue(req, res, "actual"),
 );
+
+
+// ── One brand's per-campaign money across EVERY channel (CAMPAIGN-MONEY-ONE-READ-1108) ─────────────
+//
+// The dashboard's campaign list needs each campaign's money (ROI, $ invested, outcomes) for the
+// selected brand on every page. It used to ask `/features/:slug/revenue?groupBy=campaignId` ONCE PER
+// CHANNEL the brand runs (~15 reads a page view, each re-polled every 5s): each read re-did the same
+// brand-level work on the request path (the feature row, the declared funnels, the ownership check)
+// before its O(1) snapshot read, and under load each answer took 6-31s.
+//
+// This read answers the same question once: the brand's channels come from its own campaign rows
+// (campaign-service, the owner of a campaign's channel), the brand-level work runs ONCE, and each
+// channel's body is THE SAME Gold cell the per-channel read serves (`servedRevenueByCampaign`, same
+// view, same scope key), so every campaign row here is byte-equal to that channel's own read. Each
+// element of `channels[]` IS that read's body (re-spelled for its channel like the per-channel route
+// does). Nothing is summed across channels: a campaign lives on exactly one channel.
+//
+// A channel whose read fails states `{ featureSlug, error, reason? }` in its slot, never the whole read
+// failing for it: the per-channel reads failed one channel at a time too, and the other cards stand.
+router.get("/brands/:brandId/campaign-revenue", apiKeyAuth, async (req, res) => {
+  const { brandId } = req.params;
+  const { orgId, userId, runId } = req as AuthenticatedRequest;
+  const pricing = parsePricing(req.query.pricing);
+  if (pricing === null) {
+    return res.status(400).json({ error: "pricing must be one of: gross, net" });
+  }
+  const causes = parseOutcomeCauses(req.query.cause);
+  if (causes === null) {
+    return res.status(400).json({
+      error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
+      reason: "cause_unrecognised",
+    });
+  }
+  const causeKey = causeScopeKeyPart(causes);
+  const base = { orgId, userId, runId };
+
+  try {
+    const [rows] = await Promise.all([fetchBrandCampaignRows(brandId, undefined, base), assertBrandHeld(brandId, base)]);
+    const rowSlugs = [...new Set(rows.map((r) => r.featureSlug).filter((s): s is string => typeof s === "string" && s.length > 0))];
+    // The brand's ACQUISITION CHANNELS among them — the published channel rule (active, not retired for
+    // a successor, an acquisition channel): the set the dashboard lists campaign rows for. A PR/visibility
+    // product the brand also runs performs no leg and has no row to price here.
+    const featureRows = rowSlugs.length === 0 ? [] : await db.query.features.findMany({ where: inArray(features.slug, rowSlugs) });
+    let slugs = featureRows
+      .filter((f) => f.status === "active" && f.supersededBySlug == null && f.acquisitionChannel != null)
+      .map((f) => f.slug)
+      .sort();
+    // Refresher replay of ONE channel's cell (lib/view-refresher.ts): only that channel is touched.
+    const target = pendingRefreshTarget();
+    if (target?.view === "revenue-grouped") slugs = slugs.filter((slug) => target.familyKey.startsWith(`${slug}|`));
+
+    const declaredFunnels = slugs.some((slug) => getFunnel(slug)) ? await fetchDeclaredFunnelsSoft(brandId, orgId, undefined) : [];
+
+    const parts = await mapWithConcurrency(slugs, 8, async (slug) => {
+      const funnel = getFunnel(slug);
+      const { econ, decl, pricingForIdentity } = revenuePricingOf(funnel, funnel ? declaredFunnels : []);
+      try {
+        const payload = await servedRevenueByCampaign({
+          featureSlug: slug,
+          brandId,
+          orgId,
+          runId,
+          traceHeaders: req.headers,
+          headers: { ...base, featureSlug: slug },
+          funnel,
+          econ,
+          decl,
+          pricingForIdentity,
+          pricing,
+          costBasis: "billed",
+          causes,
+          causeKey,
+        });
+        return servedJsonTextOf(payload.json, slug);
+      } catch (error) {
+        if (error instanceof BrandOwnershipError) throw error;
+        console.error(`[features-service] brand campaign revenue: channel ${slug} failed for brand ${brandId}:`, error);
+        const reason = error instanceof ContactedValueUnavailableError ? "contacted_value_unavailable" : "channel_read_failed";
+        return JSON.stringify({ featureSlug: slug, error: "Failed to compute feature revenue", reason });
+      }
+    });
+
+    const text = `{"brandId":${JSON.stringify(brandId)},"pricing":${JSON.stringify(pricing)},"channels":[${parts.join(",")}]}`;
+    return sendSnapshotJson(res, new SnapshotJson(text));
+  } catch (error) {
+    if (error instanceof BrandOwnershipError) {
+      return res.status(404).json({ error: error.message, reason: "brand_not_found", brandId: error.brandId });
+    }
+    console.error("[features-service] Brand campaign revenue error:", error);
+    return res.status(502).json({ error: "Failed to compute brand campaign revenue" });
+  }
+});
 
 export default router;
