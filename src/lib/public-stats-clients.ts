@@ -112,8 +112,13 @@ export async function fetchStatedPublicWorkflows(
 ): Promise<WorkflowMetadata[]> {
   const url = `${process.env.WORKFLOW_SERVICE_URL}/public/workflows?featureSlugs=${encodeURIComponent(featureSlugs)}&status=${status}`;
   // Slow-moving catalogue read: an interactive view reuses it 30s, re-read behind the answer
-  // (fetch-retry.ts `shareForMs`, features-service#1045).
-  const response = await fetchWithRetry(url, { headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! } }, fresh ? {} : { shareForMs: 30_000 });
+  // (fetch-retry.ts `shareForMs`, features-service#1045); outside a view it is held 30 s process-wide
+  // (`holdOutsideViewMs`, BOX-LOAD-1107). A write path asks `fresh`.
+  const response = await fetchWithRetry(
+    url,
+    { headers: { "x-api-key": process.env.WORKFLOW_SERVICE_API_KEY! } },
+    fresh ? {} : { shareForMs: 30_000, holdOutsideViewMs: 30_000 },
+  );
 
   if (!response.ok) {
     const body = await response.text();

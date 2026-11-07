@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { routeChannelOf, servedJsonText } from "../lib/served-leg-keys.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { fetchReplyLatencyByCampaignGroups } from "../lib/campaign-next-steps-io.js";
 import type { LatencyMetric } from "../lib/campaign-next-steps.js";
@@ -2664,8 +2665,23 @@ export async function handlePublicChannels(res: import("express").Response, incl
       };
     },
   });
-  res.json(includeInline ? payload : { ...payload, triggers: payload.triggers.filter(isEntryDoor) });
+  // The served TEXT is built once per cached build and variant (BOX-LOAD-1107): campaign-service reads this ~233 KB body
+  // ~110 times a minute, and each `res.json` re-stringified, re-parsed and re-walked it for the outbound leg spelling
+  // (~50 ms of the serving event loop per read). Same function, same text, same headers as `res.json`.
+  let texts = channelCatalogueTexts.get(payload);
+  if (!texts) {
+    texts = {};
+    channelCatalogueTexts.set(payload, texts);
+  }
+  const routeChannel = routeChannelOf(res.req);
+  const variant = `${includeInline ? "inline" : "entry"}|${routeChannel ?? ""}`;
+  const text = (texts[variant] ??= servedJsonText(includeInline ? payload : { ...payload, triggers: payload.triggers.filter(isEntryDoor) }, routeChannel)!);
+  if (!res.get("Content-Type")) res.set("Content-Type", "application/json");
+  res.send(text);
 }
+
+/** The served text of each cached catalogue build, per variant; dropped with the build it was made from. */
+const channelCatalogueTexts = new WeakMap<ChannelCataloguePayload, Record<string, string>>();
 
 /** One (channel × funnel) pair. It carries the pair's MINIMUM RUN LENGTH already composed
  *  (`ComposedMinimumCommitment`), read straight off the catalogue entry this row was built from, so a
