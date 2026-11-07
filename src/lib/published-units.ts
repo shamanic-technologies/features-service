@@ -404,6 +404,16 @@ export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPer
   return { ...base, roiMultiple: round(valuePerUnitUsd / cost.costPerUnitUsd, 2), unavailableReason: null };
 }
 
+/**
+ * PURE. No catalogue pipe prices the outcome: the expected cost of one more Unit is what one cost to date (ours, else
+ * every row), the catalogue's own last rung (`expectedPipeCost` `own_spend`, owner rule: a cost is never blank).
+ */
+export function withOwnSpendCost(e: ExpectedReturn, t: Pick<Totals, "units" | "spentUsd">): ExpectedReturn {
+  if (e.unavailableReason !== "no_pipe_prices_outcome" || !(t.units > 0) || !(t.spentUsd > 0)) return e;
+  const own = expectedReturnOf(e.valuePerUnitUsd, { costPerUnitUsd: round(t.spentUsd / t.units), costSource: "own_spend", basis: "measured", pipeId: "" }, null);
+  return { ...own, pipeId: null };
+}
+
 const NO_VALUE: UnitValue = { valuePerUnitUsd: null, step: null, offerId: null, lifetimeRevenueSource: null, unavailableReason: "not_priced" };
 
 const zero = (): Totals => ({
@@ -530,7 +540,7 @@ export function publishedUnitsOf(
     visitsMeasured,
     visitsUnavailableReason: visitsMeasured ? null : "no_visit_attribution_on_outcome",
     measuredReturn: measuredReturnOf(ours.units, ours.units > 0 && ours.unvaluedRows === 0 ? ours.valueUsd : null, ours.spentUsd, ours.unvaluedRows > 0),
-    expectedReturn: opts.expected ?? expectedReturnOf(null, null, "not_priced"),
+    expectedReturn: withOwnSpendCost(opts.expected ?? expectedReturnOf(null, null, "not_priced"), ours.units > 0 && ours.spentUsd > 0 ? ours : all),
   };
 }
 

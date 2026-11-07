@@ -165,6 +165,9 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
       const unvalued = publishedUnitsOf("x_post_published", [post("a")], credit);
       expect(unvalued.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "unit_has_no_value" });
       expect(unvalued.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "not_priced" });
+      // No catalogue pipe prices the outcome: expected cost = what one cost to date (ours), never blank.
+      const noPipe = publishedUnitsOf("x_post_published", [post("a"), post("b")], credit, { unitValueOf, expected: expectedReturnOf(2, null, null) });
+      expect(noPipe.expectedReturn).toMatchObject({ roiMultiple: 4, costPerUnitUsd: 0.5, costSource: "own_spend", basis: "measured", pipeId: null, unavailableReason: null });
       expect(publishedUnitsOf("x_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf }).measuredReturn.unavailableReason).toBe("nothing_spent_yet");
     });
   });
