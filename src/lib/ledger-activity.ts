@@ -47,7 +47,7 @@ export function withLedgerActivity<T extends object>(input: T, scope: LedgerScop
         ...calls,
         totals: { ...(calls.totals ?? {}), requested: null, placed: null, accepted: null, connected: booked.units, outcomes: null },
         daily: (booked.row?.past ?? []).filter((d) => d.units > 0).map((d) => ({ day: d.date, requested: null, placed: null, accepted: null, connected: d.units, outcomes: null })),
-        spend: calls.spend ? { ...calls.spend, costPerPlacedCallUsd: null, costPerConnectedCallUsd: committed !== null && booked.units ? Math.round((committed / booked.units) * 100) / 100 : null } : calls.spend,
+        spend: calls.spend ? { ...calls.spend, costPerPlacedCallUsd: null, costPerConnectedCallUsd: committed !== null && booked.ourUnits ? Math.round((committed / booked.ourUnits) * 100) / 100 : null } : calls.spend,
         ledgerUnavailableReason: booked.units === null ? booked.reason : null,
       };
     }

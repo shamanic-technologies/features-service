@@ -1,7 +1,8 @@
 /**
  * LEDGER-ONLY-1107-P2: `/offers/:offerId/outcomes` on the general ledger. PURE.
  *  - each outcome row: count = the BRAND's ledger Units of the step (Today's count), each leg's = the Units its own
- *    campaigns' runs produced; $ / outcome = the row's spend ÷ those Units; value = Units × value per outcome.
+ *    campaigns' runs produced; $ / outcome = the row's spend ÷ OUR Units; value = OUR Units × value per outcome
+ *    (LEDGER-OTHER-FACTORY-1107: the count is the total, another factory's Units in `otherFactoryUnits`, in no money figure).
  *  - the pipeline ladder: each step's count = the brand's ledger Units; customers won = the ledger's Paid client Units.
  *  - figures counting PEOPLE (contacted, companies, conversion between steps, the exclusive ladder's people per row, its
  *    conversion and history, the flash / mature pair) have no ledger twin: null + `not_a_ledger_outcome`.
@@ -19,8 +20,9 @@ function figures(row: Obj, scope: LedgerScope, step: string): Obj {
   return {
     ...row,
     recipientsReached: c.units,
-    costPerOutcomeUsd: per(row.spentUsd, c.units),
-    valueUsd: times(row.valuePerOutcomeUsd, c.units),
+    otherFactoryUnits: c.otherFactoryUnits,
+    costPerOutcomeUsd: per(row.spentUsd, c.ourUnits),
+    valueUsd: times(row.valuePerOutcomeUsd, c.ourUnits),
     unmeasuredReason: c.units === null ? c.reason : row.unmeasuredReason ?? null,
     producerGap: c.producerGap,
     maturity: null,
@@ -39,7 +41,7 @@ export function withLedgerOfferOutcomes<T extends object>(input: T, brand: Ledge
   if (p) {
     const ladder = ((p.ladder as Obj[] | undefined) ?? []).map((s) => {
       const c = ledgerCountOfStep(brand, (s.step as { key: string }).key);
-      return { ...s, recipientsReached: c.units, pricedRecipientsReached: c.units, pricedValueUsd: times(s.valuePerOutcomeUsd, c.units), conversionFromPrevious: null, pricedConversionFromPrevious: null, unmeasuredReason: c.units === null ? c.reason : null };
+      return { ...s, recipientsReached: c.units, otherFactoryUnits: c.otherFactoryUnits, pricedRecipientsReached: c.ourUnits, pricedValueUsd: times(s.valuePerOutcomeUsd, c.ourUnits), conversionFromPrevious: null, pricedConversionFromPrevious: null, unmeasuredReason: c.units === null ? c.reason : null };
     });
     const paid = ledgerCountOfStep(brand, "paid_client");
     const cw = p.customersWon as Obj | null | undefined;
@@ -50,7 +52,7 @@ export function withLedgerOfferOutcomes<T extends object>(input: T, brand: Ledge
       companiesContacted: null,
       contactedWithoutCompanyCount: null,
       ladder,
-      customersWon: cw ? { ...cw, count: paid.units, leadCount: null, valueUsd: null, otherCausesLeadCount: null, unavailableReason: paid.units === null ? paid.reason : null } : cw,
+      customersWon: cw ? { ...cw, count: paid.units, otherFactoryUnits: paid.otherFactoryUnits, leadCount: null, valueUsd: null, otherCausesLeadCount: null, unavailableReason: paid.units === null ? paid.reason : null } : cw,
       exclusiveLadder: ex
         ? {
             ...ex,

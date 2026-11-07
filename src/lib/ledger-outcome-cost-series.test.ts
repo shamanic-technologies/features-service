@@ -31,7 +31,14 @@ const step: OutcomeCostStepSeries = {
     ret: accountingReturn([], null, null, null),
   }),
 };
-const count = (units: number | null): LedgerCount => ({ units, reason: units === null ? "outcome_not_declared_in_ledger" : null, producerGap: null, row: null });
+const count = (units: number | null, ourUnits: number | null = units): LedgerCount => ({
+  units,
+  ourUnits,
+  otherFactoryUnits: units === null || ourUnits === null ? null : { total: units - ourUnits, anotherFactory: units - ourUnits, noProof: 0 },
+  reason: units === null ? "outcome_not_declared_in_ledger" : null,
+  producerGap: null,
+  row: null,
+});
 
 describe("withLedgerStepSeries: why the actual cost per Unit is empty (OUTCOME-ACCOUNTING-GAPS-1107)", () => {
   it("the brand holds Units no run of the campaigns making the step declared: declared outside these campaigns", () => {
@@ -41,6 +48,11 @@ describe("withLedgerStepSeries: why the actual cost per Unit is empty (OUTCOME-A
     expect(a.costPerUnit.actualUsd).toBeNull();
     expect(a.costPerUnit.actualUnits).toBe(0);
     expect(a.costPerUnit.actualUnavailableReason).toBe("units_declared_outside_these_campaigns");
+  });
+
+  it("every Unit on the brand ledger was made by another factory (the client's CRM or team): not proven ours", () => {
+    const a = withLedgerStepSeries(step, count(3, 0), count(0), 0.2, null, null).accounting!;
+    expect(a.costPerUnit.actualUnavailableReason).toBe("units_not_proven_ours");
   });
 
   it("no Unit anywhere on the brand ledger: no Unit yet", () => {

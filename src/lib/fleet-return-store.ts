@@ -2,7 +2,7 @@
  * Persistence for the per-brand fleet snapshot (`fleet_return_snapshots`, historical table name): the rows the
  * homepage's recently-started client pick ranks (`lib/showcase-clients.ts`). It used to hold each brand's
  * pipeline and spend for the public return medians; those are deleted (ROI-CONSISTENCY-1103) and a row now
- * holds only when the brand began and how far its funnel reached. A row stored before carries more fields,
+ * holds how far its funnel reached and its meetings booked + positive replies (SHOWCASE-MAX-1107). A row stored before carries more fields,
  * ignored on read.
  *
  * Both functions are FAIL-SOFT (log loud, never throw): the read feeds a marketing surface whose consumer
@@ -17,15 +17,16 @@ import { fleetReturnSnapshots } from "../db/schema.js";
 export interface BrandSnapshotRow {
   brandId: string;
   /**
-   * The first UTC day (`YYYY-MM-DD`) this brand was ever billed for this channel (a brand claimed by several orgs
-   * takes the earliest). NULL = no such day (never billed, the read degraded): never a substituted date.
-   */
-  startedOn?: string | null;
-  /**
    * People on the furthest RUNG the brand's funnel reached on the channel (`furthestRungReached`), never the
    * outreach base. `0` is measured; NULL = could not be counted.
    */
   outcomeCount?: number | null;
+  /**
+   * Meetings booked and positive replies on the channel, EVERY conversion (the counts the client's own dashboard
+   * reads; SHOWCASE-MAX-1107). NULL = not counted (a row stored before these fields existed).
+   */
+  meetingsBooked?: number | null;
+  positiveReplies?: number | null;
 }
 
 export interface FleetReturnSnapshotRead {
@@ -40,17 +41,15 @@ export function parseRow(raw: unknown): BrandSnapshotRow | null {
   if (typeof r.brandId !== "string") return null;
   // Absent and explicit-null are the same statement ("we have no such figure"); a present-but-wrong-typed value is
   // malformed.
-  const startedOn = r.startedOn;
-  if (startedOn !== undefined && startedOn !== null && typeof startedOn !== "string") return null;
-  const outcomeCount = r.outcomeCount;
-  if (outcomeCount !== undefined && outcomeCount !== null && (typeof outcomeCount !== "number" || !Number.isFinite(outcomeCount))) {
-    return null;
-  }
-  return {
-    brandId: r.brandId,
-    startedOn: (startedOn as string | undefined) ?? null,
-    outcomeCount: (outcomeCount as number | undefined) ?? null,
+  const num = (v: unknown): number | null | false => {
+    if (v === undefined || v === null) return null;
+    return typeof v === "number" && Number.isFinite(v) ? v : false;
   };
+  const outcomeCount = num(r.outcomeCount);
+  const meetingsBooked = num(r.meetingsBooked);
+  const positiveReplies = num(r.positiveReplies);
+  if (outcomeCount === false || meetingsBooked === false || positiveReplies === false) return null;
+  return { brandId: r.brandId, outcomeCount, meetingsBooked, positiveReplies };
 }
 
 /**

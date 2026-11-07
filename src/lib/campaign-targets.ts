@@ -336,6 +336,10 @@ export type LedgerTargetEntry = OfferTargetEntry & {
     outcomeKeys: string[];
     costPerUnitBasis: "every_path" | "own_production" | null;
     producerGap: import("./scope-outcome-ledger.js").LedgerProducerGap | null;
+    /** LEDGER-OTHER-FACTORY-1107: OUR Units of the Target (spent, value and return divide these). */
+    ourUnits: number | null;
+    /** The Target's Units another factory produced (in `outcomesToDate`, in no money figure). */
+    otherFactoryUnits: import("./scope-outcome-ledger.js").OtherFactoryUnits | null;
     ledgerDaysMissing: string[];
   } | null;
 };
@@ -363,16 +367,19 @@ export function offerTargetFromLedger(
       ledger: null,
     };
   }
+  // LEDGER-OTHER-FACTORY-1107: the count is the TOTAL (another factory's Units included, `ledger.otherFactoryUnits`);
+  // spent, value and return are OUR Units' only.
   const units = row.units;
+  const ours = row.ourUnits;
   const spent = row.productionCostUsd;
-  const valueUsd = targetValueUsd !== null && units !== null ? round(units * targetValueUsd, 2) : null;
+  const valueUsd = targetValueUsd !== null && ours !== null ? round(ours * targetValueUsd, 2) : null;
   const measuredReturn: MeasuredReturn =
     units === null
       ? { roiMultiple: null, valueUsd: null, spentUsd: null, unavailableReason: row.unitsUnavailableReason }
       : targetValueUsd === null
         ? { roiMultiple: null, valueUsd: null, spentUsd: spent, unavailableReason: targetValueUnavailableReason ?? "target_has_no_value" }
         : spent === null || spent <= 0
-          ? { roiMultiple: null, valueUsd, spentUsd: spent, unavailableReason: units === 0 ? "no_target_outcome_yet" : "unit_cost_not_in_ledger" }
+          ? { roiMultiple: null, valueUsd, spentUsd: spent, unavailableReason: ours === 0 ? (units !== null && units > 0 ? "no_target_outcome_of_ours_yet" : "no_target_outcome_yet") : "unit_cost_not_in_ledger" }
           : { roiMultiple: round(valueUsd! / spent, 2), valueUsd, spentUsd: spent, unavailableReason: null };
   return {
     ...entry,
@@ -385,6 +392,6 @@ export function offerTargetFromLedger(
     past: row.past.map((p) => ({ date: p.date, outcomes: p.units, cumulativeOutcomes: p.cumulativeUnits })),
     pastUnavailableReason: units === null ? row.unitsUnavailableReason : null,
     projection: { ...entry.projection, ...paceOf(entry.projection.outcomesPerDay, units, now) },
-    ledger: { scope: "brand", outcomeKeys: row.outcomeKeys, costPerUnitBasis: row.costPerUnitBasis, producerGap: row.producerGap, ledgerDaysMissing: row.ledgerDaysMissing },
+    ledger: { scope: "brand", outcomeKeys: row.outcomeKeys, costPerUnitBasis: row.costPerUnitBasis, producerGap: row.producerGap, ourUnits: ours, otherFactoryUnits: row.otherFactoryUnits, ledgerDaysMissing: row.ledgerDaysMissing },
   };
 }

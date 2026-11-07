@@ -223,8 +223,9 @@ export async function computeOfferPipelineGenerated(
   const firstDayOf = firstDayByOrganization(priced.persons);
   const values = new Map(priced.organizationValues);
   const wonRow = ledgerCountOfStep(priced.ledger, "paid_client").row;
-  if (board.lifetimeRevenueUsd !== null) for (const p of wonRow?.past ?? []) if (p.units > 0) {
-    values.set(`ledger:paid_client:${p.date}`, p.units * board.lifetimeRevenueUsd);
+  // LEDGER-OTHER-FACTORY-1107: dollars won by OUR Paid clients only (another factory's are no pipeline of ours).
+  if (board.lifetimeRevenueUsd !== null) for (const p of wonRow?.past ?? []) if (p.ourUnits > 0) {
+    values.set(`ledger:paid_client:${p.date}`, p.ourUnits * board.lifetimeRevenueUsd);
     firstDayOf.set(`ledger:paid_client:${p.date}`, p.date);
   }
   const series = buildPipelineGeneratedSeries({

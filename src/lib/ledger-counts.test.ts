@@ -138,8 +138,8 @@ describe("withLedgerDayChart: pipeline-activity actual bars", () => {
 
 describe("deals: the won column is the ledger's Paid client Units x LTR", () => {
   it("ledger lacks Paid client = won null + its reason; counts null", () => {
-    expect(ledgerUnitsOfRung(scope, "paid_client")).toEqual({ units: null, reason: "outcome_not_declared_in_ledger" });
-    expect(ledgerUnitsOfRung(scope, "engaged")).toEqual({ units: null, reason: NOT_A_LEDGER_OUTCOME });
+    expect(ledgerUnitsOfRung(scope, "paid_client")).toEqual({ units: null, ourUnits: null, otherFactoryUnits: null, reason: "outcome_not_declared_in_ledger" });
+    expect(ledgerUnitsOfRung(scope, "engaged")).toEqual({ units: null, ourUnits: null, otherFactoryUnits: null, reason: NOT_A_LEDGER_OUTCOME });
     const r = withLedgerDealsColumns({ lifetimeRevenueUsd: 500, columns: [{ standing: "customer", basis: "won_value", valueUsd: 6500, leads: [{ valueUsd: 500 }] }, { standing: "sales_interest", basis: "expected_value", valueUsd: 20 }] }, scope) as unknown as Record<string, any>;
     expect(r.columns[0].valueUsd).toBeNull();
     expect(r.columns[0].unitsUnavailableReason).toBe("outcome_not_declared_in_ledger");
