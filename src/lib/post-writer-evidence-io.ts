@@ -4,8 +4,9 @@
  *   - content-generation-service `GET /internal/thread-generations` (what wrote each post: run, template dynasty, model),
  *     the whole feed, keyset-paged oldest first, held 2 minutes and shared by every pipe;
  *   - runs-service `GET /internal/runs/subtree-costs` (each writing run's whole subtree cost, billed basis) and
- *     `GET /internal/outcome-occurrences` (the run's `post_published`, the `website_visit`s consuming it, the signups
- *     consuming those visits);
+ *     `GET /internal/outcome-occurrences` (the post the run produced, under the PIPE's own outcome: its leg's `to` step
+ *     and, when stated finer, its Engine's outcome, read off the catalogue, e.g. `threads_post_published`; the
+ *     `website_visit`s consuming it, the signups consuming those visits);
  *   - social-service `GET /internal/post-metrics` (each post's latest views and engagement, keyed by its publishing run).
  * Which pipe a generation belongs to = its feature + the leg its workflow DYNASTY is assigned on (`workflow_leg_assignments`),
  * never a slug literal. Any read failing throws: the build keeps its previous answer (fail loud, never a silent zero).
@@ -14,6 +15,7 @@ import { fetchWithRetry } from "./fetch-retry.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { pipeLegKeyOf } from "./funnel-legs.js";
 import { listLegAssignments } from "./workflow-leg-assignments.js";
+import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import type { PostGeneration, RunCredit } from "./post-writer-evidence.js";
 
 export interface FeedGeneration extends PostGeneration {
@@ -157,10 +159,12 @@ async function occurrencesOver(ids: readonly string[], idParam: "runIds" | "subj
 const consumesInto = (o: Occurrence, key: string) => (o.consumption?.consumingOutcomes ?? []).some((c) => c.outcomeKey === key);
 
 /**
- * PURE. What the ledger credits to each writing run: its post (`post_published` it produced), the visits consuming that
- * post, the signups consuming those visits (counted once per visit occurrence: one person, one post).
+ * PURE. What the ledger credits to each writing run: its post (an occurrence of the pipe's outcome it produced,
+ * `postKeys`), the visits consuming that post, the signups consuming those visits (counted once per visit occurrence:
+ * one person, one post).
  */
 export function ledgerCredits(
+  postKeys: ReadonlySet<string>,
   runIds: readonly string[],
   published: readonly Occurrence[],
   postConsumptions: readonly Occurrence[],
@@ -171,7 +175,7 @@ export function ledgerCredits(
   const postRun = new Map<string, string>();
   for (const o of published) {
     const e = out.get(o.runId);
-    if (!e || o.direction !== "produced" || o.outcomeKey !== "post_published") continue;
+    if (!e || o.direction !== "produced" || !postKeys.has(o.outcomeKey)) continue;
     e.published = true;
     postRun.set(o.id, o.runId);
   }
@@ -179,7 +183,7 @@ export function ledgerCredits(
   const visitRunPost = new Map<string, string>();
   for (const o of postConsumptions) {
     const src = o.consumption?.sourceOccurrenceId;
-    if (o.direction === "consumed" && o.outcomeKey === "post_published" && src && postRun.has(src) && consumesInto(o, "website_visit")) visitRunPost.set(o.runId, src);
+    if (o.direction === "consumed" && postKeys.has(o.outcomeKey) && src && postRun.has(src) && consumesInto(o, "website_visit")) visitRunPost.set(o.runId, src);
   }
   const visitPost = new Map<string, string>();
   for (const o of visitsProduced) {
@@ -251,6 +255,21 @@ async function readPostMetrics(campaignIds: readonly string[]): Promise<Map<stri
 }
 
 /**
+ * PURE. The outcome(s) one post of the pipe is declared under: the leg's `to` step and, when the pipe states it finer,
+ * its Engine's outcome (MIGRATE-1105 S5). Read off the catalogue, never a key literal (DELETE-POST-PUBLISHED-1107: the
+ * coarse `post_published` it once hard-coded was retired for the network's own outcome).
+ */
+export function pipePostKeysOf(
+  channels: ReadonlyArray<{ slug: string; stepTransitions: ReadonlyArray<{ legKey: string; to: { key: string }; outcome: string | null }> }>,
+  featureSlug: string,
+  legKey: string,
+): Set<string> {
+  const t = channels.find((c) => c.slug === featureSlug)?.stepTransitions.find((x) => x.legKey === legKey || pipeLegKeyOf(featureSlug, x.legKey) === legKey);
+  if (!t) throw new Error(`post writer evidence: no catalogue pipe ${featureSlug}|${legKey}`);
+  return new Set([t.to.key, ...(t.outcome ? [t.outcome] : [])]);
+}
+
+/**
  * The generations of one pipe and what the ledger credits to each writing run; null = the pipe's writer records no posts
  * (no generation of the feed is on it). Throws on any unreadable read.
  */
@@ -264,20 +283,26 @@ export async function readPostPipeEvidence(featureSlug: string, legKey: string):
   const gens = withoutSupportRuns(live, spend);
   if (gens.length === 0) return { generations: [], creditOf: () => ({ spentUsd: 0, published: false, views: 0, engagements: 0, visits: 0, signups: 0 }) };
   const runIds = [...new Set(gens.flatMap((g) => (g.runId ? [g.runId] : [])))];
+  const postKeys = pipePostKeysOf((await loadChannelCatalogue({ publishedOnly: false })).channels, featureSlug, legKey);
   const [metrics, published] = await Promise.all([
     readPostMetrics(gens.flatMap((g) => (g.campaignId ? [g.campaignId] : []))),
-    occurrencesOver(runIds, "runIds", { outcomeKey: "post_published", direction: "produced" }),
+    Promise.all([...postKeys].map((outcomeKey) => occurrencesOver(runIds, "runIds", { outcomeKey, direction: "produced" }))).then((xs) => xs.flat()),
   ]);
   // The visits consuming each post (per subject service), then the signups consuming each visit.
-  const bySvc = new Map<string, string[]>();
-  for (const o of published) bySvc.set(o.subjectService, [...(bySvc.get(o.subjectService) ?? []), o.subjectId]);
-  const postConsumptions = (await Promise.all([...bySvc].map(([svc, ids]) => occurrencesOver(ids, "subjectIds", { subjectService: svc, outcomeKey: "post_published", direction: "consumed" })))).flat();
+  const bySvcKey = new Map<string, { svc: string; key: string; ids: string[] }>();
+  for (const o of published) {
+    const k = `${o.subjectService}|${o.outcomeKey}`;
+    const e = bySvcKey.get(k) ?? { svc: o.subjectService, key: o.outcomeKey, ids: [] };
+    e.ids.push(o.subjectId);
+    bySvcKey.set(k, e);
+  }
+  const postConsumptions = (await Promise.all([...bySvcKey.values()].map((e) => occurrencesOver(e.ids, "subjectIds", { subjectService: e.svc, outcomeKey: e.key, direction: "consumed" })))).flat();
   const visitRuns = [...new Set(postConsumptions.filter((o) => consumesInto(o, "website_visit")).map((o) => o.runId))];
   const visitsProduced = visitRuns.length ? await occurrencesOver(visitRuns, "runIds", { outcomeKey: "website_visit", direction: "produced" }) : [];
   const leadsBySvc = new Map<string, string[]>();
   for (const o of visitsProduced) leadsBySvc.set(o.subjectService, [...(leadsBySvc.get(o.subjectService) ?? []), o.subjectId]);
   const visitConsumptions = (await Promise.all([...leadsBySvc].map(([svc, ids]) => occurrencesOver(ids, "subjectIds", { subjectService: svc, outcomeKey: "website_visit", direction: "consumed" })))).flat();
-  const ledger = ledgerCredits(runIds, published, postConsumptions, visitsProduced, visitConsumptions);
+  const ledger = ledgerCredits(postKeys, runIds, published, postConsumptions, visitsProduced, visitConsumptions);
   const missingSpend = runIds.filter((r) => !spend.has(r));
   if (missingSpend.length) console.error(`[features-service] post writer evidence ${featureSlug}|${legKey}: runs-service lists no subtree cost for ${missingSpend.length} writing run(s) (e.g. ${missingSpend[0]}): they read $0`);
   return {
