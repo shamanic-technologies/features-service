@@ -238,3 +238,21 @@ describe("another factory's Units (LEDGER-OTHER-FACTORY-1107)", () => {
     expect(() => parseScopeLedgerByDay({ producedElsewhere: [{ dimensions: { factory: "mars", outcomeKey: "paid_client", day: "2026-11-01" }, occurrences: 1 }] }, "gross")).toThrow(/unknown factory/);
   });
 });
+
+describe("LEDGER-ONLY-1107-P2: the fleet producers read only NAMES a gap", () => {
+  it("unknown producers: a 0 stays a measured 0, never `no_producer_declares_outcome`", async () => {
+    const { scopeOutcomeLedgerRowOf } = await import("./scope-outcome-ledger.js");
+    const input = {
+      producedByDay: new Map(),
+      ownCostUsd: new Map(),
+      unitCosts: new Map(),
+      undeclaredConsumptions: new Map(),
+      fleetProducers: new Map(),
+      fleetProducersKnown: false,
+      daysMissing: [],
+      today: "2026-11-07",
+    };
+    expect(scopeOutcomeLedgerRowOf(["meeting_booked"], input).units).toBe(0);
+    expect(scopeOutcomeLedgerRowOf(["meeting_booked"], { ...input, fleetProducersKnown: true }).unitsUnavailableReason).toBe("no_producer_declares_outcome");
+  });
+});

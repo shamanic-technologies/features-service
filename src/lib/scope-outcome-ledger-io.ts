@@ -102,11 +102,25 @@ const brandStore = new Map<string, { at: number; value: Promise<ScopeOutcomeLedg
 const FLEET_MS = 15 * 60_000;
 const BRAND_MS = 60_000;
 
-function fleetProducers(): Promise<Map<string, string[]>> {
-  return held(fleetStore, "producers", FLEET_MS, async () => {
-    const since = new Date(Date.now() - 399 * 86_400_000).toISOString().slice(0, 10);
-    return parseFleetProducers((await runs(`/internal/stats/outcome-performers?since=${since}&groupBy=outcomeKey,serviceName`)) as never);
-  }) as Promise<Map<string, string[]>>;
+let lastGoodProducers: Map<string, string[]> | null = null;
+
+/**
+ * Who declares each outcome anywhere (fleet, 15 min). LEDGER-ONLY-1107-P2: SOFT. It only names a producer gap, never a
+ * count, so a failed read (runs-service's fleet performers read hits its statement timeout under load, prod 2026-11-07)
+ * serves the last good map, else `null` (unknown: no gap claimed), logged; never every count of every scope nulled.
+ */
+async function fleetProducers(): Promise<Map<string, string[]> | null> {
+  try {
+    const m = (await held(fleetStore, "producers", FLEET_MS, async () => {
+      const since = new Date(Date.now() - 399 * 86_400_000).toISOString().slice(0, 10);
+      return parseFleetProducers((await runs(`/internal/stats/outcome-performers?since=${since}&groupBy=outcomeKey,serviceName`)) as never);
+    })) as Map<string, string[]>;
+    lastGoodProducers = m;
+    return m;
+  } catch (err) {
+    console.error(`[features-service] scope outcome ledger: fleet producers unreadable (${lastGoodProducers ? "last good map served" : "no producer gap named"}): ${(err as Error).message}`);
+    return lastGoodProducers;
+  }
 }
 
 function campaignOutputs(): Promise<ReturnType<typeof campaignOutputsOf>> {
@@ -130,7 +144,7 @@ export function fetchBrandOutcomeLedger(brandId: string, basis: LedgerBasis): Pr
     const t = parseOutcomeLedgerTotals(totals as never, basis);
     const units = rollUpOutcomeUnitCosts(t.produced, t.consumed, outputs.outputOf, outputs.pipeOutputs).units;
     const unitCosts = new Map<string, LedgerOutcomeCost>([...units].map(([k, u]) => [k, { unitCostUsd: u.unitCostUsd }]));
-    return { ...parsed, unitCosts, fleetProducers: producers, today: new Date().toISOString().slice(0, 10) };
+    return { ...parsed, unitCosts, fleetProducers: producers ?? new Map(), fleetProducersKnown: producers !== null, today: new Date().toISOString().slice(0, 10) };
   });
 }
 
@@ -180,6 +194,7 @@ export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string
     elsewhereByDay,
     unitCosts: brand.unitCosts,
     fleetProducers: brand.fleetProducers,
+    fleetProducersKnown: brand.fleetProducersKnown,
     daysMissing: [...daysMissing].sort(),
     today: brand.today,
   };

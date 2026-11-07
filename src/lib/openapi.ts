@@ -3699,12 +3699,12 @@ const outcomeCostExpectedSchema = z.object({
 const outcomeCostMonthSchema = z.object({
   month: z.string().describe("YYYY-MM (UTC)."),
   spendUsd: z.number().describe("What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."),
-  outcomes: z.number().int().describe("People we contacted who first reached the step this month (undated ones count in the last month)."),
+  outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."),
   costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes. Null at 0 outcomes (never the spend as a floor)."),
   cumulativeSpendUsd: z.number(),
-  cumulativeOutcomes: z.number().int(),
+  cumulativeOutcomes: z.number().int().nullable(),
   cumulativeCostPerOutcomeUsd: z.number().nullable().describe("Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."),
-  learning: z.boolean().describe("True while cumulativeOutcomes is below learningOutcomesRequired."),
+  learning: z.boolean().nullable().describe("True while cumulativeOutcomes is below learningOutcomesRequired. Null with the outcomes."),
 });
 const outcomeCostSeriesResponseRef = registry.register(
   "OfferOutcomeCostSeriesResponse",
@@ -3721,11 +3721,13 @@ const outcomeCostSeriesResponseRef = registry.register(
           learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
           sinceInception: z.object({
             spendUsd: z.number(),
-            outcomes: z.number().int(),
-            undatedOutcomes: z.number().int().describe("Of outcomes, those with no date (counted in the last month)."),
-            costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead)."),
-            learning: z.boolean(),
+            outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."),
+            undatedOutcomes: z.number().int().nullable().describe("Always 0 on the ledger (every Unit is dated); null with outcomes."),
+            costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."),
+            learning: z.boolean().nullable().describe("Null with outcomes."),
           }),
+          outcomesUnavailableReason: z.string().nullable().describe("LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."),
+          producerGap: z.object({ declaredElsewhereBy: z.array(z.string()), undeclaredConsumptions: z.number() }).nullable().describe("Who must declare the step's Units when the ledger lacks them."),
           expected: outcomeCostExpectedSchema,
           value: z
             .object({

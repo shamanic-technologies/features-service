@@ -40,6 +40,11 @@ export interface ScopeOutcomeLedgerInput {
   undeclaredConsumptions: ReadonlyMap<string, number>;
   /** outcome key -> the services that declare producing it anywhere in the fleet (empty = nobody does). */
   fleetProducers: ReadonlyMap<string, readonly string[]>;
+  /**
+   * False when the fleet producers read failed (runs-service's fleet performers read times out under load): the producers
+   * only NAME a gap, so a count never depends on them; `no_producer_declares_outcome` is then never claimed (a 0 stays 0).
+   */
+  fleetProducersKnown?: boolean;
   /** Ledger days runs-service has not computed yet (counts there may still move). */
   daysMissing: readonly string[];
   /** TODAY (UTC day): the curve runs to it. */
@@ -116,7 +121,7 @@ export function scopeOutcomeLedgerRowOf(keysIn: readonly string[], i: ScopeOutco
 
   let unitsUnavailableReason: ScopeOutcomeLedgerRow["unitsUnavailableReason"] = null;
   if (units === 0 && undeclared > 0) unitsUnavailableReason = "outcome_not_declared_in_ledger";
-  else if (units === 0 && producers.length === 0) unitsUnavailableReason = "no_producer_declares_outcome";
+  else if (units === 0 && producers.length === 0 && i.fleetProducersKnown !== false) unitsUnavailableReason = "no_producer_declares_outcome";
   if (unitsUnavailableReason !== null) {
     return {
       outcomeKeys: keys,
