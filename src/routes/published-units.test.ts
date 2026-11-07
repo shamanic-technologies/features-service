@@ -36,7 +36,7 @@ const threadsPost = (id: string, over: Record<string, unknown> = {}) => ({
   permalink: `https://threads.net/p/${id}`,
   text: `post ${id}`,
   performedBy: "ours",
-  outcomeKey: "post_published",
+  outcomeKey: "threads_post_published",
   outcomeRunId: `run-${id}`,
   publishedAt: "2026-11-01T10:00:00.000Z",
   ...over,
@@ -48,8 +48,8 @@ beforeEach(() => {
   fetchWithRetry.mockReset();
   // A catalogue where a post is worth 1/1000 of the lifetime revenue and the X pipe expects $0.10 a post.
   __setPublishedUnitsModelLoader(async (ltr) => ({
-    steps: new Map([["post_published", { key: "post_published", valueUsd: ltr === null ? null : ltr / 1000 }]]),
-    pipes: new Map([["x|start_to_post_published", { id: "x|start_to_post_published", published: true, outcome: "x_post_published", toStep: "post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
+    steps: new Map([["threads_post_published", { key: "threads_post_published", valueUsd: ltr === null ? null : ltr / 1000 }]]),
+    pipes: new Map([["x|start_to_threads_post_published", { id: "x|start_to_threads_post_published", published: true, outcome: "x_post_published", toStep: "threads_post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
   }) as never);
 });
 
@@ -61,10 +61,10 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
       if (url.startsWith("http://social/internal/post-metrics")) return json({ posts: [{ subjectId: "p1", publishRunId: "run-p1", metrics: { views: 120 }, engagement: 7 }] });
       if (url.startsWith("http://runs/internal/outcome-occurrences")) {
         const q = new URL(url).searchParams;
-        if (q.get("direction") === "produced" && q.get("outcomeKey") === "post_published" && (q.get("runIds") ?? "").split(",").includes("run-p1"))
-          return json({ occurrences: [{ id: "u1", runId: "run-p1", direction: "produced", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: { grossCents: "50", netCents: "25" }, consumption: null }], nextCursor: null });
-        if (q.get("direction") === "consumed" && !q.get("runIds") && q.get("outcomeKey") === "post_published")
-          return json({ occurrences: [{ id: "c1", runId: "visit-run", direction: "consumed", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: null, consumption: { sourceOccurrenceId: "u1", consumingOutcomes: [{ outcomeKey: "website_visit" }] } }], nextCursor: null });
+        if (q.get("direction") === "produced" && q.get("outcomeKey") === "threads_post_published" && (q.get("runIds") ?? "").split(",").includes("run-p1"))
+          return json({ occurrences: [{ id: "u1", runId: "run-p1", direction: "produced", outcomeKey: "threads_post_published", subjectService: "meta-service", subjectId: "p1", cost: { grossCents: "50", netCents: "25" }, consumption: null }], nextCursor: null });
+        if (q.get("direction") === "consumed" && !q.get("runIds") && q.get("outcomeKey") === "threads_post_published")
+          return json({ occurrences: [{ id: "c1", runId: "visit-run", direction: "consumed", outcomeKey: "threads_post_published", subjectService: "meta-service", subjectId: "p1", cost: null, consumption: { sourceOccurrenceId: "u1", consumingOutcomes: [{ outcomeKey: "website_visit" }] } }], nextCursor: null });
         if (q.get("outcomeKey") === "website_visit" && q.get("direction") === "produced")
           return json({ occurrences: [{ id: "w1", runId: "visit-run", direction: "produced", outcomeKey: "website_visit", subjectService: "lead-service", subjectId: "lead-1", cost: null, consumption: null }], nextCursor: null });
         return json({ occurrences: [], nextCursor: null });
@@ -141,10 +141,10 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     expect(res.status).toBe(200);
     expect(res.body.rows.map((r: { id: string }) => r.id)).toEqual(["x1"]);
     expect(res.body.repostsExcluded).toEqual({ rows: 1, engagements: 11701 });
-    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "post_published" }, measuredReturn: { roiMultiple: 5, spentUsd: 0.2, learning: true } });
+    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "threads_post_published" }, measuredReturn: { roiMultiple: 5, spentUsd: 0.2, learning: true } });
     expect(res.body.totals.all).toMatchObject({ engagements: 4, views: 40, valueUsd: 1 });
     expect(res.body.visitsMeasured).toBe(false);
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 10, valuePerUnitUsd: 1, costPerUnitUsd: 0.1, pipeId: "x|start_to_post_published" });
+    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 10, valuePerUnitUsd: 1, costPerUnitUsd: 0.1, pipeId: "x|start_to_threads_post_published" });
   });
 
   it("a producer that fails is named on the 502 (newsletter: runs-service 500)", async () => {

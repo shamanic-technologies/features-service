@@ -152,7 +152,7 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
     });
 
     it("value = units x value per Unit; measured return on ours = value / spend, Learning under the bar; expected = value / expected cost", () => {
-      const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
+      const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "threads_post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
       const expected = expectedReturnOf(2, { costPerUnitUsd: 0.8, costSource: "workflow", basis: "measured", pipeId: "p" }, null);
       expect(expected).toMatchObject({ roiMultiple: 2.5, valuePerUnitUsd: 2, costPerUnitUsd: 0.8 });
       const few = publishedUnitsOf("x_post_published", [post("a"), post("b", { performedBy: "client_team" })], credit, { unitValueOf, expected });

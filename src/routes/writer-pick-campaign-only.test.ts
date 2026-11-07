@@ -30,7 +30,7 @@ vi.mock("./workflow-projection.js", () => ({
 }));
 vi.mock("../lib/workflow-leg-assignments.js", () => ({
   listLegAssignments: async () => [
-    { state: "active", featureSlug: "threads-post", legKey: "start_to_post_published", workflowDynastySlug: "threads-post-maasym" },
+    { state: "active", featureSlug: "threads-post", legKey: "start_to_threads_post_published", workflowDynastySlug: "threads-post-maasym" },
     { state: "active", featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", workflowDynastySlug: "sales-cold-email-outreach-ballad" },
   ],
 }));
@@ -43,7 +43,7 @@ vi.mock("../lib/public-stats-clients.js", async (orig) => ({
 }));
 let vendorCredit: string[] = [];
 const campaigns: unknown[] = [
-  { id: "c-threads", orgId: "f0420eb5", featureSlug: "threads-post", legKey: "start_to_post_published", salesFunnelId: null, workflowSlug: "threads-post-maasym" },
+  { id: "c-threads", orgId: "f0420eb5", featureSlug: "threads-post", legKey: "start_to_threads_post_published", salesFunnelId: null, workflowSlug: "threads-post-maasym" },
   // The legacy outbound spelling on the campaign row, the served one on the assignment: one pipe.
   { id: "c-cold", orgId: "o2", featureSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", salesFunnelId: "sf-1" },
   { id: "c-no-leg", orgId: "o3", featureSlug: "threads-post", legKey: null },
@@ -109,7 +109,7 @@ beforeEach(() => {
   __resetVendorCreditForTest();
   vendorCredit = [];
   playCalls.length = 0;
-  cells.set("leg-writer-ranking:threads-post|start_to_post_published", JSON.stringify(payload("threads-post", "start_to_post_published", "threads-post|start_to_post_published")));
+  cells.set("leg-writer-ranking:threads-post|start_to_threads_post_published", JSON.stringify(payload("threads-post", "start_to_threads_post_published", "threads-post|start_to_threads_post_published")));
   cells.set(
     "leg-writer-ranking:sales-cold-email-outreach|start_to_conversation",
     JSON.stringify(payload("sales-cold-email-outreach", "start_to_conversation", "sales-cold-email-outreach|lead_found_to_conversation")),

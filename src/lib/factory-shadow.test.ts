@@ -288,13 +288,13 @@ describe("Monitoring", () => {
 });
 
 describe("Monitoring: problems apart from not-yet (owner 2026-10-29)", () => {
-  const unpriced = [{ pipeId: "threads-post|start_to_post_published", channelName: "Threads posts", fromStep: null, toStep: "post_published", lines: 1 }];
-  const waiting = { shadow: null, shadowUnavailableReason: "pipe_unpriced:threads-post|start_to_post_published", shadowUnavailableDetail: "Every line ...", unpricedPipes: unpriced };
+  const unpriced = [{ pipeId: "threads-post|start_to_threads_post_published", channelName: "Threads posts", fromStep: null, toStep: "threads_post_published", lines: 1 }];
+  const waiting = { shadow: null, shadowUnavailableReason: "pipe_unpriced:threads-post|start_to_threads_post_published", shadowUnavailableDetail: "Every line ...", unpricedPipes: unpriced };
 
   it("a line waiting on a pipe that never spent is not yet, with the pipe by name", () => {
     expect(shadowStateOf({ status: "plan_failed", failure: waiting.shadowUnavailableReason, followsPlan: false, plan: waiting })).toEqual({
       state: "not_yet",
-      stateReason: "pipe_unpriced:threads-post|start_to_post_published",
+      stateReason: "pipe_unpriced:threads-post|start_to_threads_post_published",
       stateDetail: "Waiting for a first price: Threads posts has never run.",
     });
     expect(shadowStateOf({ status: "plan_failed", failure: "no_priced_line_to_target", plan: { ...waiting, shadowUnavailableReason: "no_priced_line_to_target", unpricedPipes: [] } }).state).toBe("not_yet");

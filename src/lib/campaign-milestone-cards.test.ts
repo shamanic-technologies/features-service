@@ -7,24 +7,24 @@ const NOW = "2026-11-06T12:00:00.000Z";
 describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", () => {
   it("the chain of the campaign's units from Start to its Target (Threads post: post published -> website visit -> signup)", () => {
     const units = [
-      { campaignId: "threads", fromStep: null, toStep: "post_published" },
-      { campaignId: "closing", fromStep: "post_published", toStep: "paid_client" },
-      { campaignId: "organic", fromStep: "post_published", toStep: "website_visit" },
+      { campaignId: "threads", fromStep: null, toStep: "threads_post_published" },
+      { campaignId: "closing", fromStep: "threads_post_published", toStep: "paid_client" },
+      { campaignId: "organic", fromStep: "threads_post_published", toStep: "website_visit" },
       { campaignId: "site", fromStep: "website_visit", toStep: "signup" },
       { campaignId: "conv", fromStep: "signup", toStep: "paid_client" },
     ];
     expect(milestoneChainOf(units, "signup")).toEqual([
-      { step: "post_published", unitCampaignIds: ["threads"] },
+      { step: "threads_post_published", unitCampaignIds: ["threads"] },
       { step: "website_visit", unitCampaignIds: ["organic"] },
       { step: "signup", unitCampaignIds: ["site"] },
     ]);
     // A Target no unit reaches: the walk, then the Target.
-    expect(milestoneChainOf(units.slice(0, 1), "signup").map((m) => m.step)).toEqual(["post_published", "signup"]);
+    expect(milestoneChainOf(units.slice(0, 1), "signup").map((m) => m.step)).toEqual(["threads_post_published", "signup"]);
   });
 
   it("counts the Units the runs produced (posts), per day; $ per Unit, % to next, projection off the Target's pace", () => {
     const ms: MilestoneCardInput[] = [
-      { step: "post_published", label: "Post published", lifecycleRung: "none", ledgerByDay: new Map([["2026-11-04", 2], ["2026-11-06", 3]]), people: null, ownSpendUsd: 21.31, spendUpToUsd: 21.31, neededPerTarget: 10 },
+      { step: "threads_post_published", label: "Threads post published", lifecycleRung: "none", ledgerByDay: new Map([["2026-11-04", 2], ["2026-11-06", 3]]), people: null, ownSpendUsd: 21.31, spendUpToUsd: 21.31, neededPerTarget: 10 },
       { step: "signup", label: "Signup", lifecycleRung: "signup_or_form", ledgerByDay: new Map(), people: { cumulativeByDay: null, count: 1 }, ownSpendUsd: 0, spendUpToUsd: 21.31, neededPerTarget: 1 },
     ];
     const [post, signup] = milestoneCardsOf({ milestones: ms, targetOutcomesPerDay: 0.5, targetProjectionUnavailableReason: null, projectionDays: 3, now: NOW });
@@ -36,7 +36,7 @@ describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", ()
   });
 
   it("the past never moves with the Plan: only the projection follows the pace", () => {
-    const ms: MilestoneCardInput[] = [{ step: "post_published", label: "Post published", lifecycleRung: "none", ledgerByDay: new Map([["2026-11-06", 4]]), people: null, ownSpendUsd: 8, spendUpToUsd: 8, neededPerTarget: null }];
+    const ms: MilestoneCardInput[] = [{ step: "threads_post_published", label: "Threads post published", lifecycleRung: "none", ledgerByDay: new Map([["2026-11-06", 4]]), people: null, ownSpendUsd: 8, spendUpToUsd: 8, neededPerTarget: null }];
     const a = milestoneCardsOf({ milestones: ms, targetOutcomesPerDay: 1, targetProjectionUnavailableReason: null, projectionDays: 2, now: NOW });
     const b = milestoneCardsOf({ milestones: ms, targetOutcomesPerDay: null, targetProjectionUnavailableReason: "plan_not_computed_yet", projectionDays: 2, now: NOW });
     expect(b[0]!.past).toEqual(a[0]!.past);
@@ -52,10 +52,10 @@ describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", ()
   });
 
   it("parses runs-service's per-campaign ledger and sums units", () => {
-    const a = parseCampaignLedgerUnits({ daysMissing: ["2026-11-06"], produced: [{ dimensions: { outcomeKey: "post_published", day: "2026-11-05" }, occurrences: 2 }] });
-    const b = parseCampaignLedgerUnits({ produced: [{ dimensions: { outcomeKey: "post_published", day: "2026-11-05" }, occurrences: 1 }] });
+    const a = parseCampaignLedgerUnits({ daysMissing: ["2026-11-06"], produced: [{ dimensions: { outcomeKey: "threads_post_published", day: "2026-11-05" }, occurrences: 2 }] });
+    const b = parseCampaignLedgerUnits({ produced: [{ dimensions: { outcomeKey: "threads_post_published", day: "2026-11-05" }, occurrences: 1 }] });
     const s = sumLedgerUnits([a, b]);
-    expect(s.byOutcome.get("post_published")?.get("2026-11-05")).toBe(3);
+    expect(s.byOutcome.get("threads_post_published")?.get("2026-11-05")).toBe(3);
     expect(s.daysMissing).toEqual(["2026-11-06"]);
     expect(cumulativeFromDaily(new Map([["2026-11-06", 1]]), "2026-11-05")).toEqual([]);
   });
