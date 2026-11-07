@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BOARD_RUNG_KEYS, priceLifecycleColumns, type LifecycleBoardRow } from "./deals-lifecycle.js";
+import { BOARD_RUNG_KEYS, priceLifecycleBoard, priceLifecycleColumns, type LifecycleBoardRow } from "./deals-lifecycle.js";
 import { contactedExpiryCutoffIso, contactedLeadValue, expectedValueOfPerson, type EnginePerson, type ResolvedPath } from "./revenue-engine.js";
 import { LIFECYCLE_RUNGS } from "./lifecycle-ladder.js";
 
@@ -72,8 +72,7 @@ const ROWS: LifecycleBoardRow[] = [
   row("h-out", "engaged", ["other-offer-lead"]),
 ];
 
-const run = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}) =>
-  priceLifecycleColumns({
+const args = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}): Parameters<typeof priceLifecycleColumns>[0] => ({
     rows: ROWS,
     persons: PERSONS,
     paths: PATHS,
@@ -89,6 +88,7 @@ const run = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}) =>
     pricedCauses: ["outreach", "other", "unstated"],
     ...over,
   });
+const run = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}) => priceLifecycleColumns(args(over));
 const rung = (r: ReturnType<typeof run>, key: string) => r.rungs.find((x) => x.key === key)!;
 const card = (r: ReturnType<typeof run>, key: string, humanId: string) => rung(r, key).cards.find((c) => c.humanId === humanId)!;
 
@@ -239,5 +239,20 @@ describe("one organisation = one client ACROSS the pipeline rungs (the revenue r
     expect(rung(r, "engaged").valueUsd).toBeCloseTo(v, 6);
     expect(rung(r, "contacted").valueUsd).toBeCloseTo(v, 6);
     expect(r.expectedPipelineUsd).toBeCloseTo(2 * v, 6);
+  });
+});
+
+describe("priceLifecycleBoard organisation values (PIPELINE-GENERATED-1107)", () => {
+  it("what each organisation adds sums to the board's total, each organisation once", () => {
+    const { board, organizationValues } = priceLifecycleBoard(args());
+    expect(board).toEqual(run());
+    const sum = [...organizationValues.values()].reduce((s, v) => s + v, 0);
+    expect(sum).toBeCloseTo(board.totalUsd!, 4);
+    // org-E has two engaged people: one organisation, counted once at its most valuable member.
+    expect(organizationValues.get("org:org-E")).toBeCloseTo(Math.max(card(board, "engaged", "h-e1").valueUsd!, card(board, "engaged", "h-e2").valueUsd!), 6);
+    expect(organizationValues.get("org:org-G")).toBe(4900);
+  });
+  it("no economics: no organisation value", () => {
+    expect(priceLifecycleBoard(args({ lifetimeRevenueUsd: null })).organizationValues.size).toBe(0);
   });
 });

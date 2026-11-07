@@ -2185,9 +2185,11 @@ router.patch("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) 
     let st = current;
     if (changed) {
       invalidatePlayCatalogue();
-      const [c, assignments] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments()]);
+      const [c, assignments, scripts, { model }] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments(), readRunnableScriptsForCatalogue(), loadModel()]);
       for (const [pipeId, ps] of c.playsByPipe) {
-        if (ps.some((p) => p.isDefault && p.strategyId === next.id)) assertStrategyRunsOnPipe(c, assignments, pipeId, next, `it is the pipe's default play, so every campaign of the pipe would have nothing to run`);
+        if (ps.some((p) => p.isDefault && p.strategyId === next.id)) {
+          assertStrategyRunsOnPipe(c, assignments, pipeId, next, `it is the pipe's default play, so every campaign of the pipe would have nothing to run`, scriptsKeptOnPipe(c, model.pipes.get(pipeId), scripts, next));
+        }
       }
       st = await storeStrategyEdit(next, updatedBy);
       console.log(
@@ -2295,14 +2297,28 @@ router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
  */
 async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promise<void> {
   invalidatePlayCatalogue();
-  const [c, assignments] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments()]);
+  const [c, assignments, scripts, { model }] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments(), readRunnableScriptsForCatalogue(), loadModel()]);
   const st = c.strategies.get(strategyId);
   if (!st) throw new DeclarationError(404, "strategy_not_found", `no strategy ${strategyId} (GET /internal/catalogue/strategies)`);
-  assertStrategyRunsOnPipe(c, assignments, pipeId, st, "as the default play, every campaign of the pipe would have nothing to run");
+  assertStrategyRunsOnPipe(c, assignments, pipeId, st, "as the default play, every campaign of the pipe would have nothing to run", scriptsKeptOnPipe(c, model.pipes.get(pipeId), scripts, st));
 }
 
-/** Refused 409 `default_play_runs_nothing` while `st` allows none of the pipe's ACTIVE workflows, judged now. */
-function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], pipeId: string, st: Strategy, consequence: string): void {
+/**
+ * MIGRATE-1105 S5: the runnable scripts working the pipe (`scriptWorksPipe`) that `st` keeps, judged now. A pipe its
+ * Engine runs (no workflow left) runs a default play that keeps one of them.
+ */
+function scriptsKeptOnPipe(c: PlayCatalogue, pipe: CataloguePipe | undefined, scripts: readonly RunnableScript[], st: Strategy): number {
+  if (!pipe) return 0;
+  const working = scripts.filter((sc) => scriptWorksPipe(sc, { channelSlug: pipe.channelSlug, outcome: pipe.outcome, outcomeStated: pipe.outcomeStated }));
+  return scriptsKeptByStrategy(working, st, c).keptDynasties.length;
+}
+
+/**
+ * Refused 409 `default_play_runs_nothing` while `st` allows none of the pipe's ACTIVE workflows, judged now, and keeps
+ * none of the scripts working it (`keptScripts`, MIGRATE-1105 S5).
+ */
+function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAssignmentRow[], pipeId: string, st: Strategy, consequence: string, keptScripts = 0): void {
+  if (keptScripts > 0) return;
   const [slug, leg] = [pipeId.slice(0, pipeId.indexOf("|")), pipeId.slice(pipeId.indexOf("|") + 1)];
   const active = assignments.filter((a) => a.featureSlug === slug && pipeLegKeyOf(slug, a.legKey) === pipeLegKeyOf(slug, leg) && a.state === "active").map((a) => a.workflowDynastySlug);
   const excluded = excludedDynasties(workflowStrategyOf(c, st), active, c.tacticsByDynasty, tacticNameOf(c));

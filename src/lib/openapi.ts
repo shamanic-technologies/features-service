@@ -3846,28 +3846,59 @@ const offerCompanyLifecycleResponseRef = registry.register(
   }),
 );
 
+const offerPipelineGeneratedResponseRef = registry.register(
+  "OfferPipelineGeneratedResponse",
+  z.object({
+    offerId: z.string(),
+    brandId: z.string(),
+    columns: z.literal("pipeline_generated"),
+    lifetimeRevenueUsd: z.number().nullable().describe("The offer's lifetime revenue per client every value rests on (the lifecycle board's)."),
+    lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable().describe("Where `lifetimeRevenueUsd` comes from."),
+    pricedCauses: z.array(z.string()).describe("The causes priced (the pipeline's default: what our pipes caused)."),
+    unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Why no figure exists (every dollar field null, `points` empty). Null when valued."),
+    measuredUsd: z.number().nullable().describe("PIPELINE GENERATED TO DATE: the lifecycle Deals board's total (`totalUsd` of `columns=lifecycle`: open pipeline + won), on the board's one pipeline basis. Equals the last `kind: measured` point's `cumulativeUsd`. A forecast in dollars (every value but a stated sale is expected), never a return."),
+    openUsd: z.number().nullable().describe("Of `measuredUsd`, the open pipeline (the lifecycle board's `expectedPipelineUsd`)."),
+    wonUsd: z.number().nullable().describe("Of `measuredUsd`, the won value (the lifecycle board's Paid client)."),
+    expectedUsd: z.number().nullable().describe("`measuredUsd` plus the pipeline expected over the next `expectedHorizonDays` days at the offer's own pace since inception (`dailyPaceUsd`); equal to `measuredUsd` when `expectedFlatReason` is set. Equals the last `kind: expected` point's `cumulativeUsd`."),
+    expectedHorizonDays: z.number().describe("How many days past today the expected continuation runs (30)."),
+    dailyPaceUsd: z.number().nullable().describe("`measuredUsd` ÷ the days from `firstDay` to `today`, both counted: the pace since inception the expected days carry forward."),
+    expectedFlatReason: z.enum(["offer_not_running", "no_pipeline_yet"]).nullable().describe("Why the expected days stay flat at `measuredUsd`: no campaign of the offer is running (`offer_not_running`), or nothing was generated yet. Null = they grow at `dailyPaceUsd`."),
+    offerRunning: z.boolean().describe("A campaign of the offer is running now (campaign-service `ongoing`)."),
+    firstDay: z.string().nullable().describe("The first measured day (YYYY-MM-DD, UTC): the earliest day our outreach first reached a valued organisation. Null when nothing is valued."),
+    today: z.string().describe("The last measured day (YYYY-MM-DD, UTC)."),
+    undatedUsd: z.number().nullable().describe("Value of organisations none of whose people carries a date, counted on `firstDay` so the series still adds up to `measuredUsd` (0 in practice)."),
+    points: z.array(z.object({
+      date: z.string().describe("YYYY-MM-DD (UTC). Every day from `firstDay`, no gap."),
+      kind: z.enum(["measured", "expected"]).describe("`measured` up to `today` included (solid line), `expected` after (dotted line)."),
+      generatedUsd: z.number().describe("Measured: what the organisations our outreach first reached that day are worth today. Expected: the pace added that day."),
+      cumulativeUsd: z.number().describe("Cumulative since `firstDay`: the line to draw."),
+    })).describe("The measured days (`firstDay`..`today`), then `expectedHorizonDays` expected days. Each organisation is placed on the day our outreach first reached it (the earliest dated signal of any of its people) at what the Deals board says it is worth TODAY, so the curve only grows and a past day re-reads at today's value (a lead ruled out since adds 0; a contacted lead's value expires 30 days after its last send, the board's rule)."),
+  }),
+);
+
 registry.registerPath({
   method: "get",
   path: "/offers/{offerId}/deals-value",
-  summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through); `columns=lifecycle` = one column per lifecycle rung",
+  summary: "The dollar value of each Deals-board column, for ONE offer of a brand (every channel it sells through); `columns=lifecycle` = one column per lifecycle rung; `columns=pipeline_generated` = the board's dollars over time",
   description:
     "Default (`columns` omitted or `standing`): GET /brands/{brandId}/deals-value at the OFFER grain: same body, same semantics, same pricing. Only the people served on the offer's campaigns (across every channel) are on its board: lead-service's brand-keyed standing INTERSECTED with the offer's lead population, priced on the offer's declared funnels and LTR — the terms GET /offers/{offerId}/revenue prices on, so Interested is a SUBSET of /offers/{offerId}/revenue?cause=outreach,other,unstated's pipeline. People do not add across offers: a lead served under two offers is on both boards, so two offers' values can exceed the brand's. `unpricedLeadCount` is always 0 at this grain.\n\n" +
     "`columns=lifecycle` (DEALS-LIFECYCLE-1021) answers OfferDealsLifecycleResponse: one column per rung of the lifecycle ladder (Contacted < Engaged < Signed up < Meeting booked < Meeting attended < Paid client). WHO stands on a rung is lead-service's Unibox `lifecycle` (GET /orgs/leads/unibox?lifecycle=), read, intersected with the scope's lead population; WHAT they are worth is the same engine as the standing board: Contacted = the contacted-value model (seeded entry benchmark when no rate is measured, said per card), Engaged..Meeting attended = the engine's expected value per person, Paid client = the stated sale else the lifetime revenue. `campaignId` narrows to one pipe campaign of the offer or one sales funnel campaign of it (its units); any other id is 404 `campaign_not_on_offer`.\n\n" +
-    "`columns=company_lifecycle` (DEALS-LIFECYCLE-1021, the Companies page) answers OfferCompanyLifecycleResponse: each organisation the offer reached with its lifecycle rung (the highest rung any of its people reached, lead-service's Unibox `lifecycle` on every rung, Lead found included) and, per rung, how many organisations stand on it (each once, on its highest rung). Nothing is priced. `organizations[].organizationKey` joins GET /offers/{offerId}/revenue's `organizations[].organizationKey`.",
+    "`columns=company_lifecycle` (DEALS-LIFECYCLE-1021, the Companies page) answers OfferCompanyLifecycleResponse: each organisation the offer reached with its lifecycle rung (the highest rung any of its people reached, lead-service's Unibox `lifecycle` on every rung, Lead found included) and, per rung, how many organisations stand on it (each once, on its highest rung). Nothing is priced. `organizations[].organizationKey` joins GET /offers/{offerId}/revenue's `organizations[].organizationKey`.\n\n" +
+    "`columns=pipeline_generated` (PIPELINE-GENERATED-1107, the Today page's main chart) answers OfferPipelineGeneratedResponse: the pipeline generated to date (`measuredUsd` = the lifecycle board's total, open pipeline + won) and, per day since the first one, the cumulative pipeline generated (each organisation on the day our outreach first reached it, at today's board value), then `expectedHorizonDays` expected days at the offer's pace since inception (`expectedUsd`). No cost figure. Since inception only.",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
     params: z.object({ offerId: z.string() }),
     query: z.object({
       ...offerGrainLeadValueQuery,
-      columns: z.enum(["standing", "lifecycle", "company_lifecycle"]).describe("Which body: `standing` (default, lead-service standings), `lifecycle` (the board on the lifecycle ladder) or `company_lifecycle` (each organisation's rung and the per-rung counts).").optional(),
+      columns: z.enum(["standing", "lifecycle", "company_lifecycle", "pipeline_generated"]).describe("Which body: `standing` (default, lead-service standings), `lifecycle` (the board on the lifecycle ladder), `company_lifecycle` (each organisation's rung and the per-rung counts) or `pipeline_generated` (the board's dollars over time, measured then expected).").optional(),
       campaignId: z.string().describe("`columns=lifecycle` only: one pipe campaign of the offer, or one sales funnel campaign (campaign-service id) of it.").optional(),
     }),
   },
   responses: {
     200: {
-      description: "The offer's Deals column values: OfferDealsValueResponse (standing), OfferDealsLifecycleResponse (`columns=lifecycle`) or OfferCompanyLifecycleResponse (`columns=company_lifecycle`)",
-      content: { "application/json": { schema: z.union([offerDealsValueResponseRef, offerDealsLifecycleResponseRef, offerCompanyLifecycleResponseRef]) } },
+      description: "The offer's Deals column values: OfferDealsValueResponse (standing), OfferDealsLifecycleResponse (`columns=lifecycle`) or OfferCompanyLifecycleResponse (`columns=company_lifecycle`) or OfferPipelineGeneratedResponse (`columns=pipeline_generated`)",
+      content: { "application/json": { schema: z.union([offerDealsValueResponseRef, offerDealsLifecycleResponseRef, offerCompanyLifecycleResponseRef, offerPipelineGeneratedResponseRef]) } },
     },
     ...offerLeadValueErrors,
     400: { description: "Missing brandId, an invalid pricing or columns value, or campaignId without columns=lifecycle", content: { "application/json": { schema: errorResponse } } },

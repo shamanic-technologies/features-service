@@ -450,6 +450,22 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(again.body.created).toBe(false);
   });
 
+  it("a strategy keeping a script working the pipe may be its DEFAULT play, workflows or none (MIGRATE-1105 S5)", async () => {
+    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
+    const url = `/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`;
+    mem.assignments.push({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null });
+    // nova not judged: Valid + Catch-all allows no workflow; with no script working the pipe it is refused.
+    expect((await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" })).status).toBe(409);
+    const { readRunnableScriptsForCatalogue } = await import("../lib/script-catalogue-client.js");
+    vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([{ id: "v", outcome: "website_visit", dynasty: "dy_visit", version: 1, description: "", tactics: { channel: "sales-cold-email-outreach" }, code: "" }]);
+    try {
+      const made = await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" });
+      expect(made.status).toBe(200);
+    } finally {
+      vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([]);
+    }
+  });
+
   it("staff make a strategy a pipe's DEFAULT play only while it runs one of the pipe's active workflows", async () => {
     const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
     const url = `/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`;

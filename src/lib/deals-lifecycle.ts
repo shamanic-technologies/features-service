@@ -150,8 +150,8 @@ interface PersonValue {
   entry: EntryRateSource | null;
 }
 
-/** PURE. Every board rung's value from the engine's inputs and lead-service's lifecycle rows. */
-export function priceLifecycleColumns(input: {
+/** The board's inputs (`priceLifecycleColumns`). */
+export interface LifecycleBoardInput {
   rows: readonly LifecycleBoardRow[];
   persons: readonly EnginePerson[];
   paths: ResolvedPath[];
@@ -161,7 +161,22 @@ export function priceLifecycleColumns(input: {
   contactedPricing: ContactedPricing;
   statedWonAmountUsdByEmail: ReadonlyMap<string, number> | null;
   pricedCauses: readonly string[];
-}): DealsLifecycleResult {
+}
+
+/** PURE. Every board rung's value from the engine's inputs and lead-service's lifecycle rows. */
+export function priceLifecycleColumns(input: LifecycleBoardInput): DealsLifecycleResult {
+  return priceLifecycleBoard(input).board;
+}
+
+/**
+ * PURE. The board AND what each organisation adds to its `totalUsd` (its pipeline rung value, counted once, plus its
+ * won value), keyed like the board (`org:<orgId>`, else `lead:<leadId>`): Σ `organizationValues` = `totalUsd` exactly.
+ * Empty when the offer has no economics. Read by the pipeline-generated series (`lib/pipeline-generated.ts`).
+ */
+export function priceLifecycleBoard(input: LifecycleBoardInput): {
+  board: DealsLifecycleResult;
+  organizationValues: Map<string, number>;
+} {
   const ltr = input.lifetimeRevenueUsd;
   const unvaluedReason = ltr === null ? "no_economics" : !(ltr > 0) ? "no_client_value" : null;
   const byLead = new Map(input.persons.map((p) => [p.leadId, p] as const));
@@ -273,6 +288,7 @@ export function priceLifecycleColumns(input: {
     };
   });
 
+  const organizationValues = new Map<string, number>();
   if (unvaluedReason === null) {
     // ONE organisation = ONE client (the pipeline's MAX over members): each organisation's value lands on the
     // pipeline rung holding its most valuable member (ties: the higher rung), never on every rung it touches.
@@ -285,7 +301,13 @@ export function priceLifecycleColumns(input: {
       }
     }
     const perRung = new Map<BoardRungKey, number>();
-    for (const { rung, v } of top.values()) perRung.set(rung, (perRung.get(rung) ?? 0) + v);
+    for (const [org, { rung, v }] of top) {
+      perRung.set(rung, (perRung.get(rung) ?? 0) + v);
+      organizationValues.set(org, (organizationValues.get(org) ?? 0) + v);
+    }
+    for (const [org, v] of orgMaxByRung.get("paid_client") ?? new Map<string, number>()) {
+      organizationValues.set(org, (organizationValues.get(org) ?? 0) + v);
+    }
     for (const r of pipelineRungs) r.valueUsd = round(perRung.get(r.key) ?? 0);
     const won = rungs.find((r) => r.key === "paid_client");
     if (won) won.valueUsd = round([...(orgMaxByRung.get("paid_client") ?? new Map()).values()].reduce((s, v) => s + v, 0));
@@ -293,7 +315,7 @@ export function priceLifecycleColumns(input: {
 
   const sum = (rs: LifecycleRungValue[]): number | null =>
     unvaluedReason !== null ? null : round(rs.reduce((s, r) => s + (r.valueUsd ?? 0), 0));
-  return {
+  const board: DealsLifecycleResult = {
     columns: "lifecycle",
     lifetimeRevenueUsd: ltr,
     lifetimeRevenueSource: input.lifetimeRevenueSource,
@@ -305,4 +327,5 @@ export function priceLifecycleColumns(input: {
     rungs,
     outOfScopeCardCount,
   };
+  return { board, organizationValues };
 }
