@@ -407,8 +407,21 @@ export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPer
 }
 
 /**
- * PURE. No catalogue pipe prices the outcome: the expected cost of one more Unit is what one cost to date (ours, else
- * every row), the catalogue's own last rung (`expectedPipeCost` `own_spend`, owner rule: a cost is never blank).
+ * PURE. The Units that CARRY a declared cost and that cost (ours when any of ours does, else every row's): a Unit whose
+ * cost was never declared (a hand post imported, $0 on the ledger) is no evidence of what one costs, so dividing over it
+ * read an X post at $0.00015 and an expected 16,447x (SOCIAL-OUTCOMES-1107, 2026-11-07).
+ */
+export function costedUnitsOf(rows: readonly Pick<UnitRow, "units" | "spentUsd" | "performedBy">[]): Pick<Totals, "units" | "spentUsd"> {
+  const costed = rows.filter((r) => r.spentUsd !== null && r.spentUsd > 0);
+  const ours = costed.filter((r) => r.performedBy === "ours");
+  const pick = ours.length ? ours : costed;
+  return { units: pick.reduce((a, r) => a + r.units, 0), spentUsd: round(pick.reduce((a, r) => a + r.spentUsd!, 0)) };
+}
+
+/**
+ * PURE. No catalogue pipe prices the outcome: the expected cost of one more Unit is what one cost to date over the Units
+ * that carry a cost (`costedUnitsOf`), the catalogue's own last rung (`expectedPipeCost` `own_spend`, owner rule: a cost
+ * is never blank).
  */
 export function withOwnSpendCost(e: ExpectedReturn, t: Pick<Totals, "units" | "spentUsd">): ExpectedReturn {
   if (e.unavailableReason !== "no_pipe_prices_outcome") return e;
@@ -549,7 +562,7 @@ export function publishedUnitsOf(
     visitsMeasured,
     visitsUnavailableReason: visitsMeasured ? null : "no_visit_attribution_on_outcome",
     measuredReturn: measuredReturnOf(ours.units, ours.units > 0 && ours.unvaluedRows === 0 ? ours.valueUsd : null, ours.spentUsd, ours.unvaluedRows > 0),
-    expectedReturn: withOwnSpendCost(opts.expected ?? expectedReturnOf(null, null, "not_priced"), ours.units > 0 && ours.spentUsd > 0 ? ours : all),
+    expectedReturn: withOwnSpendCost(opts.expected ?? expectedReturnOf(null, null, "not_priced"), costedUnitsOf(rows)),
   };
 }
 
