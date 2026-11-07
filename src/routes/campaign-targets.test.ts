@@ -146,4 +146,17 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     const t = (await request(app).get("/brands/b1/campaign-targets")).body.targets[0];
     expect(t.milestones[1]).toMatchObject({ count: 2, countSource: "campaign_people" });
   });
+
+  it("serves offerTargets: two ongoing campaigns on one Target are ONE entry, no campaign name, the rows per campaign unchanged (TARGET-ROWS-UNIQUE-1107)", async () => {
+    fetchSalesFunnelCampaigns.mockResolvedValue([row("c1", "ongoing"), { ...row("c2", "ongoing"), createdAt: "2026-10-02T00:00:00.000Z" }]);
+    const body = (await request(app).get("/brands/b1/campaign-targets")).body;
+    expect(body.targets.map((t: { salesFunnelCampaignId: string }) => t.salesFunnelCampaignId)).toEqual(["c1", "c2"]);
+    expect(body.offerTargets).toHaveLength(1);
+    const e = body.offerTargets[0];
+    expect(e).not.toHaveProperty("name");
+    expect(e).not.toHaveProperty("milestones");
+    expect(e).toMatchObject({ offerId: "o1", target: { key: "conversation" }, salesFunnelCampaignIds: ["c1", "c2"], outcomesToDate: body.targets[0].outcomesToDate * 2, spentUsd: 60 });
+    expect(e.costPerOutcomeUsd).toBe(body.targets[0].costPerOutcomeUsd);
+    expect(e.projection.outcomesPerDay).toBe(body.targets[0].projection.outcomesPerDay * 2);
+  });
 });

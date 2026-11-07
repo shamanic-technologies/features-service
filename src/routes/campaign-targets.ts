@@ -19,7 +19,7 @@ import { fetchFunnelCampaignDailyBudgetUsd } from "../lib/funnel-campaign-budget
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
-import { campaignTargetRowOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetRow } from "../lib/campaign-targets.js";
+import { campaignTargetRowOf, offerTargetsOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetInput, type CampaignTargetRow } from "../lib/campaign-targets.js";
 import { milestoneChainOf, milestoneCardsOf, type MilestoneCard, type MilestoneCardInput } from "../lib/campaign-milestone-cards.js";
 import { fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
@@ -54,7 +54,7 @@ const titleOf = (key: string) => key.split("_").map((w, i) => (i === 0 ? w[0]!.t
 
 type TargetRowWithMilestones = CampaignTargetRow & { milestones: MilestoneCard[]; milestonesUnavailableReason: string | null; ledgerDaysMissing: string[] };
 
-async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, string>, labels: ReadonlyMap<string, string>, now: string): Promise<TargetRowWithMilestones> {
+async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, string>, labels: ReadonlyMap<string, string>, now: string): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput }> {
   const [activity, charts, stored, dailyBudgetUsd, copies, ledger] = await Promise.all([
     funnelCampaignActivity(row, brandId, headers, pricing),
     funnelCampaignSpendCharts(row, brandId, pricing, headers),
@@ -137,7 +137,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const unpaced = milestoneCardsOf({ milestones: cardInputs, targetOutcomesPerDay: null, targetProjectionUnavailableReason: null, projectionDays: PROJECTION_DAYS, now });
   const targetCard = targetKey ? unpaced.find((c) => c.step === targetKey) ?? null : null;
 
-  const base = campaignTargetRowOf({
+  const input: CampaignTargetInput = {
     salesFunnelCampaignId: row.id,
     name: row.salesFunnelName,
     offerId: row.offerId,
@@ -160,7 +160,8 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
       : null,
     dailyBudgetUsd,
     now,
-  });
+  };
+  const base = campaignTargetRowOf(input);
   const milestones = milestoneCardsOf({
     milestones: cardInputs,
     targetOutcomesPerDay: base.projection.outcomesPerDay,
@@ -169,12 +170,15 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     now,
   });
   return {
-    ...base,
-    targetCountSource: targetCard?.countSource ?? null,
-    milestones,
-    milestonesUnavailableReason: chain.length === 0 ? "no_unit_reaches_a_step" : null,
-    ledgerDaysMissing: ledger?.daysMissing ?? [],
-  } as TargetRowWithMilestones;
+    input,
+    row: {
+      ...base,
+      targetCountSource: targetCard?.countSource ?? null,
+      milestones,
+      milestonesUnavailableReason: chain.length === 0 ? "no_unit_reaches_a_step" : null,
+      ledgerDaysMissing: ledger?.daysMissing ?? [],
+    } as TargetRowWithMilestones,
+  };
 }
 
 router.get("/brands/:brandId/campaign-targets", apiKeyAuth, async (req, res) => {
@@ -218,8 +222,11 @@ async function computeCampaignTargets(brandId: string, one: string | null, rows:
     const picked = one ? rows.filter((r) => r.id === one) : rows.filter((r) => r.status === "ongoing");
     const ordered = [...picked].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const now = new Date().toISOString();
-    const targets = await mapWithConcurrency(ordered, 3, (r) => rowFor(r, brandId, headers, pricing, rungs, labels, now));
-    return { brandId, pricing, costBasis: "charged" as const, computedAt: now, targets };
+    const built = await mapWithConcurrency(ordered, 3, (r) => rowFor(r, brandId, headers, pricing, rungs, labels, now));
+    const targets = built.map((b) => b.row);
+    // TARGET-ROWS-UNIQUE-1107: Today reads ONE entry per (offer, Target), its campaigns merged; `targets` stays per campaign (campaign page).
+    const offerTargets = offerTargetsOf(built);
+    return { brandId, pricing, costBasis: "charged" as const, computedAt: now, targets, offerTargets };
   }
 }
 
