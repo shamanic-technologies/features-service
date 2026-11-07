@@ -54,6 +54,7 @@ vi.mock("../lib/expected-return.js", async (orig) => ({
 }));
 
 import { computeOutcomeCostSeries } from "./outcome-cost-series.js";
+import * as expectedReturn from "../lib/expected-return.js";
 
 const rows = [
   {
@@ -115,5 +116,22 @@ describe("computeOutcomeCostSeries (OUTCOME-COST-SERIES-1027)", () => {
       expect(last.cumulativeCostPerOutcomeUsd).toBe(s.sinceInception.costPerOutcomeUsd);
       expect(last.cumulativeSpendUsd).toBe(s.sinceInception.spendUsd);
     }
+  });
+
+  it("OUTCOME-ACCOUNTING-1107: a step off the offer's expected path is priced and valued on the best path through it", async () => {
+    const leg = (from: string, to: string, rate: number | null, cost: number | null) =>
+      ({ legKey: `${from}_to_${to}`, fromStep: { key: from }, toStep: { key: to }, workedBy: "platform", conversionRatePct: rate, costPerOutcomeUsd: cost, rateSource: "default", costSource: "default", outcomesNeededPerPayingClient: null, costPerPayingClientUsd: null }) as never;
+    const meetingPath = { rank: 1, combinationKey: "meet", lifetimeRevenueUsd: 1000, legs: [leg("lead_found", "conversation", null, 10), leg("conversation", "meeting_booked", 50, 5), leg("meeting_booked", "paid_client", 20, 0)] };
+    const signupPath = { rank: 2, combinationKey: "sign", lifetimeRevenueUsd: 1000, legs: [leg("lead_found", "website_visit", null, 1), leg("website_visit", "signup", 10, 2), leg("signup", "paid_client", 10, 0)] };
+    vi.mocked(expectedReturn.offerExpectedModel).mockResolvedValueOnce({ offerId: "o1", body: { paths: [signupPath, meetingPath] }, selected: ["meet"], lifetimeRevenueSource: "offer_stated", notRunning: false } as never);
+    vi.spyOn(expectedReturn, "expectedForOffer").mockReturnValueOnce({ combinationKey: "meet", basis: "default", unavailableReason: null } as never);
+    const body = await computeOutcomeCostSeries("o1", "b1", rows, [], "net", { orgId: "org1", userId: "u", runId: "r", featureSlug: undefined }, "2026-10-27");
+    const signup = body.steps.find((s) => s.stepKey === "signup")!;
+    // Signup on its own path: C = 1 / 0.10 + 2 = $12; V = 0.10 x (1000 - 0) = $100.
+    expect(signup.accounting!.costFromStart).toMatchObject({ expectedUsd: 12, route: ["website_visit", "signup"] });
+    expect(signup.accounting!.value.expectedNetPerUnitUsd).toBe(100);
+    expect(signup.value.valuePerOutcomeUsd).toBe(100);
+    // The meeting stays on the expected path: C = 10 / 0.5 + 5 = $25.
+    expect(body.steps.find((s) => s.stepKey === "meeting_booked")!.accounting!.costFromStart.expectedUsd).toBe(25);
   });
 });
