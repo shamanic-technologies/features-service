@@ -8095,6 +8095,154 @@
           "brandProjection"
         ]
       },
+      "RevenueGenerated": {
+        "type": "object",
+        "properties": {
+          "realUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "REAL REVENUE GENERATED TO DATE (the headline): money actually won, since inception. Exactly `costEconomics.realizedReturn.closedWonRevenueUsd` (the same deals: closed won, priced to our outreach, stated amount else the offer's lifetime revenue), so it agrees with the paid client count. Null with `realUnavailableReason`."
+          },
+          "paidClientCount": {
+            "type": "number",
+            "nullable": true,
+            "description": "The deals behind `realUsd` (= `costEconomics.realizedReturn.closedWonCount`)."
+          },
+          "realUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "closed_deals_not_read",
+              null
+            ],
+            "description": "Why `realUsd` is null: no source of closed deals could be read (then `realizedReturn` is null too). Null when served."
+          },
+          "undatedRealUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Of `realUsd`, sales carrying no won date: counted on `firstDay` so the solid line still ends at `realUsd`."
+          },
+          "spentUsd": {
+            "type": "number",
+            "description": "Money actually spent, whole history: `costEconomics.realizedReturn.spentUsd` (the ROI tile's spend)."
+          },
+          "expectedToDateUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "EXPECTED REVENUE of the spend to date (secondary figure): `expectedReturn.roiMultiple` (served beside it, the ONE basis every expected figure here rests on) × `spentUsd`, so `expectedToDateUsd` ÷ `spentUsd` IS the expected ROI served beside it. What the money already spent is expected to bring back once its leads have converted, never the Deals board's pipeline (another value model). Null with `expectedUnavailableReason`."
+          },
+          "expectedUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "`expectedToDateUsd` plus `expectedHorizonDays` more days of spend at `dailySpendPaceUsd`, each dollar expected to return `expectedReturn.roiMultiple`. Equal to `expectedToDateUsd` when `expectedFlatReason` is set. Equals the last point's `expectedCumulativeUsd`."
+          },
+          "expectedUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "expected_return_unavailable",
+              "nothing_spent_yet",
+              null
+            ],
+            "description": "Why every expected figure is null: the expected return could not be served (`expectedReturn.unavailableReason` says why), or nothing was spent yet. Null when served."
+          },
+          "expectedHorizonDays": {
+            "type": "number",
+            "description": "How many days past today the expected continuation runs (30)."
+          },
+          "dailySpendPaceUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "`spentUsd` ÷ the days from `firstDay` to `today`, both counted: the spend pace since inception the expected days carry forward."
+          },
+          "expectedFlatReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "offer_not_running",
+              "offer_status_unreadable",
+              "spend_not_dated",
+              null
+            ],
+            "description": "Why the expected days stay flat at `expectedToDateUsd`: no campaign of the offer runs (no more spend expected), campaign-service could not be read (logged), or no spend day is known. Null = they grow at `dailySpendPaceUsd` × `expectedReturn.roiMultiple` a day."
+          },
+          "offerRunning": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "A campaign of the offer is running now (campaign-service `ongoing`); null = unreadable."
+          },
+          "firstDay": {
+            "type": "string",
+            "nullable": true,
+            "description": "The first day (YYYY-MM-DD, UTC): the earliest spend or won day. Null when nothing was spent nor won."
+          },
+          "today": {
+            "type": "string",
+            "description": "The last measured day (YYYY-MM-DD, UTC)."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD (UTC). Every day from `firstDay`, no gap."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "measured",
+                    "expected"
+                  ],
+                  "description": "`measured` up to `today` included, `expected` after."
+                },
+                "realUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Money won that day (by the sale's won date). Null on expected days or when `realUsd` is null."
+                },
+                "realCumulativeUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "SOLID LINE: real revenue won up to that day. Today's point = `realUsd`. Null on expected days or when `realUsd` is null."
+                },
+                "expectedCumulativeUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "DOTTED LINE: expected revenue up to that day = `expectedReturn.roiMultiple` × the spend committed by then (the body's dated committed spend scaled onto `spentUsd`, so today's point = `expectedToDateUsd`), then the continuation after today (last point = `expectedUsd`). Null when no expected figure (or, on past days, when the dated spend read degraded)."
+                }
+              },
+              "required": [
+                "date",
+                "kind",
+                "realUsd",
+                "realCumulativeUsd",
+                "expectedCumulativeUsd"
+              ]
+            },
+            "description": "The measured days (`firstDay`..`today`), then `expectedHorizonDays` expected days. Draw `realCumulativeUsd` solid and `expectedCumulativeUsd` dotted (from today on for the continuation alone)."
+          }
+        },
+        "required": [
+          "realUsd",
+          "paidClientCount",
+          "realUnavailableReason",
+          "undatedRealUsd",
+          "spentUsd",
+          "expectedToDateUsd",
+          "expectedUsd",
+          "expectedUnavailableReason",
+          "expectedHorizonDays",
+          "dailySpendPaceUsd",
+          "expectedFlatReason",
+          "offerRunning",
+          "firstDay",
+          "today",
+          "points"
+        ],
+        "description": "REVENUE GENERATED (REVENUE-GENERATED-1107, owner 2026-11-07: real revenue first, expected second, solid real line, dotted expected line), since inception. REAL = the realized return's own deals, dated; EXPECTED = the expected return's ROI × spend, one basis, so expected ÷ spend never contradicts `expectedReturn`. No pipeline dollars (ROI-CONSISTENCY-1103)."
+      },
       "OfferRevenueResponse": {
         "type": "object",
         "properties": {
@@ -10352,6 +10500,17 @@
           },
           "brandId": {
             "type": "string"
+          },
+          "revenueGenerated": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RevenueGenerated"
+              },
+              {
+                "nullable": true,
+                "description": "Real revenue generated (headline) and the expected revenue on `expectedReturn`'s basis, each to date and per day since inception (see RevenueGenerated). Null only when the offer has no economics (cold start)."
+              }
+            ]
           },
           "channels": {
             "type": "array",
@@ -25195,7 +25354,7 @@
           "wonUsd": {
             "type": "number",
             "nullable": true,
-            "description": "Of `measuredUsd`, the won value (the lifecycle board's Paid client)."
+            "description": "Of `measuredUsd`, the won value (the lifecycle board's Paid client: only sales OURS by the realized return's predicate since REVENUE-GENERATED-1107). The Today page's REAL revenue and its expected twin are GET /offers/{offerId}/revenue `revenueGenerated`."
           },
           "expectedUsd": {
             "type": "number",

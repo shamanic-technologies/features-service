@@ -85,7 +85,10 @@ import {
   pricedFingerprint,
   type DownstreamHeaders,
   type FunnelPricedEconomics,
+  revenueGeneratedInputsOf,
 } from "./revenue.js";
+import { buildRevenueGenerated, type RevenueGenerated } from "../lib/revenue-generated.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeOfferPipelineActivity } from "./pipeline-activity.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
@@ -418,8 +421,13 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       });
       // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the offer's best sales path priced on
       // named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
-      const expectedReturn = await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity);
-      // LEDGER-ONLY-1107: the realized return counts the ledger's Paid client Units, never the CRM's closed deals.
+      const [expectedReturn, offerRunning] = await Promise.all([
+        expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity),
+        offerRunningSoft(brandId, offerId, headers),
+      ]);
+      const revenueGenerated = offerRevenueGenerated(body, expectedReturn.roiMultiple, offerRunning);
+      // LEDGER-ONLY-1107: the realized return and the REAL half of revenueGenerated count the ledger's Paid client
+      // Units (never the CRM's closed deals); the expected half stays expected ROI x the same spend.
       return servedRevenueBody(
         await withLedgerRealizedReturn(
           {
@@ -429,6 +437,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
             channels: groups,
             ...applyLeadDetail(body, leadDetail),
             expectedReturn,
+            revenueGenerated,
             ...(window ? { window } : {}),
           },
           brandId,
@@ -436,6 +445,34 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
         ),
       );
     },
+  });
+}
+
+/** Whether a campaign of the offer is running now (campaign-service `ongoing`); null when unreadable (logged). */
+async function offerRunningSoft(brandId: string, offerId: string, headers: DownstreamHeaders): Promise<boolean | null> {
+  try {
+    const rows = await fetchBrandCampaignRows(brandId, undefined, headers);
+    return rows.some((r) => r.offerId === offerId && r.status === "ongoing");
+  } catch (err) {
+    console.error(`[features-service] offer revenue (offer ${offerId}, brand ${brandId}): campaign status unreadable, revenueGenerated's expected days stay flat: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * REVENUE-GENERATED-1107 (`lib/revenue-generated.ts`): real revenue (the realized return's deals, dated) first,
+ * expected second on the expected return's basis. Null only on a body the engine did not price (no economics).
+ */
+export function offerRevenueGenerated(body: object & { costEconomics: { realizedReturn: { spentUsd: number } | null; actualCostUsd: number } }, expectedRoiMultiple: number | null, offerRunning: boolean | null): RevenueGenerated | null {
+  const inputs = revenueGeneratedInputsOf(body);
+  if (inputs === null) return null;
+  return buildRevenueGenerated({
+    deals: inputs.deals,
+    spentUsd: body.costEconomics.realizedReturn?.spentUsd ?? body.costEconomics.actualCostUsd,
+    spendByDay: inputs.spendByDay,
+    expectedRoiMultiple,
+    offerRunning,
+    today: new Date().toISOString().slice(0, 10),
   });
 }
 

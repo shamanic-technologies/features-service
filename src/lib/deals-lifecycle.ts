@@ -19,7 +19,9 @@
  *     (`expectedValueOfPerson`). An observed rung REPLACES the forecast pointing at it, exactly as the pipeline
  *     prices it. 0 says why (`zeroValueReason`).
  *   - Paid client: what was won: the amount a human STATED on the sale, else the offer's lifetime revenue per client
- *     (`valueSource`); a sale none of our pipes caused is 0 `not_ours`.
+ *     (`valueSource`), ONLY on a sale OURS by the realized return's predicate (`isClosedWonOurs`, REVENUE-GENERATED-1107):
+ *     anyone else on the rung (a sale none of our pipes caused, or no sale recorded at all) is 0 `not_ours`, so the
+ *     won column is exactly `costEconomics.realizedReturn`'s deals among the people on the rung.
  *
  * A card is one Unibox row (a person at a company); its value is the MAX over its leads held by this population. A
  * rung's value is company-level, the pipeline's rule: one organisation = one client = the MAX over its members, so
@@ -34,6 +36,7 @@
  * (`measured` | `default_entry`).
  */
 import { LIFECYCLE_RUNGS, type LifecycleRungKey } from "./lifecycle-ladder.js";
+import { isClosedWonOurs } from "./ratio-basis.js";
 import {
   contactedEntryRatesOf,
   contactedExpired,
@@ -194,9 +197,13 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
 
   const valueOf = (p: EnginePerson, rung: BoardRungKey): PersonValue => {
     if (rung === "paid_client") {
-      // A sale none of our pipes caused is the customer's, never our pipeline nor our won value.
-      if (p.signals.closeWin && (p.unpricedSignals ?? []).includes("closeWin")) {
-        return { v: 0, zero: "not_ours", source: null, entry: null };
+      // Won value = a sale OURS by the realized return's own predicate (`isClosedWonOurs`: closed, priced to our
+      // outreach, not ruled dead), so the board's won column and "N paid clients" are the same deals
+      // (REVENUE-GENERATED-1107: 13 companies on the Paid client rung with no sale of ours read $6,500 won beside
+      // 0 paid clients). A person on the rung with no sale of ours (the customer's own sale, a rung lead-service
+      // places from another source) is worth 0 here.
+      if (!isClosedWonOurs(p)) {
+        return { v: 0, zero: (p.deadSignals ?? []).includes("closeWin") ? "ruled_out" : "not_ours", source: null, entry: null };
       }
       const email = p.email?.trim().toLowerCase() ?? null;
       const stated = email ? (input.statedWonAmountUsdByEmail?.get(email) ?? null) : null;

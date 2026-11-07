@@ -1665,12 +1665,40 @@ const offerRevenueChannelGroupSchema = offerChannelSchema.extend({
 
 const windowDaysParam = z.string().describe("ONE CHOSEN WINDOW: an integer 1..90 = that many UTC days ending today (7 and 30 are what the Today page asks). Adds `window` — emails sent/delivered/bounced + delivery rate, emails queued right now (snapshot), actual spend + cost per email sent, positive replies, website visits and the expected pipeline curve — each a window total beside one value per day. Omitted → no `window` key, every other field byte-identical. Anything else is a 400 with reason 'window_days_unrecognised'.").optional();
 
+const revenueGeneratedRef = registry.register(
+  "RevenueGenerated",
+  z.object({
+    realUsd: z.number().nullable().describe("REAL REVENUE GENERATED TO DATE (the headline): money actually won, since inception. Exactly `costEconomics.realizedReturn.closedWonRevenueUsd` (the same deals: closed won, priced to our outreach, stated amount else the offer's lifetime revenue), so it agrees with the paid client count. Null with `realUnavailableReason`."),
+    paidClientCount: z.number().nullable().describe("The deals behind `realUsd` (= `costEconomics.realizedReturn.closedWonCount`)."),
+    realUnavailableReason: z.enum(["closed_deals_not_read", "outcome_not_declared_in_ledger", "no_producer_declares_outcome", "ledger_unreadable", "lifetime_revenue_not_stated"]).nullable().describe("Why `realUsd` is null. LEDGER-ONLY-1107: the real half counts the brand ledger's Paid client Units × the offer's lifetime revenue; `outcome_not_declared_in_ledger` = no run declares Paid client Units for this brand (consumed, never produced), `ledger_unreadable` = runs-service unreadable. Null when served."),
+    undatedRealUsd: z.number().nullable().describe("Of `realUsd`, sales carrying no won date: counted on `firstDay` so the solid line still ends at `realUsd`."),
+    spentUsd: z.number().describe("Money actually spent, whole history: `costEconomics.realizedReturn.spentUsd` (the ROI tile's spend)."),
+    expectedToDateUsd: z.number().nullable().describe("EXPECTED REVENUE of the spend to date (secondary figure): `expectedReturn.roiMultiple` (served beside it, the ONE basis every expected figure here rests on) × `spentUsd`, so `expectedToDateUsd` ÷ `spentUsd` IS the expected ROI served beside it. What the money already spent is expected to bring back once its leads have converted, never the Deals board's pipeline (another value model). Null with `expectedUnavailableReason`."),
+    expectedUsd: z.number().nullable().describe("`expectedToDateUsd` plus `expectedHorizonDays` more days of spend at `dailySpendPaceUsd`, each dollar expected to return `expectedReturn.roiMultiple`. Equal to `expectedToDateUsd` when `expectedFlatReason` is set. Equals the last point's `expectedCumulativeUsd`."),
+    expectedUnavailableReason: z.enum(["expected_return_unavailable", "nothing_spent_yet"]).nullable().describe("Why every expected figure is null: the expected return could not be served (`expectedReturn.unavailableReason` says why), or nothing was spent yet. Null when served."),
+    expectedHorizonDays: z.number().describe("How many days past today the expected continuation runs (30)."),
+    dailySpendPaceUsd: z.number().nullable().describe("`spentUsd` ÷ the days from `firstDay` to `today`, both counted: the spend pace since inception the expected days carry forward."),
+    expectedFlatReason: z.enum(["offer_not_running", "offer_status_unreadable", "spend_not_dated"]).nullable().describe("Why the expected days stay flat at `expectedToDateUsd`: no campaign of the offer runs (no more spend expected), campaign-service could not be read (logged), or no spend day is known. Null = they grow at `dailySpendPaceUsd` × `expectedReturn.roiMultiple` a day."),
+    offerRunning: z.boolean().nullable().describe("A campaign of the offer is running now (campaign-service `ongoing`); null = unreadable."),
+    firstDay: z.string().nullable().describe("The first day (YYYY-MM-DD, UTC): the earliest spend or won day. Null when nothing was spent nor won."),
+    today: z.string().describe("The last measured day (YYYY-MM-DD, UTC)."),
+    points: z.array(z.object({
+      date: z.string().describe("YYYY-MM-DD (UTC). Every day from `firstDay`, no gap."),
+      kind: z.enum(["measured", "expected"]).describe("`measured` up to `today` included, `expected` after."),
+      realUsd: z.number().nullable().describe("Money won that day (by the sale's won date). Null on expected days or when `realUsd` is null."),
+      realCumulativeUsd: z.number().nullable().describe("SOLID LINE: real revenue won up to that day. Today's point = `realUsd`. Null on expected days or when `realUsd` is null."),
+      expectedCumulativeUsd: z.number().nullable().describe("DOTTED LINE: expected revenue up to that day = `expectedReturn.roiMultiple` × the spend committed by then (the body's dated committed spend scaled onto `spentUsd`, so today's point = `expectedToDateUsd`), then the continuation after today (last point = `expectedUsd`). Null when no expected figure (or, on past days, when the dated spend read degraded)."),
+    })).describe("The measured days (`firstDay`..`today`), then `expectedHorizonDays` expected days. Draw `realCumulativeUsd` solid and `expectedCumulativeUsd` dotted (from today on for the continuation alone)."),
+  }).describe("REVENUE GENERATED (REVENUE-GENERATED-1107, owner 2026-11-07: real revenue first, expected second, solid real line, dotted expected line), since inception. REAL = the realized return's own deals, dated; EXPECTED = the expected return's ROI × spend, one basis, so expected ÷ spend never contradicts `expectedReturn`. No pipeline dollars (ROI-CONSISTENCY-1103)."),
+);
+
 const offerRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     offerId: z.string(),
     brandId: z.string(),
     window: revenueWindowRef.describe("Present ONLY when ?windowDays= was asked. See RevenueWindow.").optional(),
+    revenueGenerated: revenueGeneratedRef.nullable().describe("Real revenue generated (headline) and the expected revenue on `expectedReturn`'s basis, each to date and per day since inception (see RevenueGenerated). Null only when the offer has no economics (cold start).").optional(),
     channels: z
       .array(offerRevenueChannelGroupSchema)
       .describe(
@@ -3902,7 +3930,7 @@ const offerPipelineGeneratedResponseRef = registry.register(
     unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Why no figure exists (every dollar field null, `points` empty). Null when valued."),
     measuredUsd: z.number().nullable().describe("PIPELINE GENERATED TO DATE: the lifecycle Deals board's total (`totalUsd` of `columns=lifecycle`: open pipeline + won), on the board's one pipeline basis. Equals the last `kind: measured` point's `cumulativeUsd`. A forecast in dollars (every value but a stated sale is expected), never a return."),
     openUsd: z.number().nullable().describe("Of `measuredUsd`, the open pipeline (the lifecycle board's `expectedPipelineUsd`)."),
-    wonUsd: z.number().nullable().describe("Of `measuredUsd`, the won value (the lifecycle board's Paid client)."),
+    wonUsd: z.number().nullable().describe("Of `measuredUsd`, the won value (the lifecycle board's Paid client: only sales OURS by the realized return's predicate since REVENUE-GENERATED-1107). The Today page's REAL revenue and its expected twin are GET /offers/{offerId}/revenue `revenueGenerated`."),
     expectedUsd: z.number().nullable().describe("`measuredUsd` plus the pipeline expected over the next `expectedHorizonDays` days at the offer's own pace since inception (`dailyPaceUsd`); equal to `measuredUsd` when `expectedFlatReason` is set. Equals the last `kind: expected` point's `cumulativeUsd`."),
     expectedHorizonDays: z.number().describe("How many days past today the expected continuation runs (30)."),
     dailyPaceUsd: z.number().nullable().describe("`measuredUsd` ÷ the days from `firstDay` to `today`, both counted: the pace since inception the expected days carry forward."),

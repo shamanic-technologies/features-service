@@ -140,7 +140,7 @@ const nulled = <R extends { costEconomics?: CostEconLike | null }>(rows: R[] | u
 export async function withLedgerRealizedReturn<T extends object>(body: T, brandId: string, basis: LedgerBasis, narrowerScope: string | null = null): Promise<T> {
   const b = body as RevenueBodyLike;
   const { ledgerRealizedReturn, scopeOutcomeLedgerRowOf } = await import("./scope-outcome-ledger.js");
-  const needsLedger = narrowerScope === null && (Boolean(b.costEconomics) || (b.offers?.length ?? 0) > 0);
+  const needsLedger = narrowerScope === null && (Boolean(b.costEconomics) || (b.offers?.length ?? 0) > 0 || Boolean((body as { revenueGenerated?: unknown }).revenueGenerated));
   const ledger = needsLedger
     ? await fetchBrandOutcomeLedger(brandId, basis).catch((err: Error) => {
         console.error(`[features-service] realized return: brand ledger of ${brandId} unreadable (null): ${err.message}`);
@@ -157,6 +157,11 @@ export async function withLedgerRealizedReturn<T extends object>(body: T, brandI
   const out: Record<string, unknown> = { ...(body as Record<string, unknown>) };
   if (b.costEconomics) out.costEconomics = rebased(b.costEconomics, b.headline?.lifetimeRevenueUsd);
   if (b.offers) out.offers = b.offers.map((o) => (o.costEconomics ? { ...o, costEconomics: rebased(o.costEconomics, o.headline?.lifetimeRevenueUsd) } : o));
+  const rg = (body as { revenueGenerated?: import("./revenue-generated.js").RevenueGenerated | null }).revenueGenerated;
+  if (rg && narrowerScope === null) {
+    const { withLedgerRealHalf } = await import("./revenue-generated.js");
+    out.revenueGenerated = withLedgerRealHalf(rg, paid, b.headline?.lifetimeRevenueUsd ?? null);
+  }
   if (b.channels) out.channels = nulled(b.channels, "per_channel_not_in_ledger");
   if (b.groups) out.groups = nulled(b.groups, "per_group_not_in_ledger");
   return out as T;

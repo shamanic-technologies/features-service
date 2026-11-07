@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import { postWriterBars, type PostGeneration, type RunCredit } from "./post-writer-evidence.js";
-import { generationOf, generationsOfPipe, ledgerCredits, withoutSupportRuns, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
+import { generationOf, generationsOfPipe, ledgerCredits, pipePostKeysOf, withoutSupportRuns, type FeedGeneration, type Occurrence } from "./post-writer-evidence-io.js";
 import { rankWriters, type WriterCandidate } from "./leg-writer-ranking.js";
 
-const LEG = "start_to_post_published";
+const LEG = "start_to_threads_post_published";
 const gen = (id: string, runId: string | null, tpl: string | null, model = "claude-haiku", createdAt = "2026-10-30T10:00:00Z"): PostGeneration => ({
   generationId: id,
   createdAt,
@@ -102,13 +102,18 @@ describe("post pipe membership and ledger credits", () => {
     const occ = (o: Partial<Occurrence> & Pick<Occurrence, "id" | "runId" | "direction" | "outcomeKey">): Occurrence => ({ subjectService: "x", subjectId: "y", consumption: null, ...o });
     const cons = (src: string, into: string) => ({ sourceOccurrenceId: src, consumingOutcomes: [{ outcomeKey: into }] });
     const out = ledgerCredits(
-      ["pub1", "pub2"],
-      [occ({ id: "post1", runId: "pub1", direction: "produced", outcomeKey: "post_published" })],
+      new Set(["threads_post_published"]),
+      ["pub1", "pub2", "other"],
       [
-        occ({ id: "c1", runId: "visitA", direction: "consumed", outcomeKey: "post_published", consumption: cons("post1", "website_visit") }),
-        occ({ id: "c2", runId: "visitB", direction: "consumed", outcomeKey: "post_published", consumption: cons("post1", "website_visit") }),
+        occ({ id: "post1", runId: "pub1", direction: "produced", outcomeKey: "threads_post_published" }),
+        // Another outcome the run produced is no post of this pipe.
+        occ({ id: "x1", runId: "other", direction: "produced", outcomeKey: "x_post_published" }),
+      ],
+      [
+        occ({ id: "c1", runId: "visitA", direction: "consumed", outcomeKey: "threads_post_published", consumption: cons("post1", "website_visit") }),
+        occ({ id: "c2", runId: "visitB", direction: "consumed", outcomeKey: "threads_post_published", consumption: cons("post1", "website_visit") }),
         // A social-service view of the post is no visit.
-        occ({ id: "c3", runId: "viewed", direction: "consumed", outcomeKey: "post_published", consumption: cons("post1", "post_viewed") }),
+        occ({ id: "c3", runId: "viewed", direction: "consumed", outcomeKey: "threads_post_published", consumption: cons("post1", "post_viewed") }),
       ],
       [occ({ id: "vA", runId: "visitA", direction: "produced", outcomeKey: "website_visit" }), occ({ id: "vB", runId: "visitB", direction: "produced", outcomeKey: "website_visit" })],
       [
@@ -120,6 +125,17 @@ describe("post pipe membership and ledger credits", () => {
     );
     expect(out.get("pub1")).toEqual({ published: true, visits: 2, signups: 1 });
     expect(out.get("pub2")).toEqual({ published: false, visits: 0, signups: 0 });
+    expect(out.get("other")).toEqual({ published: false, visits: 0, signups: 0 });
+  });
+
+  it("a post pipe's outcome is read off the catalogue: its leg's step, and its Engine's finer outcome (DELETE-POST-PUBLISHED-1107)", () => {
+    const channels = [
+      { slug: "threads-post", stepTransitions: [{ legKey: "start_to_threads_post_published", to: { key: "threads_post_published" }, outcome: null }] },
+      { slug: "social-post", stepTransitions: [{ legKey: "start_to_lead_found", to: { key: "lead_found" }, outcome: "x_post_published" }] },
+    ];
+    expect([...pipePostKeysOf(channels, "threads-post", "start_to_threads_post_published")]).toEqual(["threads_post_published"]);
+    expect([...pipePostKeysOf(channels, "social-post", "start_to_lead_found")].sort()).toEqual(["lead_found", "x_post_published"]);
+    expect(() => pipePostKeysOf(channels, "threads-post", "start_to_post_published")).toThrow(/no catalogue pipe/);
   });
 });
 

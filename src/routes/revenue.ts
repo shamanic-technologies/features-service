@@ -121,7 +121,7 @@ import { applySignalOverlays } from "../lib/signal-overlays.js";
 import { computeWorkflowRevenueGroups } from "../lib/workflow-revenue.js";
 import { resolveWorkflowScope, type WorkflowScope } from "../lib/workflow-scope.js";
 import { buildRevenueOutcomes, type RevenueOutcomes } from "../lib/revenue-outcomes.js";
-import { WHOLE_BASIS, closedWonOf, type RatioBasis } from "../lib/ratio-basis.js";
+import { WHOLE_BASIS, closedWonDealsOf, type ClosedWonDeal, type RatioBasis } from "../lib/ratio-basis.js";
 import {
   buildFunnelSteps,
   funnelForSteps,
@@ -807,6 +807,18 @@ function buildOutcomeSeries(leads: LeadRow[]): Pick<RevenueBody, "recipientsOpen
 
 /** The revenue response body for one (brand, campaign?) scope — everything but the featureSlug. */
 export type RevenueBody = Omit<RevenueResponse, "featureSlug">;
+
+/**
+ * What `revenueGenerated` (REVENUE-GENERATED-1107, `lib/revenue-generated.ts`) is built from, held per body off the
+ * wire: the realized return's deals with their won dates (null exactly when `realizedReturn` is) and the body's dated
+ * committed spend (null when that read degraded). Absent on a body the engine did not price (cold start, lens).
+ */
+export interface RevenueGeneratedInputs {
+  deals: ClosedWonDeal[] | null;
+  spendByDay: Map<string, number> | null;
+}
+const REVENUE_GENERATED_INPUTS = new WeakMap<object, RevenueGeneratedInputs>();
+export const revenueGeneratedInputsOf = (body: object): RevenueGeneratedInputs | null => REVENUE_GENERATED_INPUTS.get(body) ?? null;
 
 export type DownstreamHeaders = { orgId: string; userId?: string; runId?: string; featureSlug?: string };
 
@@ -2076,8 +2088,10 @@ export async function computeFeatureRevenue(
   // THE REALIZED RETURN's numerator: every deal actually closed won to date (whole history), priced to our
   // outreach. Only when a source of closed deals was READ (the human statements or the legacy
   // qualifications) — with neither, "0 won" would be a fabricated measurement.
+  const wonDeals =
+    observed === null && quals === null ? null : closedWonDealsOf(persons, economics.lifetimeRevenueUsd);
   const realized =
-    observed === null && quals === null ? null : closedWonOf(persons, economics.lifetimeRevenueUsd);
+    wonDeals === null ? null : { closedWonCount: wonDeals.length, closedWonRevenueUsd: wonDeals.reduce((s, d) => s + d.valueUsd, 0) };
   const maturity = plan.unknown
     ? ({ unknown: true } as const)
     : plan.cutoffIso && matureCost
@@ -2215,6 +2229,9 @@ export async function computeFeatureRevenue(
     outcomeCauses: { priced: [...causes], counts: observed?.causeCounts ?? null },
     learningPhase: learning?.phase ?? null,
   };
+  // REVENUE-GENERATED-1107: the realized return's deals, dated, and the dated spend, kept off the wire for the
+  // offer read's `revenueGenerated` (`revenueGeneratedInputsOf`).
+  REVENUE_GENERATED_INPUTS.set(body, { deals: wonDeals, spendByDay });
   return attachMaturity(
     body,
     scoped,
