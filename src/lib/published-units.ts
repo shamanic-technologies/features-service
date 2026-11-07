@@ -128,7 +128,9 @@ export interface UnitRow extends Omit<UnitSource, "ledger" | "metrics" | "campai
   visitsUnavailableReason: "no_visit_attribution_on_outcome" | "not_on_ledger_yet" | null;
   /** Each engagement kind the platform reports (null = not reported); sums to `engagements`. */
   engagementBreakdown: EngagementBreakdown;
-  /** `engagements_exceed_views`: the platform reports more interactions than views, so one of the two is not measured. */
+  /** `views_not_reported`: the platform gives no views (absent, or 0 beside an engagement: nobody engages unseen). */
+  viewsUnavailableReason: "views_not_reported" | null;
+  /** `engagements_exceed_views`: the platform reports more interactions than (non-zero) views, so one of the two is not measured. */
   metricsWarning: "engagements_exceed_views" | null;
   valuePerUnitUsd: number | null;
   /** units x valuePerUnitUsd: the value this row produced (yield). */
@@ -409,7 +411,9 @@ export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPer
  * every row), the catalogue's own last rung (`expectedPipeCost` `own_spend`, owner rule: a cost is never blank).
  */
 export function withOwnSpendCost(e: ExpectedReturn, t: Pick<Totals, "units" | "spentUsd">): ExpectedReturn {
-  if (e.unavailableReason !== "no_pipe_prices_outcome" || !(t.units > 0) || !(t.spentUsd > 0)) return e;
+  if (e.unavailableReason !== "no_pipe_prices_outcome") return e;
+  // Nothing was ever spent making one: no cost to divide by, the only case an expected return stays blank.
+  if (!(t.units > 0) || !(t.spentUsd > 0)) return { ...e, unavailableReason: "nothing_spent_on_outcome" };
   const own = expectedReturnOf(e.valuePerUnitUsd, { costPerUnitUsd: round(t.spentUsd / t.units), costSource: "own_spend", basis: "measured", pipeId: "" }, null);
   return { ...own, pipeId: null };
 }
@@ -479,11 +483,16 @@ export function publishedUnitsOf(
       const value = opts.unitValueOf ? opts.unitValueOf(s) : NO_VALUE;
       const valueUsd = value.valuePerUnitUsd === null ? null : round(s.units * value.valuePerUnitUsd, 4);
       const spentUsd = c ? c.spentUsd : null;
+      // Zero views beside an engagement is no measured zero (nobody engages unseen): the source does not report views.
+      const viewsUnreported = s.views === 0 && engagements !== null && engagements > 0;
+      const views = viewsUnreported ? null : s.views;
       return {
         ...rest,
+        views,
+        viewsUnavailableReason: viewsUnreported ? ("views_not_reported" as const) : views === null ? ("views_not_reported" as const) : null,
         engagements,
         engagementBreakdown,
-        metricsWarning: s.views !== null && engagements !== null && engagements > s.views ? ("engagements_exceed_views" as const) : null,
+        metricsWarning: views !== null && views > 0 && engagements !== null && engagements > views ? ("engagements_exceed_views" as const) : null,
         spentUsd,
         visits: c && visitsMeasured ? c.visits : null,
         signups: c && visitsMeasured ? c.signups : null,

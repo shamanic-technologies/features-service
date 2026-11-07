@@ -75101,6 +75101,15 @@
                             ],
                             "description": "SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`."
                           },
+                          "viewsUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "views_not_reported",
+                              null
+                            ],
+                            "description": "The platform gives no views: absent, or 0 beside an engagement (nobody engages unseen), then `views` is null."
+                          },
                           "metricsWarning": {
                             "type": "string",
                             "nullable": true,
@@ -75108,7 +75117,7 @@
                               "engagements_exceed_views",
                               null
                             ],
-                            "description": "The platform reports more interactions than views: one of the two is not measured."
+                            "description": "The platform reports more interactions than (non-zero) views: one of the two is not measured."
                           },
                           "valuePerUnitUsd": {
                             "type": "number",
@@ -75209,6 +75218,7 @@
                           "ledgerUnavailableReason",
                           "visitsUnavailableReason",
                           "engagementBreakdown",
+                          "viewsUnavailableReason",
                           "metricsWarning",
                           "valuePerUnitUsd",
                           "valueUsd",

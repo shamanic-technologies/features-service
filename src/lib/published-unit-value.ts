@@ -27,12 +27,33 @@ export function pipesMakingOutcome(model: Pick<CatalogueModel, "pipes">, outcome
   return [...model.pipes.values()].filter((p) => p.published && p.outcome === outcomeKey);
 }
 
+/**
+ * PURE. A step's value WITHOUT the catalogue's rounding to the cent: its route's rates multiplied along `valueVia` up to
+ * the first step whose value is not tiny (or Paid client). The catalogue serves `valueUsd` rounded to 2 decimals, so a
+ * step a few cents of a cent are worth reads $0.00 (a newsletter email: 0.01% to Website visit, SOCIAL-OUTCOMES-1107),
+ * a false zero. Same rule, same route, more decimals.
+ */
+export function unroundedStepValue(model: Pick<CatalogueModel, "steps">, step: string): number | null {
+  const own = model.steps.get(step);
+  if (!own || own.valueUsd === null) return null;
+  let factor = 1;
+  let at = own;
+  for (let hops = 0; hops < 20 && at.valueVia && at.valueUsd !== null && at.valueUsd < 1; hops++) {
+    const next = model.steps.get(at.valueVia.toStep);
+    if (!next || next.valueUsd === null) break;
+    factor *= at.valueVia.ratePct / 100;
+    at = next;
+  }
+  if (at.valueUsd === null) return null;
+  return Math.round(factor * at.valueUsd * 1e8) / 1e8;
+}
+
 /** PURE. The step valued, its value per Unit, and the expected cost of one more Unit. */
 export function outcomeCatalogueFigures(model: Pick<CatalogueModel, "pipes" | "steps">, outcomeKey: string): OutcomeCatalogueFigures {
   const pipes = pipesMakingOutcome(model, outcomeKey);
   const step = model.steps.has(outcomeKey) ? outcomeKey : (pipes[0]?.toStep ?? null);
   if (step === null) return { step: null, valuePerUnitUsd: null, cost: null, unavailableReason: "no_catalogue_step_for_outcome" };
-  const valuePerUnitUsd = model.steps.get(step)?.valueUsd ?? null;
+  const valuePerUnitUsd = unroundedStepValue(model, step);
   const priced = pipes
     .filter((p) => p.operatedBy === "platform" && p.expectedCost && p.expectedCost.costPerOutcomeUsd > 0)
     .sort(
