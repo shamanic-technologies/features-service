@@ -419,14 +419,17 @@ export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPer
 }
 
 /**
- * PURE. The Units that CARRY a declared cost and that cost (ours when any of ours does, else every row's): a Unit whose
- * cost was never declared (a hand post imported, $0 on the ledger) is no evidence of what one costs, so dividing over it
- * read an X post at $0.00015 and an expected 16,447x (SOCIAL-OUTCOMES-1107, 2026-11-07).
+ * PURE. The Units whose cost is evidence of what one costs. OURS Units on the ledger count, a $0 one included: our run
+ * made it and declared everything it metered, so $0 is its true cost (OUTCOME-ACCOUNTING-1107, prod 2026-11-07: 24
+ * LinkedIn posts written on our Claude Max login and published by social-service's scheduler, treg billing $0, read an
+ * expected $0.0188 beside an actual $0.0051 when only the 9 posts carrying a cost row counted). With no spend among ours,
+ * the Units of any performer that carry a cost; a client-team Unit at $0 (a hand post imported: nothing of ours ran to
+ * make it) is never evidence (an X post read $0.00015 and 16,447x, SOCIAL-OUTCOMES-1107).
  */
 export function costedUnitsOf(rows: readonly Pick<UnitRow, "units" | "spentUsd" | "performedBy">[]): Pick<Totals, "units" | "spentUsd"> {
+  const ours = rows.filter((r) => r.performedBy === "ours" && r.spentUsd !== null);
   const costed = rows.filter((r) => r.spentUsd !== null && r.spentUsd > 0);
-  const ours = costed.filter((r) => r.performedBy === "ours");
-  const pick = ours.length ? ours : costed;
+  const pick = ours.some((r) => r.spentUsd! > 0) ? ours : costed;
   return { units: pick.reduce((a, r) => a + r.units, 0), spentUsd: round(pick.reduce((a, r) => a + r.spentUsd!, 0)) };
 }
 
