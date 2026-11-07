@@ -12,6 +12,9 @@
  * cached per scope (this route's response shape), refreshed behind a stale read.
  */
 import { Router } from "express";
+import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+import { scopeOutcomeLedgerRowOf } from "../lib/scope-outcome-ledger.js";
+import { rebaseSpendChartOnLedger, type LedgerSpendChart } from "../lib/spend-charts-ledger.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
@@ -57,7 +60,7 @@ export interface OfferSpendChartsBody {
   pricing: Pricing;
   costBasis: "charged";
   salesFunnelCampaignIds: string[];
-  offer: SpendChart;
+  offer: LedgerSpendChart;
 }
 
 const legOf = (u: SalesFunnelUnitRow, steps: PipeSteps): ChartLeg | null => {
@@ -222,7 +225,21 @@ export async function computeOfferSpendCharts(
     chartContext(brandId, rows.flatMap((r) => r.units.map((u) => u.campaignId)), pricing, headers),
     expectedReturnForOffer(identity, brandId, offerId, null),
   ]);
-  const offer = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps), offerChannels), expected);
+  const measured = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps), offerChannels), expected);
+  // LEDGER-ONLY-1107: the offer chart's outcomes and conversion are the brand's ledger Units (the count Today's Target
+  // row prints), never the people the offer's campaigns reached. Unreadable = every outcome figure null, said so.
+  const ledger = await fetchBrandOutcomeLedger(brandId, pricing === "gross" ? "gross" : "net").catch((err: Error) => {
+    console.error(`[features-service] offer spend charts: brand ledger of ${brandId} unreadable (outcomes null): ${err.message}`);
+    return null;
+  });
+  const step = measured.outcomeStep;
+  const from = measured.leg?.fromStep ?? null;
+  const offer = rebaseSpendChartOnLedger(
+    measured,
+    step === null ? null : ledger === null ? "ledger_unreadable" : scopeOutcomeLedgerRowOf([step], ledger),
+    from === null || ledger === null ? null : scopeOutcomeLedgerRowOf([from], ledger),
+    measured.leg?.learningOutcomesRequired ?? 10,
+  );
   return { offerId, brandId, pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), offer };
 }
 

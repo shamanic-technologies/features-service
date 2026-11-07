@@ -321,3 +321,70 @@ function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
     },
   };
 }
+
+/**
+ * LEDGER-ONLY-1107 (owner 2026-11-07, « ON VEUT LE TOTAL ET LES STATS PAR OUTCOME!!!!! … INDEPENDAMMENT DES SOURCES »): a
+ * Today entry's measured figures are the BRAND's ledger total of its Target outcome (every source, every campaign, each Unit
+ * once), never the sum of what its campaigns attributed to themselves: count = Units, $ each = the ledger's unit cost,
+ * spent = what those Units cost to produce, return = Units × the Target's value ÷ that cost, past = Units per day. The
+ * projection keeps its pace (the plan's expected outcomes per day) from the ledger count. `ledger` null = the entry names no
+ * Target; a string = why the ledger could not be read.
+ */
+export type LedgerTargetEntry = OfferTargetEntry & {
+  ledger: {
+    scope: "brand";
+    outcomeKeys: string[];
+    costPerUnitBasis: "every_path" | "own_production" | null;
+    producerGap: import("./scope-outcome-ledger.js").LedgerProducerGap | null;
+    ledgerDaysMissing: string[];
+  } | null;
+};
+
+export function offerTargetFromLedger(
+  entry: OfferTargetEntry,
+  row: import("./scope-outcome-ledger.js").ScopeOutcomeLedgerRow | "ledger_unreadable" | null,
+  targetValueUsd: number | null,
+  targetValueUnavailableReason: string | null,
+  now: string,
+): LedgerTargetEntry {
+  if (row === null || row === "ledger_unreadable") {
+    const reason = row === null ? "campaign_states_no_target" : "ledger_unreadable";
+    return {
+      ...entry,
+      outcomesToDate: null,
+      outcomesUnavailableReason: reason,
+      spentUsd: null,
+      costPerOutcomeUsd: null,
+      costPerOutcomeUnavailableReason: reason,
+      measuredReturn: { roiMultiple: null, valueUsd: null, spentUsd: null, unavailableReason: reason },
+      past: [],
+      pastUnavailableReason: reason,
+      projection: { ...entry.projection, ...paceOf(entry.projection.outcomesPerDay, null, now) },
+      ledger: null,
+    };
+  }
+  const units = row.units;
+  const spent = row.productionCostUsd;
+  const valueUsd = targetValueUsd !== null && units !== null ? round(units * targetValueUsd, 2) : null;
+  const measuredReturn: MeasuredReturn =
+    units === null
+      ? { roiMultiple: null, valueUsd: null, spentUsd: null, unavailableReason: row.unitsUnavailableReason }
+      : targetValueUsd === null
+        ? { roiMultiple: null, valueUsd: null, spentUsd: spent, unavailableReason: targetValueUnavailableReason ?? "target_has_no_value" }
+        : spent === null || spent <= 0
+          ? { roiMultiple: null, valueUsd, spentUsd: spent, unavailableReason: units === 0 ? "no_target_outcome_yet" : "unit_cost_not_in_ledger" }
+          : { roiMultiple: round(valueUsd! / spent, 2), valueUsd, spentUsd: spent, unavailableReason: null };
+  return {
+    ...entry,
+    outcomesToDate: units,
+    outcomesUnavailableReason: row.unitsUnavailableReason,
+    spentUsd: spent,
+    costPerOutcomeUsd: row.costPerUnitUsd,
+    costPerOutcomeUnavailableReason: row.costPerUnitUnavailableReason,
+    measuredReturn,
+    past: row.past.map((p) => ({ date: p.date, outcomes: p.units, cumulativeOutcomes: p.cumulativeUnits })),
+    pastUnavailableReason: units === null ? row.unitsUnavailableReason : null,
+    projection: { ...entry.projection, ...paceOf(entry.projection.outcomesPerDay, units, now) },
+    ledger: { scope: "brand", outcomeKeys: row.outcomeKeys, costPerUnitBasis: row.costPerUnitBasis, producerGap: row.producerGap, ledgerDaysMissing: row.ledgerDaysMissing },
+  };
+}

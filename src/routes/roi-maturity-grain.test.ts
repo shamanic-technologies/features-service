@@ -233,6 +233,17 @@ async function body(query = "brandId=b1&leads=full"): Promise<Record<string, any
   return res.body;
 }
 
+import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+const ledgerOf = (paid: number) => ({
+  producedByDay: new Map(paid > 0 ? [["paid_client", new Map([["2026-10-01", paid]])]] : []),
+  ownCostUsd: new Map(paid > 0 ? [["paid_client", 0]] : []),
+  unitCosts: new Map(),
+  undeclaredConsumptions: new Map(),
+  fleetProducers: new Map([["paid_client", ["lead-service"]]]),
+  daysMissing: [],
+  today: "2026-11-07",
+});
+
 describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
   beforeEach(() => {
     vi.mocked(db.query.features.findFirst).mockResolvedValue({
@@ -371,18 +382,20 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
     expect(res.spend.totalSpentCents).toBe(4000);
   });
 
-  it("serves the REALIZED return beside the pipeline one: every deal closed won to date over money actually spent (ROI-CONSISTENCY-1103)", async () => {
+  it("serves the REALIZED return: the brand ledger's Paid client Units x LTR over money actually spent (LEDGER-ONLY-1107)", async () => {
     mockFetch({ closes: true });
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(2) as never);
     const res = await body();
-    // Whole history: l1 AND the young l5 count (the mature cohort no longer gates a realized sale).
     const rr = res.costEconomics.realizedReturn;
     expect(rr.closedWonCount).toBe(2);
+    expect(rr.closedWonRevenueUsd).toBeCloseTo(2 * res.headline.lifetimeRevenueUsd, 6);
     expect(rr.spentUsd).toBeCloseTo(res.costEconomics.actualCostUsd, 9);
     expect(rr.roiMultiple).toBeCloseTo(rr.closedWonRevenueUsd / res.costEconomics.actualCostUsd, 9);
   });
 
-  it("nothing closed is a MEASURED 0, not a null", async () => {
+  it("nothing closed is a MEASURED 0, not a null (the ledger holds no Paid client Unit, a producer declares them)", async () => {
     mockFetch();
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(0) as never);
     const res = await body();
     expect(res.costEconomics.realizedReturn).toMatchObject({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
   });

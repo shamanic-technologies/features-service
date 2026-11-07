@@ -20,6 +20,10 @@ vi.mock("../middleware/auth.js", () => ({
 const fetchWithRetry = vi.fn();
 vi.mock("../lib/fetch-retry.js", () => ({ fetchWithRetry: (...a: unknown[]) => fetchWithRetry(...a) }));
 
+const fetchSalesFunnelCampaigns = vi.fn(async () => [] as unknown[]);
+vi.mock("../lib/sales-funnel-campaigns-client.js", () => ({ fetchSalesFunnelCampaigns: (...a: unknown[]) => fetchSalesFunnelCampaigns(...(a as [])) }));
+vi.mock("../lib/campaign-identity-client.js", () => ({ fetchBrandCampaignRows: async () => [] }));
+vi.mock("../lib/brand-leg-economics-client.js", () => ({ fetchBrandLegEconomics: async () => ({ offers: [] }) }));
 vi.mock("../lib/offer-lifetime-revenue.js", () => ({ offerLifetimeRevenue: async (stated: number | null | undefined) => (typeof stated === "number" ? { usd: stated, source: "offer_stated" } : { usd: 1000, source: "fleet_median" }) }));
 
 import router from "./published-units.js";
@@ -46,9 +50,16 @@ beforeEach(() => {
   __resetPublishedUnits();
   for (const [k, v] of Object.entries({ RUNS_SERVICE_URL: "http://runs", RUNS_SERVICE_API_KEY: "k", SOCIAL_SERVICE_URL: "http://social", SOCIAL_SERVICE_API_KEY: "k", META_SERVICE_URL: "http://meta", META_SERVICE_API_KEY: "k", TRANSACTIONAL_EMAIL_SERVICE_URL: "http://te", TRANSACTIONAL_EMAIL_SERVICE_API_KEY: "k" })) process.env[k] = v;
   fetchWithRetry.mockReset();
-  // A catalogue where a post is worth 1/1000 of the lifetime revenue and the X pipe expects $0.10 a post.
+  fetchSalesFunnelCampaigns.mockReset();
+  fetchSalesFunnelCampaigns.mockResolvedValue([]);
+  // A catalogue where a post converts to a paying client 0.1% of the time (nobody of ours works that leg: $0), so it is
+  // worth 1/1000 of the lifetime revenue NET, and the X pipe expects $0.10 a post.
   __setPublishedUnitsModelLoader(async (ltr) => ({
-    steps: new Map([["threads_post_published", { key: "threads_post_published", valueUsd: ltr === null ? null : ltr / 1000 }]]),
+    lifetimeRevenueUsd: ltr,
+    steps: new Map([
+      ["threads_post_published", { key: "threads_post_published", valueUsd: ltr === null ? null : ltr / 1000, valueVia: { toStep: "paid_client", ratePct: 0.1 } }],
+      ["paid_client", { key: "paid_client", valueUsd: ltr, valueVia: null }],
+    ]),
     pipes: new Map([["x|start_to_threads_post_published", { id: "x|start_to_threads_post_published", published: true, outcome: "x_post_published", toStep: "threads_post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
   }) as never);
 });
@@ -141,10 +152,44 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     expect(res.status).toBe(200);
     expect(res.body.rows.map((r: { id: string }) => r.id)).toEqual(["x1"]);
     expect(res.body.repostsExcluded).toEqual({ rows: 1, engagements: 11701 });
-    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "threads_post_published" }, measuredReturn: { roiMultiple: 5, spentUsd: 0.2, learning: true } });
+    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "threads_post_published" }, measuredReturn: { roiMultiple: null, spentUsd: 0.2, unavailableReason: "return_only_at_campaign_target" } });
     expect(res.body.totals.all).toMatchObject({ engagements: 4, views: 40, valueUsd: 1 });
     expect(res.body.visitsMeasured).toBe(false);
-    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 10, valuePerUnitUsd: 1, costPerUnitUsd: 0.1, pipeId: "x|start_to_threads_post_published" });
+    // OUTCOME-ACCOUNTING-1107: no campaign targets X posts, so no return; the report states the four figures.
+    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "outcome_is_no_campaign_target" });
+    expect(res.body.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "outcome_is_no_campaign_target" });
+    expect(res.body.accounting).toMatchObject({
+      costPerUnit: { actualUsd: 0.2, expectedUsd: 0.1, variance: { usd: 0.1, pct: 100 } },
+      costFromStart: { actualUsd: 0.2, expectedUsd: 0.1, route: ["threads_post_published"] },
+      yieldToNext: { nextStep: "paid_client", measuredPct: null, measuredUnavailableReason: "next_milestone_not_tracked_for_outcome", expectedPct: 0.1 },
+      value: { expectedNetPerUnitUsd: 1, basis: "expected_net" },
+      returns: { isCampaignTarget: false, unavailableReason: "outcome_is_no_campaign_target" },
+    });
+    expect(res.body.rows[0].accounting.costPerUnit).toMatchObject({ actualUsd: 0.2, expectedUsd: 0.1 });
+  });
+
+  it("OUTCOME-ACCOUNTING-1107: a campaign whose Target is the outcome gets the return, on its own Units and spend", async () => {
+    const xPost = (id: string, campaign: string | null) => ({ id, platform: "x", orgId: "org-1", brandId: "b1", username: "DistributeYou", externalId: id, text: `t ${id}`, permalink: null, publishedAt: "2026-11-05T10:00:00.000Z", performedBy: "ours", ourSubjectId: id, outcomeKey: "x_post_published", unitRunId: `run-${id}`, metrics: { views: 10 }, kind: "post", campaign });
+    fetchSalesFunnelCampaigns.mockResolvedValue([{ id: "fc-1", target: "threads_post_published", units: [{ campaignId: "unit-1" }] }, { id: "fc-2", target: "paid_client", units: [{ campaignId: "unit-2" }] }]);
+    fetchWithRetry.mockImplementation(async (url: string) => {
+      if (url.startsWith("http://social/internal/account-posts")) return json({ posts: [xPost("x1", "unit-1"), xPost("x2", "unit-2")] });
+      if (url.startsWith("http://runs/internal/outcome-occurrences")) {
+        const q = new URL(url).searchParams;
+        if (q.get("direction") === "produced" && q.get("outcomeKey") === "x_post_published")
+          return json({
+            occurrences: ["x1", "x2"].map((id, i) => ({ id: `u${id}`, runId: `run-${id}`, direction: "produced", outcomeKey: "x_post_published", subjectService: "social-service", subjectId: id, cost: { grossCents: "40", netCents: "40" }, consumption: null, tags: { campaignId: i === 0 ? "unit-1" : "unit-2" } })),
+            nextCursor: null,
+          });
+        return json({ occurrences: [], nextCursor: null });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const res = await request(app).get("/brands/b1/published-units/x_post_published");
+    expect(res.status).toBe(200);
+    // fc-1 made x1 ($0.40) worth $1: measured 2.5x (Learning under 10 Units); expected $1 / $0.10 = 10x.
+    expect(res.body.accounting.returns).toMatchObject({ isCampaignTarget: true, targetCampaignIds: ["fc-1"], measured: { roiMultiple: 2.5, targetUnits: 1, spentUsd: 0.4, learning: true }, expected: { roiMultiple: 10 } });
+    expect(res.body.measuredReturn).toMatchObject({ roiMultiple: 2.5 });
+    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 10, costPerUnitUsd: 0.1 });
   });
 
   it("a producer that fails is named on the 502 (newsletter: runs-service 500)", async () => {

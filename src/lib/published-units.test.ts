@@ -151,31 +151,45 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
       expect(body).toMatchObject({ visitsMeasured: false, costPerSignupUsd: null, costPerSignupUnavailableReason: "no_visit_attribution_on_outcome" });
     });
 
-    it("value = units x value per Unit; measured return on ours = value / spend, Learning under the bar; expected = value / expected cost", () => {
+    it("OUTCOME-ACCOUNTING-1107: no return below a campaign's Target; the report on OUR Units; client-team Units apart", () => {
       const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "threads_post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
       const expected = expectedReturnOf(2, { costPerUnitUsd: 0.8, costSource: "workflow", basis: "measured", pipeId: "p" }, null);
-      expect(expected).toMatchObject({ roiMultiple: 2.5, valuePerUnitUsd: 2, costPerUnitUsd: 0.8 });
-      const few = publishedUnitsOf("x_post_published", [post("a"), post("b", { performedBy: "client_team" })], credit, { unitValueOf, expected });
-      expect(few.rows[0]).toMatchObject({ valueUsd: 2, measuredReturn: { roiMultiple: 4, valueUsd: 2, spentUsd: 0.5, learning: true } });
-      expect(few.totals.all.valueUsd).toBe(4);
-      expect(few.totals.ours.valueUsd).toBe(2);
-      expect(few.measuredReturn).toMatchObject({ roiMultiple: 4, learning: true });
-      expect(few.expectedReturn.roiMultiple).toBe(2.5);
-      expect(few.daily[0]).toMatchObject({ valueUsd: 4, oursValueUsd: 2, oursSpentUsd: 0.5, measuredReturn: { roiMultiple: 4 } });
-      const many = Array.from({ length: MEASURED_RETURN_MIN_UNITS }, (_, i) => post(`m${i}`));
-      expect(publishedUnitsOf("x_post_published", many, credit, { unitValueOf, expected }).measuredReturn).toMatchObject({ roiMultiple: 4, learning: false, valueUsd: 20, spentUsd: 5 });
-      const unvalued = publishedUnitsOf("x_post_published", [post("a")], credit);
-      expect(unvalued.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "unit_has_no_value" });
-      expect(unvalued.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "not_priced" });
-      // No catalogue pipe prices the outcome: expected cost = what one cost to date (ours), never blank.
-      const noPipe = publishedUnitsOf("x_post_published", [post("a"), post("b")], credit, { unitValueOf, expected: expectedReturnOf(2, null, null) });
-      expect(noPipe.expectedReturn).toMatchObject({ roiMultiple: 4, costPerUnitUsd: 0.5, costSource: "own_spend", basis: "measured", pipeId: null, unavailableReason: null });
-      // Units with no declared cost are no evidence of a cost: $0.30 on 1 costed post of 3 = $0.30 a post, never $0.10.
-      const mixed = publishedUnitsOf("x_post_published", [post("c", { performedBy: "client_team" }), post("h1", { performedBy: "client_team" }), post("h2")], (s) => (s.id === "c" ? { spentUsd: 0.3, visits: 0, signups: 0 } : { spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf, expected: expectedReturnOf(2, null, null) });
-      expect(mixed.expectedReturn).toMatchObject({ costPerUnitUsd: 0.3, roiMultiple: 6.67, costSource: "own_spend" });
-      const free = publishedUnitsOf("linkedin_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf, expected: expectedReturnOf(2, null, null) });
-      expect(free.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "nothing_spent_on_outcome" });
-      expect(publishedUnitsOf("x_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf }).measuredReturn.unavailableReason).toBe("nothing_spent_yet");
+      // Route: X post (made from Start, $0.80 expected) -> Website visit (5%) -> ... Paid client.
+      const figures = {
+        route: ["threads_post_published"], costPerUnitUsd: 0.8, costPerUnitBasis: "measured", costPerUnitUnavailableReason: null, costFromStartUsd: 0.8, costFromStartUnavailableReason: null,
+        rolledYieldPct: 100, rolledYieldFromStep: "threads_post_published", next: { step: "website_visit", ratePct: 5, rateBasis: "catalogue_route", legKey: null, costPerUnitUsd: 0 },
+        netValuePerUnitUsd: 2, netValueUnavailableReason: null,
+      };
+      const accounting = { figures, step: "threads_post_published", lifetimeRevenueUsd: 1000, lifetimeRevenueSource: "offer_stated", expectedCostSource: "workflow", targets: [], windowDays: 0, today: "2026-11-07" };
+      const body = publishedUnitsOf("x_post_published", [post("a"), post("b", { performedBy: "client_team" })], credit, { unitValueOf, expected, accounting });
+      expect(body.rows.find((r) => r.id === "a")).toMatchObject({ valueUsd: 2, measuredReturn: { roiMultiple: null, unavailableReason: "return_only_at_campaign_target" }, accountingUnavailableReason: null });
+      expect(body.rows.find((r) => r.id === "b")).toMatchObject({ accounting: null, accountingUnavailableReason: "performed_by_client_team" });
+      expect(body.totals.ours.units).toBe(1);
+      expect(body.totals.clientTeam.units).toBe(1);
+      expect(body.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "outcome_is_no_campaign_target" });
+      expect(body.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "outcome_is_no_campaign_target" });
+      expect(body.daily[0]!.measuredReturn.roiMultiple).toBeNull();
+      // Ours only: $0.50 actual vs $0.80 expected, variance -$0.30; visits measured on the next milestone, pooled with the 5% prior.
+      expect(body.accounting.costPerUnit).toMatchObject({ actualUsd: 0.5, actualUnits: 1, expectedUsd: 0.8, variance: { usd: -0.3, splitUnavailableReason: "attempts_not_on_ledger" } });
+      expect(body.accounting.costFromStart).toMatchObject({ actualUsd: 0.5, expectedUsd: 0.8 });
+      expect(body.accounting.yieldToNext).toMatchObject({ nextStep: "website_visit", measuredNextUnits: 1, measuredTrials: 1, measuredPct: 100 });
+      expect(body.accounting.value.expectedNetPerUnitUsd).toBe(2);
+      expect(body.accounting.returns.unavailableReason).toBe("outcome_is_no_campaign_target");
+      // A campaign whose Target is the outcome: measured = its Units x value / their spend; expected = value / cost from Start.
+      const many = Array.from({ length: MEASURED_RETURN_MIN_UNITS }, (_, i) => post(`m${i}`, { campaignId: "unit-1" }));
+      const targeted = publishedUnitsOf("x_post_published", [...many, post("off")], credit, { unitValueOf, expected, accounting: { ...accounting, targets: [{ campaignId: "fc-1", unitCampaignIds: ["unit-1"] }] } });
+      expect(targeted.measuredReturn).toMatchObject({ roiMultiple: 4, learning: false, valueUsd: 20, spentUsd: 5 });
+      expect(targeted.expectedReturn).toMatchObject({ roiMultiple: 2.5, costPerUnitUsd: 0.8 });
+      // Visits not tracked for the outcome: measured yield null with the reason, never 0.
+      const blind = publishedUnitsOf("x_post_published", [post("a")], credit, { unitValueOf, expected, accounting, visitsMeasured: false });
+      expect(blind.accounting.yieldToNext).toMatchObject({ measuredPct: null, measuredUnavailableReason: "no_visit_attribution_on_outcome", expectedPct: 5 });
+      // No catalogue pipe prices the outcome: expected cost per Unit = what one cost to date over the costed Units.
+      const noPipe = publishedUnitsOf("x_post_published", [post("c", { performedBy: "client_team" }), post("h2")], (s) => (s.id === "h2" ? { spentUsd: 0.3, visits: 0, signups: 0 } : { spentUsd: 0, visits: 0, signups: 0 }), {
+        unitValueOf,
+        accounting: { ...accounting, figures: { ...figures, costPerUnitUsd: null, costPerUnitBasis: null, costPerUnitUnavailableReason: "leg_cost_unavailable", costFromStartUsd: null, costFromStartUnavailableReason: "leg_cost_unavailable" } },
+      });
+      expect(noPipe.accounting.costPerUnit).toMatchObject({ actualUsd: 0.3, expectedUsd: 0.3, expectedSource: "own_spend" });
+      expect(noPipe.accounting.costFromStart.expectedUsd).toBe(0.3);
     });
   });
 });
