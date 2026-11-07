@@ -74915,7 +74915,7 @@
     "/brands/{brandId}/published-units/{outcomeKey}": {
       "get": {
         "summary": "One published outcome of the brand (Threads posts, X posts, LinkedIn posts, newsletter emails): every Unit with its creative and what it led to",
-        "description": "OUTCOME-FINEST-1106 (customer Outcome pages, hard-coded per outcome, owner 2026-11-06). Rows, newest first: the creative (post text, newsletter subject), its link, date, account (or mailing list), who performed it (`ours` | `client_team`: a hand post imported off a connected account), its Units (1 per post, emails sent per newsletter release), lifetime `views` / `engagements` its platform reports (null = not reported), and the ledger's `spentUsd`, `visits` (website visits that CONSUMED the Unit: a click on its link, never a time window) and `signups` (consuming those visits); null + `ledgerUnavailableReason: not_on_ledger_yet` before its Unit is declared. `totals.all` / `totals.ours`; `costPerSignupUsd` = ours spend / ours signups (null while ours has no signup: `learning`). `daily[]` = one point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X and LinkedIn account posts, post metrics), transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); LinkedIn rows come from the brand's connected LinkedIn accounts (social-service account posts, like X). Held 2 min, served up to 30 min old while re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere.",
+        "description": "OUTCOME-FINEST-1106 (customer Outcome pages, hard-coded per outcome, owner 2026-11-06). Rows, newest first: the creative (post text, newsletter subject), its link, date, account (or mailing list), who performed it (`ours` | `client_team`: a hand post imported off a connected account), its Units (1 per post, emails sent per newsletter release), lifetime `views` / `engagements` its platform reports (null = not reported), and the ledger's `spentUsd`, `visits` (website visits that CONSUMED the Unit: a click on its link, never a time window) and `signups` (consuming those visits); null + `ledgerUnavailableReason: not_on_ledger_yet` before its Unit is declared. `totals.all` / `totals.ours`; `costPerSignupUsd` = ours spend / ours signups (null while ours has no signup: `learning`). `daily[]` = one point per UTC day a row was published (quiet days omitted). Sources: meta-service (Threads), social-service (X and LinkedIn account posts, post metrics), transactional-email-service (releases; a release stating no brand is the org's newsletter, listed on each of its brands), runs-service (Units, cost, consumptions); LinkedIn rows come from the brand's connected LinkedIn accounts (social-service account posts, like X). Held 2 min, served up to 30 min old while re-read. `?pricing=` default NET. Org-scoped (x-org-id). No open rate anywhere. SOCIAL-OUTCOMES-1107: per-kind `engagementBreakdown` (sums to `engagements`), reposts of others' posts excluded (`repostsExcluded`), visits null + reason when the outcome carries no click signal, value produced (`valueUsd`, yield) and the MEASURED / EXPECTED returns overall, per day and per row.",
         "tags": [
           "Stats"
         ],
@@ -75041,6 +75041,156 @@
                               "not_on_ledger_yet",
                               null
                             ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The producer's kind (`post`, `quote`); a `repost` never lists (see `repostsExcluded`)."
+                          },
+                          "visitsUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "no_visit_attribution_on_outcome",
+                              "not_on_ledger_yet",
+                              null
+                            ]
+                          },
+                          "engagementBreakdown": {
+                            "type": "object",
+                            "properties": {
+                              "likes": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "replies": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Comments."
+                              },
+                              "reposts": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "quotes": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "shares": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "bookmarks": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "clicks": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Link clicks the platform reports (none does today: null)."
+                              }
+                            },
+                            "required": [
+                              "likes",
+                              "replies",
+                              "reposts",
+                              "quotes",
+                              "shares",
+                              "bookmarks",
+                              "clicks"
+                            ],
+                            "description": "SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`."
+                          },
+                          "metricsWarning": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "engagements_exceed_views",
+                              null
+                            ],
+                            "description": "The platform reports more interactions than views: one of the two is not measured."
+                          },
+                          "valuePerUnitUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "What one Unit is worth: the catalogue value of the outcome's step on the offer's lifetime revenue (the Today Target value)."
+                          },
+                          "valueUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "units x valuePerUnitUsd: the value this row produced (yield)."
+                          },
+                          "value": {
+                            "type": "object",
+                            "properties": {
+                              "valuePerUnitUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "step": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "offerId": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The offer of the campaign that produced the Unit; null = none (valued on the fleet median lifetime revenue)."
+                              },
+                              "lifetimeRevenueSource": {
+                                "type": "string",
+                                "nullable": true,
+                                "enum": [
+                                  "offer_stated",
+                                  "fleet_median",
+                                  null
+                                ]
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "valuePerUnitUsd",
+                              "step",
+                              "offerId",
+                              "lifetimeRevenueSource",
+                              "unavailableReason"
+                            ]
+                          },
+                          "measuredReturn": {
+                            "type": "object",
+                            "properties": {
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "valueUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "spentUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "learning": {
+                                "type": "boolean",
+                                "description": "Fewer Units than the maturity bar (10): show `expectedReturn` instead."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`no_unit_yet`, `unit_has_no_value`, `nothing_spent_yet`."
+                              }
+                            },
+                            "required": [
+                              "roiMultiple",
+                              "valueUsd",
+                              "spentUsd",
+                              "learning",
+                              "unavailableReason"
+                            ],
+                            "description": "MEASURED return (the campaign Target rule): Units x their value / money actually spent."
                           }
                         },
                         "required": [
@@ -75056,7 +75206,14 @@
                           "spentUsd",
                           "visits",
                           "signups",
-                          "ledgerUnavailableReason"
+                          "ledgerUnavailableReason",
+                          "visitsUnavailableReason",
+                          "engagementBreakdown",
+                          "metricsWarning",
+                          "valuePerUnitUsd",
+                          "valueUsd",
+                          "value",
+                          "measuredReturn"
                         ]
                       }
                     },
@@ -75086,6 +75243,66 @@
                             },
                             "spentUsd": {
                               "type": "number"
+                            },
+                            "viewsReportedRows": {
+                              "type": "number",
+                              "description": "Rows whose platform reports views; `views` sums those only."
+                            },
+                            "engagementBreakdown": {
+                              "type": "object",
+                              "properties": {
+                                "likes": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "replies": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Comments."
+                                },
+                                "reposts": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "quotes": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "shares": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "bookmarks": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "clicks": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Link clicks the platform reports (none does today: null)."
+                                }
+                              },
+                              "required": [
+                                "likes",
+                                "replies",
+                                "reposts",
+                                "quotes",
+                                "shares",
+                                "bookmarks",
+                                "clicks"
+                              ],
+                              "description": "SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`."
+                            },
+                            "rowsEngagementsAboveViews": {
+                              "type": "number",
+                              "description": "Rows flagged `engagements_exceed_views`."
+                            },
+                            "valueUsd": {
+                              "type": "number",
+                              "description": "Σ rows' value produced (yield); rows with no value counted in `unvaluedRows`."
+                            },
+                            "unvaluedRows": {
+                              "type": "number"
                             }
                           },
                           "required": [
@@ -75095,7 +75312,12 @@
                             "engagements",
                             "visits",
                             "signups",
-                            "spentUsd"
+                            "spentUsd",
+                            "viewsReportedRows",
+                            "engagementBreakdown",
+                            "rowsEngagementsAboveViews",
+                            "valueUsd",
+                            "unvaluedRows"
                           ]
                         },
                         "ours": {
@@ -75121,6 +75343,66 @@
                             },
                             "spentUsd": {
                               "type": "number"
+                            },
+                            "viewsReportedRows": {
+                              "type": "number",
+                              "description": "Rows whose platform reports views; `views` sums those only."
+                            },
+                            "engagementBreakdown": {
+                              "type": "object",
+                              "properties": {
+                                "likes": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "replies": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Comments."
+                                },
+                                "reposts": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "quotes": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "shares": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "bookmarks": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "clicks": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Link clicks the platform reports (none does today: null)."
+                                }
+                              },
+                              "required": [
+                                "likes",
+                                "replies",
+                                "reposts",
+                                "quotes",
+                                "shares",
+                                "bookmarks",
+                                "clicks"
+                              ],
+                              "description": "SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`."
+                            },
+                            "rowsEngagementsAboveViews": {
+                              "type": "number",
+                              "description": "Rows flagged `engagements_exceed_views`."
+                            },
+                            "valueUsd": {
+                              "type": "number",
+                              "description": "Σ rows' value produced (yield); rows with no value counted in `unvaluedRows`."
+                            },
+                            "unvaluedRows": {
+                              "type": "number"
                             }
                           },
                           "required": [
@@ -75130,7 +75412,12 @@
                             "engagements",
                             "visits",
                             "signups",
-                            "spentUsd"
+                            "spentUsd",
+                            "viewsReportedRows",
+                            "engagementBreakdown",
+                            "rowsEngagementsAboveViews",
+                            "valueUsd",
+                            "unvaluedRows"
                           ]
                         }
                       },
@@ -75142,6 +75429,16 @@
                     "costPerSignupUsd": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "costPerSignupUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_visit_attribution_on_outcome",
+                        "no_signup_yet",
+                        "nothing_spent_yet",
+                        null
+                      ]
                     },
                     "learning": {
                       "type": "boolean"
@@ -75171,6 +75468,97 @@
                           },
                           "spentUsd": {
                             "type": "number"
+                          },
+                          "engagements": {
+                            "type": "number"
+                          },
+                          "engagementBreakdown": {
+                            "type": "object",
+                            "properties": {
+                              "likes": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "replies": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Comments."
+                              },
+                              "reposts": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "quotes": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "shares": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "bookmarks": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "clicks": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Link clicks the platform reports (none does today: null)."
+                              }
+                            },
+                            "required": [
+                              "likes",
+                              "replies",
+                              "reposts",
+                              "quotes",
+                              "shares",
+                              "bookmarks",
+                              "clicks"
+                            ],
+                            "description": "SOCIAL-OUTCOMES-1107: each engagement kind the platform reports (null = not reported); the kinds reported sum to `engagements`."
+                          },
+                          "valueUsd": {
+                            "type": "number"
+                          },
+                          "oursSpentUsd": {
+                            "type": "number"
+                          },
+                          "oursValueUsd": {
+                            "type": "number"
+                          },
+                          "measuredReturn": {
+                            "type": "object",
+                            "properties": {
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "valueUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "spentUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "learning": {
+                                "type": "boolean",
+                                "description": "Fewer Units than the maturity bar (10): show `expectedReturn` instead."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`no_unit_yet`, `unit_has_no_value`, `nothing_spent_yet`."
+                              }
+                            },
+                            "required": [
+                              "roiMultiple",
+                              "valueUsd",
+                              "spentUsd",
+                              "learning",
+                              "unavailableReason"
+                            ],
+                            "description": "MEASURED return (the campaign Target rule): Units x their value / money actually spent."
                           }
                         },
                         "required": [
@@ -75180,9 +75568,121 @@
                           "views",
                           "visits",
                           "signups",
-                          "spentUsd"
+                          "spentUsd",
+                          "engagements",
+                          "engagementBreakdown",
+                          "valueUsd",
+                          "oursSpentUsd",
+                          "oursValueUsd",
+                          "measuredReturn"
                         ]
                       }
+                    },
+                    "repostsExcluded": {
+                      "type": "object",
+                      "properties": {
+                        "rows": {
+                          "type": "number"
+                        },
+                        "engagements": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "rows",
+                        "engagements"
+                      ],
+                      "description": "Reposts of someone else's post (X retweet, LinkedIn plain reshare: producer `kind: repost`), left out of every row and total; their engagements are the original post's."
+                    },
+                    "visitsMeasured": {
+                      "type": "boolean",
+                      "description": "False = the org's ledger never credited a website visit to a Unit of this outcome: visits/signups null, never 0."
+                    },
+                    "visitsUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "no_visit_attribution_on_outcome",
+                        null
+                      ]
+                    },
+                    "measuredReturn": {
+                      "type": "object",
+                      "properties": {
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "valueUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "spentUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "learning": {
+                          "type": "boolean",
+                          "description": "Fewer Units than the maturity bar (10): show `expectedReturn` instead."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "`no_unit_yet`, `unit_has_no_value`, `nothing_spent_yet`."
+                        }
+                      },
+                      "required": [
+                        "roiMultiple",
+                        "valueUsd",
+                        "spentUsd",
+                        "learning",
+                        "unavailableReason"
+                      ],
+                      "description": "OURS (billed to the org): Units x value / spend. Read `expectedReturn` while `learning`."
+                    },
+                    "expectedReturn": {
+                      "type": "object",
+                      "properties": {
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "valuePerUnitUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "costPerUnitUsd": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "costSource": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "basis": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Weakest input: measured < stated < fleet < default."
+                        },
+                        "pipeId": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "roiMultiple",
+                        "valuePerUnitUsd",
+                        "costPerUnitUsd",
+                        "costSource",
+                        "basis",
+                        "pipeId",
+                        "unavailableReason"
+                      ],
+                      "description": "EXPECTED return of one more Unit: its value / the expected cost of one on the catalogue pipe making the outcome."
                     }
                   },
                   "required": [
@@ -75193,8 +75693,14 @@
                     "rows",
                     "totals",
                     "costPerSignupUsd",
+                    "costPerSignupUnavailableReason",
                     "learning",
-                    "daily"
+                    "daily",
+                    "repostsExcluded",
+                    "visitsMeasured",
+                    "visitsUnavailableReason",
+                    "measuredReturn",
+                    "expectedReturn"
                   ]
                 }
               }
@@ -75237,7 +75743,7 @@
             }
           },
           "502": {
-            "description": "A read failed",
+            "description": "A producer read failed: `reason: producer_unavailable` + `producer`, `producerPath`, `producerStatus`, `detail` name who is down.",
             "content": {
               "application/json": {
                 "schema": {
