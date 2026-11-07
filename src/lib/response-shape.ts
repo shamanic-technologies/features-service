@@ -60,13 +60,20 @@ const routeMemo = new Map<string, string>();
  * byte-for-byte as before. Name the fix, never a date alone.
  */
 export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
-  // Several campaigns' people are read one lead-service walk per campaign identity (CAMPAIGN-TOTAL-POSREPLY-1106).
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "several-campaign-people-1106",
-  "/offers/{offerId}/spend-charts": "several-campaign-people-1106",
-  "/brands/{brandId}/sales-funnel-campaigns": "several-campaign-people-1106",
-  "/offers/{offerId}/outcome-cost-series": "several-campaign-people-1106",
-  "/offers/{offerId}/revenue": "several-campaign-people-1106",
-  "/brands/{brandId}/offers": "several-campaign-people-1106",
+  // LEDGER-ONLY-1107-P2: every count / $ per outcome / conversion re-based on the cost-accounting ledger (supersedes
+  // several-campaign-people-1106 on the routes it named).
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-only-1107-p2",
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-only-1107-p2",
+  "/offers/{offerId}/spend-charts": "ledger-only-1107-p2",
+  "/brands/{brandId}/sales-funnel-campaigns": "ledger-only-1107-p2",
+  "/offers/{offerId}/outcome-cost-series": "ledger-only-1107-p2",
+  "/offers/{offerId}/outcomes": "ledger-only-1107-p2",
+  "/offers/{offerId}/revenue": "ledger-only-1107-p2",
+  "/brands/{brandId}/offers": "ledger-only-1107-p2",
+  "/brands/{brandId}/revenue": "ledger-only-1107-p2",
+  "/brands/{brandId}/campaign-targets": "ledger-only-1107-p2",
+  "/features/{featureSlug}/revenue": "ledger-only-1107-p2",
+  "/features/{featureSlug}/stats": "ledger-only-1107-p2",
 };
 
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */

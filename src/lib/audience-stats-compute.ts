@@ -1,3 +1,7 @@
+import { withLedgerAudienceStats } from "./ledger-audience-stats.js";
+import { ledgerScopeOf } from "./ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "./ledger-counts-io.js";
+import { fetchAudienceUnits } from "./scope-outcome-ledger-io.js";
 import type { Request } from "express";
 import { fetchPricingFunnels } from "./reading-funnels.js";
 import { economicsFromTerms, offerTermsEconomics } from "./offer-priced-economics.js";
@@ -1162,7 +1166,7 @@ export function validateAudienceStatsQuery(req: Request):
   };
 }
 
-export async function computeAudienceStats(
+export async function computeAudienceStatsBeforeLedger(
   req: Request,
   pricing: Pricing = "gross",
   // The CAMPAIGNS this read is scoped to, resolved by the route (it needs them for the cache key too,
@@ -1533,4 +1537,33 @@ export async function computeAudienceStats(
         : { maturity: null, unattributedMaturity: null }),
     },
   };
+}
+
+
+/**
+ * LEDGER-ONLY-1107-P2: every `/audience-stats` read (feature, brand, offer) answers its counts and $ / outcome on the
+ * general ledger (`lib/ledger-audience-stats.ts`): per audience, the Units of the runs served under it, in the read's
+ * campaign scope (an offer's / an identity's campaigns, else the brand). Unreadable = every count null, logged.
+ */
+export async function computeAudienceStats(
+  req: Request,
+  pricing: Pricing = "gross",
+  scopeCampaignIdsOverride?: string[],
+  scopeChannels?: ScopeChannel[],
+  scopeOfferId?: string | null,
+): Promise<ComputeResult> {
+  const result = await computeAudienceStatsBeforeLedger(req, pricing, scopeCampaignIdsOverride, scopeChannels, scopeOfferId);
+  if (!result.ok) return result;
+  const brandId = (req.params.brandId as string | undefined) ?? (req.query.brandId as string | undefined);
+  if (!brandId) return { ok: true, envelope: withLedgerAudienceStats(result.envelope, ledgerScopeOf(null, "no_brand_scope"), null) };
+  const single = (req.query.campaignId as string | undefined)?.trim() || undefined;
+  const campaignIds = scopeCampaignIdsOverride ?? (single ? [single] : null);
+  const [brand, byAudience] = await Promise.all([
+    readLedgerScope(brandId, ledgerBasisOf(pricing), null, "audience stats"),
+    fetchAudienceUnits(brandId, campaignIds).catch((err: Error) => {
+      console.error(`[features-service] audience stats: ledger per audience of brand ${brandId} unreadable (counts null): ${err.message}`);
+      return null;
+    }),
+  ]);
+  return { ok: true, envelope: withLedgerAudienceStats(result.envelope, brand, byAudience) };
 }

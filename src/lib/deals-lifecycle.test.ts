@@ -73,6 +73,8 @@ const ROWS: LifecycleBoardRow[] = [
 ];
 
 const args = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}): Parameters<typeof priceLifecycleColumns>[0] => ({
+    // LEDGER-ONLY-1107-P2: the ledger holds 2 Paid client Units (the won column = 2 x LTR); no other rung counted.
+    ledgerUnitsOf: (r) => (r === "paid_client" ? { units: 2, reason: null } : { units: null, reason: "not_a_ledger_outcome" }),
     rows: ROWS,
     persons: PERSONS,
     paths: PATHS,
@@ -136,7 +138,8 @@ describe("priceLifecycleColumns (DEALS-LIFECYCLE-1021)", () => {
     expect(card(r, "engaged", "h-e1").valueUsd).toBeCloseTo(e1, 6);
     expect(card(r, "engaged", "h-e2").valueUsd).toBeCloseTo(e2, 6);
     expect(rung(r, "engaged").valueUsd).toBeCloseTo(Math.max(e1, e2), 6);
-    expect(rung(r, "engaged").organizationCount).toBe(1);
+    // LEDGER-ONLY-1107-P2: people / organisations on a rung are no ledger figure.
+    expect(rung(r, "engaged").organizationCount).toBeNull();
     expect(rung(r, "engaged").cardCount).toBe(2);
     expect(card(r, "meeting_booked", "h-m").valueUsd).toBe(500);
     expect(rung(r, "engaged").expected).toBe(true);
@@ -147,13 +150,19 @@ describe("priceLifecycleColumns (DEALS-LIFECYCLE-1021)", () => {
     expect(r.outOfScopeCardCount).toBe(1);
   });
 
-  it("Paid client: the stated sale, else the lifetime revenue", () => {
-    expect(card(r, "paid_client", "h-w1")).toMatchObject({ valueUsd: 4900, valueSource: "stated_amount" });
-    expect(card(r, "paid_client", "h-w2")).toMatchObject({ valueUsd: 1000, valueSource: "lifetime_revenue" });
-    expect(rung(r, "paid_client").valueUsd).toBe(5900);
-    expect(rung(r, "paid_client").expected).toBe(true);
-    const onlyStated = run({ rows: [row("h-w1", "paid_client", ["w-stated"])] });
-    expect(rung(onlyStated, "paid_client").expected).toBe(false);
+  it("LEDGER-ONLY-1107-P2: Paid client = the ledger's Paid client Units x LTR; no card carries it", () => {
+    expect(card(r, "paid_client", "h-w1")).toMatchObject({ valueUsd: 0, zeroValueReason: "won_counted_on_ledger" });
+    expect(card(r, "paid_client", "h-w2")).toMatchObject({ valueUsd: 0, zeroValueReason: "won_counted_on_ledger" });
+    expect(rung(r, "paid_client").valueUsd).toBe(2 * LTR);
+    expect(rung(r, "paid_client").units).toBe(2);
+    expect(r.wonUsd).toBe(2 * LTR);
+    // The ledger lacking Paid client Units: rung, won and total unknown, never the CRM's deals.
+    const lacks = run({ ledgerUnitsOf: () => ({ units: null, reason: "outcome_not_declared_in_ledger" }) });
+    expect(rung(lacks, "paid_client").valueUsd).toBeNull();
+    expect(rung(lacks, "paid_client").unitsUnavailableReason).toBe("outcome_not_declared_in_ledger");
+    expect(lacks.wonUsd).toBeNull();
+    expect(lacks.totalUsd).toBeNull();
+    expect(lacks.expectedPipelineUsd).not.toBeNull();
   });
 
   it("a ruled-out engaged person reads 0 ruled_out", () => {
@@ -181,8 +190,8 @@ describe("ONE pipeline basis (owner 2026-10-21): the board prices what the pipel
       rows: [row("h-eo", "engaged", ["e-other"]), row("h-wo", "paid_client", ["w-other"])],
     });
     expect(card(r, "engaged", "h-eo")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
-    expect(card(r, "paid_client", "h-wo")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
-    expect(r.wonUsd).toBe(0);
+    expect(card(r, "paid_client", "h-wo")).toMatchObject({ valueUsd: 0, zeroValueReason: "won_counted_on_ledger" });
+    expect(r.wonUsd).toBe(2 * LTR);
   });
 
   it("REVENUE-GENERATED-1107: a Paid client card with no sale of ours (no closeWin, or a dead one) adds no won value", () => {
@@ -197,10 +206,9 @@ describe("ONE pipeline basis (owner 2026-10-21): the board prices what the pipel
       persons,
       rows: [row("h-n", "paid_client", ["w-none"]), row("h-d", "paid_client", ["w-dead"]), row("h-o", "paid_client", ["w-ours"])],
     });
-    expect(card(r, "paid_client", "h-n")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
-    expect(card(r, "paid_client", "h-d")).toMatchObject({ valueUsd: 0, zeroValueReason: "ruled_out" });
-    expect(card(r, "paid_client", "h-o")).toMatchObject({ valueUsd: LTR, valueSource: "lifetime_revenue" });
-    expect(r.wonUsd).toBe(LTR);
+    // LEDGER-ONLY-1107-P2 supersedes the CRM predicate: whatever the cards, won = the ledger's Units x LTR.
+    for (const h of ["h-n", "h-d", "h-o"]) expect(card(r, "paid_client", h)).toMatchObject({ valueUsd: 0, zeroValueReason: "won_counted_on_ledger" });
+    expect(r.wonUsd).toBe(2 * LTR);
   });
 
   it("Contacted rides the pipeline's own function: a lead with no group rate takes the default, none at all ⇒ 0", () => {
@@ -242,7 +250,7 @@ describe("one organisation = one client ACROSS the pipeline rungs (the revenue r
     expect(rung(r, "contacted").valueUsd).toBe(0);
     expect(rung(r, "engaged").valueUsd).toBeCloseTo(ve, 6);
     expect(r.expectedPipelineUsd).toBeCloseTo(Math.max(vc, ve), 6);
-    expect(rung(r, "contacted").organizationCount).toBe(1);
+    expect(rung(r, "contacted").organizationCount).toBeNull();
   });
 
   it("a tie lands on the higher rung; different companies still add up", () => {
@@ -264,11 +272,12 @@ describe("priceLifecycleBoard organisation values (PIPELINE-GENERATED-1107)", ()
   it("what each organisation adds sums to the board's total, each organisation once", () => {
     const { board, organizationValues } = priceLifecycleBoard(args());
     expect(board).toEqual(run());
+    // The won dollars are the ledger's (no organisation carries them): the organisations add up to the open pipeline.
     const sum = [...organizationValues.values()].reduce((s, v) => s + v, 0);
-    expect(sum).toBeCloseTo(board.totalUsd!, 4);
+    expect(sum).toBeCloseTo(board.expectedPipelineUsd!, 4);
     // org-E has two engaged people: one organisation, counted once at its most valuable member.
     expect(organizationValues.get("org:org-E")).toBeCloseTo(Math.max(card(board, "engaged", "h-e1").valueUsd!, card(board, "engaged", "h-e2").valueUsd!), 6);
-    expect(organizationValues.get("org:org-G")).toBe(4900);
+    expect(organizationValues.get("org:org-G")).toBeUndefined();
   });
   it("no economics: no organisation value", () => {
     expect(priceLifecycleBoard(args({ lifetimeRevenueUsd: null })).organizationValues.size).toBe(0);

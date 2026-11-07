@@ -74,6 +74,8 @@ import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { fetchPerOfferPricing, perOfferFingerprint } from "../lib/per-offer-pricing.js";
 import { Router } from "express";
 import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
+import { withLedgerCounts } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -446,14 +448,20 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         // LEDGER-ONLY-1107: the realized return counts the ledger's Paid client Units, never the CRM's closed deals.
         return servedRevenueBody(
           await withLedgerRealizedReturn(
-            {
-              brandId,
-              costBasis: "charged" as const,
-              channels: groups,
-              ...applyLeadDetail(body, leadDetail),
-              expectedReturn,
-              ...(window ? { window } : {}),
-            },
+            // LEDGER-ONLY-1107-P2: every count / $ per outcome / curve on the brand's ledger; channel rows' per-leg person
+            // figures are not ledger figures (null).
+            withLedgerCounts(
+              {
+                brandId,
+                costBasis: "charged" as const,
+                channels: groups.map((g) => ({ ...g, maturity: null })),
+                ...applyLeadDetail(body, leadDetail),
+                expectedReturn,
+                ...(window ? { window } : {}),
+              },
+              await readLedgerScope(brandId, ledgerBasisOf(pricing), null, "brand revenue"),
+              "brand",
+            ),
             brandId,
             pricing === "gross" ? "gross" : "net",
           ),
@@ -624,9 +632,8 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
             channels: channels.map((c) => ({ featureSlug: c.featureSlug, campaignIds: c.campaignIds })),
             headline: body.headline,
             costEconomics: body.costEconomics,
-            // The offer's per-leg figures and verdict (`lib/scope-maturity.ts`) — the object its own
-            // `/offers/:offerId/revenue` read serves, so the row and the offer's page agree.
-            maturity: body.maturity ?? null,
+            // LEDGER-ONLY-1107-P2: the per-leg flash / mature person figures are not ledger figures.
+            maturity: null,
           };
         });
         // WHOSE WINS EVERY ROW COUNTED. A lean row carries no `outcomeCauses` of its own, so the

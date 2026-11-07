@@ -15,6 +15,8 @@
  * Since inception only. Producers unreadable = 502; an unknown campaign = 404 `sales_funnel_campaign_not_found`.
  */
 import { Router } from "express";
+import { withLedgerActivity } from "../lib/ledger-activity.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow, type SalesFunnelCampaignRow } from "../lib/sales-funnel-campaigns-client.js";
@@ -91,7 +93,7 @@ export interface FunnelCampaignActivityBody {
   salesFunnelId: string;
   name: string;
   createdAt: string;
-  basis: "people_since_inception";
+  basis: "people_since_inception" | "ledger_units_since_inception";
   pricing: Pricing;
   funnel: { mode: "proactive" | "reactive"; steps: FunnelActivityStep[] } | null;
   funnelUnavailableReason: string | null;
@@ -229,19 +231,31 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
         funnel = { mode: "reactive", steps: reactiveFunnelSteps(path, handed, actedByStep, outcomeLeads) };
       }
 
-      return {
-        salesFunnelCampaignId: row.id,
-        brandId,
-        offerId: row.offerId,
-        salesFunnelId: row.salesFunnelId,
-        name: row.salesFunnelName,
-        createdAt: row.createdAt,
-        basis: "people_since_inception",
-        pricing,
-        funnel,
-        funnelUnavailableReason,
-        pipes,
-      };
+      // LEDGER-ONLY-1107-P2: every count is the ledger's Units (all units' campaigns for the funnel, each unit's own for its pipe).
+      const basis = ledgerBasisOf(pricing);
+      const unitIds = row.units.map((u) => u.campaignId);
+      const [all, ...perUnit] = await Promise.all([
+        readLedgerScope(brandId, basis, unitIds, "funnel campaign activity"),
+        ...unitIds.map((id) => readLedgerScope(brandId, basis, [id], "funnel campaign activity pipe")),
+      ]);
+      const byUnit = new Map(unitIds.map((id, i) => [id, perUnit[i]!] as const));
+      return withLedgerActivity(
+        {
+          salesFunnelCampaignId: row.id,
+          brandId,
+          offerId: row.offerId,
+          salesFunnelId: row.salesFunnelId,
+          name: row.salesFunnelName,
+          createdAt: row.createdAt,
+          basis: "people_since_inception",
+          pricing,
+          funnel,
+          funnelUnavailableReason,
+          pipes,
+        } as FunnelCampaignActivityBody,
+        all,
+        (id) => byUnit.get(id) ?? all,
+      ) as unknown as FunnelCampaignActivityBody;
     },
   });
 }

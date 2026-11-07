@@ -25,7 +25,7 @@ export type LedgerSpendChartPoint = Nullable<
 export type LedgerSpendChart = Omit<SpendChart, "daily" | "totals"> & {
   daily: LedgerSpendChartPoint[];
   totals: Nullable<SpendChart["totals"], "outcomes" | "entered" | "converted"> & { standardCostPerOutcomeUsd: number | null };
-  ledger: { scope: "brand"; outcomeKeys: string[]; entryKeys: string[]; producerGap: LedgerProducerGap | null; ledgerDaysMissing: string[] };
+  ledger: { scope: "brand" | "campaign" | "pipe"; outcomeKeys: string[]; entryKeys: string[]; producerGap: LedgerProducerGap | null; ledgerDaysMissing: string[] };
 };
 
 const cumulativeAt = (row: ScopeOutcomeLedgerRow | null, day: string): number | null => {
@@ -46,6 +46,7 @@ export function rebaseSpendChartOnLedger(
   outcome: ScopeOutcomeLedgerRow | "ledger_unreadable" | null,
   entry: ScopeOutcomeLedgerRow | null,
   outcomesRequired: number,
+  scope: "brand" | "campaign" | "pipe" = "brand",
 ): LedgerSpendChart {
   const o = outcome === "ledger_unreadable" ? null : outcome;
   const reason = outcome === "ledger_unreadable" ? "ledger_unreadable" : o === null ? chart.outcomeUnavailableReason ?? "no_leg" : o.unitsUnavailableReason;
@@ -88,7 +89,7 @@ export function rebaseSpendChartOnLedger(
       learning: units === null ? null : units < outcomesRequired,
     },
     ledger: {
-      scope: "brand",
+      scope,
       outcomeKeys: o?.outcomeKeys ?? [],
       entryKeys: entry?.outcomeKeys ?? [],
       producerGap: o?.producerGap ?? null,

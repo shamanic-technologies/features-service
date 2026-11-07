@@ -24,6 +24,7 @@ import { milestoneChainOf, milestoneCardsOf, type MilestoneCard, type MilestoneC
 import { fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+import { ledgerKeysOfStep } from "../lib/ledger-counts.js";
 import { scopeOutcomeLedgerRowOf, scopeOutcomeLedgerRows, type ScopeOutcomeLedgerInput } from "../lib/scope-outcome-ledger.js";
 import { listDeclaredSteps } from "../lib/channel-declarations-store.js";
 import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
@@ -88,8 +89,9 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   // MIGRATE-1105 S5: a unit whose pipe's Engine makes a finer outcome (Threads post published on the leg to Post
   // published) lands its Units under that outcome; its milestone counts them too (a Unit has ONE outcome: no double count).
   const ledgerKeysOf = (step: string, unitCampaignIds: readonly string[]): string[] => {
-    const keys = new Set([step]);
-    for (const u of row.units) if (unitCampaignIds.includes(u.campaignId)) keys.add(stepsOfPipe(u.pipeId)?.outcome ?? step);
+    // LEDGER-ONLY-1107-P2: the step's ledger keys through the ONE resolver (a click is declared as `lead_visited`).
+    const keys = new Set(ledgerKeysOfStep(step));
+    for (const u of row.units) if (unitCampaignIds.includes(u.campaignId)) for (const k of ledgerKeysOfStep(stepsOfPipe(u.pipeId)?.outcome ?? step)) keys.add(k);
     return [...keys].sort();
   };
   const notDeclared = (keys: readonly string[]): string | null => {

@@ -299,4 +299,40 @@ vi.mock("./lib/scope-outcome-ledger-io.js", async (importOriginal) => ({
   fetchBrandOutcomeLedger: vi.fn(async () => {
     throw new Error("brand outcome ledger not mocked in this suite");
   }),
+  // LEDGER-ONLY-1107-P2: the campaign-scope and per-audience ledger reads, same default.
+  fetchCampaignSetOutcomeLedger: vi.fn(async () => {
+    throw new Error("campaign outcome ledger not mocked in this suite");
+  }),
+  fetchAudienceUnits: vi.fn(async () => {
+    throw new Error("audience ledger not mocked in this suite");
+  }),
+  fetchWorkflowUnits: vi.fn(async () => {
+    throw new Error("workflow ledger not mocked in this suite");
+  }),
+}));
+
+// LEDGER-ONLY-1107-P2: the ledger overlays (every count re-based on runs-service's ledger) are IDENTITY in route suites, which
+// assert the engine's in-process figures (the `retired-returns` precedent); `lib/ledger-counts.test.ts` and
+// `routes/ledger-counts-wiring.test.ts` unmock them and pin the re-base and its wiring.
+vi.mock("./lib/ledger-counts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/ledger-counts.js")>();
+  return {
+    ...actual,
+    withLedgerCounts: vi.fn(<T>(b: T) => b),
+    withLedgerRawStats: vi.fn((raw: Record<string, number>) => ({ raw, ledgerCounts: null })),
+    withLedgerDayChart: vi.fn(<T>(b: T) => b),
+    withLedgerDealsColumns: vi.fn(<T>(b: T) => b),
+  };
+});
+vi.mock("./lib/ledger-activity.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  withLedgerActivity: vi.fn(<T>(b: T) => b),
+}));
+vi.mock("./lib/ledger-offer-outcomes.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  withLedgerOfferOutcomes: vi.fn(<T>(b: T) => b),
+}));
+vi.mock("./lib/ledger-audience-stats.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  withLedgerAudienceStats: vi.fn(<T>(b: T) => b),
 }));

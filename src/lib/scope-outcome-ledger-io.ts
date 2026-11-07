@@ -117,3 +117,121 @@ export function fetchBrandOutcomeLedger(brandId: string, basis: LedgerBasis): Pr
     return { ...parsed, unitCosts, fleetProducers: producers, today: new Date().toISOString().slice(0, 10) };
   });
 }
+
+const campaignStore = new Map<string, { at: number; value: Promise<ReturnType<typeof parseScopeLedgerByDay>> }>();
+
+function campaignByDay(campaignId: string, basis: LedgerBasis) {
+  return held(campaignStore, `${campaignId}|${basis}`, BRAND_MS, async () =>
+    parseScopeLedgerByDay((await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,day&campaignId=${encodeURIComponent(campaignId)}`)) as WireByDay, basis),
+  );
+}
+
+/**
+ * LEDGER-ONLY-1107-P2: the ledger of a SET of campaigns (a funnel campaign's units, one pipe, a campaign identity): the
+ * Units their runs produced per outcome per day, their own cost, the consumptions of unknown provenance in that scope
+ * (one runs-service read per campaign, held 60 s, summed: a Unit is declared by ONE run, so of ONE campaign). The
+ * every-path unit cost ($ each, the standard) and who declares each outcome are the BRAND's (a cost is a brand figure).
+ */
+export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string[], brandId: string, basis: LedgerBasis): Promise<ScopeOutcomeLedgerInput> {
+  const ids = [...new Set(campaignIds)].sort();
+  const [parts, brand] = await Promise.all([Promise.all(ids.map((id) => campaignByDay(id, basis))), fetchBrandOutcomeLedger(brandId, basis)]);
+  const producedByDay = new Map<string, Map<string, number>>();
+  const ownCostUsd = new Map<string, number>();
+  const undeclaredConsumptions = new Map<string, number>();
+  const daysMissing = new Set<string>();
+  for (const p of parts) {
+    for (const [k, days] of p.producedByDay) {
+      const into = producedByDay.get(k) ?? producedByDay.set(k, new Map()).get(k)!;
+      for (const [d, n] of days) into.set(d, (into.get(d) ?? 0) + n);
+    }
+    for (const [k, c] of p.ownCostUsd) ownCostUsd.set(k, (ownCostUsd.get(k) ?? 0) + c);
+    for (const [k, n] of p.undeclaredConsumptions) undeclaredConsumptions.set(k, (undeclaredConsumptions.get(k) ?? 0) + n);
+    for (const d of p.daysMissing) daysMissing.add(d);
+  }
+  return {
+    producedByDay,
+    ownCostUsd,
+    undeclaredConsumptions,
+    unitCosts: brand.unitCosts,
+    fleetProducers: brand.fleetProducers,
+    daysMissing: [...daysMissing].sort(),
+    today: brand.today,
+  };
+}
+
+const audienceStore = new Map<string, { at: number; value: Promise<Map<string, Map<string, number>>> }>();
+
+/** LEDGER-ONLY-1107-P2: a brand's (or a set of its campaigns') ledger Units per audience (the one each run was SERVED under) per outcome. */
+export async function fetchAudienceUnits(brandId: string, campaignIds: readonly string[] | null): Promise<Map<string, Map<string, number>>> {
+  const read = (q: string) =>
+    held(audienceStore, q, BRAND_MS, async () => {
+      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,audienceId&${q}`)) as WireByDay;
+      const out = new Map<string, Map<string, number>>();
+      for (const g of body.produced ?? []) {
+        const a = g.dimensions?.audienceId;
+        const k = g.dimensions?.outcomeKey;
+        if (!a || !k) continue;
+        const m = out.get(a) ?? out.set(a, new Map()).get(a)!;
+        m.set(k, (m.get(k) ?? 0) + (g.occurrences ?? 0));
+      }
+      return out;
+    });
+  const parts = await Promise.all(
+    campaignIds === null ? [read(`brandId=${encodeURIComponent(brandId)}`)] : [...new Set(campaignIds)].map((id) => read(`campaignId=${encodeURIComponent(id)}`)),
+  );
+  const out = new Map<string, Map<string, number>>();
+  for (const p of parts)
+    for (const [a, m] of p) {
+      const into = out.get(a) ?? out.set(a, new Map()).get(a)!;
+      for (const [k, n] of m) into.set(k, (into.get(k) ?? 0) + n);
+    }
+  return out;
+}
+
+const workflowStore = new Map<string, { at: number; value: Promise<Map<string, Map<string, Map<string, number>>>> }>();
+
+/**
+ * LEDGER-ONLY-1107-P2: Units per workflow version (`workflowSlug` of the producing run) per outcome per day, for a brand
+ * or a set of its campaigns: one scope ledger per workflow (`ledgerOfWorkflowSlugs`).
+ */
+export async function fetchWorkflowUnits(brandId: string, campaignIds: readonly string[] | null): Promise<Map<string, Map<string, Map<string, number>>>> {
+  const read = (q: string) =>
+    held(workflowStore, q, BRAND_MS, async () => {
+      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,workflowSlug,day&${q}`)) as WireByDay;
+      const out = new Map<string, Map<string, Map<string, number>>>();
+      for (const g of body.produced ?? []) {
+        const w = g.dimensions?.workflowSlug;
+        const k = g.dimensions?.outcomeKey;
+        const d = g.dimensions?.day;
+        if (!w || !k || !d) continue;
+        const byKey = out.get(w) ?? out.set(w, new Map()).get(w)!;
+        const byDay = byKey.get(k) ?? byKey.set(k, new Map()).get(k)!;
+        byDay.set(d, (byDay.get(d) ?? 0) + (g.occurrences ?? 0));
+      }
+      return out;
+    });
+  const parts = await Promise.all(
+    campaignIds === null ? [read(`brandId=${encodeURIComponent(brandId)}`)] : [...new Set(campaignIds)].map((id) => read(`campaignId=${encodeURIComponent(id)}`)),
+  );
+  const out = new Map<string, Map<string, Map<string, number>>>();
+  for (const p of parts)
+    for (const [w, byKey] of p) {
+      const wk = out.get(w) ?? out.set(w, new Map()).get(w)!;
+      for (const [k, byDay] of byKey) {
+        const kd = wk.get(k) ?? wk.set(k, new Map()).get(k)!;
+        for (const [d, n] of byDay) kd.set(d, (kd.get(d) ?? 0) + n);
+      }
+    }
+  return out;
+}
+
+/** PURE. One scope ledger for the Units of a workflow's versions; reasons (producers, undeclared) from the brand's. */
+export function ledgerOfWorkflowSlugs(units: ReadonlyMap<string, ReadonlyMap<string, ReadonlyMap<string, number>>>, slugs: readonly string[], brand: ScopeOutcomeLedgerInput): ScopeOutcomeLedgerInput {
+  const producedByDay = new Map<string, Map<string, number>>();
+  for (const s of slugs)
+    for (const [k, byDay] of units.get(s) ?? []) {
+      const into = producedByDay.get(k) ?? producedByDay.set(k, new Map()).get(k)!;
+      for (const [d, n] of byDay) into.set(d, (into.get(d) ?? 0) + n);
+    }
+  return { ...brand, producedByDay, ownCostUsd: new Map() };
+}

@@ -11,7 +11,8 @@ export interface JourneyPipe {
   pipeId: string;
   fromStep: string | null;
   toStep: string;
-  people: number;
+  /** LEDGER-ONLY-1107-P2: the campaign's ledger Units of the `to` step; null = the ledger cannot state them. */
+  people: number | null;
   /** False: the client's own team works this step (no workflow of ours, nothing spent by us). */
   runByUs: boolean;
   /** Committed cents per workflow DYNASTY on the pipe's campaign. */
@@ -28,7 +29,7 @@ export interface JourneyTransition {
   fromLabel: string;
   toStep: string;
   toLabel: string;
-  people: number;
+  people: number | null;
   runByUs: boolean;
   shareBasis: "spend";
   scripts: JourneyScript[];
@@ -64,7 +65,7 @@ export function peopleJourneysOf(
       scripts,
       // People made it but the pipe recorded no spend of its own: its work was paid under another pipe of the campaign
       // (a sourcing serve filed under the outreach unit), so no share can be said, and it is not free.
-      scriptsUnavailableReason: total > 0 ? null : !p.runByUs ? "done_by_your_team" : p.people > 0 ? "spend_recorded_under_another_pipe" : "no_spend_yet",
+      scriptsUnavailableReason: total > 0 ? null : !p.runByUs ? "done_by_your_team" : (p.people ?? 0) > 0 ? "spend_recorded_under_another_pipe" : "no_spend_yet",
     };
   });
 }

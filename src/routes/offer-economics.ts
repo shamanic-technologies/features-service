@@ -73,6 +73,8 @@ import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
 import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
+import { withLedgerCounts } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -430,16 +432,22 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       // Units (never the CRM's closed deals); the expected half stays expected ROI x the same spend.
       return servedRevenueBody(
         await withLedgerRealizedReturn(
-          {
-            offerId,
-            brandId,
-            costBasis: "charged" as const,
-            channels: groups,
-            ...applyLeadDetail(body, leadDetail),
-            expectedReturn,
-            revenueGenerated,
-            ...(window ? { window } : {}),
-          },
+          // LEDGER-ONLY-1107-P2: every count / $ per outcome / curve on the brand's ledger (Today's count); channel rows'
+          // per-leg person figures are not ledger figures (null).
+          withLedgerCounts(
+            {
+              offerId,
+              brandId,
+              costBasis: "charged" as const,
+              channels: groups.map((g) => ({ ...g, maturity: null })),
+              ...applyLeadDetail(body, leadDetail),
+              expectedReturn,
+              revenueGenerated,
+              ...(window ? { window } : {}),
+            },
+            await readLedgerScope(brandId, ledgerBasisOf(pricing), null, "offer revenue"),
+            "brand",
+          ),
           brandId,
           pricing === "gross" ? "gross" : "net",
         ),

@@ -35,6 +35,8 @@
  */
 import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { Router } from "express";
+import { ledgerCountOfStep, ledgerUnitsOfRung, type LedgerScope } from "../lib/ledger-counts.js";
+import { readLedgerScope } from "../lib/ledger-counts-io.js";
 import { apiKeyAuth } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
@@ -163,13 +165,15 @@ async function priceOfferLifecycleBoard(
   pre: Parameters<typeof loadBrandPricedPopulation>[2],
   campaignIds: string[],
   offerId: string,
-): Promise<ReturnType<typeof priceLifecycleBoard> & { persons: EnginePerson[] }> {
+): Promise<ReturnType<typeof priceLifecycleBoard> & { persons: EnginePerson[]; ledger: LedgerScope }> {
   // The PIPELINE's basis (owner 2026-10-21, one pipeline figure everywhere): the causes the offer revenue read prices
   // by default (`DEFAULT_PRICED_CAUSES`: what our pipes caused) and its own contacted pricing (`contactedPricingOf`).
-  const [population, uniboxRows, contactedPricing] = await Promise.all([
+  const [population, uniboxRows, contactedPricing, ledger] = await Promise.all([
     loadBrandPricedPopulation(brandId, headers, pre, { pricedCauses: DEFAULT_PRICED_CAUSES, campaignIds, offerId }),
     fetchUniboxLifecycleRows(brandId, BOARD_RUNG_KEYS, headers),
     contactedPricingOf(brandId, headers),
+    // LEDGER-ONLY-1107-P2: the brand's ledger Units per rung (Today's count); Paid client prices the won column.
+    readLedgerScope(brandId, "net", null, "deals lifecycle board"),
   ]);
   let statedWonAmountUsdByEmail: Map<string, number> | null = null;
   if (population.observed) {
@@ -183,6 +187,7 @@ async function priceOfferLifecycleBoard(
     .filter((r) => rungs.has(r.rung))
     .map((r) => ({ humanId: r.humanId, companyKey: r.companyKey, relationKey: r.relationKey, leadIds: r.leadIds, rung: r.rung as BoardRungKey }));
   const priced = priceLifecycleBoard({
+    ledgerUnitsOf: (rung) => ledgerUnitsOfRung(ledger, rung),
     rows,
     persons: population.persons,
     paths: population.paths,
@@ -192,7 +197,7 @@ async function priceOfferLifecycleBoard(
     statedWonAmountUsdByEmail,
     pricedCauses: DEFAULT_PRICED_CAUSES,
   });
-  return { ...priced, persons: population.persons };
+  return { ...priced, persons: population.persons, ledger };
 }
 
 /**
@@ -213,9 +218,18 @@ export async function computeOfferPipelineGenerated(
   ]);
   const running = rows.some((r) => r.offerId === offerId && r.status === "ongoing");
   const { board } = priced;
+  // LEDGER-ONLY-1107-P2: the won dollars are the ledger's Paid client Units x LTR, each on the day the ledger dates it;
+  // unknown Units = the whole measured series unknown (never the open pipeline alone under the board's total).
+  const firstDayOf = firstDayByOrganization(priced.persons);
+  const values = new Map(priced.organizationValues);
+  const wonRow = ledgerCountOfStep(priced.ledger, "paid_client").row;
+  if (board.lifetimeRevenueUsd !== null) for (const p of wonRow?.past ?? []) if (p.units > 0) {
+    values.set(`ledger:paid_client:${p.date}`, p.units * board.lifetimeRevenueUsd);
+    firstDayOf.set(`ledger:paid_client:${p.date}`, p.date);
+  }
   const series = buildPipelineGeneratedSeries({
-    organizationValues: board.unvaluedReason === null ? priced.organizationValues : null,
-    firstDayOf: firstDayByOrganization(priced.persons),
+    organizationValues: board.unvaluedReason === null && board.wonUsd !== null ? values : null,
+    firstDayOf,
     running,
     today,
   });
