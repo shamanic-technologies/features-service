@@ -685,15 +685,15 @@ const spendSchema = z.object({
   totalCpcCents: z.number().nullable().describe("COMMITTED cost per website click = totalSpentCents / clicks (clicked.total). Null (renders '-'), never a false $0.00, when there are 0 clicks OR 0 committed spend."),
   actualCpcCents: z.number().nullable().describe("ACTUAL (billed) cost per website click = actualSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 actual spend."),
   provisionedCpcCents: z.number().nullable().describe("PROVISIONED cost per website click = provisionedSpentCents / clicks. Null (renders '-'), never a false $0.00, when 0 clicks OR 0 provisioned holds."),
-  signupsCount: z.number().int().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)").optional(),
-  salesMeetingsCount: z.number().int().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0.").optional(),
-  formSubmissionsCount: z.number().int().describe("REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0.").optional(),
+  signupsCount: z.number().int().nullable().describe("REAL attributed signups (lead-service conversion tracker, deduped, excludes 'ping') for the brand — the Signups tile. 0 when none. ABSENT (undefined) on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (features-service#461)").optional(),
+  salesMeetingsCount: z.number().int().nullable().describe("REAL attributed sales meetings booked (lead-service conversion tracker) for the brand — the Sales Meetings tile. 0 when none. ABSENT on a cold / pre-rollout payload; never a fabricated 0.").optional(),
+  formSubmissionsCount: z.number().int().nullable().describe("REAL attributed form submissions (lead-service conversion tracker, event=form_submission, deduped, excludes 'ping') for the brand — the Form Submissions tile for a form_submissions brand (the visit-driven sibling of signups). 0 when none. ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0.").optional(),
   cpsCents: z.number().nullable().describe("REAL cost per signup = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents) / signupsCount, USD cents. So cpsCents × signupsCount ≈ committed spend by construction. null when signupsCount is 0 (no denominator — never a false $0). ABSENT when signupsCount is absent. REPLACES the projected cps dropped in features-service#406 with the REAL tracked computation — no projection.").optional(),
   cpsmCents: z.number().nullable().describe("REAL cost per sales meeting = totalSpentCents (COMMITTED) / salesMeetingsCount, USD cents. null when salesMeetingsCount is 0. ABSENT when salesMeetingsCount is absent. Real tracked data, not a projection.").optional(),
   cpfsCents: z.number().nullable().describe("REAL cost per form submission = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / formSubmissionsCount, USD cents. So cpfsCents × formSubmissionsCount ≈ committed spend by construction. null when formSubmissionsCount is 0 (no denominator — never a false $0). ABSENT when formSubmissionsCount is absent. Real tracked data, not a projection.").optional(),
-  salesCount: z.number().int().describe("REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)").optional(),
+  salesCount: z.number().int().nullable().describe("REAL attributed SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase, deduped, excludes 'ping') for the brand — the Sales tile's brand-level aggregate, the terminal outcome of BOTH the website-purchase goal (multi-step close) and the combined-sales goal (paying client won via either path). Equivalent to signupsCount / salesMeetingsCount / formSubmissionsCount. 0 when none; ABSENT on a cold / pre-rollout payload when lead-service didn't serve the counts; never a fabricated 0. (Renamed from purchasesCount — features-service combined-sales slice.)").optional(),
   cpSaleCents: z.number().nullable().describe("REAL cost per sale = totalSpentCents (COMMITTED, SAME denominator as cpsCents/totalCpcCents) / salesCount, USD cents. So cpSaleCents × salesCount ≈ committed spend by construction. null when salesCount is 0 (no denominator — never a false $0). ABSENT when salesCount is absent. Real tracked data, not a projection. (Renamed from cppCents — features-service combined-sales slice.)").optional(),
-  positiveRepliesCount: z.number().int().describe("REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"),
+  positiveRepliesCount: z.number().int().nullable().describe("REAL attributed positive replies for the brand — the single-step positive_replies goal's outcome (reply-goal sibling of signups/meetings/form-submissions), the Positive Replies tile. Deduped by lead from the SAME leads[] snapshot as recipientsRepliesPositive.total (a positive reply is an email engagement signal, NOT a lead-service conversion event), so ALWAYS present (leads are a fail-loud core input) — never absent, unlike the conversion-counts tiles. 0 when none. (features-service#482)"),
   cpprCents: z.number().nullable().describe("REAL cost per positive reply = totalSpentCents (COMMITTED = actual + provisioned, the SAME denominator as totalCpcCents/cpsCents) / positiveRepliesCount, USD cents. So cpprCents × positiveRepliesCount ≈ committed spend by construction. null when positiveRepliesCount is 0 (no denominator — never a false $0). Real tracked data, not a projection. (features-service#482)"),
   ratioBasis: z.object({
     maturityDays: z.number().int().describe("The maturity delay the ratios were measured under — costEconomics.maturityDays."),
@@ -708,19 +708,19 @@ const spendSchema = z.object({
     salesCount: z.number().int().nullable().describe("Sales cpSaleCents divides, same rules.").optional(),
     unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable().describe("Why every ratio above is null: maturing = nothing spent is mature yet; maturity_unknown = campaign legs unreadable. Spend and counts here are null too."),
   }).describe("WHAT EVERY COST PER OUTCOME IN THIS BLOCK DIVIDES — the ROI's own basis, so the ratios and costEconomics.roiMultiple are one basis on one screen. Each ratio = the matching spend here ÷ the matching count here (outside the zero-outcome benchmark floor). The block's top-level totals and counts keep the WHOLE history."),
-  maturity: spendRatiosMaturitySchema.optional(),
+  maturity: spendRatiosMaturitySchema.nullable().optional(),
 });
 
 // THE VOLUME HALF of a money answer — how much real outcome evidence the figures beside it rest on.
 // Shared verbatim by every grain that answers it (the per-campaign groups, the per-workflow groups and
 // the un-grouped brand read), because two grains counting people two ways would eventually disagree.
 const revenueOutcomesSchema = z.object({
-  recipientsContacted: z.number().describe("REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."),
-  recipientsConvertible: z.number().describe("THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."),
-  recipientsBounced: z.number().describe("Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."),
-  recipientsUnsubscribed: z.number().describe("Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."),
-  recipientsClicked: z.number().describe("Distinct leads that visited the site off this grain — twin of recipientsClicked.total."),
-  recipientsRepliesPositive: z.number().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
+  recipientsContacted: z.number().nullable().describe("REACH — distinct leads this grain emailed for this brand, INCLUDING every one whose email bounced and every one who unsubscribed (a lead only queued and never sent is NOT reached): we sent it, we paid for it, so a bounce is the proof a send happened rather than a reason to forget it. The grain-level twin of the brand read's recipientsContacted.total, deduped by lead exactly as the brand read dedupes. 0 is a MEASURED count: 'this reached nobody' is an answer. This is the figure to read for 'how many unique people did we reach out to'."),
+  recipientsConvertible: z.number().nullable().describe("THE PIPELINE BASE — of the leads reached, the ones still able to convert: recipientsContacted minus everyone a bounce or an unsubscribe removed from the funnel. Every expected-value figure on this grain (headline.totalPipelineUsd, costEconomics, the leads[] EV column) rests on these people and no others, so this is the figure to read for 'how many are still eligible to convert'. SERVED rather than subtracted in the browser because it is not derivable from the counts beside it: a lead can be both bounced AND unsubscribed, so contacted − bounced − unsubscribed double-subtracts it — only the per-lead set knows the union."),
+  recipientsBounced: z.number().nullable().describe("Distinct leads whose email BOUNCED. Counted inside recipientsContacted (a bounce implies a send) and excluded from recipientsConvertible (a bounced mailbox can never convert)."),
+  recipientsUnsubscribed: z.number().nullable().describe("Distinct leads who UNSUBSCRIBED. Counted inside recipientsContacted (we did email them) and excluded from recipientsConvertible (they asked us to stop)."),
+  recipientsClicked: z.number().nullable().describe("Distinct leads that visited the site off this grain — twin of recipientsClicked.total."),
+  recipientsRepliesPositive: z.number().nullable().describe("Distinct leads that replied positively — twin of recipientsRepliesPositive.total."),
   committedSpentCents: z.number().describe("COMMITTED spend attributed to this grain, in cents — costEconomics.committedCostUsd in the unit the two rates are denominated in."),
   actualSpentCents: z.number().describe("Billed-only spend for this grain, in cents. TRANSITIONAL — reported for consumer migration, divided by nowhere."),
   cpcCents: z.number().nullable().describe("ratioBasis.committedSpentCents ÷ ratioBasis.recipientsClicked (the ROI's mature cohort), in cents. OBSERVED accounting: null when this grain bought no visit or spent nothing — 'we could not measure this', never 0 and never floored to a benchmark (projection lives on /workflow-projection)."),
@@ -735,7 +735,7 @@ const revenueOutcomesSchema = z.object({
   sending: z.object({
     recipientsSent: z.number().int().describe("Distinct leads at least one email was SENT to — the denominator of every rate in this block."),
     recipientsDelivered: z.number().int().describe("Of recipientsSent, the ones the provider reported DELIVERED and never bounced."),
-    recipientsBounced: z.number().int().describe("Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."),
+    recipientsBounced: z.number().int().nullable().describe("Of recipientsSent, the ones whose email BOUNCED (a delivery later followed by a bounce counts here, once). outcomes.recipientsBounced may be slightly larger: it also counts a bounce with no recorded send."),
     recipientsAwaitingDelivery: z.number().int().describe("Of recipientsSent, the ones with neither a delivery nor a bounce reported yet. recipientsDelivered + recipientsBounced + recipientsAwaitingDelivery = recipientsSent."),
     recipientsReplied: z.number().int().describe("Of recipientsSent, the ones who REPLIED, whatever the reply said."),
     recipientsRepliedPositive: z.number().int().describe("Of recipientsSent, the ones whose reply was positive (sender-classified or evidenced by the customer's CRM)."),
@@ -743,8 +743,8 @@ const revenueOutcomesSchema = z.object({
     bounceRatePct: z.number().nullable().describe("100 × recipientsBounced ÷ recipientsSent. Null only when nothing was sent."),
     replyRatePct: z.number().nullable().describe("100 × recipientsReplied ÷ recipientsSent. Null only when nothing was sent."),
     positiveReplyRatePct: z.number().nullable().describe("100 × recipientsRepliedPositive ÷ recipientsSent. Null only when nothing was sent."),
-  }).describe("WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."),
-  maturity: outcomeRatiosMaturitySchema.optional(),
+  }).nullable().describe("WHAT HAPPENED TO THE EMAILS THIS GRAIN SENT — delivery and reply on ONE denominator (distinct leads sent to), whole history, same deduped person set as the counts above. Every rate is served so no consumer divides."),
+  maturity: outcomeRatiosMaturitySchema.nullable().optional(),
 });
 
 // WHICH DOLLARS A FIGURE IS MADE OF. Declared once, here, because it is answered at two grains — per
@@ -797,8 +797,8 @@ const funnelStepBreakdownSchema = z.object({
     committedSpentCents: z.number().nullable().describe("The committed spend every rung's costPerReachCents divides — costEconomics.ratioBasis.committedCostUsd × 100."),
     unmeasuredReason: z.enum(["maturing", "maturity_unknown"]).nullable(),
   }).describe("What every rung's costPerReachCents divides — the ROI's basis."),
-  contactedRecipients: z.number().int().describe("REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."),
-  convertibleRecipients: z.number().int().describe("THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."),
+  contactedRecipients: z.number().int().nullable().describe("REACH — DISTINCT leads this scope emailed, bounced and unsubscribed INCLUDED. It is the base the FIRST rung converts from (its fromRecipientsReached, under the label 'Contacted'), and the reason that rung's rate is answerable at all. Always measured wherever the leads were read. The first rung converts from REACH and not from the smaller convertible base on purpose: a bounce is a real loss at the very first rung and it was paid for, so a rate that quietly divided by the survivors would hide the people this campaign bought and never reached. Byte-equal to outcomes.recipientsContacted for the same scope."),
+  convertibleRecipients: z.number().int().nullable().describe("THE PIPELINE BASE — of those reached, the ones still able to convert (contactedRecipients minus everyone a bounce or an unsubscribe removed). Stated BESIDE the reach it is drawn from so nobody has to work out which of the two a rate divided by. Byte-equal to outcomes.recipientsConvertible for the same scope — one count, read off one deduped person set."),
   steps: z.array(funnelStepSchema).describe("The funnel's rungs in the funnel's own order, first to last — four for either meeting funnel (reply-or-visit → booked → attended → paid), three for website purchases (visit → signup → paid) and for the form magnet (visit → form filled → paid)."),
 });
 
@@ -966,14 +966,14 @@ const featureRevenueResponseSchema = z.object({
   campaignIdentity: campaignIdentitySchema.describe("Present only on a ?campaignId= read: the identity the figures were totalled over. A campaign-scoped read answers for the campaign's whole identity — its stopped ancestors included — so asking about any member returns the same, complete campaign.").optional(),
   window: revenueWindowRef.describe("Present ONLY on a ?campaignId= read that asked ?windowDays= (windowDays=all = since inception): the campaign card row. The SAME block the offer and brand revenue reads serve, over the campaign's whole IDENTITY (its stopped ancestors included) on this channel: emails sent / delivered / bounced (EMAILS, every step), emails queued right now (queuedEmails, snapshot), and spend on the read's ?pricing= basis as actualSpentCents (charged) + provisionedSpentCents (holds still open, e.g. follow-ups not sent yet) = totalSpentCents (committed). The spend is the campaign's own only (brandLevel* are 0). A part that could not be read is null (queuedEmails with queuedEmailsUnavailableReason), never 0. See RevenueWindow.").optional(),
   spend: spendSchema.nullable().describe("Canonical spend block for the Overview card — Total spent / Budget spent today / CPC each in three variants (total=committed, actual=billed, provisioned=holds; total = actual + provisioned), plus top sources. Present on the OVERVIEW response; null on the lensed (?lens=) response (lens pages use costPerConversionUsd); absent on grouped (?groupBy=campaignId) groups. (features-service#396, committed naming features-service#402)"),
-  recipientsContacted: recipientsContactedSchema.describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
-  recipientsOpened: signalSeriesSchema.describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
-  recipientsClicked: signalSeriesSchema.describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
-  recipientsRepliesPositive: signalSeriesSchema.describe("Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#390."),
-  meetingsBooked: signalSeriesSchema.describe("Meeting-goal outcome ACTUAL series, dated by when the meeting was booked, server-computed from the SAME leads[] snapshot. features-service#377."),
-  purchased: signalSeriesSchema.describe("Purchase-goal outcome ACTUAL series, dated by when the deal closed, server-computed from the SAME leads[] snapshot. features-service#377."),
-  signups: signalSeriesSchema.describe("Signup-goal outcome ACTUAL series (lead-service conversion tracker, attributed per lead by matched email). `total` is the REAL count of leads we can confirm signed up, but `daily` is EMPTY with `undatedCount === total`: lead-service exposes WHICH lead converted, not WHEN (the conversion timestamp exists internally but no endpoint surfaces it). The per-day trend populates automatically once lead-service exposes the conversion date. Distinct from recipientsClicked (the visit PROXY the funnel EV anchors to). features-service#476."),
-  formSubmissions: signalSeriesSchema.describe("Form-submission-goal outcome ACTUAL series (lead-service conversion tracker, event=form_submission, attributed per lead by matched email). Same shape + same date-gap caveat as `signups`: `total` real, `daily` empty / `undatedCount === total` until lead-service surfaces the conversion date. features-service#476."),
+  recipientsContacted: recipientsContactedSchema.nullable().describe("Server-computed contacted aggregates for the Overview Outreach card + daily graph, from the SAME leads[] snapshot (single source, dashboard renders only — features-service#371/#372)."),
+  recipientsOpened: signalSeriesSchema.nullable().describe("Opens ACTUAL series for the Overview daily graph, server-computed from the SAME leads[] snapshot — coherent with recipientsContacted + the table (features-service#377). Replaces the pipeline-activity/instantly event-day source."),
+  recipientsClicked: signalSeriesSchema.nullable().describe("Clicks ACTUAL series (website visits), server-computed from the SAME leads[] snapshot. ALSO the signup-goal's observed outcome — a downstream account signup is not tracked here, so the visit is the coherent signup-funnel actual; the dashboard scales it by visitToSignupPct for the projected signups line (forecast). features-service#377."),
+  recipientsRepliesPositive: signalSeriesSchema.nullable().describe("Positive-replies ACTUAL series (email-gateway firstRepliedAt), server-computed from the SAME leads[] snapshot — coherent with the other actual series + the table. The booked-meetings lens's engagement signal (P=replyToMeeting) the meeting-goal Outcome line renders; distinct from meetingsBooked (the reply is the signal, the booked meeting its downstream outcome). features-service#390."),
+  meetingsBooked: signalSeriesSchema.nullable().describe("Meeting-goal outcome ACTUAL series, dated by when the meeting was booked, server-computed from the SAME leads[] snapshot. features-service#377."),
+  purchased: signalSeriesSchema.nullable().describe("Purchase-goal outcome ACTUAL series, dated by when the deal closed, server-computed from the SAME leads[] snapshot. features-service#377."),
+  signups: signalSeriesSchema.nullable().describe("Signup-goal outcome ACTUAL series (lead-service conversion tracker, attributed per lead by matched email). `total` is the REAL count of leads we can confirm signed up, but `daily` is EMPTY with `undatedCount === total`: lead-service exposes WHICH lead converted, not WHEN (the conversion timestamp exists internally but no endpoint surfaces it). The per-day trend populates automatically once lead-service exposes the conversion date. Distinct from recipientsClicked (the visit PROXY the funnel EV anchors to). features-service#476."),
+  formSubmissions: signalSeriesSchema.nullable().describe("Form-submission-goal outcome ACTUAL series (lead-service conversion tracker, event=form_submission, attributed per lead by matched email). Same shape + same date-gap caveat as `signups`: `total` real, `daily` empty / `undatedCount === total` until lead-service surfaces the conversion date. features-service#476."),
   sequences: signalSeriesSchema.nullable().describe("OUTREACH ACTIVITY daily series for the Overview graph — instantly campaigns-created per day (email-gateway groupBy=day), NOT the lead snapshot. Answers 'how much outreach happened each day' (re-contacts count each day, matches 'budget spent today'), whereas recipientsContacted answers 'how many DISTINCT leads have I reached' (deduped by first-ever contact). The two grains DIFFER by design and are NOT reconciled: the Outreach card renders recipientsContacted.total (unique leads); the graph's Outreach ACTUAL bars render sequences.daily (per-day actions). undatedCount is always 0. Present on the OVERVIEW response only (same gate as spend); null on the lensed (?lens=) response and absent on grouped (?groupBy=campaignId) groups. Fail-soft: null when the email-gateway read fails. features-service#415."),
   headline: z.object({
     unpricedReason: pipelineUnpricedReasonSchema.nullable().describe("WHY the scope's pipeline is unpriced, null when it is priced. no_priced_funnel = the scope walks no priced funnel (no campaign leg, nothing ticked, or its offer terms could not be read); lifetime_revenue_not_stated = no lifetime revenue exists at all (the offer states none AND no offer in the fleet states one to take the median of; an unstated offer is otherwise priced on the fleet median, owner 2026-10-09); no_funnel_wired = the feature wires no funnel; no_channel = the brand runs no channel yet; outcome_unvalued = a campaign that took its people over produces a step with no value of its own (Client Satisfied, after Paid client), so it adds no value to divide. Never an average: the brand-level sales economics are no input (owner 2026-10-05)."),
@@ -1521,13 +1521,13 @@ const audienceStatsEvidenceSchema = z.object({
   firstRunAt: z.string().datetime().nullable(),
   lastRunAt: z.string().datetime().nullable(),
   memberCount: z.number().describe("Distinct MEMBER count of the audience (people served under it — human-service membership provenance). The addressable pool size; contacted ⊆ memberCount. Remaining-to-contact = memberCount − contacted; %used = contacted / memberCount. 0 when the audience has no members."),
-  contacted: z.number().describe("Audience-scoped contacted-recipient count from email-gateway broadcast stats."),
-  opened: z.number().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
-  websiteClicks: z.number().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
-  positiveReplies: z.number().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
-  formSubmissions: z.number().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions.").optional(),
-  signups: z.number().describe("REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups.").optional(),
-  sales: z.number().describe("REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales.").optional(),
+  contacted: z.number().nullable().describe("Audience-scoped contacted-recipient count from email-gateway broadcast stats."),
+  opened: z.number().nullable().describe("Audience-scoped opened-recipient count (recipients who opened >= 1 email) from email-gateway broadcast stats."),
+  websiteClicks: z.number().nullable().describe("Audience-scoped clicked-recipient count. Dashboard CPC = totalCostInUsdCents / websiteClicks."),
+  positiveReplies: z.number().nullable().describe("Audience-scoped positive-reply recipient count. Dashboard CPPR = totalCostInUsdCents / positiveReplies."),
+  formSubmissions: z.number().nullable().describe("REAL per-audience form-submission conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead form-submission conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the form_submissions goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per form submission = totalCostInUsdCents / formSubmissions.").optional(),
+  signups: z.number().nullable().describe("REAL per-audience signup conversions (lead-service conversion tracker), attributed by intersecting the audience's member emails with the brand's matched-lead signup conversion emails — the SAME membership join as clicks/replies, never a split of the brand total. Present ONLY for the signup goal; ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per signup = totalCostInUsdCents / signups.").optional(),
+  sales: z.number().nullable().describe("REAL per-audience SALES — paying clients won (lead-service conversion tracker, event=sale, RENAMED from event=purchase), attributed by intersecting the audience's member emails with the brand's matched-lead sale conversion emails — the SAME membership join as signups/form-submissions, never a split of the brand total. Present ONLY for the website-purchase OR combined-sales goals (both terminate in a `sale`); ABSENT otherwise and when lead-service didn't serve the conversion emails (never a fabricated 0). Dashboard cost per sale = totalCostInUsdCents / sales.").optional(),
 });
 
 const audienceStatsRowSchema = z.object({
@@ -1898,7 +1898,7 @@ const conversionHistorySchema = z.object({
 }).nullable().describe("THE SLICED % CONVERSION, DATED (only with ?conversionHistory=true, else null): per day since the offer's first delivery, every person stands where they stood that day (the furthest step priced for them reached by then, else the furthest reached, else the contacted row once contacted), then the conversionFromRowAbove rule. Null on a step that is not counted, and when no delivery date is known.");
 const exclusiveLadderSchema = z.object({
   contacted: z.object({
-    count: z.number().int().describe("Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."),
+    count: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: null (people are no ledger figure). Contacted people who reached no step yet (openers included; bounced and unsubscribed included, worth 0)."),
     valuedCount: z.number().int().describe("Of those, the people the pipeline values above 0."),
     expiredCount: z.number().int().describe("Last email sent more than expiryDays ago: worth 0."),
     cannotConvertCount: z.number().int().describe("Bounced or unsubscribed: worth 0."),
@@ -1939,8 +1939,8 @@ const exclusiveLadderSchema = z.object({
     expectedConversionFromRowAbove: expectedConversionRef.describe("Never empty: the measured % Conversion, else a named hypothesis (see ExpectedConversion).").optional(),
   })).describe("The ladder's steps in climbing order. A person stands on the furthest step priced for them (else, nothing priced, the furthest reached, as notOurs; else the contacted row)."),
   total: z.object({
-    people: z.number().int().describe("Distinct people on a row (contacted row included)."),
-    peopleOnNoRow: z.number().int().describe("Served people never contacted and on no step (worth 0)."),
+    people: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: null (people per row are no ledger figure). Distinct people on a row (contacted row included)."),
+    peopleOnNoRow: z.number().int().nullable().describe("Served people never contacted and on no step (worth 0)."),
     gapUsd: z.number().nullable().describe("GET /offers/{offerId}/revenue's pipeline (same pricing and cause) less the sum of the rows; 0 when they agree to the cent."),
     gapReason: z.enum(["population_differs", "unpriced"]).nullable().describe("Why there is a gap or it could not be checked; null when they agree."),
     hot: z.object({
@@ -1952,9 +1952,9 @@ const exclusiveLadderSchema = z.object({
   }),
 }).describe("THE PIPELINE SLICED: ladder[] is cumulative (a paying client is also on every step below), so it never adds; here every person stands on ONE row and the rows add up to the pipeline. The sliced conversion column is rows[].conversionFromRowAbove and contacted.conversionFromRowAbove (row above / (row + row above)); ladder[].pricedConversionFromPrevious stays the cumulative step-to-step rate.");
 const offerPipelineSchema = z.object({
-  peopleContacted: z.number().int().describe("Distinct people contacted for the offer."),
-  companiesContacted: z.number().int().describe("Distinct companies those people belong to."),
-  contactedWithoutCompanyCount: z.number().int().describe("Contacted people whose company is unknown: in peopleContacted, in no company."),
+  peopleContacted: z.number().int().nullable().describe("Distinct people contacted for the offer."),
+  companiesContacted: z.number().int().nullable().describe("Distinct companies those people belong to."),
+  contactedWithoutCompanyCount: z.number().int().nullable().describe("Contacted people whose company is unknown: in peopleContacted, in no company."),
   ladder: z.array(z.object({
     step: stepRefSchema,
     recipientsReached: z.number().int().nullable().describe("Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."),
@@ -1972,10 +1972,10 @@ const offerPipelineSchema = z.object({
     }).nullable().describe("Leads that reached this step and then went cold (lead-service's rule), and what the pipeline prices them at now. Null when who went cold could not be read; count 0 when nobody did (always 0 for a brand the rule does not apply to, see coldRule)."),
   })).describe("Every step a lead climbs (visit, reply, signup, form, meeting booked, meeting attended, paid client), whether or not a leg of ours lands on it — the outcome rows only carry steps a leg lands on."),
   customersWon: z.object({
-    count: z.number().int().describe("Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."),
-    leadCount: z.number().int(),
+    count: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Paid client Units (null when the ledger lacks them). Paying clients won on the PRICED causes (default: our outreach only). One organisation = one client."),
+    leadCount: z.number().int().nullable(),
     valueUsd: z.number().nullable().describe("Per client the amount stated on its sale, else the offer's lifetime revenue, summed. Null when a client has neither."),
-    otherCausesLeadCount: z.number().int().describe("Paying clients counted but not priced (another cause, or unstated)."),
+    otherCausesLeadCount: z.number().int().nullable().describe("Paying clients counted but not priced (another cause, or unstated)."),
     otherFactoryUnits: otherFactoryUnitsSchema.nullable().optional().describe("LEDGER-OTHER-FACTORY-1107: of `count` (the ledger's TOTAL Paid client Units), those another factory produced."),
   }).nullable().describe("CUSTOMERS WON THANKS TO US. 0 = measured, nobody. Null = no source of closed deals could be read."),
   coldRule: z.object({
@@ -3220,11 +3220,11 @@ registry.registerPath({
 });
 
 const callCountsSchema = z.object({
-  requested: z.number().int().describe("Every call row recorded (twillio-service), whether or not Twilio accepted it."),
-  placed: z.number().int().describe("Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."),
-  accepted: z.number().int().describe("Calls the rep ANSWERED and took (pressed 1). Subset of placed."),
-  connected: z.number().int().describe("Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."),
-  outcomes: z.record(z.string(), z.number().int()).describe("Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."),
+  requested: z.number().int().nullable().describe("Every call row recorded (twillio-service), whether or not Twilio accepted it."),
+  placed: z.number().int().nullable().describe("Calls Twilio accepted and dialled (a call SID issued). The calls PLACED."),
+  accepted: z.number().int().nullable().describe("Calls the rep ANSWERED and took (pressed 1). Subset of placed."),
+  connected: z.number().int().nullable().describe("Calls bridged to the prospect (the rep's second keypress): the BOOKING CALLS OBTAINED. Subset of accepted."),
+  outcomes: z.record(z.string(), z.number().int()).nullable().describe("LEDGER-ONLY-1107-P2: null (call buckets are no ledger outcome). Each call in exactly one bucket, adding up to `requested` (twillio-service's own: connected, acceptedNotConnected, answeredNotAccepted, noAnswer, busy, failed, canceled, inProgress)."),
   billedMinutes: z.number().describe("Minutes billed on the leg to the rep."),
   connectBilledMinutes: z.number().describe("Minutes billed on the bridged leg to the prospect."),
   totalBilledMinutes: z.number().describe("billedMinutes + connectBilledMinutes."),
@@ -3245,9 +3245,9 @@ const campaignCallsSchema = z.object({
 
 const pipeDaySchema = z.object({
   date: z.string().describe("UTC day, YYYY-MM-DD."),
-  handed: z.number().int().describe("People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."),
-  actedOn: z.number().int().describe("People the pipe first acted on that day (an answer sent; on AI Instant Call, the call placed)."),
-  reached: z.number().int().describe("People reaching the pipe's own `toStep` that day (meeting booked; on a call step, the call placed: the act is the outcome)."),
+  handed: z.number().int().nullable().describe("People first handed to the pipe that day (e.g. positive replies given to the AI Meeting Booking worker)."),
+  actedOn: z.number().int().nullable().describe("People the pipe first acted on that day (an answer sent; on AI Instant Call, the call placed)."),
+  reached: z.number().int().nullable().describe("People reaching the pipe's own `toStep` that day (meeting booked; on a call step, the call placed: the act is the outcome)."),
 });
 
 const salesFunnelCampaignActivityResponseRef = registry.register(
@@ -3259,7 +3259,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
     salesFunnelId: z.string(),
     name: z.string(),
     createdAt: z.string(),
-    basis: z.literal("people_since_inception").describe("Every count is PEOPLE since inception (no window)."),
+    basis: z.enum(["people_since_inception", "ledger_units_since_inception"]).describe("Every count is PEOPLE since inception (no window)."),
     pricing: z.enum(["gross", "net"]).describe("The `?pricing=` basis echoed (it only moves `pipes[].calls.spend`)."),
     funnel: funnelCampaignFunnelSchema,
     funnelUnavailableReason: funnelUnavailableReasonSchema,
@@ -3276,22 +3276,22 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
           kind: z.enum(["sourcing", "outreach", "takeover"]).nullable().describe("`sourcing` (from nothing to Lead found: its finds are the funnel's Lead found, its outreach pipe works them) | `outreach` (from Lead found: holds the people) | `takeover` (from any later step: acts on people another campaign holds, e.g. AI Meeting Booking, AI Instant Call). Null when the pipe is unknown to the catalogue."),
           people: z
             .object({
-              found: z.number().int().describe("Leads the pipe holds (lead-service `total`)."),
-              contacted: z.number().int().describe("lead-service's contacted bucket for this unit."),
-              sent: z.number().int().describe("People at least one email was actually sent to."),
-              delivered: z.number().int().describe("People an email reached (sent, no bounce)."),
+              found: z.number().int().nullable().describe("Leads the pipe holds (lead-service `total`)."),
+              contacted: z.number().int().nullable().describe("lead-service's contacted bucket for this unit."),
+              sent: z.number().int().nullable().describe("People at least one email was actually sent to."),
+              delivered: z.number().int().nullable().describe("People an email reached (sent, no bounce)."),
               reachedToStep: z.number().int().nullable().describe("People at the pipe's `toStep` (lead-service's bucket for it); null when no bucket counts that step."),
             })
             .nullable()
             .describe("An OUTREACH pipe's people counts since inception. Null on other kinds."),
           work: z
             .object({
-              handed: z.number().int().describe("Distinct people handed to the pipe since inception."),
-              actedOn: z.number().int().describe("Distinct people it acted on (answered; on a call pipe, called)."),
+              handed: z.number().int().nullable().describe("Distinct people handed to the pipe since inception."),
+              actedOn: z.number().int().nullable().describe("Distinct people it acted on (answered; on a call pipe, called)."),
               reached: z.number().int().nullable().describe("Of the people handed, those reaching the pipe's `toStep` (attributed outcome; on a call step, the act itself). Null when no producer counts that step."),
               conversionRatePct: z.number().nullable().describe("reached / handed x 100. Null when reached is null or nobody was handed."),
               daily: z.array(pipeDaySchema).describe("Per UTC day with any activity, ascending. Each person once per figure, on the day of its first occurrence."),
-              undated: z.object({ handed: z.number().int(), actedOn: z.number().int(), reached: z.number().int() }).describe("People in the totals with no date for that figure (on no day)."),
+              undated: z.object({ handed: z.number().int().nullable(), actedOn: z.number().int().nullable(), reached: z.number().int() }).describe("People in the totals with no date for that figure (on no day)."),
             })
             .nullable()
             .describe("A TAKEOVER pipe's work since inception, total and per day (the pipe's \"over time\" chart). Null on other kinds."),
