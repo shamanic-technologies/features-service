@@ -206,6 +206,15 @@ const campaignIdentitySchema = z.object({
   representativeId: z.string().describe("The member to render the identity's line on: the live campaign when there is one, else the most recently created member."),
 });
 
+/** LEDGER-OTHER-FACTORY-1107: Units of an outcome another factory produced (in the count, in no money figure). */
+const otherFactoryUnitsSchema = z
+  .object({
+    total: z.number().int(),
+    anotherFactory: z.number().int().describe("Reached by the client's CRM, team or site, or before our first touch."),
+    noProof: z.number().int().describe("No proof our outreach caused it."),
+  })
+  .describe("LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2).");
+
 /**
  * LEDGER-ONLY-1107-P2: the block every body whose counts are re-based on the cost-accounting ledger carries.
  */
@@ -216,6 +225,7 @@ const ledgerCountsSchema = z
     unavailableReason: z.string().nullable().describe("Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."),
     nullFields: z.record(z.string(), z.string()).optional().describe("Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."),
     producerGaps: z.record(z.string(), z.object({ declaredElsewhereBy: z.array(z.string()), undeclaredConsumptions: z.number() })).optional().describe("Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."),
+    otherFactoryUnits: z.record(z.string(), otherFactoryUnitsSchema).optional().describe("LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."),
     ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: counts there may still move."),
   })
   .passthrough()
@@ -1758,6 +1768,7 @@ registry.registerPath({
 
 const outcomeFiguresShape = {
   recipientsReached: z.number().int().nullable().describe("DISTINCT leads that reached the step, every cause counted, whole history. 0 is measured; null = the producer behind this step was unreadable, or nothing in the fleet counts the step."),
+  otherFactoryUnits: otherFactoryUnitsSchema.nullable().optional().describe("LEDGER-OTHER-FACTORY-1107: of recipientsReached (the ledger's TOTAL), the Units another factory produced; costPerOutcomeUsd and valueUsd divide / multiply OUR Units only."),
   spentUsd: z.number().describe("COMMITTED spend of the campaigns whose leg LANDS on this step (actual + provisioned), whole history, on the requested pricing basis."),
   costPerOutcomeUsd: z.number().nullable().describe("spentUsd / recipientsReached — OBSERVED, never floored. Null when either is 0 or the count is unmeasured."),
   valuePerOutcomeUsd: z.number().nullable().describe("What STANDING on this step is worth: P(paid client | reached it) x lifetime revenue, the BEST PATH (max) across the offer's declared funnels containing the step, each on its own terms. Null when no declared funnel prices it — never 0."),
@@ -1947,6 +1958,7 @@ const offerPipelineSchema = z.object({
   ladder: z.array(z.object({
     step: stepRefSchema,
     recipientsReached: z.number().int().nullable().describe("Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."),
+    otherFactoryUnits: otherFactoryUnitsSchema.nullable().optional().describe("LEDGER-OTHER-FACTORY-1107: of recipientsReached, the Units another factory produced (pricedRecipientsReached = OUR Units)."),
     pricedRecipientsReached: z.number().int().nullable().describe("Of those, the ones whose step is priced (`cause`, default our outreach)."),
     valuePerOutcomeUsd: z.number().nullable().describe("Byte-same value per outcome as the outcome row of the same step."),
     pricedValueUsd: z.number().nullable().describe("THE STEP'S $ PIPELINE: pricedRecipientsReached x valuePerOutcomeUsd, the outcome row's valueUsd rule (equal to it on a step whose row counts the offer's own leads). Per person, like valueUsd. Null when the step is not counted or not priced. Not additive across steps: a lead that booked is also a replier."),
@@ -1964,6 +1976,7 @@ const offerPipelineSchema = z.object({
     leadCount: z.number().int(),
     valueUsd: z.number().nullable().describe("Per client the amount stated on its sale, else the offer's lifetime revenue, summed. Null when a client has neither."),
     otherCausesLeadCount: z.number().int().describe("Paying clients counted but not priced (another cause, or unstated)."),
+    otherFactoryUnits: otherFactoryUnitsSchema.nullable().optional().describe("LEDGER-OTHER-FACTORY-1107: of `count` (the ledger's TOTAL Paid client Units), those another factory produced."),
   }).nullable().describe("CUSTOMERS WON THANKS TO US. 0 = measured, nobody. Null = no source of closed deals could be read."),
   coldRule: z.object({
     applies: z.boolean().describe("False = not a CRM brand (or its CRM cannot prove an absence): nothing goes cold and coldLeads is empty."),
@@ -3526,8 +3539,9 @@ const ledgerSpendChartSchema = spendChartSchema.extend({
   totals: z.object({
     spendUsd: z.number(),
     outcomes: nInt.describe("The brand's ledger Units of the outcome step: the SAME count as Today's Target row (campaign-targets offerTargets[].outcomesToDate). Null = the ledger lacks it."),
-    costPerOutcomeUsd: z.number().nullable().describe("ACTUAL: spendUsd / outcomes."),
+    costPerOutcomeUsd: z.number().nullable().describe("ACTUAL: spendUsd / OUR Units of the outcome (outcomes minus otherFactoryUnits.total)."),
     standardCostPerOutcomeUsd: z.number().nullable().describe("STANDARD: the ledger's every-path unit cost of the outcome (= offerTargets[].costPerOutcomeUsd)."),
+    otherFactoryUnits: otherFactoryUnitsSchema.nullable().describe("LEDGER-OTHER-FACTORY-1107: the Units of `outcomes` another factory produced (in the count, in no $ / outcome)."),
     entered: nInt.describe("Ledger Units of the leg's FROM step."),
     converted: nInt.describe("= outcomes when entered is served."),
     conversionRatePct: z.number().nullable().describe("The ledger yield: outcomes / entered x 100."),
@@ -3909,6 +3923,9 @@ const brandDealsValueResponseSchema = z.object({
     basis: z.enum(["expected_value", "won_value"]).nullable().describe("`expected_value` (Interested): each person at the byte-same expected value the engine prices them on, on the pipeline's causes (what our pipes caused) — the column is a SUBSET of the pipeline. `won_value` (Won): the amount a human stated on the sale, else the brand's lifetime revenue per client."),
     leadCount: z.number().nullable(),
     organizationCount: z.number().nullable(),
+    units: z.number().nullable().optional().describe("Won column: the brand ledger's TOTAL Paid client Units, every source."),
+    ourUnits: z.number().nullable().optional().describe("Won column (LEDGER-OTHER-FACTORY-1107): OUR Paid client Units; the column's value = these × LTR."),
+    otherFactoryUnits: otherFactoryUnitsSchema.nullable().optional(),
     unpricedLeadCount: z.number().nullable().describe("People lead-service places in the column that this read's lead population did not hold yet (their card reads null)."),
     leads: z.array(z.object({
       leadId: z.string(),
@@ -3990,8 +4007,10 @@ const offerDealsLifecycleResponseRef = registry.register(
       cardCount: z.number().describe("Cards listed on the rung (records)."),
       leadCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."),
       organizationCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."),
-      units: z.number().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the rung's outcome (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."),
+      units: z.number().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's TOTAL Units of the rung's outcome, every source (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."),
       unitsUnavailableReason: z.string().nullable(),
+      ourUnits: z.number().nullable().describe("LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (Paid client's won value = these × LTR)."),
+      otherFactoryUnits: otherFactoryUnitsSchema.nullable(),
       cards: z.array(lifecycleCardSchema).describe("One card per Unibox row on the rung, ordered by humanId then companyKey."),
     })).describe("Every board rung, ladder order, always all six."),
   }),
@@ -5729,7 +5748,7 @@ const showcaseBrandFunnelsSchema = z.object({
 const showcaseGroupSchema = z.object({
   brands: z.array(showcaseBrandFunnelsSchema).describe("The clients this ranking named, ALREADY ORDERED by this service. The consumer ranks nothing. Empty exactly when `measured` is false."),
   measured: z.boolean().describe("True iff this ranking named at least one client. False always carries a reason. It is a statement about the PICK, not about any one client's chain — a named client whose own funnel could not be walked still appears, with its own measured:false."),
-  unmeasuredReason: z.enum(["no_snapshot_yet", "no_qualifying_clients"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and nobody passed this ranking's gate (undated, or nothing produced). Different silences, kept apart."),
+  unmeasuredReason: z.enum(["no_snapshot_yet", "no_qualifying_clients"]).nullable().describe("Present exactly when `measured` is false. `no_snapshot_yet` = no background snapshot has been written yet, so there was nothing to rank at all; `no_qualifying_clients` = a snapshot exists and no client has a meeting booked or a positive reply. Different silences, kept apart."),
   requestedCount: z.number().int().describe("How many clients this group set out to name (3)."),
   qualifyingCount: z.number().int().describe("How many clients passed the gate BEFORE the cut to requestedCount. A SHORT group is therefore a stated fact (qualifyingCount < requestedCount) rather than a list a consumer has to count — a short or empty group is never served silently."),
 });
@@ -5738,7 +5757,7 @@ const showcaseFunnelsResponseSchema = z.object({
   costBasis: z.literal("vendor").describe("Every money figure is REAL VENDOR COST: what the email, data and AI vendors charged us to produce it, before any markup, over the whole history (owner 2026-10-31, PUBLIC-VENDOR-COST-1031). Counts are unchanged."),
   brands: z.array(showcaseBrandFunnelsSchema).describe("Every client the group below names, once, in its order."),
   groups: z.object({
-    recentlyStarted: showcaseGroupSchema.describe("THE HOMEPAGE HERO ROW: CLIENTS WHO BOOKED MEETINGS (owner 2026-10-19). The 3 most recently begun clients with at least 1 meeting booked, newest first; if fewer than 3 exist, the remaining slots go to the most recently begun clients with at least 1 positive reply, always listed after the meeting clients. A website visit never qualifies a client for this group. 'Began' is the FIRST UTC DAY the client was ever billed for the channel, a measured fact from the dated cost ledger; a client we cannot date is not a candidate. Active or not. A row that cannot be filled is short rather than padded (`qualifyingCount`)."),
+    recentlyStarted: showcaseGroupSchema.describe("THE HOMEPAGE HERO ROW: THE BIGGEST FIGURES WE HAVE (owner 2026-11-07, SHOWCASE-MAX-1107; the key name is historical, kept so consumers read it unchanged). The 3 clients with the MOST meetings booked, ties and remaining slots broken by the most positive replies (interested leads), over the whole history, whenever they began, active or not; biggest figures first. A client qualifies with at least 1 meeting booked or 1 positive reply; a website visit never qualifies a client. Always 3 when 3 clients have ever produced one (a client whose chain cannot be read is replaced by the next biggest). Staff test clients are never named. Counts are every conversion, the same counts the client sees on its own dashboard."),
   }).describe("The PICK. The best-return group is deleted (ROI-CONSISTENCY-1103: a return exists only where a value lands)."),
 });
 
@@ -6680,7 +6699,7 @@ registry.registerPath({
   path: "/public/stats/showcase-funnels",
   summary: "Ordered funnel counts AND cost per rung for the SHOWCASE brands named on our homepage (public, no auth)",
   description:
-    "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT PAST CONTACTED IS OUR OUTREACH'S WIN ONLY (owner 2026-10-29): a rung reached only through an outcome lead-service did not judge caused by our outreach (`causedByOutreach` false or undecided, e.g. a CRM meeting booked before our first email to that person, or by someone we never emailed) is not counted here, unlike the client's own dashboard, which counts every conversion. The verdict is lead-service's alone: a booked/attended/sale rung counts only when a lead-service statement judged it ours. WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: one ranking, served as `groups.recentlyStarted` (the hero row: the 3 most recently begun clients with at least 1 meeting booked, filled with the newest clients with at least 1 positive reply when fewer than 3; never one qualified by website visits alone). The best-return group is deleted (ROI-CONSISTENCY-1103). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the group's clients, in an unchanged shape. The ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars). No return is served. EVERY MONEY FIGURE HERE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history, comped work included. The client's own dashboard keeps what the client paid. A brand whose billed spend lacks a vendor cost on more than 1% states `vendorCost.moneyUnavailableReason` and null money, never a mix. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
+    "The current funnel counts of the client brands our public homepage names — how many people were contacted, and how many reached each subsequent step of that client's own funnel — so a static page renders them without computing anything. EVERY COUNT IS EVERY CONVERSION (owner 2026-11-07, SHOWCASE-MAX-1107): the same counts the client sees on its own dashboard, whatever caused the outcome (the 2026-10-29 'outreach-caused only' filter is removed). WHICH CLIENTS ARE NAMED IS THIS SERVICE'S DECISION AND IS ALREADY ORDERED HERE: one ranking, served as `groups.recentlyStarted` (the hero row: the 3 clients with the most meetings booked, ties and fill broken by the most positive replies, whole history, whenever they began; never one qualified by website visits alone). The best-return group is deleted (ROI-CONSISTENCY-1103). The consumer ranks nothing, filters nothing and divides nothing. TAKES NO PARAMETER NAMING A BRAND, and never will, because a caller-supplied identifier would turn this unauthenticated read into a way to read ANY brand's funnel with no session. `brands` is the group's clients, in an unchanged shape. The ranking is computed from a PERSISTED snapshot refreshed off the request path, so this read answers in milliseconds. Each rung carries both what it MEASURED and what it COST: peopleReached, plus costPerReachUsd (that rung's COMMITTED spend over the people who reached it, OBSERVED, in dollars). No return is served. EVERY MONEY FIGURE HERE IS REAL VENDOR COST (owner 2026-10-31, PUBLIC-VENDOR-COST-1031): what the email, data and AI vendors charged us to produce it, before any markup, over the whole history, comped work included. The client's own dashboard keeps what the client paid. A brand whose billed spend lacks a vendor cost on more than 1% states `vendorCost.moneyUnavailableReason` and null money, never a mix. THE CONSUMER DIVIDES NOTHING: every figure it prints is stated on the wire, in dollars. The client's total spend is deliberately NOT published. Each brand carries one ordered chain per funnel its OWN campaigns state they sell (two funnels share legs, so chains overlap and must never be summed), the outreach base first, in the funnel's own order under the funnel's own names; a step nobody reached is STILL SERVED, with 0, and the consumer hides empty cells itself. A step's peopleReached is null when we could not measure it — never a 0 standing in for an unknown. A brand with nothing to walk carries funnels: [] and a named unmeasuredReason, and one brand's failed read never blanks the others.",
   tags: ["Public"],
   responses: {
     200: { description: "The PICKED group of clients, already ordered — ordered funnel counts and per-rung cost for each", content: { "application/json": { schema: showcaseFunnelsResponseSchema } } },
@@ -6856,7 +6875,7 @@ registry.registerPath({
   path: "/public/stats/showcase-outcomes",
   summary: "The homepage's named clients per OUTCOME — the funnel-free twin of /public/stats/showcase-funnels (public, no auth)",
   description:
-    "Wave C4. The SAME cell, picks, order and figures as /public/stats/showcase-funnels, re-keyed: each client states one row per outcome (the rungs of every path it sells, merged by step — a rung's count and cost do not depend on the path it was walked on), ALWAYS including `conversation` (positive replies) and `meeting_booked` (0 when measured zero; every count is our outreach's wins only, as on the funnel twin; a step none of its paths walks is stated from the client's own person counts with `legKeys: []`). No return is served (ROI-CONSISTENCY-1103). No brand parameter; no field names a funnel.",
+    "Wave C4. The SAME cell, picks, order and figures as /public/stats/showcase-funnels, re-keyed: each client states one row per outcome (the rungs of every path it sells, merged by step — a rung's count and cost do not depend on the path it was walked on), ALWAYS including `conversation` (positive replies) and `meeting_booked` (0 when measured zero; every count is every conversion, as on the funnel twin and the client's own dashboard; a step none of its paths walks is stated from the client's own person counts with `legKeys: []`). No return is served (ROI-CONSISTENCY-1103). No brand parameter; no field names a funnel.",
   tags: ["Public"],
   responses: {
     200: {
@@ -9887,12 +9906,12 @@ registry.registerPath({
                   offerId: z.string(),
                   target: z.object({ key: z.string(), label: z.string(), lifecycleRung: z.string().nullable() }).nullable().describe("null = the offer's campaigns that state no Target, merged into one entry."),
                   salesFunnelCampaignIds: z.array(z.string()).describe("The campaigns merged into this entry, oldest first (ids only: Today names no campaign)."),
-                  outcomesToDate: z.number().nullable().describe("LEDGER-ONLY-1107: the BRAND's total Units of the Target outcome in the general ledger (every source, every campaign, each Unit ONCE), never the sum of what the campaigns attributed. Null + outcomesUnavailableReason (`outcome_not_declared_in_ledger` + ledger.producerGap, `no_producer_declares_outcome`, `ledger_unreadable`)."),
+                  outcomesToDate: z.number().nullable().describe("LEDGER-ONLY-1107: the BRAND's total Units of the Target outcome in the general ledger (every source, every campaign, each Unit ONCE; LEDGER-OTHER-FACTORY-1107: another factory's Units included, `ledger.otherFactoryUnits`), never the sum of what the campaigns attributed. Null + outcomesUnavailableReason (`outcome_not_declared_in_ledger` + ledger.producerGap, `no_producer_declares_outcome`, `ledger_unreadable`)."),
                   outcomesUnavailableReason: z.string().nullable(),
-                  spentUsd: z.number().nullable().describe("What those Units cost to produce: outcomesToDate × costPerOutcomeUsd (ledger)."),
+                  spentUsd: z.number().nullable().describe("What OUR Units cost to produce: ledger.ourUnits × costPerOutcomeUsd (ledger)."),
                   costPerOutcomeUsd: z.number().nullable().describe("The ledger's every-path unit cost of the Target outcome (STANDARD cost; own production cost per Unit where the outcome is no pipe's output, ledger.costPerUnitBasis)."),
                   costPerOutcomeUnavailableReason: z.string().nullable(),
-                  measuredReturn: z.object({ roiMultiple: campaignTargetValue, valueUsd: campaignTargetValue, spentUsd: campaignTargetValue, unavailableReason: z.string().nullable() }).describe("outcomesToDate × the Target's value ÷ spentUsd (ledger)."),
+                  measuredReturn: z.object({ roiMultiple: campaignTargetValue, valueUsd: campaignTargetValue, spentUsd: campaignTargetValue, unavailableReason: z.string().nullable() }).describe("ledger.ourUnits × the Target's value ÷ spentUsd (ledger; another factory's Units are no return of ours)."),
                   past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })).describe("The brand's ledger Units of the Target per UTC day, from the first to today; the last cumulative IS outcomesToDate."),
                   pastUnavailableReason: z.string().nullable(),
                   projection: z.object({
@@ -9915,6 +9934,8 @@ registry.registerPath({
                       outcomeKeys: z.array(z.string()),
                       costPerUnitBasis: z.enum(["every_path", "own_production"]).nullable(),
                       producerGap: ledgerProducerGapSchema.nullable(),
+                      ourUnits: z.number().nullable().describe("LEDGER-OTHER-FACTORY-1107: OUR Units of the Target (spent, $ each, value and return divide these)."),
+                      otherFactoryUnits: otherFactoryUnitsSchema.nullable(),
                       ledgerDaysMissing: z.array(z.string()),
                     })
                     .nullable()
@@ -9933,14 +9954,16 @@ registry.registerPath({
                   label: z.string(),
                   lifecycleRung: z.string().nullable(),
                   outcomeKeys: z.array(z.string()),
-                  units: z.number().nullable().describe("Total Units of the outcome in the brand's ledger, every source, every campaign, each once."),
+                  units: z.number().nullable().describe("Total Units of the outcome in the brand's ledger, every source (ours + otherFactoryUnits), every campaign, each once."),
+                  ourUnits: z.number().nullable().describe("LEDGER-OTHER-FACTORY-1107: OUR Units; costPerUnitUsd and productionCostUsd divide these."),
+                  otherFactoryUnits: otherFactoryUnitsSchema.nullable(),
                   unitsUnavailableReason: z.enum(["outcome_not_declared_in_ledger", "no_producer_declares_outcome"]).nullable(),
                   producerGap: ledgerProducerGapSchema.nullable(),
-                  costPerUnitUsd: z.number().nullable().describe("$ each: the ledger's every-path unit cost, else its own production cost per Unit (costPerUnitBasis)."),
+                  costPerUnitUsd: z.number().nullable().describe("$ each over OUR Units: the ledger's every-path unit cost, else its own production cost per Unit (costPerUnitBasis). Null `no_unit_of_ours_yet` when only another factory made it."),
                   costPerUnitBasis: z.enum(["every_path", "own_production"]).nullable(),
                   costPerUnitUnavailableReason: z.string().nullable(),
-                  productionCostUsd: z.number().nullable().describe("units × costPerUnitUsd."),
-                  past: z.array(z.object({ date: z.string(), units: z.number(), cumulativeUnits: z.number() })).describe("One point per UTC day from the first Unit to today."),
+                  productionCostUsd: z.number().nullable().describe("ourUnits × costPerUnitUsd."),
+                  past: z.array(z.object({ date: z.string(), units: z.number(), cumulativeUnits: z.number(), ourUnits: z.number(), cumulativeOurUnits: z.number(), otherFactoryUnits: z.number() })).describe("One point per UTC day from the first Unit to today: units = total, ourUnits + otherFactoryUnits its two parts."),
                   ledgerDaysMissing: z.array(z.string()),
                 }),
               )

@@ -126,6 +126,10 @@ export interface LifecycleRungValue {
   /** LEDGER-ONLY-1107-P2: the ledger's Units of the rung's outcome (null + reason when it has no twin or the ledger lacks it). */
   units: number | null;
   unitsUnavailableReason: string | null;
+  /** LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (the won value divides these); `units` is the total. */
+  ourUnits: number | null;
+  /** The rung's Units another factory produced (in `units`, worth nothing of ours). */
+  otherFactoryUnits: import("./scope-outcome-ledger.js").OtherFactoryUnits | null;
   cards: LifecycleCard[];
 }
 
@@ -167,7 +171,7 @@ export interface LifecycleBoardInput {
    * LEDGER-ONLY-1107-P2: the scope's ledger Units per rung (`ledgerCountOfStep` of the rung key; contacted / engaged have
    * no twin). Paid client's Units price the won column (never `isClosedWonOurs` on the CRM's deals).
    */
-  ledgerUnitsOf: (rung: BoardRungKey) => { units: number | null; reason: string | null };
+  ledgerUnitsOf: (rung: BoardRungKey) => { units: number | null; ourUnits: number | null; otherFactoryUnits: import("./scope-outcome-ledger.js").OtherFactoryUnits | null; reason: string | null };
   rows: readonly LifecycleBoardRow[];
   persons: readonly EnginePerson[];
   paths: ResolvedPath[];
@@ -299,6 +303,8 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
       organizationCount: null,
       units: ledger.units,
       unitsUnavailableReason: ledger.units === null ? ledger.reason : null,
+      ourUnits: ledger.ourUnits,
+      otherFactoryUnits: ledger.otherFactoryUnits,
       cards,
     };
   });
@@ -322,7 +328,8 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
     }
     for (const r of pipelineRungs) r.valueUsd = round(perRung.get(r.key) ?? 0);
     const won = rungs.find((r) => r.key === "paid_client");
-    if (won) won.valueUsd = won.units === null ? null : round(won.units * ltr!);
+    // Won value = OUR Paid clients × LTR (another factory's are counted in `units`, worth nothing of ours).
+    if (won) won.valueUsd = won.ourUnits === null ? null : round(won.ourUnits * ltr!);
   }
 
   // A rung the ledger cannot value (won Units unknown) makes every total including it unknown, never a partial sum.

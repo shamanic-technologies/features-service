@@ -61,19 +61,20 @@ const routeMemo = new Map<string, string>();
  */
 export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // LEDGER-ONLY-1107-P2: every count / $ per outcome / conversion re-based on the cost-accounting ledger (supersedes
-  // several-campaign-people-1106 on the routes it named).
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-only-1107-p2",
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-only-1107-p2",
-  "/offers/{offerId}/spend-charts": "ledger-only-1107-p2",
-  "/brands/{brandId}/sales-funnel-campaigns": "ledger-only-1107-p2",
-  "/offers/{offerId}/outcome-cost-series": "ledger-only-1107-p2",
-  "/offers/{offerId}/outcomes": "ledger-only-1107-p2",
-  "/offers/{offerId}/revenue": "ledger-only-1107-p2",
-  "/brands/{brandId}/offers": "ledger-only-1107-p2",
-  "/brands/{brandId}/revenue": "ledger-only-1107-p2",
-  "/brands/{brandId}/campaign-targets": "ledger-only-1107-p2",
-  "/features/{featureSlug}/revenue": "ledger-only-1107-p2",
-  "/features/{featureSlug}/stats": "ledger-only-1107-p2",
+  // several-campaign-people-1106 on the routes it named). LEDGER-OTHER-FACTORY-1107: counts add another factory's Units,
+  // money divides ours only.
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-other-factory-1107",
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-other-factory-1107",
+  "/offers/{offerId}/spend-charts": "ledger-other-factory-1107",
+  "/brands/{brandId}/sales-funnel-campaigns": "ledger-other-factory-1107",
+  "/offers/{offerId}/outcome-cost-series": "ledger-other-factory-1107",
+  "/offers/{offerId}/outcomes": "ledger-other-factory-1107",
+  "/offers/{offerId}/revenue": "ledger-other-factory-1107",
+  "/brands/{brandId}/offers": "ledger-other-factory-1107",
+  "/brands/{brandId}/revenue": "ledger-other-factory-1107",
+  "/brands/{brandId}/campaign-targets": "ledger-other-factory-1107",
+  "/features/{featureSlug}/revenue": "ledger-other-factory-1107",
+  "/features/{featureSlug}/stats": "ledger-other-factory-1107",
 };
 
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */
