@@ -185,6 +185,24 @@ describe("ONE pipeline basis (owner 2026-10-21): the board prices what the pipel
     expect(r.wonUsd).toBe(0);
   });
 
+  it("REVENUE-GENERATED-1107: a Paid client card with no sale of ours (no closeWin, or a dead one) adds no won value", () => {
+    // Prod 2026-11-07 (our own offer Product-led): 13 companies on the Paid client rung with no outreach-caused sale
+    // read $6,500 won beside realizedReturn's 0 paid clients.
+    const persons = [
+      person("w-none", "org-N", { positiveReply: true }),
+      person("w-dead", "org-D2", { closeWin: true }, { deadSignals: ["closeWin"] }),
+      person("w-ours", "org-O", { closeWin: true }),
+    ];
+    const r = run({
+      persons,
+      rows: [row("h-n", "paid_client", ["w-none"]), row("h-d", "paid_client", ["w-dead"]), row("h-o", "paid_client", ["w-ours"])],
+    });
+    expect(card(r, "paid_client", "h-n")).toMatchObject({ valueUsd: 0, zeroValueReason: "not_ours" });
+    expect(card(r, "paid_client", "h-d")).toMatchObject({ valueUsd: 0, zeroValueReason: "ruled_out" });
+    expect(card(r, "paid_client", "h-o")).toMatchObject({ valueUsd: LTR, valueSource: "lifetime_revenue" });
+    expect(r.wonUsd).toBe(LTR);
+  });
+
   it("Contacted rides the pipeline's own function: a lead with no group rate takes the default, none at all ⇒ 0", () => {
     const pricing = {
       entryRatePctByGroup: {},
