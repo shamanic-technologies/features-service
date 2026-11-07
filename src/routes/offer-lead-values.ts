@@ -10,6 +10,9 @@
  *       highest rung of its people) and how many stand on each rung, for the Companies page
  *       (`lib/company-lifecycle-io.ts`, the cell `/offers/:offerId/revenue` lists its organisations from). A mode of this route so the gateway's existing
  *       passthrough reaches it.
+ *   GET /offers/:offerId/deals-value?brandId=&columns=pipeline_generated — the board's dollars over time: each
+ *       organisation on the day our outreach first reached it, cumulative, then the expected continuation
+ *       (PIPELINE-GENERATED-1107, `lib/pipeline-generated.ts`; the Today page's main chart).
  *
  * Same semantics, same pricing and same body as the brand reads; what narrows is WHO: only the leads
  * served on the offer's campaigns (every channel), read the way `/offers/:offerId/revenue` reads them,
@@ -51,10 +54,13 @@ import type { DealsValueResult } from "../lib/deals-value.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
 import { campaignSetKey, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
+import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
+import { buildPipelineGeneratedSeries, firstDayByOrganization, type PipelineGeneratedSeries } from "../lib/pipeline-generated.js";
+import type { EnginePerson } from "../lib/revenue-engine.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
 import {
   BOARD_RUNG_KEYS,
-  priceLifecycleColumns,
+  priceLifecycleBoard,
   type BoardRungKey,
   type DealsLifecycleResult,
   type LifecycleBoardRow,
@@ -147,6 +153,17 @@ export async function computeOfferDealsLifecycle(
   campaignIds: string[],
   offerId: string,
 ): Promise<DealsLifecycleResult> {
+  return (await priceOfferLifecycleBoard(brandId, headers, pre, campaignIds, offerId)).board;
+}
+
+/** The lifecycle board plus what each organisation adds to it and the people it was priced on. */
+async function priceOfferLifecycleBoard(
+  brandId: string,
+  headers: DownstreamHeaders,
+  pre: Parameters<typeof loadBrandPricedPopulation>[2],
+  campaignIds: string[],
+  offerId: string,
+): Promise<ReturnType<typeof priceLifecycleBoard> & { persons: EnginePerson[] }> {
   // The PIPELINE's basis (owner 2026-10-21, one pipeline figure everywhere): the causes the offer revenue read prices
   // by default (`DEFAULT_PRICED_CAUSES`: what our pipes caused) and its own contacted pricing (`contactedPricingOf`).
   const [population, uniboxRows, contactedPricing] = await Promise.all([
@@ -165,7 +182,7 @@ export async function computeOfferDealsLifecycle(
   const rows: LifecycleBoardRow[] = uniboxRows
     .filter((r) => rungs.has(r.rung))
     .map((r) => ({ humanId: r.humanId, companyKey: r.companyKey, relationKey: r.relationKey, leadIds: r.leadIds, rung: r.rung as BoardRungKey }));
-  return priceLifecycleColumns({
+  const priced = priceLifecycleBoard({
     rows,
     persons: population.persons,
     paths: population.paths,
@@ -175,7 +192,58 @@ export async function computeOfferDealsLifecycle(
     statedWonAmountUsdByEmail,
     pricedCauses: DEFAULT_PRICED_CAUSES,
   });
+  return { ...priced, persons: population.persons };
 }
+
+/**
+ * PIPELINE GENERATED OVER TIME (PIPELINE-GENERATED-1107, `lib/pipeline-generated.ts`): the lifecycle board's dollars,
+ * each organisation placed on the day our outreach first reached it, cumulative, then its expected continuation.
+ */
+export async function computeOfferPipelineGenerated(
+  brandId: string,
+  headers: DownstreamHeaders,
+  pre: Parameters<typeof loadBrandPricedPopulation>[2],
+  campaignIds: string[],
+  offerId: string,
+  today: string,
+): Promise<OfferPipelineGeneratedResult> {
+  const [priced, rows] = await Promise.all([
+    priceOfferLifecycleBoard(brandId, headers, pre, campaignIds, offerId),
+    fetchBrandCampaignRows(brandId, undefined, headers),
+  ]);
+  const running = rows.some((r) => r.offerId === offerId && r.status === "ongoing");
+  const { board } = priced;
+  const series = buildPipelineGeneratedSeries({
+    organizationValues: board.unvaluedReason === null ? priced.organizationValues : null,
+    firstDayOf: firstDayByOrganization(priced.persons),
+    running,
+    today,
+  });
+  return {
+    columns: "pipeline_generated",
+    lifetimeRevenueUsd: board.lifetimeRevenueUsd,
+    lifetimeRevenueSource: board.lifetimeRevenueSource,
+    pricedCauses: board.pricedCauses,
+    unvaluedReason: board.unvaluedReason,
+    openUsd: board.expectedPipelineUsd,
+    wonUsd: board.wonUsd,
+    offerRunning: running,
+    ...series,
+  };
+}
+
+export type OfferPipelineGeneratedResult = PipelineGeneratedSeries & {
+  columns: "pipeline_generated";
+  lifetimeRevenueUsd: number | null;
+  lifetimeRevenueSource: DealsLifecycleResult["lifetimeRevenueSource"];
+  pricedCauses: readonly string[];
+  unvaluedReason: DealsLifecycleResult["unvaluedReason"];
+  /** The Deals board's open pipeline (`expectedPipelineUsd`), the expected part of `measuredUsd`. */
+  openUsd: number | null;
+  /** The Deals board's won value, the part of `measuredUsd` already won. */
+  wonUsd: number | null;
+  offerRunning: boolean;
+};
 
 class CampaignNotOnOfferError extends Error {
   constructor(readonly offerId: string, readonly campaignId: string) {
@@ -198,8 +266,8 @@ async function campaignScope(offerId: string, brandId: string, campaignId: strin
 
 router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
   const columns = req.query.columns === undefined ? "standing" : req.query.columns;
-  if (columns !== "standing" && columns !== "lifecycle" && columns !== "company_lifecycle") {
-    return res.status(400).json({ error: "columns must be one of: standing, lifecycle, company_lifecycle" });
+  if (columns !== "standing" && columns !== "lifecycle" && columns !== "company_lifecycle" && columns !== "pipeline_generated") {
+    return res.status(400).json({ error: "columns must be one of: standing, lifecycle, company_lifecycle, pipeline_generated" });
   }
   const rawCampaignId = typeof req.query.campaignId === "string" ? req.query.campaignId.trim() : "";
   if (req.query.campaignId !== undefined && (columns !== "lifecycle" || rawCampaignId === "")) {
@@ -216,6 +284,24 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
       return res.json({ offerId, brandId, ...result });
     }
     const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);
+    if (columns === "pipeline_generated") {
+      const today = new Date().toISOString().slice(0, 10);
+      const result = await servedCached<OfferPipelineGeneratedResult>({
+        view: "offer-pipeline-generated",
+        scopeKey: buildScopeKey(offerId, {
+          orgId: headers.orgId,
+          brandId,
+          channels: featureSlugs.join("+"),
+          campaigns: campaignSetKey(campaignIds),
+          ...keyParts,
+          today,
+          m: "pipeline-generated-v1",
+        }),
+        orgId: headers.orgId,
+        compute: () => computeOfferPipelineGenerated(brandId, headers, pre, campaignIds, offerId, today),
+      });
+      return res.json({ offerId, brandId, ...result });
+    }
     if (columns === "lifecycle") {
       const scoped = rawCampaignId ? await campaignScope(offerId, brandId, rawCampaignId, campaignIds, headers) : campaignIds;
       const result = await servedCached<DealsLifecycleResult>({

@@ -213,6 +213,30 @@ describe("GET /offers/:offerId/deals-value", () => {
   });
 });
 
+describe("GET /offers/:offerId/deals-value?columns=pipeline_generated (PIPELINE-GENERATED-1107)", () => {
+  it("measured = the lifecycle board's total = the last measured point; expected days follow, flat when nothing runs", async () => {
+    const board = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=lifecycle");
+    const res = await get("/offers/offer-a/deals-value?brandId=brand-1&pricing=net&columns=pipeline_generated");
+    expect(res.status).toBe(200);
+    expect(res.body.columns).toBe("pipeline_generated");
+    expect(res.body.measuredUsd).toBeGreaterThan(0);
+    expect(res.body.measuredUsd).toBeCloseTo(board.body.totalUsd, 2);
+    expect(res.body.openUsd).toBeCloseTo(board.body.expectedPipelineUsd, 6);
+    expect(res.body.wonUsd).toBeCloseTo(board.body.wonUsd, 6);
+    const points = res.body.points as Array<{ date: string; kind: string; cumulativeUsd: number }>;
+    const measured = points.filter((p) => p.kind === "measured");
+    const expected = points.filter((p) => p.kind === "expected");
+    expect(measured.at(-1)!.date).toBe(res.body.today);
+    expect(measured.at(-1)!.cumulativeUsd).toBe(res.body.measuredUsd);
+    expect(expected).toHaveLength(res.body.expectedHorizonDays);
+    expect(expected.at(-1)!.cumulativeUsd).toBe(res.body.expectedUsd);
+    // The fixture's campaigns state no status: nothing runs, so no more pipeline is expected.
+    expect(res.body.offerRunning).toBe(false);
+    expect(res.body.expectedFlatReason).toBe("offer_not_running");
+    expect(res.body.expectedUsd).toBe(res.body.measuredUsd);
+  });
+});
+
 describe("GET /offers/:offerId/deals-value?columns=lifecycle (DEALS-LIFECYCLE-1021)", () => {
   type Rung = { key: string; valueUsd: number; cardCount: number; cards: Array<{ humanId: string; valueUsd: number }> };
   it("prices every lifecycle rung of the offer's people; the rungs sum to the total; an empty rung is 0", async () => {
