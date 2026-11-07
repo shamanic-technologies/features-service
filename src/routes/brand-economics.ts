@@ -73,6 +73,7 @@
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { fetchPerOfferPricing, perOfferFingerprint } from "../lib/per-offer-pricing.js";
 import { Router } from "express";
+import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -442,14 +443,21 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
         // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the best of the brand's offers' sales
         // paths priced on named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
         const expectedReturn = await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
-        return servedRevenueBody({
-          brandId,
-          costBasis: "charged" as const,
-          channels: groups,
-          ...applyLeadDetail(body, leadDetail),
-          expectedReturn,
-          ...(window ? { window } : {}),
-        });
+        // LEDGER-ONLY-1107: the realized return counts the ledger's Paid client Units, never the CRM's closed deals.
+        return servedRevenueBody(
+          await withLedgerRealizedReturn(
+            {
+              brandId,
+              costBasis: "charged" as const,
+              channels: groups,
+              ...applyLeadDetail(body, leadDetail),
+              expectedReturn,
+              ...(window ? { window } : {}),
+            },
+            brandId,
+            pricing === "gross" ? "gross" : "net",
+          ),
+        );
       },
     });
 
@@ -624,7 +632,7 @@ router.get("/brands/:brandId/offers", apiKeyAuth, async (req, res) => {
         // WHOSE WINS EVERY ROW COUNTED. A lean row carries no `outcomeCauses` of its own, so the
         // payload states it once: the money in these rows moves with the parameter, and a consumer
         // has to be able to name the basis of a figure it is about to render beside another.
-        return servedRevenueBody({ brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: groups });
+        return servedRevenueBody(await withLedgerRealizedReturn({ brandId, costBasis: "charged" as const, outcomeCauses: { priced: [...causes] }, offers: groups }, brandId, pricing === "gross" ? "gross" : "net"));
       },
     });
 

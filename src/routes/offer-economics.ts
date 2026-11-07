@@ -72,6 +72,7 @@ import { ContactedValueUnavailableError, contactedValueUnavailableBody } from ".
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
+import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
 import { computeRevenueWindow, parseWindowDays, WINDOW_DAYS_ERROR, type WindowDays } from "../lib/revenue-window.js";
 import { FUNNEL_RETIRED_BODY, namesRetiredFunnel } from "../lib/retired-funnel-param.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
@@ -418,15 +419,22 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
       // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the offer's best sales path priced on
       // named hypotheses (`lib/expected-return.ts`). Additive: the measured figures are unchanged.
       const expectedReturn = await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity);
-      return servedRevenueBody({
-        offerId,
-        brandId,
-        costBasis: "charged" as const,
-        channels: groups,
-        ...applyLeadDetail(body, leadDetail),
-        expectedReturn,
-        ...(window ? { window } : {}),
-      });
+      // LEDGER-ONLY-1107: the realized return counts the ledger's Paid client Units, never the CRM's closed deals.
+      return servedRevenueBody(
+        await withLedgerRealizedReturn(
+          {
+            offerId,
+            brandId,
+            costBasis: "charged" as const,
+            channels: groups,
+            ...applyLeadDetail(body, leadDetail),
+            expectedReturn,
+            ...(window ? { window } : {}),
+          },
+          brandId,
+          pricing === "gross" ? "gross" : "net",
+        ),
+      );
     },
   });
 }

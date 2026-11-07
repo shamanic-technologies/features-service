@@ -1,3 +1,4 @@
+import { withLedgerRealizedReturn } from "../lib/scope-outcome-ledger-io.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { createHash } from "node:crypto";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
@@ -2573,7 +2574,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-by-offer-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}` }, req.headers).catch(() => {});
 
-          return servedRevenueBody({ featureSlug, costBasis: "charged" as const, groupBy: "offerId", groups });
+          return servedRevenueBody(await withLedgerRealizedReturn({ featureSlug, costBasis: "charged" as const, groupBy: "offerId", groups }, brandId, pricing === "gross" ? "gross" : "net"));
         },
       });
 
@@ -2668,7 +2669,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
 
           traceEvent(runId, { service: "features-service", event: "feature-revenue-grouped-done", detail: `featureSlug=${featureSlug}, groupCount=${groups.length}, identities=${byIdentity.size}` }, req.headers).catch(() => {});
 
-          return servedRevenueBody({ featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups });
+          return servedRevenueBody(await withLedgerRealizedReturn({ featureSlug, costBasis: costBasis === "actual" ? ("actual" as const) : ("charged" as const), groupBy: "campaignId", groups }, brandId, pricing === "gross" ? "gross" : "net"));
         },
       });
 
@@ -2794,7 +2795,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               : offerId
                 ? await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity)
                 : await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
-        return servedRevenueBody({
+        // LEDGER-ONLY-1107: the realized return counts the brand's ledger Paid client Units; a campaign or workflow read carries none.
+        return servedRevenueBody(
+          await withLedgerRealizedReturn(
+            {
           featureSlug,
           costBasis: "charged" as const,
           ...applyLeadDetail(body, leadDetail),
@@ -2811,7 +2815,12 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 workflowSlugs: workflowScope.workflowSlugs,
               }
             : undefined,
-        });
+        },
+            brandId,
+            pricing === "gross" ? "gross" : "net",
+            campaignId ? "per_campaign_not_in_ledger" : workflowScope ? "per_workflow_not_in_ledger" : null,
+          ),
+        );
       }),
     });
 
