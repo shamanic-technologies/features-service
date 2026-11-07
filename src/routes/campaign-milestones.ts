@@ -122,7 +122,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
         const byDynasty = new Map<string, number>();
         for (const [slug, c] of spends[i]!) byDynasty.set(dynastyOf(slug), (byDynasty.get(dynastyOf(slug)) ?? 0) + c.committedCents);
         // The campaign page's own count of who reached the step (the milestones' too), the chart's when the page has none.
-        const people = peopleOf.get(p.leg.toStep) ?? p.totals.outcomes;
+        const people = peopleOf.get(p.leg.toStep) ?? p.totals.outcomes ?? null;
         return [{ pipeId: p.pipeId, fromStep: p.leg.fromStep, toStep: p.leg.toStep, people, runByUs: runByUsOf(p.pipeId), spendByDynasty: byDynasty }];
       }),
       (k) => labels.get(k) ?? titleOf(k),

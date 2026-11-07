@@ -24,7 +24,8 @@ export interface MilestoneLegFigures {
 export interface MilestonePipeSpend {
   toStep: string;
   spendUsd: number;
-  outcomes: number;
+  /** LEDGER-ONLY-1107-P2: the pipe's ledger Units; null = the ledger cannot state them. */
+  outcomes: number | null;
 }
 export interface MilestoneStepPeople {
   key: string;
@@ -107,7 +108,7 @@ export function milestonesOf(input: {
   rowSteps.forEach((step, i) => {
     const own = pipes.filter((p) => p.toStep === step.key);
     const ownSpend = own.reduce((a, p) => a + p.spendUsd, 0);
-    const ownOutcomes = own.reduce((a, p) => a + p.outcomes, 0);
+    const ownOutcomes = own.reduce((a, p) => a + (p.outcomes ?? 0), 0);
     spentUpTo += ownSpend;
     const people = step.people;
     const leg = legOf.get(step.key) ?? null;

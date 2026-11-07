@@ -19,6 +19,8 @@ import { fetchLeadIdsByStanding } from "../lib/leads-client.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { loadBrandPricedPopulation, BrandPricesDifferentlyError, type BrandPricingPre } from "./contacted-value.js";
 import { priceDealsColumns, type DealsValueResult } from "../lib/deals-value.js";
+import { withLedgerDealsColumns } from "../lib/ledger-counts.js";
+import { readLedgerScope } from "../lib/ledger-counts-io.js";
 
 const router = Router();
 
@@ -64,14 +66,18 @@ export async function computeBrandDealsValue(
   const scoped = (members: Set<string>): Set<string> =>
     campaignIds ? new Set([...members].filter((id) => held.has(id))) : members;
 
-  return priceDealsColumns({
-    persons: population.persons,
-    paths: population.paths,
-    lifetimeRevenueUsd: population.lifetimeRevenueUsd,
-    members: { sales_interest: scoped(interested), customer: scoped(won) },
-    statedWonAmountUsdByEmail,
-    pricedCauses: DEFAULT_PRICED_CAUSES,
-  });
+  // LEDGER-ONLY-1107-P2: the won column's value is the brand ledger's Paid client Units x LTR.
+  return withLedgerDealsColumns(
+    priceDealsColumns({
+      persons: population.persons,
+      paths: population.paths,
+      lifetimeRevenueUsd: population.lifetimeRevenueUsd,
+      members: { sales_interest: scoped(interested), customer: scoped(won) },
+      statedWonAmountUsdByEmail,
+      pricedCauses: DEFAULT_PRICED_CAUSES,
+    }) as DealsValueResult & { columns: Array<Record<string, unknown> & { standing: string; basis: string | null }> },
+    await readLedgerScope(brandId, "net", null, "deals value"),
+  ) as DealsValueResult;
 }
 
 router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
