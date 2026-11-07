@@ -326,6 +326,70 @@ export function runAggregateOf(outcomeKey: string, produced: readonly LedgerOccu
 }
 
 /**
+ * NEWSLETTER-COST-1107-FEATURES: a stored bulk-run total is a CACHE of the ledger, so it must move when the ledger's MONEY
+ * on its rows moves, not only their count (prod 2026-11-07: runs-service re-priced our org's Postmark sends 1.19c -> 0.165c,
+ * the Units count never moved, every finished release kept its pre-correction cost). Reading the whole run is the build
+ * itself (minutes), so the money key is a deterministic SAMPLE: the ledger money of the run's first
+ * `BULK_RUN_COST_SAMPLE_ROWS` produced and consumed occurrences (runs-service pages by id, the same rows on every read). A
+ * re-price, a late cost or a re-allocation of the run's inputs moves it; anything a sample can miss is caught by the
+ * rebuild ceiling (`BULK_RUN_REBUILD_CEILING_MS`).
+ */
+export const BULK_RUN_COST_SAMPLE_ROWS = 100;
+export const BULK_RUN_REBUILD_CEILING_MS = 24 * 60 * 60_000;
+
+/** PURE. The money key of a bulk run's sample (gross and net, every produced cost and every consumed part of the key). */
+export function bulkRunCostKeyOf(outcomeKey: string, produced: readonly LedgerOccurrence[], consumed: readonly LedgerOccurrence[]): string {
+  let net = 0;
+  let gross = 0;
+  let rows = 0;
+  for (const u of produced) {
+    if (u.direction !== "produced" || u.outcomeKey !== outcomeKey) continue;
+    rows += 1;
+    net += Number(u.cost?.netCents ?? 0) || 0;
+    gross += Number(u.cost?.grossCents ?? 0) || 0;
+  }
+  for (const c of consumed) {
+    if (c.direction !== "consumed") continue;
+    rows += 1;
+    for (const part of c.consumption?.consumingOutcomes ?? []) {
+      if (part.outcomeKey !== outcomeKey || !part.standardCost) continue;
+      net += Number(part.standardCost.netCents) || 0;
+      gross += Number(part.standardCost.grossCents) || 0;
+    }
+  }
+  return `rows:${rows}|gross:${gross.toFixed(6)}|net:${net.toFixed(6)}`;
+}
+
+/** A bulk run's stored total: the Units fingerprint and the money key it was built at (read BEFORE the build). */
+export interface StoredBulkRun {
+  fingerprint: string;
+  /** Absent on a total stored before NEWSLETTER-COST-1107-FEATURES: rebuilt once. */
+  costKey?: string | null;
+  builtAt?: string | null;
+  agg: RunAggregate;
+}
+
+export type BulkRunRebuildReason = "never_built" | "units_moved" | "ledger_cost_moved" | "ceiling";
+
+/**
+ * PURE. Why a stored bulk total must be rebuilt, null when it still IS the ledger's figure: never built, its Units count
+ * moved, its ledger money moved (same count), or it is older than the ceiling. An unknown current money key (the sample
+ * read failed) never forces a rebuild on its own.
+ */
+export function bulkRunRebuildReason(
+  stored: StoredBulkRun | null,
+  current: { fingerprint: string; costKey: string | null },
+  nowMs: number,
+): BulkRunRebuildReason | null {
+  if (!stored) return "never_built";
+  if (stored.fingerprint !== current.fingerprint) return "units_moved";
+  if (current.costKey !== null && stored.costKey !== current.costKey) return "ledger_cost_moved";
+  const built = stored.builtAt ? Date.parse(stored.builtAt) : NaN;
+  if (!Number.isFinite(built) || nowMs - built > BULK_RUN_REBUILD_CEILING_MS) return "ceiling";
+  return null;
+}
+
+/**
  * PURE. Visits and signups of bulk runs: a website visit consumed one of the run's Units (its consumption names the
  * Unit's run), a signup consumed that visit (once per visit).
  */
