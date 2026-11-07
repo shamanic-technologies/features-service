@@ -82,3 +82,56 @@ describe("shared downstream reads", () => {
     expect(asked).toEqual(["past", "today", "today"]);
   });
 });
+
+describe("shared runs-service reads outside a view compute (LEDGER-LOAD-1107-FEATURES)", () => {
+  let calls: string[] = [];
+  let status = 200;
+  beforeEach(() => {
+    process.env.RUNS_SERVICE_URL = "http://runs-svc";
+    process.env.RUNS_READ_SHARE_MS = "30000";
+    process.env.DOWNSTREAM_READ_SHARE_MS = "3000";
+    __resetSharedReads();
+    calls = [];
+    status = 200;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      calls.push(`${String(input)} ${JSON.stringify((init as RequestInit)?.headers ?? {})}`);
+      await new Promise((r) => setTimeout(r, 2));
+      return new Response(JSON.stringify({ n: calls.length }), { status });
+    });
+  });
+  afterEach(() => {
+    process.env.RUNS_READ_SHARE_MS = "0";
+    process.env.DOWNSTREAM_READ_SHARE_MS = "0";
+    vi.restoreAllMocks();
+  });
+
+  it("a fleet build asks an identical runs-service GET once (concurrent + within 30 s), each asker reading the same bytes", async () => {
+    const read = (run: string) => fetchWithRetry("http://runs-svc/internal/stats/costs/vendor?groupBy=workflowSlug", { headers: { "x-api-key": "k", "x-run-id": run } }).then((r) => r.text());
+    const [a, b] = await Promise.all([read("r1"), read("r2")]);
+    const c = await read("r3");
+    expect(calls).toHaveLength(1);
+    expect(a).toBe(b);
+    expect(c).toBe(a);
+  });
+
+  it("never another question (headers), never another service, never a POST, never a failure", async () => {
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?groupBy=brandId", { headers: { "x-org-id": "o1" } });
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?groupBy=brandId", { headers: { "x-org-id": "o2" } });
+    await fetchWithRetry("http://lead/x");
+    await fetchWithRetry("http://lead/x");
+    await fetchWithRetry("http://runs-svc/v1/runs/batch", { method: "POST", body: "{}" });
+    await fetchWithRetry("http://runs-svc/v1/runs/batch", { method: "POST", body: "{}" });
+    status = 500;
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?f=1");
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?f=1");
+    expect(calls).toHaveLength(8);
+  });
+
+  it("an interactive view never takes a background answer (its 3 s freshness holds), and an opted-out caller is never shared", async () => {
+    await fetchWithRetry("http://runs-svc/v1/runs?campaignIds=c1");
+    await withLiveLeadCopy(() => fetchWithRetry("http://runs-svc/v1/runs?campaignIds=c1"));
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?g=2", undefined, { backgroundShare: false });
+    await fetchWithRetry("http://runs-svc/v1/stats/costs?g=2", undefined, { backgroundShare: false });
+    expect(calls).toHaveLength(4);
+  });
+});
