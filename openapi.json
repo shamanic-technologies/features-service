@@ -24470,19 +24470,24 @@
                       "type": "number"
                     },
                     "outcomes": {
-                      "type": "integer"
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
                     },
                     "undatedOutcomes": {
                       "type": "integer",
-                      "description": "Of outcomes, those with no date (counted in the last month)."
+                      "nullable": true,
+                      "description": "Always 0 on the ledger (every Unit is dated); null with outcomes."
                     },
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead)."
+                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."
                     },
                     "learning": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "nullable": true,
+                      "description": "Null with outcomes."
                     }
                   },
                   "required": [
@@ -24492,6 +24497,31 @@
                     "costPerOutcomeUsd",
                     "learning"
                   ]
+                },
+                "outcomesUnavailableReason": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."
+                },
+                "producerGap": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ],
+                  "description": "Who must declare the step's Units when the ledger lacks them."
                 },
                 "expected": {
                   "type": "object",
@@ -24559,7 +24589,8 @@
                       },
                       "outcomes": {
                         "type": "integer",
-                        "description": "People we contacted who first reached the step this month (undated ones count in the last month)."
+                        "nullable": true,
+                        "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
                       },
                       "costPerOutcomeUsd": {
                         "type": "number",
@@ -24570,7 +24601,8 @@
                         "type": "number"
                       },
                       "cumulativeOutcomes": {
-                        "type": "integer"
+                        "type": "integer",
+                        "nullable": true
                       },
                       "cumulativeCostPerOutcomeUsd": {
                         "type": "number",
@@ -24579,7 +24611,8 @@
                       },
                       "learning": {
                         "type": "boolean",
-                        "description": "True while cumulativeOutcomes is below learningOutcomesRequired."
+                        "nullable": true,
+                        "description": "True while cumulativeOutcomes is below learningOutcomesRequired. Null with the outcomes."
                       }
                     },
                     "required": [
@@ -24611,6 +24644,8 @@
                 "stepKey",
                 "learningOutcomesRequired",
                 "sinceInception",
+                "outcomesUnavailableReason",
+                "producerGap",
                 "expected",
                 "value",
                 "months",
