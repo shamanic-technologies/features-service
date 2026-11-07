@@ -82,18 +82,40 @@ export function closedWonOf(
   persons: EnginePerson[],
   lifetimeRevenueUsd: number | null | undefined,
 ): { closedWonCount: number; closedWonRevenueUsd: number } | null {
-  let closedWonCount = 0;
-  let closedWonRevenueUsd = 0;
+  const deals = closedWonDealsOf(persons, lifetimeRevenueUsd);
+  if (deals === null) return null;
+  return { closedWonCount: deals.length, closedWonRevenueUsd: deals.reduce((s, d) => s + d.valueUsd, 0) };
+}
+
+/** One deal closed won, priced to our outreach (`closedWonOf`'s predicate), with the day it was won. */
+export interface ClosedWonDeal {
+  leadId: string;
+  valueUsd: number;
+  /** The engine's `signalDates.closeWin` (ISO), null when the sale carries no date. */
+  wonAt: string | null;
+}
+
+/**
+ * PURE. The deals `closedWonOf` counts, one per lead, each with its value and its won date: the realized
+ * return's numerator, dated (REVENUE-GENERATED-1107). Null exactly when `closedWonOf` is null.
+ */
+export function closedWonDealsOf(
+  persons: EnginePerson[],
+  lifetimeRevenueUsd: number | null | undefined,
+): ClosedWonDeal[] | null {
+  const deals: ClosedWonDeal[] = [];
   for (const p of dedupPersonsByLead(persons)) {
-    if (!p.signals.closeWin) continue;
-    if ((p.unpricedSignals ?? []).includes("closeWin")) continue;
-    if ((p.deadSignals ?? []).includes("closeWin")) continue;
+    if (!isClosedWonOurs(p)) continue;
     const stated =
       typeof p.valueUsd === "number" && Number.isFinite(p.valueUsd) && p.valueUsd >= 0 ? p.valueUsd : null;
     const value = stated ?? (lifetimeRevenueUsd != null && lifetimeRevenueUsd > 0 ? lifetimeRevenueUsd : null);
     if (value === null) return null;
-    closedWonCount += 1;
-    closedWonRevenueUsd += value;
+    deals.push({ leadId: p.leadId, valueUsd: value, wonAt: p.signalDates?.closeWin ?? null });
   }
-  return { closedWonCount, closedWonRevenueUsd };
+  return deals;
+}
+
+/** PURE. A won deal that is OURS: closed, priced to our outreach, not ruled dead (the realized return's predicate). */
+export function isClosedWonOurs(p: EnginePerson): boolean {
+  return Boolean(p.signals.closeWin) && !(p.unpricedSignals ?? []).includes("closeWin") && !(p.deadSignals ?? []).includes("closeWin");
 }
