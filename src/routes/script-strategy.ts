@@ -3,10 +3,11 @@
  *
  *   GET /internal/script-strategy?campaignId=&outcome=   (api key; workflow-service's Engine runner, per run)
  *
- * MIGRATE-1105 S6 (owner 2026-11-07): the strategy the campaign keeps on this Engine (`lib/engine-strategy-io.ts`, stored
- * per campaign x Engine, judged from its brief). The Engine's runnable scripts come from workflow-service's catalogue
- * (held 60 s), the verdicts from the tactic sweep. Unreadable = 502, no brief and no verdict yet = 503
- * `campaign_states_no_brief`: the runner runs nothing and retries (fail closed, never "any script").
+ * The campaign's BRIEF decides the strategy (MIGRATE-1105 S0b, owner 2026-11-06: a brief rewritten to « Contacted pure
+ * prospects » ran the funnel's catch-all find script): the brief judge's play for the unit's pipe (`briefPlayOfUnit`, Jev
+ * asked when the brief moved) wins; a brief that picks nothing on the pipe leaves the unit's own sales funnel naming it
+ * (the leg ladder's and writer pick's rule, `playOfLegRead`). The Engine's runnable scripts come from workflow-service's catalogue (held 60 s), the verdicts
+ * from the tactic sweep. Unreadable = 502: the runner runs nothing and retries (fail closed, never "any script").
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -14,7 +15,9 @@ import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { fetchCampaignPipe } from "../lib/fleet-leg-campaigns.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
-import { EngineStrategyHeldError, engineStrategyOfCampaign } from "../lib/engine-strategy-io.js";
+import { playOfLegRead } from "./workflow-projection.js";
+import { briefPlayOfUnit } from "./factory-shadow.js";
+import { engineStrategyOfCampaign } from "../lib/engine-strategy-io.js";
 
 const router = Router();
 
@@ -25,24 +28,51 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
   try {
     const unit = await fetchCampaignPipe(campaignId);
     if (!unit.found) return res.status(404).json({ error: `campaign-service lists no campaign ${campaignId}`, reason: "campaign_not_found" });
-    // MIGRATE-1105 S6: the strategy the campaign keeps on THIS Engine, stored on the campaign (judged from its brief). No
-    // pipe, leg, play, sales funnel id or default play: a row naming no campaign runs nothing.
-    if (!unit.salesFunnelCampaignId || !unit.orgId || !unit.brandId) {
-      return res.status(422).json({ error: `campaign ${campaignId} belongs to no campaign a person runs: no strategy, nothing runs`, reason: "campaign_states_no_campaign" });
+    // MIGRATE-1105 S6: the strategy the campaign keeps on THIS Engine, stored on the campaign (judged from its brief). The
+    // pipe / play / sales funnel read below serves only a campaign that holds no verdict on the Engine yet.
+    const stored = unit.salesFunnelCampaignId && unit.orgId && unit.brandId
+      ? await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome })
+      : ({ kind: "legacy" } as const);
+    if (stored.kind === "kept") {
+      const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+      return res.json({
+        campaignId,
+        outcome,
+        strategyId: stored.strategy?.id ?? null,
+        strategyName: stored.strategy?.name ?? null,
+        strategySource: `campaign_engine_${stored.row.source}`,
+        briefPlayId: null,
+        ...scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue),
+      });
     }
-    const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
-    if (stored.kind !== "kept") throw new Error(`no verdict for campaign ${unit.salesFunnelCampaignId} on ${outcome}`);
-    const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+    const pipe = unit.featureSlug && unit.legKey ? { featureSlug: unit.featureSlug, legKey: unit.legKey } : null;
+    const [catalogue, scripts, played, briefed] = await Promise.all([
+      loadPlayCatalogue(),
+      readRunnableScripts(),
+      pipe ? playOfLegRead(pipe.featureSlug, pipe.legKey, unit.salesFunnelId) : Promise.resolve(null),
+      pipe && unit.salesFunnelCampaignId && unit.orgId && unit.brandId
+        ? briefPlayOfUnit({ salesFunnelCampaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId, ...pipe })
+        : Promise.resolve(null),
+    ]);
+    const briefStrategy = briefed ? (catalogue.strategies.get(briefed.strategyId) ?? null) : null;
+    const strategy = briefStrategy ?? (played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null);
+    const playUnknown = !briefStrategy && played !== null && !strategy ? played.answer.strategyId || played.answer.id : null;
+    const kept = scriptsKeptByStrategy(
+      scripts.filter((s) => s.outcome === outcome),
+      strategy,
+      catalogue,
+      playUnknown,
+    );
     res.json({
       campaignId,
       outcome,
-      strategyId: stored.strategy?.id ?? null,
-      strategyName: stored.strategy?.name ?? null,
-      strategySource: `campaign_engine_${stored.row.source}`,
-      ...scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue),
+      strategyId: strategy?.id ?? null,
+      strategyName: strategy?.name ?? null,
+      strategySource: briefStrategy ? "brief" : (played?.answer.source ?? "no_strategy"),
+      briefPlayId: briefed?.playId ?? null,
+      ...kept,
     });
   } catch (error) {
-    if (error instanceof EngineStrategyHeldError) return res.status(503).json({ error: error.message, reason: "campaign_states_no_brief" });
     console.error(`[features-service] script strategy ${campaignId} x ${outcome} unreadable:`, error);
     res.status(502).json({ error: `the scripts this campaign's strategy keeps could not be read: ${(error as Error).message}`, reason: "script_strategy_unreadable" });
   }

@@ -80,11 +80,10 @@ describe("engineStrategyNeed (MIGRATE-1105 S6)", () => {
     expect(engineStrategyNeed({ source: "judge", briefHash: h, optionsSignature: "a" }, h, "a")).toBe("stored");
     expect(engineStrategyNeed({ source: "judge", briefHash: h, optionsSignature: "a" }, h, "b")).toBe("ask");
   });
-  it("a brief that moved is judged again; no brief keeps the verdict held, and holds the Engine when none is held", () => {
+  it("a brief that moved is judged again; no brief = no condition", () => {
     expect(engineStrategyNeed({ source: "carried", briefHash: h, optionsSignature: null }, briefHashOf("Use the client's mailboxes."), null)).toBe("ask");
-    expect(engineStrategyNeed({ source: "carried", briefHash: h, optionsSignature: null }, null, null)).toBe("stored");
-    expect(engineStrategyNeed(null, null, null)).toBe("hold");
-    expect(engineStrategyNeed(null, h, "x")).toBe("ask");
+    expect(engineStrategyNeed({ source: "carried", briefHash: h, optionsSignature: null }, null, null)).toBe("empty_brief");
+    expect(engineStrategyNeed({ source: "carried", briefHash: null, optionsSignature: null }, null, null)).toBe("stored");
   });
 });
 

@@ -103,14 +103,6 @@ export type CampaignEngineStrategy =
   | { kind: "legacy" }
   | { kind: "kept"; row: StoredEngineStrategy; strategy: Strategy | null };
 
-/** The campaign holds no verdict on the Engine and states no brief to judge one from: run nothing, retry later. */
-export class EngineStrategyHeldError extends Error {
-  constructor(readonly campaignId: string, readonly outcome: string) {
-    super(`campaign ${campaignId} states no brief and keeps no strategy on ${outcome} yet: nothing runs until its brief is written`);
-    this.name = "EngineStrategyHeldError";
-  }
-}
-
 const held = new Map<string, { at: number; value: Promise<CampaignEngineStrategy> }>();
 const keyOf = (campaignId: string, outcome: string) => `${campaignId}|${outcome}`;
 export function forgetEngineStrategy(campaignId: string, outcome: string): void {
@@ -157,6 +149,7 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
   if (hit && Date.now() - hit.at < HELD_MS) return hit.value;
   const value = (async (): Promise<CampaignEngineStrategy> => {
     const stored = await readEngineStrategy(campaign.campaignId, engine.outcome);
+    if (!stored) return { kind: "legacy" };
     const rows = await fetchSalesFunnelCampaigns(campaign.brandId, null, { orgId: campaign.orgId });
     const row = rows.find((r) => r.id === campaign.campaignId);
     if (!row) throw new Error(`campaign-service lists no campaign ${campaign.campaignId} for brand ${campaign.brandId}`);
@@ -166,13 +159,18 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     // Options are read only when a judged verdict may have gone stale on them (a carried one stands on its brief alone).
     let options: EngineStrategyOption[] | null = null;
     const optionsNow = async () => {
-      options ??= engineStrategyOptions(engine.outcome, await readRunnableScripts(), catalogue, stored?.strategyId ? [stored.strategyId] : []);
+      options ??= engineStrategyOptions(engine.outcome, await readRunnableScripts(), catalogue, stored.strategyId ? [stored.strategyId] : []);
       return options;
     };
-    const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
+    const signature = stored.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
     const need = engineStrategyNeed(stored, briefHash, signature);
-    if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies) };
-    if (need === "hold") throw new EngineStrategyHeldError(campaign.campaignId, engine.outcome);
+    if (need === "stored") return { kind: "kept", row: stored, strategy: strategyOfStored(stored, catalogue.strategies) };
+    if (need === "empty_brief") {
+      const next = { ...stored, strategyId: null, source: "empty_brief" as const, briefHash: null, optionsSignature: null, confidence: null, model: null };
+      await writeEngineStrategy(next);
+      console.log(`[features-service] campaign ${campaign.campaignId} has no brief: no condition on ${engine.outcome}`);
+      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null };
+    }
     const opts = await optionsNow();
     const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }), opts);
     const next = {
@@ -185,10 +183,10 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
       optionsSignature: optionsSignatureOf(opts),
       confidence: pick.confidence,
       model: pick.model,
-      carriedFrom: stored?.carriedFrom ?? null,
+      carriedFrom: stored.carriedFrom,
     };
     await writeEngineStrategy(next);
-    console.log(`[features-service] brief of campaign ${campaign.campaignId} judged on Engine ${engine.outcome}: ${pick.option.strategyId ?? "no condition"} (${pick.confidence}, was ${stored ? (stored.strategyId ?? "no condition") : "none"})`);
+    console.log(`[features-service] brief of campaign ${campaign.campaignId} judged on Engine ${engine.outcome}: ${pick.option.strategyId ?? "no condition"} (${pick.confidence}, was ${stored.strategyId ?? "no condition"})`);
     return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: strategyOfStored(next, catalogue.strategies) };
   })();
   held.set(key, { at: Date.now(), value });

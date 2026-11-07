@@ -18,7 +18,6 @@ import type { PlayCatalogue, Strategy } from "./plays.js";
 import type { RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 
-/** `empty_brief` = a pre-S6 row only; never written any more. */
 export type EngineStrategySource = "carried" | "judge" | "empty_brief";
 
 export interface StoredEngineStrategy {
@@ -88,18 +87,16 @@ export const optionsSignatureOf = (options: readonly EngineStrategyOption[]): st
   sha256(JSON.stringify(options.map((o) => [o.strategyId, o.description]).sort()));
 
 /**
- * PURE: whether a stored verdict still stands. `stored` = read it; `ask` = Jev; `hold` = no verdict and no brief to judge:
- * the Engine runs nothing until the campaign states its brief (a blank brief never widens to every script: the Engine's
- * scripts serve different people). A carried verdict stands while its brief is unchanged, whatever the options; a judged
- * one also needs the same options. A brief emptied after a verdict keeps that verdict.
+ * PURE: whether a stored verdict still stands. `stored` = read it; `empty_brief` = no brief, no condition; `ask` = Jev.
+ * A carried verdict stands while its brief is unchanged, whatever the options; a judged one also needs the same options.
  */
 export function engineStrategyNeed(
   stored: Pick<StoredEngineStrategy, "briefHash" | "optionsSignature" | "source"> | null,
   briefHash: string | null,
   optionsSignature: string | null,
-): "stored" | "ask" | "hold" {
+): "stored" | "empty_brief" | "ask" {
   if (stored && stored.briefHash === briefHash && (stored.source !== "judge" || stored.optionsSignature === optionsSignature)) return "stored";
-  if (briefHash === null) return stored ? "stored" : "hold";
+  if (briefHash === null) return "empty_brief";
   return "ask";
 }
 
