@@ -583,10 +583,10 @@ export function withVendorCredit(p: LegWriterRankingPayload, outOfCredit: Readon
  * What a run of the pipe writes with today (BEST-TPL-LLM-1022): rank 1 template and rank 1 LLM under the play its campaign
  * unit names (`salesFunnelId`; null = the pipe's default play). Null = the pipe's writer ranking is not built yet.
  */
-export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000) {
+export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000, campaignId: string | null = null) {
   const [catalogue, played, built, outOfCredit] = await Promise.all([
     loadPlayCatalogue(),
-    playOfLegRead(featureSlug, legKey, salesFunnelId),
+    playOfLegRead(featureSlug, legKey, salesFunnelId, campaignId),
     readLegWriterRanking(featureSlug, legKey, waitMs),
     readOutOfCreditProvidersSoft(`writer pick ${featureSlug}|${legKey}`),
   ]);
@@ -646,7 +646,7 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       const unit = await fetchCampaignPipe(campaignId!);
       if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
       if (!unit.featureSlug || !unit.legKey) return bad(res, 422, "campaign_states_no_pipe", `campaign ${campaignId} states no ${unit.featureSlug ? "legKey" : "featureSlug"}: no pipe to pick a writer on`);
-      const picked = await pickPipeWriters(unit.featureSlug, unit.legKey, unit.salesFunnelId);
+      const picked = await pickPipeWriters(unit.featureSlug, unit.legKey, unit.salesFunnelId, 30_000, campaignId);
       if (!picked) return notComputed(res, unit.featureSlug, unit.legKey);
       return res.json({ workflowSlug: null, workflowDynastySlug: null, campaignId, featureSlug: unit.featureSlug, ...pickBody(picked) });
     }
@@ -659,7 +659,7 @@ router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Respon
       if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
       salesFunnelId = unit.salesFunnelId;
     }
-    const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId);
+    const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId, 30_000, campaignId);
     if (!picked) return notComputed(res, pipe.featureSlug, pipe.legKey);
     res.json({ workflowSlug, workflowDynastySlug: pipe.dynasty, featureSlug: pipe.featureSlug, ...pickBody(picked) });
   } catch (error) {

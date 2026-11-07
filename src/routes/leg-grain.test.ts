@@ -15,6 +15,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { offerEconomicsFromDeclared } from "../lib/leg-economics-fixture.js";
 
+// MIGRATE-1105 S6: no campaign here holds a verdict per Engine (the legacy play read is what these tests pin).
+vi.mock("../lib/engine-strategy-io.js", () => ({ engineStrategyOfUnit: async () => ({ kind: "legacy" }) }));
 vi.mock("../lib/workflow-leg-assignments.js", async (importOriginal) => {
   const { everyWorkflowActive } = await import("../lib/leg-assignments-fixture.js");
   return {

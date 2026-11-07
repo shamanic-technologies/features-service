@@ -1064,3 +1064,29 @@ export const factoryPipeVerdicts = pgTable(
   },
   (table) => [primaryKey({ columns: [table.campaignId, table.pipeId] })],
 );
+
+/**
+ * A CAMPAIGN'S STRATEGY PER ENGINE (MIGRATE-1105 S6, owner 2026-11-07; `lib/engine-strategy.ts`). One row per
+ * (campaign, Engine outcome): the strategy the brief judge keeps for that Engine, or none (NULL = every script).
+ * `campaign_id` = the campaign a person runs (campaign-service `sales_funnel_campaigns.id`). Migration 0064.
+ */
+export const campaignEngineStrategies = pgTable(
+  "campaign_engine_strategies",
+  {
+    campaignId: text("campaign_id").notNull(),
+    outcome: text("outcome").notNull(),
+    orgId: text("org_id").notNull(),
+    strategyId: text("strategy_id"),
+    /** `carried` | `judge` | `empty_brief`. */
+    source: text("source").notNull(),
+    briefHash: text("brief_hash"),
+    optionsSignature: text("options_signature"),
+    confidence: doublePrecision("confidence"),
+    model: text("model"),
+    /** On a `carried` row: the play it was carried from (audit only). */
+    carriedFrom: text("carried_from"),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "campaign_engine_strategies_pk", columns: [table.campaignId, table.outcome] })],
+);
+export type CampaignEngineStrategyRow = typeof campaignEngineStrategies.$inferSelect;

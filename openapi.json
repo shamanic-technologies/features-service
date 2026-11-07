@@ -51250,11 +51250,16 @@
                     "strategySource": {
                       "type": "string",
                       "enum": [
+                        "campaign_engine_carried",
+                        "campaign_engine_judge",
+                        "campaign_engine_empty_brief",
+                        "brief",
                         "sales_funnel",
                         "pipe_default",
                         "retired_play",
                         "no_strategy"
-                      ]
+                      ],
+                      "description": "`campaign_engine_*` = the strategy the campaign keeps on this Engine (MIGRATE-1105 S6, stored on the campaign, judged from its brief); the others serve only a campaign holding no verdict on the Engine yet."
                     },
                     "scriptTacticIds": {
                       "type": "array",
@@ -51326,6 +51331,317 @@
           },
           "502": {
             "description": "script_strategy_unreadable: run nothing and retry"
+          }
+        }
+      }
+    },
+    "/internal/campaigns/{campaignId}/engine-strategies": {
+      "get": {
+        "summary": "The strategy one campaign keeps on each Engine (internal, api-key)",
+        "description": "MIGRATE-1105 S6. One row per Engine (outcome): the strategy the brief judge keeps, or none (every script). `carried` = written by the S6 migration from what the campaign ran that day, held while its brief is unchanged; `judge` = Jev's pick from the brief; `empty_brief` = no brief.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "campaignId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The verdicts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaignId": {
+                      "type": "string"
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "strategyId": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Null = no condition: every script of the Engine."
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "carried",
+                              "judge",
+                              "empty_brief"
+                            ]
+                          },
+                          "briefHash": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "optionsSignature": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "model": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "carriedFrom": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "judgedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "outcome",
+                          "orgId",
+                          "strategyId",
+                          "source",
+                          "briefHash",
+                          "optionsSignature",
+                          "confidence",
+                          "model",
+                          "carriedFrom",
+                          "judgedAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "campaignId",
+                    "engines"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "engine_strategies_unreadable"
+          }
+        }
+      }
+    },
+    "/internal/engine-strategies": {
+      "get": {
+        "summary": "Every stored campaign x Engine strategy (internal, api-key, audit)",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The verdicts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "strategyId": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Null = no condition: every script of the Engine."
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "carried",
+                              "judge",
+                              "empty_brief"
+                            ]
+                          },
+                          "briefHash": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "optionsSignature": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "model": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "carriedFrom": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "judgedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "outcome",
+                          "orgId",
+                          "strategyId",
+                          "source",
+                          "briefHash",
+                          "optionsSignature",
+                          "confidence",
+                          "model",
+                          "carriedFrom",
+                          "judgedAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "engines"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "engine_strategies_unreadable"
+          }
+        }
+      }
+    },
+    "/internal/engine-strategies/carry": {
+      "post": {
+        "summary": "Carry every live campaign's strategy onto its Engines (internal, api-key, staff; MIGRATE-1105 S6 migration)",
+        "description": "For every live campaign unit, store the campaign's verdict on the unit's Engine from what it runs today (the brief judge's play, else its funnel's play, else its pipe's default). A verdict already stored is never touched. `apply: false` = dry run. Two units of one campaign on one Engine naming two strategies = `conflict`, nothing written.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apply": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One row per unit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "apply": {
+                      "type": "boolean"
+                    },
+                    "counts": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      }
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "unitId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "featureSlug": {
+                            "type": "string"
+                          },
+                          "legKey": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "strategyId": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "carriedFrom": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "result": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "unitId",
+                          "orgId",
+                          "featureSlug",
+                          "legKey",
+                          "outcome",
+                          "strategyId",
+                          "carriedFrom",
+                          "result",
+                          "detail"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "apply",
+                    "counts",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "engine_strategy_carry_failed"
           }
         }
       }
