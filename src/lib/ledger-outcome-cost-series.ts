@@ -42,11 +42,12 @@ export function withLedgerStepSeries(
 }
 
 function ledgerAccounting(a: OutcomeAccounting, costFromStartUsd: number | null, landing: LedgerCount | null, landingSpendUsd: number | null, target: LedgerCount | null, targetSpendUsd: number | null): OutcomeAccounting {
-  const units = landing?.units ?? null;
+  // LEDGER-OTHER-FACTORY-1107: a cost per Unit and a return divide OUR Units only.
+  const units = landing?.ourUnits ?? null;
   const actualUsd = per(landingSpendUsd, units);
   const actualReason = landing === null ? "not_made_by_our_campaigns" : units === null ? landing.reason : landingSpendUsd === null ? "spend_unreadable" : units === 0 ? "no_unit_yet" : null;
   const valuePer = a.returns.expected.valuePerUnitUsd;
-  const tUnits = target?.units ?? null;
+  const tUnits = target?.ourUnits ?? null;
   const measured = !a.returns.isCampaignTarget
     ? a.returns.measured
     : {

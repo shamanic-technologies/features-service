@@ -74,7 +74,7 @@ const ROWS: LifecycleBoardRow[] = [
 
 const args = (over: Partial<Parameters<typeof priceLifecycleColumns>[0]> = {}): Parameters<typeof priceLifecycleColumns>[0] => ({
     // LEDGER-ONLY-1107-P2: the ledger holds 2 Paid client Units (the won column = 2 x LTR); no other rung counted.
-    ledgerUnitsOf: (r) => (r === "paid_client" ? { units: 2, reason: null } : { units: null, reason: "not_a_ledger_outcome" }),
+    ledgerUnitsOf: (r) => (r === "paid_client" ? { units: 2, ourUnits: 2, otherFactoryUnits: { total: 0, anotherFactory: 0, noProof: 0 }, reason: null } : { units: null, ourUnits: null, otherFactoryUnits: null, reason: "not_a_ledger_outcome" }),
     rows: ROWS,
     persons: PERSONS,
     paths: PATHS,
@@ -157,12 +157,16 @@ describe("priceLifecycleColumns (DEALS-LIFECYCLE-1021)", () => {
     expect(rung(r, "paid_client").units).toBe(2);
     expect(r.wonUsd).toBe(2 * LTR);
     // The ledger lacking Paid client Units: rung, won and total unknown, never the CRM's deals.
-    const lacks = run({ ledgerUnitsOf: () => ({ units: null, reason: "outcome_not_declared_in_ledger" }) });
+    const lacks = run({ ledgerUnitsOf: () => ({ units: null, ourUnits: null, otherFactoryUnits: null, reason: "outcome_not_declared_in_ledger" }) });
     expect(rung(lacks, "paid_client").valueUsd).toBeNull();
     expect(rung(lacks, "paid_client").unitsUnavailableReason).toBe("outcome_not_declared_in_ledger");
     expect(lacks.wonUsd).toBeNull();
     expect(lacks.totalUsd).toBeNull();
     expect(lacks.expectedPipelineUsd).not.toBeNull();
+    // LEDGER-OTHER-FACTORY-1107: 2 ours + 15 another factory made: the rung counts 17, its value is OUR 2 only.
+    const mixed = run({ ledgerUnitsOf: (k) => (k === "paid_client" ? { units: 17, ourUnits: 2, otherFactoryUnits: { total: 15, anotherFactory: 6, noProof: 9 }, reason: null } : { units: null, ourUnits: null, otherFactoryUnits: null, reason: "not_a_ledger_outcome" }) });
+    expect(rung(mixed, "paid_client")).toMatchObject({ units: 17, ourUnits: 2, otherFactoryUnits: { total: 15 }, valueUsd: 2 * LTR });
+    expect(mixed.wonUsd).toBe(2 * LTR);
   });
 
   it("a ruled-out engaged person reads 0 ruled_out", () => {

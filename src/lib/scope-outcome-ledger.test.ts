@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-import { scopeOutcomeLedgerRowOf, scopeOutcomeLedgerRows, type ScopeOutcomeLedgerInput } from "./scope-outcome-ledger.js";
+import { scopeOutcomeLedgerRowOf, scopeOutcomeLedgerRows, ledgerRealizedReturn, type ScopeOutcomeLedgerInput, type OtherFactory } from "./scope-outcome-ledger.js";
 import { parseScopeLedgerByDay, parseFleetProducers } from "./scope-outcome-ledger-io.js";
 
 const base = (over: Partial<ScopeOutcomeLedgerInput> = {}): ScopeOutcomeLedgerInput => ({
@@ -157,16 +157,84 @@ describe("withLedgerRealHalf (LEDGER-ONLY-1107 x REVENUE-GENERATED-1107)", () =>
   };
   it("the real half = ledger Paid client Units × LTR per day; Units dated before the chart land on its first day", async () => {
     const { withLedgerRealHalf } = await import("./revenue-generated.js");
-    const paid = { units: 2, unitsUnavailableReason: null, past: [{ date: "2026-11-01", units: 1, cumulativeUnits: 1 }, { date: "2026-11-02", units: 0, cumulativeUnits: 1 }, { date: "2026-11-03", units: 1, cumulativeUnits: 2 }] };
+    // 2 of OUR Paid clients + 5 another factory made: the real half is ours only (LEDGER-OTHER-FACTORY-1107).
+    const paid = { units: 7, ourUnits: 2, unitsUnavailableReason: null, past: [{ date: "2026-11-01", ourUnits: 1, cumulativeOurUnits: 1 }, { date: "2026-11-02", ourUnits: 0, cumulativeOurUnits: 1 }, { date: "2026-11-03", ourUnits: 1, cumulativeOurUnits: 2 }] };
     const r = withLedgerRealHalf(rg, paid, 1000);
     expect(r).toMatchObject({ realUsd: 2000, paidClientCount: 2, realUnavailableReason: null, spentUsd: 400, expectedToDateUsd: 800 });
     expect(r.points.map((p) => [p.realUsd, p.realCumulativeUsd, p.expectedCumulativeUsd])).toEqual([[1000, 1000, 400], [1000, 2000, 800], [null, null, 820]]);
   });
   it("Paid client not declared in the ledger: every real figure null + the reason; the expected half untouched", async () => {
     const { withLedgerRealHalf } = await import("./revenue-generated.js");
-    const r = withLedgerRealHalf(rg, { units: null, unitsUnavailableReason: "outcome_not_declared_in_ledger", past: [] }, 1000);
+    const r = withLedgerRealHalf(rg, { units: null, ourUnits: null, unitsUnavailableReason: "outcome_not_declared_in_ledger", past: [] }, 1000);
     expect(r).toMatchObject({ realUsd: null, paidClientCount: null, realUnavailableReason: "outcome_not_declared_in_ledger", expectedToDateUsd: 800 });
     expect(r.points.every((p) => p.realCumulativeUsd === null)).toBe(true);
     expect(withLedgerRealHalf(rg, null, 1000).realUnavailableReason).toBe("ledger_unreadable");
+  });
+});
+
+/**
+ * LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « ON VEUT LE TOTAL ET LES STATS PAR OUTCOME … INDEPENDAMMENT DES SOURCES »):
+ * the count = our Units + another factory's; every money figure divides OUR Units only (IAS 2).
+ */
+describe("another factory's Units (LEDGER-OTHER-FACTORY-1107)", () => {
+  const elsewhere = (rows: Array<[string, string, OtherFactory, number]>) => {
+    const out = new Map<string, Map<string, Map<OtherFactory, number>>>();
+    for (const [k, d, f, n] of rows) {
+      const days = out.get(k) ?? out.set(k, new Map()).get(k)!;
+      const byF = days.get(d) ?? days.set(d, new Map()).get(d)!;
+      byF.set(f, (byF.get(f) ?? 0) + n);
+    }
+    return out;
+  };
+
+  it("total = ours + theirs; $ each and production cost divide OUR Units only", () => {
+    // Ours: 3 interested leads at $148 each ($444). Theirs: 2 from the client's CRM + 1 with no proof of ours.
+    const r = scopeOutcomeLedgerRowOf(["lead_interested"], base({
+      elsewhereByDay: elsewhere([["lead_interested", "2026-11-02", "another_factory", 2], ["lead_interested", "2026-11-03", "no_proof", 1]]),
+    }));
+    expect(r.units).toBe(6);
+    expect(r.ourUnits).toBe(3);
+    expect(r.otherFactoryUnits).toEqual({ total: 3, anotherFactory: 2, noProof: 1 });
+    expect(r.units).toBe(r.ourUnits! + r.otherFactoryUnits!.total);
+    // Denominator = ours: $444 ÷ 3 = $148, never $444 ÷ 6 = $74.
+    expect(r.costPerUnitUsd).toBe(148);
+    expect(r.productionCostUsd).toBe(444);
+    expect(r.past.map((p) => [p.date, p.units, p.ourUnits, p.otherFactoryUnits, p.cumulativeUnits, p.cumulativeOurUnits])).toEqual([
+      ["2026-11-01", 2, 2, 0, 2, 2],
+      ["2026-11-02", 2, 0, 2, 4, 2],
+      ["2026-11-03", 2, 1, 1, 6, 3],
+      ["2026-11-04", 0, 0, 0, 6, 3],
+    ]);
+  });
+
+  it("Distribute.you: 17 Paid clients, none ours (6 another factory, 11 no proof): count 17, no $ each, no return", () => {
+    const r = scopeOutcomeLedgerRowOf(["paid_client"], base({
+      undeclaredConsumptions: new Map(),
+      elsewhereByDay: elsewhere([["paid_client", "2026-10-01", "another_factory", 6], ["paid_client", "2026-10-15", "no_proof", 11]]),
+    }));
+    expect(r).toMatchObject({ units: 17, ourUnits: 0, otherFactoryUnits: { total: 17, anotherFactory: 6, noProof: 11 }, unitsUnavailableReason: null, costPerUnitUsd: null, costPerUnitUnavailableReason: "no_unit_of_ours_yet", productionCostUsd: null });
+    expect(r.past.at(-1)).toMatchObject({ cumulativeUnits: 17, cumulativeOurUnits: 0 });
+    // The realized return counts OUR Paid clients only: 0 × LTR.
+    expect(ledgerRealizedReturn(r, 1000, 500).realizedReturn).toMatchObject({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
+  });
+
+  it("an outcome only another factory made is listed among the scope's outcomes", () => {
+    const rows = scopeOutcomeLedgerRows(base({ undeclaredConsumptions: new Map(), elsewhereByDay: elsewhere([["meeting_booked", "2026-11-01", "another_factory", 4]]) }));
+    expect(rows.find((x) => x.outcomeKey === "meeting_booked")).toMatchObject({ units: 4, ourUnits: 0 });
+  });
+
+  it("parses runs-service's producedElsewhere[] (factory dimension) beside produced[]", () => {
+    const p = parseScopeLedgerByDay({
+      produced: [{ dimensions: { outcomeKey: "paid_client", day: "2026-11-01" }, occurrences: 1, cost: { grossCents: "1000", netCents: "900", vendorCents: "500" } }],
+      producedElsewhere: [
+        { dimensions: { factory: "another_factory", outcomeKey: "paid_client", day: "2026-11-01" }, occurrences: 6 },
+        { dimensions: { factory: "no_proof", outcomeKey: "paid_client", day: "2026-11-02" }, occurrences: 11 },
+      ],
+    }, "gross");
+    expect(p.elsewhereByDay.get("paid_client")?.get("2026-11-01")?.get("another_factory")).toBe(6);
+    expect(p.elsewhereByDay.get("paid_client")?.get("2026-11-02")?.get("no_proof")).toBe(11);
+    const r = scopeOutcomeLedgerRowOf(["paid_client"], { ...p, unitCosts: new Map(), fleetProducers: new Map(), today: "2026-11-02" });
+    expect(r).toMatchObject({ units: 18, ourUnits: 1, costPerUnitUsd: 10 });
+    expect(() => parseScopeLedgerByDay({ producedElsewhere: [{ dimensions: { factory: "mars", outcomeKey: "paid_client", day: "2026-11-01" }, occurrences: 1 }] }, "gross")).toThrow(/unknown factory/);
   });
 });
