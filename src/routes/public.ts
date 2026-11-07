@@ -3587,6 +3587,31 @@ export interface OutcomePricesPayload {
 
 let outcomePricesStore: { value: OutcomePricesPayload; computedAt: number } | null = null;
 let outcomePricesWarm: Promise<void> | null = null;
+let outcomePricesRestore: Promise<void> | null = null;
+
+/**
+ * The last good build, persisted (LEDGER-LOAD-1107-ROI-BOOT, `lib/fleet-cell-store.ts`). Held only in memory, a restart
+ * left the store empty until the first build of the new process landed, and that build reads every brand's leads: with
+ * lead-service shedding requests it failed (prod 2026-11-07 18:48, `lead-service general HTTP thread unavailable`) and
+ * every read waiting on it (the expected return's sales-path model, sales-paths, the period recap) answered "not
+ * computed yet". A process with no build now starts from the stored one (its own `computedAt`) and rebuilds behind it;
+ * a failed rebuild keeps it.
+ */
+const OUTCOME_PRICES_CELL_KEY = "outcome-prices-v1";
+
+function restoreOutcomePrices(): Promise<void> {
+  if (outcomePricesStore) return Promise.resolve();
+  outcomePricesRestore ??= loadFleetCell(OUTCOME_PRICES_CELL_KEY).then((stored) => {
+    if (!stored || outcomePricesStore) return;
+    try {
+      outcomePricesStore = { value: JSON.parse(stored.text) as OutcomePricesPayload, computedAt: stored.computedAt };
+      console.log(`[features-service] outcome prices: serving the persisted build of ${new Date(stored.computedAt).toISOString()} while this process rebuilds`);
+    } catch (error) {
+      console.error("[features-service] outcome prices: persisted build unreadable, building:", error);
+    }
+  });
+  return outcomePricesRestore;
+}
 
 /**
  * Every workflow that never competes for the leg's price: the ones the owner DEPRECATED on the leg, and the ones
@@ -3680,9 +3705,13 @@ export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
 export function warmOutcomePrices(): Promise<void> {
   if (outcomePricesStore && Date.now() - outcomePricesStore.computedAt < OUTCOME_PRICES_FRESH_MS) return Promise.resolve();
   if (outcomePricesWarm) return outcomePricesWarm;
-  outcomePricesWarm = withTimeout(computeOutcomePrices(), OUTCOME_PRICES_WARM_TIMEOUT_MS, "outcome prices")
-    .then((value) => {
-      outcomePricesStore = { value, computedAt: Date.now() };
+  outcomePricesWarm = restoreOutcomePrices()
+    .then(async () => {
+      if (outcomePricesStore && Date.now() - outcomePricesStore.computedAt < OUTCOME_PRICES_FRESH_MS) return;
+      const value = await withTimeout(computeOutcomePrices(), OUTCOME_PRICES_WARM_TIMEOUT_MS, "outcome prices");
+      const computedAt = Date.now();
+      outcomePricesStore = { value, computedAt };
+      await storeFleetCell(OUTCOME_PRICES_CELL_KEY, JSON.stringify(value), computedAt);
     })
     .catch((error) => {
       console.error("[features-service] outcome prices warm failed, keeping the previous value:", error);
@@ -3739,6 +3768,7 @@ export const FLEET_LEG_COSTS_BOOT_WAIT_MS = 200_000;
  * Still empty after `waitMs` → `StoreNotComputedError` (the route's 503). (`lib/await-warm-store.ts`.)
  */
 export async function awaitFleetLegCostsFromOutcomePrices(waitMs: number = FLEET_LEG_COSTS_BOOT_WAIT_MS): Promise<Map<string, number>> {
+  await restoreOutcomePrices();
   await awaitWarmStore(() => outcomePricesStore?.value ?? null, warmOutcomePrices, waitMs, "fleet leg costs (outcome prices)");
   return fleetLegCostsFromOutcomePrices();
 }
@@ -3749,6 +3779,7 @@ export async function awaitFleetLegCostsFromOutcomePrices(waitMs: number = FLEET
  */
 export async function readOutcomePricesMeetingBooked(waitMs: number): Promise<OutcomePricesPayload["outcomes"]["meetingBooked"] | null> {
   try {
+    await restoreOutcomePrices();
     const value = await awaitWarmStore(() => outcomePricesStore?.value ?? null, warmOutcomePrices, waitMs, "outcome prices (research meeting cost)");
     return value.outcomes.meetingBooked;
   } catch (error) {
@@ -3781,6 +3812,7 @@ export function __setOutcomePricesForTest(value: OutcomePricesPayload): void {
 export function __resetOutcomePrices(): void {
   outcomePricesStore = null;
   outcomePricesWarm = null;
+  outcomePricesRestore = null;
 }
 
 function notComputedYet(): OutcomePricesPayload {
@@ -3793,7 +3825,8 @@ function notComputedYet(): OutcomePricesPayload {
   };
 }
 
-router.get("/public/stats/outcome-prices", (_req, res) => {
+router.get("/public/stats/outcome-prices", async (_req, res) => {
+  await restoreOutcomePrices();
   void warmOutcomePrices();
   res.json(outcomePricesStore?.value ?? notComputedYet());
 });
