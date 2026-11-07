@@ -9543,7 +9543,8 @@ registry.registerPath({
                 kind: z.string().nullable().optional().describe("The producer's kind (`post`, `quote`); a `repost` never lists (see `repostsExcluded`)."),
                 visitsUnavailableReason: z.enum(["no_visit_attribution_on_outcome", "not_on_ledger_yet"]).nullable(),
                 engagementBreakdown: engagementBreakdownSchema,
-                metricsWarning: z.enum(["engagements_exceed_views"]).nullable().describe("The platform reports more interactions than views: one of the two is not measured."),
+                viewsUnavailableReason: z.enum(["views_not_reported"]).nullable().describe("The platform gives no views: absent, or 0 beside an engagement (nobody engages unseen), then `views` is null."),
+                metricsWarning: z.enum(["engagements_exceed_views"]).nullable().describe("The platform reports more interactions than (non-zero) views: one of the two is not measured."),
                 valuePerUnitUsd: z.number().nullable().describe("What one Unit is worth: the catalogue value of the outcome's step on the offer's lifetime revenue (the Today Target value)."),
                 valueUsd: z.number().nullable().describe("units x valuePerUnitUsd: the value this row produced (yield)."),
                 value: z.object({
