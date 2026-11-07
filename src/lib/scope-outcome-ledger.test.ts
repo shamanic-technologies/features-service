@@ -10,10 +10,10 @@ const base = (over: Partial<ScopeOutcomeLedgerInput> = {}): ScopeOutcomeLedgerIn
   producedByDay: new Map([
     ["lead_interested", new Map([["2026-11-01", 2], ["2026-11-03", 1]])],
     ["threads_post_published", new Map([["2026-11-02", 4]])],
-    ["post_published", new Map([["2026-11-02", 1]])],
+    ["post_engaged", new Map([["2026-11-02", 1]])],
   ]),
-  ownCostUsd: new Map([["lead_interested", 0], ["threads_post_published", 8], ["post_published", 3]]),
-  unitCosts: new Map([["lead_interested", { unitCostUsd: 148 }], ["threads_post_published", { unitCostUsd: null }], ["post_published", { unitCostUsd: 3 }]]),
+  ownCostUsd: new Map([["lead_interested", 0], ["threads_post_published", 8], ["post_engaged", 3]]),
+  unitCosts: new Map([["lead_interested", { unitCostUsd: 148 }], ["threads_post_published", { unitCostUsd: null }], ["post_engaged", { unitCostUsd: 3 }]]),
   undeclaredConsumptions: new Map([["signup", 5], ["paid_client", 29]]),
   fleetProducers: new Map([["paid_client", ["lead-service"]], ["lead_interested", ["lead-service"]]]),
   daysMissing: [],
@@ -42,7 +42,7 @@ describe("scopeOutcomeLedgerRowOf", () => {
   });
 
   it("finer outcomes counted together add their Units; $ each weighted, own production where the outcome is no pipe output", () => {
-    const r = scopeOutcomeLedgerRowOf(["post_published", "threads_post_published"], base());
+    const r = scopeOutcomeLedgerRowOf(["post_engaged", "threads_post_published"], base());
     expect(r).toMatchObject({ units: 5, costPerUnitUsd: 2.2, costPerUnitBasis: "own_production", productionCostUsd: 11 });
   });
 
@@ -68,7 +68,7 @@ describe("scopeOutcomeLedgerRowOf", () => {
   });
 
   it("rows: one per outcome produced or consumed undeclared", () => {
-    expect(scopeOutcomeLedgerRows(base()).map((r) => r.outcomeKey)).toEqual(["lead_interested", "paid_client", "post_published", "signup", "threads_post_published"]);
+    expect(scopeOutcomeLedgerRows(base()).map((r) => r.outcomeKey)).toEqual(["lead_interested", "paid_client", "post_engaged", "signup", "threads_post_published"]);
   });
 });
 
