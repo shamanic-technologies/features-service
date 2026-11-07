@@ -152,15 +152,15 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
     });
 
     it("OUTCOME-ACCOUNTING-1107: no return below a campaign's Target; the report on OUR Units; client-team Units apart", () => {
-      const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
+      const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "threads_post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
       const expected = expectedReturnOf(2, { costPerUnitUsd: 0.8, costSource: "workflow", basis: "measured", pipeId: "p" }, null);
       // Route: X post (made from Start, $0.80 expected) -> Website visit (5%) -> ... Paid client.
       const figures = {
-        route: ["post_published"], costPerUnitUsd: 0.8, costPerUnitBasis: "measured", costPerUnitUnavailableReason: null, costFromStartUsd: 0.8, costFromStartUnavailableReason: null,
-        rolledYieldPct: 100, rolledYieldFromStep: "post_published", next: { step: "website_visit", ratePct: 5, rateBasis: "catalogue_route", legKey: null, costPerUnitUsd: 0 },
+        route: ["threads_post_published"], costPerUnitUsd: 0.8, costPerUnitBasis: "measured", costPerUnitUnavailableReason: null, costFromStartUsd: 0.8, costFromStartUnavailableReason: null,
+        rolledYieldPct: 100, rolledYieldFromStep: "threads_post_published", next: { step: "website_visit", ratePct: 5, rateBasis: "catalogue_route", legKey: null, costPerUnitUsd: 0 },
         netValuePerUnitUsd: 2, netValueUnavailableReason: null,
       };
-      const accounting = { figures, step: "post_published", lifetimeRevenueUsd: 1000, lifetimeRevenueSource: "offer_stated", expectedCostSource: "workflow", targets: [], windowDays: 0, today: "2026-11-07" };
+      const accounting = { figures, step: "threads_post_published", lifetimeRevenueUsd: 1000, lifetimeRevenueSource: "offer_stated", expectedCostSource: "workflow", targets: [], windowDays: 0, today: "2026-11-07" };
       const body = publishedUnitsOf("x_post_published", [post("a"), post("b", { performedBy: "client_team" })], credit, { unitValueOf, expected, accounting });
       expect(body.rows.find((r) => r.id === "a")).toMatchObject({ valueUsd: 2, measuredReturn: { roiMultiple: null, unavailableReason: "return_only_at_campaign_target" }, accountingUnavailableReason: null });
       expect(body.rows.find((r) => r.id === "b")).toMatchObject({ accounting: null, accountingUnavailableReason: "performed_by_client_team" });
@@ -190,6 +190,12 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
       });
       expect(noPipe.accounting.costPerUnit).toMatchObject({ actualUsd: 0.3, expectedUsd: 0.3, expectedSource: "own_spend" });
       expect(noPipe.accounting.costFromStart.expectedUsd).toBe(0.3);
+      // Ours at $0 on the ledger is a true $0 (our run declared all it metered): 1 post at $0.30 + 2 at $0 = $0.10 each.
+      const zero = publishedUnitsOf("linkedin_post_published", [post("p1"), post("p2"), post("p3"), post("hand", { performedBy: "client_team" })], (s) => (s.id === "p1" ? { spentUsd: 0.3, visits: 0, signups: 0 } : { spentUsd: 0, visits: 0, signups: 0 }), {
+        unitValueOf,
+        accounting: { ...accounting, figures: { ...figures, costPerUnitUsd: null, costPerUnitBasis: null, costPerUnitUnavailableReason: "leg_cost_unavailable", costFromStartUsd: null, costFromStartUnavailableReason: "leg_cost_unavailable" } },
+      });
+      expect(zero.accounting.costPerUnit).toMatchObject({ actualUsd: 0.1, expectedUsd: 0.1, variance: { usd: 0 } });
     });
   });
 });

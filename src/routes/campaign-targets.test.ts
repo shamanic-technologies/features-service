@@ -8,7 +8,7 @@ import request from "supertest";
 
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
-vi.mock("../lib/channel-declarations-store.js", () => ({ listDeclaredSteps: vi.fn(async () => [{ key: "post_published", label: "Post published" }]) }));
+vi.mock("../lib/channel-declarations-store.js", () => ({ listDeclaredSteps: vi.fn(async () => [{ key: "threads_post_published", label: "Threads post published" }]) }));
 const copies = vi.fn();
 vi.mock("./agent-catalogue.js", () => ({ funnelCopiesFor: (...a: unknown[]) => copies(...a) }));
 const ledgerOf = vi.fn();

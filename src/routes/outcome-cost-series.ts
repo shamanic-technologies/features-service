@@ -64,19 +64,21 @@ interface ExpectedPerStep {
   values: Map<string, StepValue>;
   /** The expected sales path the figures are read off (OUTCOME-ACCOUNTING-1107 walks it), its basis and LTR source. */
   path: SalesPath | null;
+  /** Every priced path of the offer's model, best first: a step off the expected path is read on the best one through it. */
+  paths: SalesPath[];
   basis: string | null;
   lifetimeRevenueSource: string | null;
 }
 
 /** The expected cost AND value per step, off the offer's expected model's path. Soft: unreadable = every step null + reason. */
 async function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId: string): Promise<ExpectedPerStep> {
-  const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason), path: null, basis: null, lifetimeRevenueSource: null });
+  const none = (reason: string): ExpectedPerStep => ({ costs: expectedStepCosts(null, null, reason), values: stepValues(null, reason), path: null, paths: [], basis: null, lifetimeRevenueSource: null });
   try {
     const m = await offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS);
     if (m === null) return none("expected_model_unavailable");
     const e = expectedForOffer(m);
     const path = e.combinationKey ? (m.body.paths.find((p) => p.combinationKey === e.combinationKey) ?? null) : null;
-    return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason), path, basis: e.basis, lifetimeRevenueSource: m.lifetimeRevenueSource };
+    return { costs: expectedStepCosts(path, e.basis, e.unavailableReason), values: stepValues(path, e.unavailableReason), path, paths: [...m.body.paths].sort((a, b) => a.rank - b.rank), basis: e.basis, lifetimeRevenueSource: m.lifetimeRevenueSource };
   } catch (err) {
     if (err instanceof ExpectedModelComputing) return none("expected_model_computing");
     console.error(`[features-service] outcome cost series: expected model unreadable (offer ${offerId}): ${(err as Error).message}`);
@@ -152,7 +154,10 @@ export async function computeOutcomeCostSeries(
     Promise.all([...landing].map(async ([step, us]) => [step, await spendOf(us.map((u) => u.campaignId), us.map((u) => u.featureSlug))] as const)).then((x) => new Map(x)),
     Promise.all([...targetsByStep].map(async ([step, ts]) => [step, await spendOf(ts.flatMap((t) => t.unitCampaignIds), ts.flatMap((t) => t.featureSlugs))] as const)).then((x) => new Map(x)),
   ]);
-  const routeLegs = expected.path ? pathRouteLegs(expected.path) : [];
+  // The route of a step: the offer's expected path when it walks the step, else the best-ranked path of its model that
+  // does (a Signup Target the expected path skips is still valued and priced on a real path, never left unvalued).
+  const pathOfStep = (step: string): SalesPath | null =>
+    expected.path && expected.path.legs.some((l) => l.toStep.key === step) ? expected.path : (expected.paths.find((p) => p.legs.some((l) => l.toStep.key === step)) ?? expected.path);
   const windowDaysOf = (legKey: string | null) => (legKey ? legMaturity(storedLegKeyOf(legKey)).durationDays : 0);
 
   // The learning bar of a step: the maturity rule of the offer's leg landing on it, else the default rule.
@@ -166,10 +171,19 @@ export async function computeOutcomeCostSeries(
     spendByDay,
     outcomeDays,
     learningBarOf: (step: OutcomeCostStep) => barByStep.get(step) ?? legMaturity(null).outcomesRequired,
-    expectedOf: (step: OutcomeCostStep) => expected.costs.get(step)!,
-    valueOf: (step: OutcomeCostStep) => expected.values.get(step)!,
+    // A step off the expected path reads its expected cost and value on the best path through it (same as `accounting`).
+    expectedOf: (step: OutcomeCostStep) => {
+      const p = pathOfStep(step);
+      return p && p !== expected.path ? expectedStepCosts(p, expected.basis, null).get(step)! : expected.costs.get(step)!;
+    },
+    valueOf: (step: OutcomeCostStep) => {
+      const p = pathOfStep(step);
+      return p && p !== expected.path ? stepValues(p, null).get(step)! : expected.values.get(step)!;
+    },
     accountingOf: (step: OutcomeCostStep, costFromStartUsd: number | null) => {
-      const figures = expectedRouteFigures(routeLegs, step, expected.path?.lifetimeRevenueUsd ?? null);
+      const stepPath = pathOfStep(step);
+      const routeLegs = stepPath ? pathRouteLegs(stepPath) : [];
+      const figures = expectedRouteFigures(routeLegs, step, stepPath?.lifetimeRevenueUsd ?? null);
       const intoAt = routeLegs.findIndex((l) => l.toStep === step);
       const into = intoAt >= 0 ? routeLegs[intoAt]! : null;
       return leadStepAccounting({
@@ -183,7 +197,7 @@ export async function computeOutcomeCostSeries(
         targets: targetsByStep.get(step) ?? [],
         targetSpendUsd: targetsByStep.has(step) ? (targetSpend.get(step) ?? null) : null,
         windowDaysOf,
-        lifetimeRevenueUsd: expected.path?.lifetimeRevenueUsd ?? null,
+        lifetimeRevenueUsd: stepPath?.lifetimeRevenueUsd ?? null,
         lifetimeRevenueSource: expected.lifetimeRevenueSource,
         expectedBasis: expected.basis,
         today,
