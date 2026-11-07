@@ -512,3 +512,70 @@ describe("a campaign is priced on the funnels ITS OWN leg is read through, not t
     expect(res.body.headline.unpricedReason).toBe("no_priced_funnel");
   });
 });
+
+// CAMPAIGN-MONEY-ONE-READ-1108: the brand-wide read serves, per channel, the body the per-channel
+// `?groupBy=campaignId` read serves — one answer instead of one read per channel, same figures.
+describe("GET /brands/:brandId/campaign-revenue — every channel's campaign money in one read", () => {
+  const CHANNEL_FEATURE = { ...SALES_FEATURE, acquisitionChannel: { type: "outbound" }, supersededBySlug: null };
+  const PR_FEATURE = { ...SALES_FEATURE, id: "feat-pr", slug: "pr-cold-email-outreach", status: "deprecated", acquisitionChannel: { type: "pr" }, supersededBySlug: null };
+  beforeEach(() => {
+    vi.mocked(db.query.features.findFirst).mockResolvedValue(SALES_FEATURE as never);
+    vi.mocked(db.query.features.findMany).mockResolvedValue([CHANNEL_FEATURE, PR_FEATURE] as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("each channel element is byte-equal to that channel's own grouped read", async () => {
+    mockFetch({
+      campaigns: [...FAMILY, { ...FAMILY[2], id: "pr-1", featureSlug: "pr-cold-email-outreach" }],
+      costByCampaign: { "stopped-1": 3000, "stopped-2": 2000, live: 5000 },
+      leads: [replyLead("stopped-1", "l1"), replyLead("live", "l3")],
+    });
+
+    const perChannel = await request(app)
+      .get("/features/sales-cold-email-outreach/revenue?brandId=b1&groupBy=campaignId&pricing=gross")
+      .set(AUTH);
+    expect(perChannel.status).toBe(200);
+
+    const one = await request(app).get("/brands/b1/campaign-revenue?pricing=gross").set(AUTH);
+    expect(one.status).toBe(200);
+    expect(one.body.brandId).toBe("b1");
+    expect(one.body.pricing).toBe("gross");
+    // Only the ACTIVE acquisition channel: the deprecated PR product is not a channel row.
+    expect(one.body.channels.map((c: { featureSlug: string }) => c.featureSlug)).toEqual(["sales-cold-email-outreach"]);
+    expect(one.body.channels[0]).toEqual(perChannel.body);
+    expect(one.body.channels[0].groups.length).toBe(3);
+  });
+
+  it("a foreign brand is a named 404", async () => {
+    mockFetch({ campaigns: FAMILY, costByCampaign: {}, leads: [] });
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const inner = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (input, init) => {
+      const url = String(typeof input === "string" ? input : input instanceof URL ? input : (input as { url: string }).url);
+      if (url.includes("/leg-rates")) return new Response("forbidden", { status: 403 });
+      return inner(input, init);
+    });
+    const res = await request(app).get("/brands/b1/campaign-revenue?pricing=net").set(AUTH);
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("brand_not_found");
+  });
+
+  it("a channel whose read fails states its error in its slot, never failing the whole read", async () => {
+    mockFetch({ campaigns: FAMILY, costByCampaign: { live: 100 }, leads: [] });
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const inner = fetchSpy.getMockImplementation()!;
+    fetchSpy.mockImplementation(async (input, init) => {
+      const url = String(typeof input === "string" ? input : input instanceof URL ? input : (input as { url: string }).url);
+      if (url.includes("/stats/costs")) return new Response("boom", { status: 500 });
+      return inner(input, init);
+    });
+    const res = await request(app).get("/brands/b1/campaign-revenue").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.channels).toEqual([{ featureSlug: "sales-cold-email-outreach", error: "Failed to compute feature revenue", reason: "channel_read_failed" }]);
+  });
+
+  it("refuses an unknown pricing value", async () => {
+    const res = await request(app).get("/brands/b1/campaign-revenue?pricing=cheap").set(AUTH);
+    expect(res.status).toBe(400);
+  });
+});
