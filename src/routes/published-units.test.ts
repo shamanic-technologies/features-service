@@ -40,7 +40,7 @@ const threadsPost = (id: string, over: Record<string, unknown> = {}) => ({
   permalink: `https://threads.net/p/${id}`,
   text: `post ${id}`,
   performedBy: "ours",
-  outcomeKey: "post_published",
+  outcomeKey: "threads_post_published",
   outcomeRunId: `run-${id}`,
   publishedAt: "2026-11-01T10:00:00.000Z",
   ...over,
@@ -57,10 +57,10 @@ beforeEach(() => {
   __setPublishedUnitsModelLoader(async (ltr) => ({
     lifetimeRevenueUsd: ltr,
     steps: new Map([
-      ["post_published", { key: "post_published", valueUsd: ltr === null ? null : ltr / 1000, valueVia: { toStep: "paid_client", ratePct: 0.1 } }],
+      ["threads_post_published", { key: "threads_post_published", valueUsd: ltr === null ? null : ltr / 1000, valueVia: { toStep: "paid_client", ratePct: 0.1 } }],
       ["paid_client", { key: "paid_client", valueUsd: ltr, valueVia: null }],
     ]),
-    pipes: new Map([["x|start_to_post_published", { id: "x|start_to_post_published", published: true, outcome: "x_post_published", toStep: "post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
+    pipes: new Map([["x|start_to_threads_post_published", { id: "x|start_to_threads_post_published", published: true, outcome: "x_post_published", toStep: "threads_post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
   }) as never);
 });
 
@@ -72,10 +72,10 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
       if (url.startsWith("http://social/internal/post-metrics")) return json({ posts: [{ subjectId: "p1", publishRunId: "run-p1", metrics: { views: 120 }, engagement: 7 }] });
       if (url.startsWith("http://runs/internal/outcome-occurrences")) {
         const q = new URL(url).searchParams;
-        if (q.get("direction") === "produced" && q.get("outcomeKey") === "post_published" && (q.get("runIds") ?? "").split(",").includes("run-p1"))
-          return json({ occurrences: [{ id: "u1", runId: "run-p1", direction: "produced", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: { grossCents: "50", netCents: "25" }, consumption: null }], nextCursor: null });
-        if (q.get("direction") === "consumed" && !q.get("runIds") && q.get("outcomeKey") === "post_published")
-          return json({ occurrences: [{ id: "c1", runId: "visit-run", direction: "consumed", outcomeKey: "post_published", subjectService: "meta-service", subjectId: "p1", cost: null, consumption: { sourceOccurrenceId: "u1", consumingOutcomes: [{ outcomeKey: "website_visit" }] } }], nextCursor: null });
+        if (q.get("direction") === "produced" && q.get("outcomeKey") === "threads_post_published" && (q.get("runIds") ?? "").split(",").includes("run-p1"))
+          return json({ occurrences: [{ id: "u1", runId: "run-p1", direction: "produced", outcomeKey: "threads_post_published", subjectService: "meta-service", subjectId: "p1", cost: { grossCents: "50", netCents: "25" }, consumption: null }], nextCursor: null });
+        if (q.get("direction") === "consumed" && !q.get("runIds") && q.get("outcomeKey") === "threads_post_published")
+          return json({ occurrences: [{ id: "c1", runId: "visit-run", direction: "consumed", outcomeKey: "threads_post_published", subjectService: "meta-service", subjectId: "p1", cost: null, consumption: { sourceOccurrenceId: "u1", consumingOutcomes: [{ outcomeKey: "website_visit" }] } }], nextCursor: null });
         if (q.get("outcomeKey") === "website_visit" && q.get("direction") === "produced")
           return json({ occurrences: [{ id: "w1", runId: "visit-run", direction: "produced", outcomeKey: "website_visit", subjectService: "lead-service", subjectId: "lead-1", cost: null, consumption: null }], nextCursor: null });
         return json({ occurrences: [], nextCursor: null });
@@ -152,7 +152,7 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     expect(res.status).toBe(200);
     expect(res.body.rows.map((r: { id: string }) => r.id)).toEqual(["x1"]);
     expect(res.body.repostsExcluded).toEqual({ rows: 1, engagements: 11701 });
-    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "post_published" }, measuredReturn: { roiMultiple: null, spentUsd: 0.2, unavailableReason: "return_only_at_campaign_target" } });
+    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "threads_post_published" }, measuredReturn: { roiMultiple: null, spentUsd: 0.2, unavailableReason: "return_only_at_campaign_target" } });
     expect(res.body.totals.all).toMatchObject({ engagements: 4, views: 40, valueUsd: 1 });
     expect(res.body.visitsMeasured).toBe(false);
     // OUTCOME-ACCOUNTING-1107: no campaign targets X posts, so no return; the report states the four figures.
@@ -160,7 +160,7 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     expect(res.body.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "outcome_is_no_campaign_target" });
     expect(res.body.accounting).toMatchObject({
       costPerUnit: { actualUsd: 0.2, expectedUsd: 0.1, variance: { usd: 0.1, pct: 100 } },
-      costFromStart: { actualUsd: 0.2, expectedUsd: 0.1, route: ["post_published"] },
+      costFromStart: { actualUsd: 0.2, expectedUsd: 0.1, route: ["threads_post_published"] },
       yieldToNext: { nextStep: "paid_client", measuredPct: null, measuredUnavailableReason: "next_milestone_not_tracked_for_outcome", expectedPct: 0.1 },
       value: { expectedNetPerUnitUsd: 1, basis: "expected_net" },
       returns: { isCampaignTarget: false, unavailableReason: "outcome_is_no_campaign_target" },
@@ -170,7 +170,7 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
 
   it("OUTCOME-ACCOUNTING-1107: a campaign whose Target is the outcome gets the return, on its own Units and spend", async () => {
     const xPost = (id: string, campaign: string | null) => ({ id, platform: "x", orgId: "org-1", brandId: "b1", username: "DistributeYou", externalId: id, text: `t ${id}`, permalink: null, publishedAt: "2026-11-05T10:00:00.000Z", performedBy: "ours", ourSubjectId: id, outcomeKey: "x_post_published", unitRunId: `run-${id}`, metrics: { views: 10 }, kind: "post", campaign });
-    fetchSalesFunnelCampaigns.mockResolvedValue([{ id: "fc-1", target: "post_published", units: [{ campaignId: "unit-1" }] }, { id: "fc-2", target: "paid_client", units: [{ campaignId: "unit-2" }] }]);
+    fetchSalesFunnelCampaigns.mockResolvedValue([{ id: "fc-1", target: "threads_post_published", units: [{ campaignId: "unit-1" }] }, { id: "fc-2", target: "paid_client", units: [{ campaignId: "unit-2" }] }]);
     fetchWithRetry.mockImplementation(async (url: string) => {
       if (url.startsWith("http://social/internal/account-posts")) return json({ posts: [xPost("x1", "unit-1"), xPost("x2", "unit-2")] });
       if (url.startsWith("http://runs/internal/outcome-occurrences")) {

@@ -7,25 +7,25 @@ import { engineOutcomeLookup } from "./channel-declarations-store.js";
 
 // MIGRATE-1105 S5: a pipe names the outcome its Engine makes; its scripts are that outcome's.
 describe("scriptWorksPipe", () => {
-  const stated = { channelSlug: "threads-post", outcome: "threads_post_published", outcomeStated: true };
-  const unstated = { channelSlug: "threads-post", outcome: "post_published", outcomeStated: false };
+  const stated = { channelSlug: "email-sending", outcome: "email_sent", outcomeStated: true };
+  const unstated = { channelSlug: "email-sending", outcome: "conversation", outcomeStated: false };
 
   it("a re-homed script (no channel) works the pipe naming its outcome", () => {
-    expect(scriptWorksPipe({ outcome: "threads_post_published", tactics: { recorded_by: "meta" } }, stated)).toBe(true);
+    expect(scriptWorksPipe({ outcome: "email_sent", tactics: { recorded_by: "instantly" } }, stated)).toBe(true);
   });
 
   it("a script of another outcome never works it", () => {
-    expect(scriptWorksPipe({ outcome: "post_published", tactics: { channel: "threads-post" } }, stated)).toBe(false);
-    expect(scriptWorksPipe({ outcome: "x_post_published", tactics: {} }, stated)).toBe(false);
+    expect(scriptWorksPipe({ outcome: "conversation", tactics: { channel: "email-sending" } }, stated)).toBe(false);
+    expect(scriptWorksPipe({ outcome: "whatsapp_message_sent", tactics: {} }, stated)).toBe(false);
   });
 
   it("a script not yet re-homed works the pipe of its channel and outcome, as before", () => {
-    expect(scriptWorksPipe({ outcome: "post_published", tactics: { channel: "threads-post" } }, unstated)).toBe(true);
-    expect(scriptWorksPipe({ outcome: "post_published", tactics: { channel: "social-post" } }, unstated)).toBe(false);
+    expect(scriptWorksPipe({ outcome: "conversation", tactics: { channel: "email-sending" } }, unstated)).toBe(true);
+    expect(scriptWorksPipe({ outcome: "conversation", tactics: { channel: "founder-hello" } }, unstated)).toBe(false);
   });
 
   it("a script stating no channel never works a pipe naming no outcome (it is asked by other scripts)", () => {
-    expect(scriptWorksPipe({ outcome: "post_published", tactics: {} }, unstated)).toBe(false);
+    expect(scriptWorksPipe({ outcome: "conversation", tactics: {} }, unstated)).toBe(false);
   });
 });
 
