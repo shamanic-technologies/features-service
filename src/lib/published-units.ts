@@ -36,6 +36,18 @@ export interface UnitSource {
   /** Lifetime views / engagements its platform reports (null = not reported, or no such count for this outcome). */
   views: number | null;
   engagements: number | null;
+  /**
+   * The platform's raw counts (social-service `metrics`: likes, replies, reposts, quotes, shares, bookmarks, clicks...).
+   * When present, `engagements` and the breakdown are read off it (one rule); absent = `engagements` as given.
+   */
+  metrics?: Record<string, number | null | undefined> | null;
+  /**
+   * What the row is, in the producer's own vocabulary (social-service `post | quote | repost | comment`). A `repost` (an X
+   * retweet, a LinkedIn plain reshare: no text of ours, the ORIGINAL post's counts) is not a Unit we published. Absent = a post.
+   */
+  kind?: string | null;
+  /** The campaign the Unit was produced on (ledger tag), to value it on that campaign's offer. Null = none. */
+  campaignId?: string | null;
   /** The ledger handles: the run the Unit(s) are produced on and the outcome key they carry (null = not on the ledger yet). */
   ledger: {
     runId: string;
@@ -56,12 +68,73 @@ export interface LedgerCredit {
   signups: number;
 }
 
-export interface UnitRow extends Omit<UnitSource, "ledger"> {
+/**
+ * SOCIAL-OUTCOMES-1107. The engagement kinds a platform reports on a published Unit, in the producer's own words
+ * (social-service `metrics`): `replies` are the comments. `clicks` is listed so a network that reports link clicks is
+ * read the day it does; none does today (null). ONE rule for every published outcome: `engagements` = the sum of the
+ * kinds reported, so a breakdown always adds up to it.
+ */
+export const ENGAGEMENT_KINDS = ["likes", "replies", "reposts", "quotes", "shares", "bookmarks", "clicks"] as const;
+export type EngagementKind = (typeof ENGAGEMENT_KINDS)[number];
+export type EngagementBreakdown = Record<EngagementKind, number | null>;
+
+/** What one Unit of the outcome is worth, and on what terms (the Target value rule of `lib/campaign-targets.ts`). */
+export interface UnitValue {
+  /** The catalogue value of the step the outcome lands on, on the offer's lifetime revenue (null = no route to Paid client rated). */
+  valuePerUnitUsd: number | null;
+  /** The catalogue step valued (the outcome's own step, else the step its pipe lands on). */
+  step: string | null;
+  /** The offer of the campaign that produced the Unit; null = the Unit names no campaign stating an offer. */
+  offerId: string | null;
+  /** `offer_stated` = the offer's typed lifetime revenue; `fleet_median` = no offer or an unstated one (every offer has an LTR). */
+  lifetimeRevenueSource: "offer_stated" | "fleet_median" | null;
+  unavailableReason: string | null;
+}
+
+/** A return on money actually spent (the campaign MEASURED return rule: Units x their value / spend). */
+export interface MeasuredReturn {
+  roiMultiple: number | null;
+  valueUsd: number | null;
+  spentUsd: number | null;
+  /** Fewer Units than the maturity bar: the figure is shown, but the page reads the expected return instead. */
+  learning: boolean;
+  unavailableReason: string | null;
+}
+
+/** The EXPECTED return of one more Unit: its value / what one costs to make on the catalogue pipe producing it. */
+export interface ExpectedReturn {
+  roiMultiple: number | null;
+  valuePerUnitUsd: number | null;
+  costPerUnitUsd: number | null;
+  /** Where the cost comes from (`lib/agent-catalogue.ts` `expectedPipeCost`: workflow, default, benchmark, flash...). */
+  costSource: string | null;
+  /** The weakest input (measured < stated < fleet < default). */
+  basis: string | null;
+  pipeId: string | null;
+  unavailableReason: string | null;
+}
+
+/** Fewer Units of ours than this = Learning (the maturity bar of every leg with no stated rule, `lib/maturity.ts`). */
+export const MEASURED_RETURN_MIN_UNITS = 10;
+
+export interface UnitRow extends Omit<UnitSource, "ledger" | "metrics" | "campaignId"> {
   spentUsd: number | null;
   visits: number | null;
   signups: number | null;
   /** Why the ledger figures are null: `not_on_ledger_yet` (no Unit declared for it yet). */
   ledgerUnavailableReason: "not_on_ledger_yet" | null;
+  /** Why visits and signups are null while spend is served: `no_visit_attribution_on_outcome` (no website visit was ever
+   *  credited to a Unit of this outcome in the org: its links carry no tracked click yet), or `not_on_ledger_yet`. */
+  visitsUnavailableReason: "no_visit_attribution_on_outcome" | "not_on_ledger_yet" | null;
+  /** Each engagement kind the platform reports (null = not reported); sums to `engagements`. */
+  engagementBreakdown: EngagementBreakdown;
+  /** `engagements_exceed_views`: the platform reports more interactions than views, so one of the two is not measured. */
+  metricsWarning: "engagements_exceed_views" | null;
+  valuePerUnitUsd: number | null;
+  /** units x valuePerUnitUsd: the value this row produced (yield). */
+  valueUsd: number | null;
+  value: UnitValue;
+  measuredReturn: MeasuredReturn;
 }
 
 export interface Totals {
@@ -72,6 +145,14 @@ export interface Totals {
   visits: number;
   signups: number;
   spentUsd: number;
+  /** Rows whose platform reports views (views on the others are not counted, never 0). */
+  viewsReportedRows: number;
+  engagementBreakdown: EngagementBreakdown;
+  /** Rows flagged `engagements_exceed_views`. */
+  rowsEngagementsAboveViews: number;
+  /** Σ rows' valueUsd (rows with no value left out, counted in `unvaluedRows`). */
+  valueUsd: number;
+  unvaluedRows: number;
 }
 
 export interface DayPoint {
@@ -82,6 +163,13 @@ export interface DayPoint {
   visits: number;
   signups: number;
   spentUsd: number;
+  engagements: number;
+  engagementBreakdown: EngagementBreakdown;
+  valueUsd: number;
+  oursSpentUsd: number;
+  oursValueUsd: number;
+  /** Ours that day: value / spend (learning = that day's ours Units under the bar). */
+  measuredReturn: MeasuredReturn;
 }
 
 export interface PublishedUnitsBody {
@@ -90,9 +178,18 @@ export interface PublishedUnitsBody {
   totals: { all: Totals; ours: Totals };
   /** Ours spend ÷ ours signups; null while ours has no signup (`learning: true`) or nothing was spent. */
   costPerSignupUsd: number | null;
+  costPerSignupUnavailableReason: "no_visit_attribution_on_outcome" | "no_signup_yet" | "nothing_spent_yet" | null;
   learning: boolean;
   /** One point per UTC day a row was published on (quiet days omitted: a time axis), oldest first. */
   daily: DayPoint[];
+  /** Reposts of someone else's post (a retweet, a plain reshare): not a Unit we published, left out of every row and total. */
+  repostsExcluded: { rows: number; engagements: number };
+  /** Whether the org's ledger credits website visits to Units of this outcome at all (false = visits/signups null). */
+  visitsMeasured: boolean;
+  visitsUnavailableReason: "no_visit_attribution_on_outcome" | null;
+  /** OURS (what the org is billed for): Units x value / spend. Read `expectedReturn` while `learning`. */
+  measuredReturn: MeasuredReturn;
+  expectedReturn: ExpectedReturn;
 }
 
 const round = (n: number, d = 6) => Math.round(n * 10 ** d) / 10 ** d;
@@ -268,61 +365,172 @@ export function creditOfRow(src: UnitSource, unitsByRun: ReadonlyMap<string, rea
   return { spentUsd: round(sum.spentUsd), visits: sum.visits, signups: sum.signups };
 }
 
-const zero = (): Totals => ({ rows: 0, units: 0, views: 0, engagements: 0, visits: 0, signups: 0, spentUsd: 0 });
+const emptyBreakdown = (): EngagementBreakdown => Object.fromEntries(ENGAGEMENT_KINDS.map((k) => [k, null])) as EngagementBreakdown;
+
+/** PURE. Each engagement kind the platform reports (null = not reported). */
+export function engagementBreakdownOf(m: Record<string, number | null | undefined> | null | undefined): EngagementBreakdown {
+  const out = emptyBreakdown();
+  if (!m) return out;
+  for (const k of ENGAGEMENT_KINDS) {
+    const v = m[k];
+    out[k] = typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  return out;
+}
+
+/** PURE. The sum of the kinds reported; null when none is. */
+export function engagementsOfBreakdown(b: EngagementBreakdown): number | null {
+  const known = ENGAGEMENT_KINDS.map((k) => b[k]).filter((v): v is number => v !== null);
+  return known.length ? known.reduce((a, c) => a + c, 0) : null;
+}
+
+/** PURE. A repost of someone else's post (producer `kind: repost`): left out of the page. */
+export const isRepost = (s: Pick<UnitSource, "kind">): boolean => s.kind === "repost";
+
+/** PURE. Units x value / spend, with the maturity bar. */
+export function measuredReturnOf(units: number, valueUsd: number | null, spentUsd: number | null, unvalued: boolean): MeasuredReturn {
+  const learning = units < MEASURED_RETURN_MIN_UNITS;
+  if (units === 0) return { roiMultiple: null, valueUsd: null, spentUsd, learning, unavailableReason: "no_unit_yet" };
+  if (unvalued || valueUsd === null) return { roiMultiple: null, valueUsd: null, spentUsd, learning, unavailableReason: "unit_has_no_value" };
+  if (spentUsd === null || !(spentUsd > 0)) return { roiMultiple: null, valueUsd: round(valueUsd, 2), spentUsd, learning, unavailableReason: "nothing_spent_yet" };
+  return { roiMultiple: round(valueUsd / spentUsd, 2), valueUsd: round(valueUsd, 2), spentUsd: round(spentUsd), learning, unavailableReason: null };
+}
+
+/** PURE. The expected return of one more Unit: value / expected cost per Unit. */
+export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPerUnitUsd: number; costSource: string; basis: string; pipeId: string } | null, valueReason: string | null): ExpectedReturn {
+  const base = { valuePerUnitUsd, costPerUnitUsd: cost?.costPerUnitUsd ?? null, costSource: cost?.costSource ?? null, basis: cost?.basis ?? null, pipeId: cost?.pipeId ?? null };
+  if (valuePerUnitUsd === null) return { ...base, roiMultiple: null, unavailableReason: valueReason ?? "unit_has_no_value" };
+  if (!cost || !(cost.costPerUnitUsd > 0)) return { ...base, roiMultiple: null, unavailableReason: cost ? "pipe_cost_zero" : "no_pipe_prices_outcome" };
+  return { ...base, roiMultiple: round(valuePerUnitUsd / cost.costPerUnitUsd, 2), unavailableReason: null };
+}
+
+const NO_VALUE: UnitValue = { valuePerUnitUsd: null, step: null, offerId: null, lifetimeRevenueSource: null, unavailableReason: "not_priced" };
+
+const zero = (): Totals => ({
+  rows: 0,
+  units: 0,
+  views: 0,
+  engagements: 0,
+  visits: 0,
+  signups: 0,
+  spentUsd: 0,
+  viewsReportedRows: 0,
+  engagementBreakdown: emptyBreakdown(),
+  rowsEngagementsAboveViews: 0,
+  valueUsd: 0,
+  unvaluedRows: 0,
+});
+
+function addBreakdown(into: EngagementBreakdown, b: EngagementBreakdown): void {
+  for (const k of ENGAGEMENT_KINDS) if (b[k] !== null) into[k] = (into[k] ?? 0) + b[k]!;
+}
 
 function add(t: Totals, r: UnitRow): void {
   t.rows += 1;
   t.units += r.units;
   t.views += r.views ?? 0;
+  if (r.views !== null) t.viewsReportedRows += 1;
   t.engagements += r.engagements ?? 0;
+  addBreakdown(t.engagementBreakdown, r.engagementBreakdown);
+  if (r.metricsWarning) t.rowsEngagementsAboveViews += 1;
   t.visits += r.visits ?? 0;
   t.signups += r.signups ?? 0;
   t.spentUsd = round(t.spentUsd + (r.spentUsd ?? 0));
+  if (r.valueUsd === null) t.unvaluedRows += 1;
+  else t.valueUsd = round(t.valueUsd + r.valueUsd);
 }
 
-/** PURE. The page body: rows newest first, totals (all and ours), $ per signup on ours, the day series. */
+export interface PublishedUnitsOptions {
+  /** What one Unit of the row is worth (IO resolves the offer and the catalogue). Absent = not priced. */
+  unitValueOf?: (src: UnitSource) => UnitValue;
+  /** The expected return of one more Unit (catalogue pipe producing the outcome). */
+  expected?: ExpectedReturn;
+  /** Whether the org's ledger credits website visits to this outcome at all. Default true. */
+  visitsMeasured?: boolean;
+}
+
+/** PURE. The page body: rows newest first, totals (all and ours), $ per signup on ours, the day series, value and returns. */
 export function publishedUnitsOf(
   outcomeKey: PublishedOutcomeKey,
-  sources: readonly UnitSource[],
+  allSources: readonly UnitSource[],
   creditOf: (src: UnitSource) => LedgerCredit | null,
+  opts: PublishedUnitsOptions = {},
 ): PublishedUnitsBody {
+  const visitsMeasured = opts.visitsMeasured ?? true;
+  const reposts = allSources.filter(isRepost);
+  const sources = allSources.filter((s) => !isRepost(s));
   const rows: UnitRow[] = sources
     .map((s) => {
       const c = creditOf(s);
-      const { ledger: _ledger, ...rest } = s;
+      const { ledger: _ledger, metrics, campaignId: _campaignId, ...rest } = s;
+      const engagementBreakdown = metrics ? engagementBreakdownOf(metrics) : { ...emptyBreakdown() };
+      // The breakdown when the platform reports any kind (it then sums to engagements); else the total it gives.
+      const engagements = engagementsOfBreakdown(engagementBreakdown) ?? s.engagements;
+      const value = opts.unitValueOf ? opts.unitValueOf(s) : NO_VALUE;
+      const valueUsd = value.valuePerUnitUsd === null ? null : round(s.units * value.valuePerUnitUsd, 4);
+      const spentUsd = c ? c.spentUsd : null;
       return {
         ...rest,
-        spentUsd: c ? c.spentUsd : null,
-        visits: c ? c.visits : null,
-        signups: c ? c.signups : null,
+        engagements,
+        engagementBreakdown,
+        metricsWarning: s.views !== null && engagements !== null && engagements > s.views ? ("engagements_exceed_views" as const) : null,
+        spentUsd,
+        visits: c && visitsMeasured ? c.visits : null,
+        signups: c && visitsMeasured ? c.signups : null,
         ledgerUnavailableReason: c ? null : ("not_on_ledger_yet" as const),
+        visitsUnavailableReason: !c ? ("not_on_ledger_yet" as const) : visitsMeasured ? null : ("no_visit_attribution_on_outcome" as const),
+        valuePerUnitUsd: value.valuePerUnitUsd,
+        valueUsd,
+        value,
+        measuredReturn: measuredReturnOf(s.units, valueUsd, spentUsd, value.valuePerUnitUsd === null),
       };
     })
     .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt) || a.id.localeCompare(b.id));
   const all = zero();
   const ours = zero();
-  const days = new Map<string, DayPoint>();
+  const days = new Map<string, DayPoint & { oursUnvalued: boolean }>();
   for (const r of rows) {
     add(all, r);
     if (r.performedBy === "ours") add(ours, r);
     const date = r.publishedAt.slice(0, 10);
-    const d = days.get(date) ?? { date, units: 0, oursUnits: 0, views: 0, visits: 0, signups: 0, spentUsd: 0 };
+    const d =
+      days.get(date) ??
+      ({ date, units: 0, oursUnits: 0, views: 0, visits: 0, signups: 0, spentUsd: 0, engagements: 0, engagementBreakdown: emptyBreakdown(), valueUsd: 0, oursSpentUsd: 0, oursValueUsd: 0, measuredReturn: measuredReturnOf(0, null, null, true), oursUnvalued: false });
     d.units += r.units;
-    if (r.performedBy === "ours") d.oursUnits += r.units;
     d.views += r.views ?? 0;
     d.visits += r.visits ?? 0;
     d.signups += r.signups ?? 0;
     d.spentUsd = round(d.spentUsd + (r.spentUsd ?? 0));
+    d.engagements += r.engagements ?? 0;
+    addBreakdown(d.engagementBreakdown, r.engagementBreakdown);
+    d.valueUsd = round(d.valueUsd + (r.valueUsd ?? 0));
+    if (r.performedBy === "ours") {
+      d.oursUnits += r.units;
+      d.oursSpentUsd = round(d.oursSpentUsd + (r.spentUsd ?? 0));
+      d.oursValueUsd = round(d.oursValueUsd + (r.valueUsd ?? 0));
+      if (r.valueUsd === null) d.oursUnvalued = true;
+    }
     days.set(date, d);
   }
-  const costPerSignupUsd = ours.signups > 0 && ours.spentUsd > 0 ? round(ours.spentUsd / ours.signups) : null;
+  const daily = [...days.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(({ oursUnvalued, ...d }) => ({ ...d, measuredReturn: measuredReturnOf(d.oursUnits, d.oursUnits > 0 ? d.oursValueUsd : null, d.oursSpentUsd, oursUnvalued) }));
+  const costPerSignupUsd = visitsMeasured && ours.signups > 0 && ours.spentUsd > 0 ? round(ours.spentUsd / ours.signups) : null;
+  const costPerSignupUnavailableReason = costPerSignupUsd !== null ? null : !visitsMeasured ? "no_visit_attribution_on_outcome" : ours.signups === 0 ? "no_signup_yet" : "nothing_spent_yet";
+  const repostBreakdowns = reposts.map((s) => engagementsOfBreakdown(engagementBreakdownOf(s.metrics)) ?? s.engagements ?? 0);
   return {
     outcomeKey,
     rows,
     totals: { all, ours },
     costPerSignupUsd,
+    costPerSignupUnavailableReason,
     learning: ours.signups === 0,
-    daily: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    daily,
+    repostsExcluded: { rows: reposts.length, engagements: repostBreakdowns.reduce((a, b) => a + b, 0) },
+    visitsMeasured,
+    visitsUnavailableReason: visitsMeasured ? null : "no_visit_attribution_on_outcome",
+    measuredReturn: measuredReturnOf(ours.units, ours.units > 0 && ours.unvaluedRows === 0 ? ours.valueUsd : null, ours.spentUsd, ours.unvaluedRows > 0),
+    expectedReturn: opts.expected ?? expectedReturnOf(null, null, "not_priced"),
   };
 }
 

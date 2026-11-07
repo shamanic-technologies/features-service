@@ -8,7 +8,7 @@ import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { isPublishedOutcomeKey, PUBLISHED_OUTCOME_KEYS } from "../lib/published-units.js";
-import { readPublishedUnits } from "../lib/published-units-io.js";
+import { PublishedUnitsProducerError, readPublishedUnits } from "../lib/published-units-io.js";
 
 const router = Router();
 
@@ -29,6 +29,9 @@ router.get("/brands/:brandId/published-units/:outcomeKey", apiKeyAuth, async (re
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] published units error:", err);
+    // A producer that failed is NAMED (SOCIAL-OUTCOMES-1107): the page says who is down, never a bare failure.
+    if (err instanceof PublishedUnitsProducerError)
+      return void res.status(502).json({ error: `Failed to read the brand's published Units: ${err.producer} answered ${err.status ?? "nothing"}`, reason: "producer_unavailable", producer: err.producer, producerPath: err.path, producerStatus: err.status, detail: err.detail });
     res.status(502).json({ error: "Failed to read the brand's published Units" });
   }
 });

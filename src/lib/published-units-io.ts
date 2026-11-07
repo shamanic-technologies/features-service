@@ -18,8 +18,16 @@ import { mapWithConcurrency } from "./concurrency.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { featureViewSnapshots } from "../db/schema.js";
+import { fetchBrandCampaignRows } from "./campaign-identity-client.js";
+import { fetchBrandLegEconomics } from "./brand-leg-economics-client.js";
+import { offerLifetimeRevenue } from "./offer-lifetime-revenue.js";
+import { outcomeCatalogueFigures } from "./published-unit-value.js";
+import type { CatalogueModel } from "./agent-catalogue.js";
 import {
   addInputCosts,
+  expectedReturnOf,
+  type ExpectedReturn,
+  type UnitValue,
   bulkVisitCredits,
   runAggregateOf,
   type RunAggregate,
@@ -39,9 +47,31 @@ function env(name: string): string {
   return v;
 }
 
+/**
+ * A producer this page reads answered an error (SOCIAL-OUTCOMES-1107: newsletter_email_sent read a bare "Failed to read"
+ * while runs-service answered 500). The route serves its name, path and status so the page says WHO is down.
+ */
+export class PublishedUnitsProducerError extends Error {
+  constructor(
+    public readonly producer: string,
+    public readonly path: string,
+    public readonly status: number | null,
+    public readonly detail: string,
+  ) {
+    super(`${producer} ${path} ${status ?? "unreachable"}: ${detail}`);
+    this.name = "PublishedUnitsProducerError";
+  }
+}
+
 async function getJson(service: string, base: string, key: string, path: string): Promise<unknown> {
-  const res = await fetchWithRetry(`${env(base)}${path}`, { headers: { "x-api-key": env(key) } }, { timeoutMs: 120_000 });
-  if (!res.ok) throw new Error(`${service} ${path.split("?")[0]} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const route = path.split("?")[0]!;
+  let res: Response;
+  try {
+    res = await fetchWithRetry(`${env(base)}${path}`, { headers: { "x-api-key": env(key) } }, { timeoutMs: 120_000 });
+  } catch (err) {
+    throw new PublishedUnitsProducerError(service, route, null, (err as Error).message.slice(0, 300));
+  }
+  if (!res.ok) throw new PublishedUnitsProducerError(service, route, res.status, (await res.text()).slice(0, 300));
   return res.json();
 }
 
@@ -51,7 +81,7 @@ const metaGet = (path: string) => getJson("meta-service", "META_SERVICE_URL", "M
 const newsletterGet = (path: string) => getJson("transactional-email-service", "TRANSACTIONAL_EMAIL_SERVICE_URL", "TRANSACTIONAL_EMAIL_SERVICE_API_KEY", path);
 
 interface ServedOccurrence extends LedgerOccurrence {
-  tags?: { brandIds?: string[] } | null;
+  tags?: { brandIds?: string[]; campaignId?: string | null } | null;
   declaredAt?: string;
   performer?: { kind?: string | null } | null;
 }
@@ -132,6 +162,7 @@ async function threadsRows(orgId: string, brandId: string): Promise<UnitSource[]
       units: 1,
       views: m?.metrics?.views ?? null,
       engagements: m ? (m.engagement ?? null) : null,
+      metrics: m?.metrics ?? null,
       ledger: { runId: p.outcomeRunId, outcomeKey: p.outcomeKey, subjectId: p.id },
     };
   });
@@ -151,6 +182,8 @@ interface AccountPost {
   outcomeKey: string;
   unitRunId: string | null;
   metrics: Record<string, number | null>;
+  /** social-service's vocabulary `post | quote | repost | comment`; absent = a post (SOCIAL-OUTCOMES-1107). */
+  kind?: string | null;
 }
 
 /** Every post of the brand's connected accounts on one network, hand posts included (social-service account posts). */
@@ -170,6 +203,8 @@ async function accountPostRows(orgId: string, brandId: string, platform: "x" | "
       units: 1,
       views: p.metrics.views ?? null,
       engagements: engagementsOf(p.metrics, ENGAGEMENT_COUNTS),
+      metrics: p.metrics,
+      kind: p.kind ?? null,
       ledger: p.unitRunId ? { runId: p.unitRunId, outcomeKey: p.outcomeKey, subjectId: p.ourSubjectId ?? p.id } : null,
     }));
 }
@@ -341,9 +376,19 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
   const credits = creditsByOccurrence(units, unitConsumptions, visitsProduced, visitConsumptions, pricing);
   addInputCosts(credits, units, consumedOnRuns, pricing);
   const bulkVisits = bulkVisitCredits(new Set(bulk.map((h) => h.runId)), unitConsumptions, visitsProduced, visitConsumptions);
-  const unitsByRun = new Map<string, LedgerOccurrence[]>();
+  const unitsByRun = new Map<string, ServedOccurrence[]>();
   for (const u of units) unitsByRun.set(u.runId, [...(unitsByRun.get(u.runId) ?? []), u]);
-  return (src: UnitSource) => {
+  // Visits are attributed only where the org's ledger ever credited one to a Unit of the outcome (a tracked link click):
+  // none = the outcome carries no click signal, so visits read null with a reason, never a measured 0 (SOCIAL-OUTCOMES-1107).
+  const visitsMeasured = unitConsumptions.some((c) => c.direction === "consumed" && (c.consumption?.consumingOutcomes ?? []).some((p) => p.outcomeKey === "website_visit"));
+  const campaignOf = (src: UnitSource): string | null => {
+    if (!src.ledger) return null;
+    const onRun = (unitsByRun.get(src.ledger.runId) ?? []).filter((o) => o.outcomeKey === src.ledger!.outcomeKey);
+    const own = src.ledger.subjectId ? onRun.filter((o) => o.subjectId === src.ledger!.subjectId) : [];
+    const tagged = (own.length ? own : onRun).find((o) => typeof o.tags?.campaignId === "string" && o.tags.campaignId);
+    return tagged?.tags?.campaignId ?? null;
+  };
+  const creditOf = (src: UnitSource) => {
     if (src.ledger?.bulkFingerprint !== undefined) {
       const agg = bulkAggs.get(src.ledger.runId)!;
       const v = bulkVisits.get(src.ledger.runId) ?? { visits: 0, signups: 0 };
@@ -351,13 +396,71 @@ async function ledgerOf(orgId: string, sources: readonly UnitSource[], pricing: 
     }
     return creditOfRow(src, unitsByRun, credits);
   };
+  return { creditOf, visitsMeasured, campaignOf };
 }
 
 /** The brand's Units of one published outcome, computed now. */
 export async function computePublishedUnits(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net"): Promise<PublishedUnitsBody> {
   const sources = await ROWS[outcomeKey](orgId, brandId);
-  const creditOf = await ledgerOf(orgId, sources, pricing);
-  return publishedUnitsOf(outcomeKey, sources, creditOf);
+  const { creditOf, visitsMeasured, campaignOf } = await ledgerOf(orgId, sources, pricing);
+  const withCampaigns = sources.map((s) => ({ ...s, campaignId: campaignOf(s) }));
+  const valuation = await valuationOf(orgId, brandId, outcomeKey, withCampaigns);
+  return publishedUnitsOf(outcomeKey, withCampaigns, creditOf, { unitValueOf: valuation.valueOf, expected: valuation.expected, visitsMeasured });
+}
+
+// ---------------------------------------------------------------- value (SOCIAL-OUTCOMES-1107)
+
+/** Test seam: the catalogue model on a lifetime revenue (the shadow plan's model). */
+let loadModel: (ltr: number | null, source: "offer_stated" | "fleet_median" | null) => Promise<CatalogueModel> = async (ltr, source) =>
+  (await import("../routes/agent-catalogue.js")).loadCatalogueModelForLifetimeRevenue(ltr, source);
+export function __setPublishedUnitsModelLoader(f: typeof loadModel): void {
+  loadModel = f;
+}
+
+/**
+ * Each Unit valued on the offer of the campaign that produced it (its lifetime revenue, stated else the fleet median:
+ * every offer has one); a Unit naming no campaign stating an offer (a hand post, a newsletter) on the fleet median. The
+ * page's expected return reads the offer most of OURS Units were valued on, else the fleet median. A read that fails
+ * leaves the value null with `value_unreadable` (logged loud), never a 502 of the page and never a guessed value.
+ */
+async function valuationOf(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, sources: readonly UnitSource[]): Promise<{ valueOf: (s: UnitSource) => UnitValue; expected: ExpectedReturn }> {
+  const unreadable: UnitValue = { valuePerUnitUsd: null, step: null, offerId: null, lifetimeRevenueSource: null, unavailableReason: "value_unreadable" };
+  try {
+    const needsOffers = sources.some((s) => s.campaignId);
+    const [campaigns, econ] = needsOffers
+      ? await Promise.all([fetchBrandCampaignRows(brandId, undefined, { orgId }), fetchBrandLegEconomics(brandId, orgId)])
+      : [[], { offers: [] as Array<{ offerId: string; lifetimeRevenueUsd: number | null }> }];
+    const offerOfCampaign = new Map(campaigns.map((c) => [c.id, c.offerId ?? null] as const));
+    const offers = new Map(econ.offers.map((o) => [o.offerId, o.lifetimeRevenueUsd] as const));
+    const offerOf = (s: UnitSource): string | null => {
+      const o = s.campaignId ? (offerOfCampaign.get(s.campaignId) ?? null) : null;
+      return o && offers.has(o) ? o : null;
+    };
+    const figuresByOffer = new Map<string, Promise<{ figures: ReturnType<typeof outcomeCatalogueFigures>; source: "offer_stated" | "fleet_median" | null }>>();
+    const figuresFor = (offerId: string | null) => {
+      const key = offerId ?? "";
+      if (!figuresByOffer.has(key))
+        figuresByOffer.set(
+          key,
+          offerLifetimeRevenue(offerId ? offers.get(offerId) : null).then(async (ltr) => ({ figures: outcomeCatalogueFigures(await loadModel(ltr.usd, ltr.source), outcomeKey), source: ltr.source })),
+        );
+      return figuresByOffer.get(key)!;
+    };
+    const offerIds = [...new Set(sources.map(offerOf))];
+    const resolved = new Map(await Promise.all(offerIds.map(async (o) => [o ?? "", { offerId: o, ...(await figuresFor(o)) }] as const)));
+    const valueOf = (s: UnitSource): UnitValue => {
+      const r = resolved.get(offerOf(s) ?? "")!;
+      return { valuePerUnitUsd: r.figures.valuePerUnitUsd, step: r.figures.step, offerId: r.offerId, lifetimeRevenueSource: r.source, unavailableReason: r.figures.unavailableReason };
+    };
+    const oursByOffer = new Map<string, number>();
+    for (const s of sources) if (s.performedBy === "ours") oursByOffer.set(offerOf(s) ?? "", (oursByOffer.get(offerOf(s) ?? "") ?? 0) + s.units);
+    const top = [...oursByOffer].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? "";
+    const pageFigures = resolved.get(top) ?? { offerId: null, ...(await figuresFor(null)) };
+    return { valueOf, expected: expectedReturnOf(pageFigures.figures.valuePerUnitUsd, pageFigures.figures.cost, pageFigures.figures.unavailableReason) };
+  } catch (err) {
+    console.error(`[features-service] published units ${brandId} ${outcomeKey}: value unreadable, served null: ${(err as Error).message}`);
+    return { valueOf: () => unreadable, expected: expectedReturnOf(null, null, "value_unreadable") };
+  }
 }
 
 /**

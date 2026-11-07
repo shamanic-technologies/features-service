@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addInputCosts, bulkVisitCredits, runAggregateOf, creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
+import { addInputCosts, engagementBreakdownOf, engagementsOfBreakdown, expectedReturnOf, MEASURED_RETURN_MIN_UNITS, bulkVisitCredits, runAggregateOf, creditOfRow, creditsByOccurrence, engagementsOf, publishedUnitsOf, type LedgerOccurrence, type UnitSource } from "./published-units.js";
 
 const occ = (o: Partial<LedgerOccurrence> & Pick<LedgerOccurrence, "id" | "runId" | "direction" | "outcomeKey">): LedgerOccurrence => ({
   subjectService: "meta-service",
@@ -57,11 +57,11 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
     const body = publishedUnitsOf("threads_post_published", rows, (s) => credit[s.id] ?? null);
     expect(body.rows.map((r) => r.id)).toEqual(["b", "c", "a"]);
     expect(body.rows.find((r) => r.id === "c")).toMatchObject({ spentUsd: null, visits: null, signups: null, ledgerUnavailableReason: "not_on_ledger_yet" });
-    expect(body.totals.all).toEqual({ rows: 3, units: 3, views: 150, engagements: 4, visits: 5, signups: 2, spentUsd: 2.01 });
+    expect(body.totals.all).toMatchObject({ rows: 3, units: 3, views: 150, viewsReportedRows: 2, engagements: 4, visits: 5, signups: 2, spentUsd: 2.01 });
     expect(body.totals.ours).toMatchObject({ rows: 2, signups: 1, spentUsd: 2 });
     expect(body.costPerSignupUsd).toBe(2);
     expect(body.learning).toBe(false);
-    expect(body.daily).toEqual([
+    expect(body.daily).toMatchObject([
       { date: "2026-11-01", units: 2, oursUnits: 2, views: 100, visits: 3, signups: 1, spentUsd: 2 },
       { date: "2026-11-02", units: 1, oursUnits: 0, views: 50, visits: 2, signups: 1, spentUsd: 0.01 },
     ]);
@@ -100,5 +100,72 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
   it("engagements sum the counts the platform reports; none reported = null", () => {
     expect(engagementsOf({ likes: 2, replies: null, reposts: 1 }, ["likes", "replies", "reposts", "quotes"])).toBe(3);
     expect(engagementsOf({ likes: null }, ["likes", "replies"])).toBeNull();
+  });
+
+  describe("SOCIAL-OUTCOMES-1107: breakdown, reposts, visit attribution, value and returns", () => {
+    const post = (id: string, over: Partial<UnitSource> = {}): UnitSource => ({
+      id,
+      publishedAt: "2026-11-03T10:00:00Z",
+      account: "@us",
+      performedBy: "ours",
+      text: id,
+      url: null,
+      units: 1,
+      views: 100,
+      engagements: null,
+      ledger: { runId: `r-${id}`, outcomeKey: "x_post_published", subjectId: null },
+      ...over,
+    });
+    const credit = () => ({ spentUsd: 0.5, visits: 1, signups: 0 });
+
+    it("the breakdown sums to engagements on every row, total and day; unreported kinds stay null", () => {
+      const b = engagementBreakdownOf({ views: 9, likes: 2, replies: 3, reposts: 1, quotes: 0, bookmarks: null });
+      expect(b).toEqual({ likes: 2, replies: 3, reposts: 1, quotes: 0, shares: null, bookmarks: null, clicks: null });
+      expect(engagementsOfBreakdown(b)).toBe(6);
+      const body = publishedUnitsOf("x_post_published", [post("a", { metrics: { likes: 2, replies: 3, reposts: 1 } }), post("b", { metrics: { likes: 4, bookmarks: 1 } })], credit);
+      for (const r of body.rows) expect(engagementsOfBreakdown(r.engagementBreakdown)).toBe(r.engagements);
+      expect(body.totals.all.engagements).toBe(11);
+      expect(body.totals.all.engagementBreakdown).toEqual({ likes: 6, replies: 3, reposts: 1, quotes: null, shares: null, bookmarks: 1, clicks: null });
+      expect(body.daily[0]!.engagements).toBe(11);
+    });
+
+    it("a repost of someone else's post (kind repost) is no Unit of ours: out of every row and total, its engagements stated apart", () => {
+      const rt = post("rt", { text: "RT @tparsi: ...", views: 30, metrics: { likes: 11000, reposts: 701 }, kind: "repost" });
+      const body = publishedUnitsOf("x_post_published", [post("own", { metrics: { likes: 3 }, kind: "post" }), rt, post("q", { kind: "quote", metrics: { likes: 1 } })], credit);
+      expect(body.rows.map((r) => r.id).sort()).toEqual(["own", "q"]);
+      expect(body.totals.all.engagements).toBe(4);
+      expect(body.repostsExcluded).toEqual({ rows: 1, engagements: 11701 });
+    });
+
+    it("more engagements than views is flagged, never silently served as consistent", () => {
+      const body = publishedUnitsOf("threads_post_published", [post("t", { views: 0, metrics: { replies: 3 } })], credit);
+      expect(body.rows[0]).toMatchObject({ engagements: 3, metricsWarning: "engagements_exceed_views" });
+      expect(body.totals.all.rowsEngagementsAboveViews).toBe(1);
+    });
+
+    it("an outcome with no click signal on the ledger serves visits and signups null with a reason, never 0", () => {
+      const body = publishedUnitsOf("x_post_published", [post("a")], credit, { visitsMeasured: false });
+      expect(body.rows[0]).toMatchObject({ visits: null, signups: null, visitsUnavailableReason: "no_visit_attribution_on_outcome", spentUsd: 0.5 });
+      expect(body).toMatchObject({ visitsMeasured: false, costPerSignupUsd: null, costPerSignupUnavailableReason: "no_visit_attribution_on_outcome" });
+    });
+
+    it("value = units x value per Unit; measured return on ours = value / spend, Learning under the bar; expected = value / expected cost", () => {
+      const unitValueOf = () => ({ valuePerUnitUsd: 2, step: "post_published", offerId: "o1", lifetimeRevenueSource: "offer_stated" as const, unavailableReason: null });
+      const expected = expectedReturnOf(2, { costPerUnitUsd: 0.8, costSource: "workflow", basis: "measured", pipeId: "p" }, null);
+      expect(expected).toMatchObject({ roiMultiple: 2.5, valuePerUnitUsd: 2, costPerUnitUsd: 0.8 });
+      const few = publishedUnitsOf("x_post_published", [post("a"), post("b", { performedBy: "client_team" })], credit, { unitValueOf, expected });
+      expect(few.rows[0]).toMatchObject({ valueUsd: 2, measuredReturn: { roiMultiple: 4, valueUsd: 2, spentUsd: 0.5, learning: true } });
+      expect(few.totals.all.valueUsd).toBe(4);
+      expect(few.totals.ours.valueUsd).toBe(2);
+      expect(few.measuredReturn).toMatchObject({ roiMultiple: 4, learning: true });
+      expect(few.expectedReturn.roiMultiple).toBe(2.5);
+      expect(few.daily[0]).toMatchObject({ valueUsd: 4, oursValueUsd: 2, oursSpentUsd: 0.5, measuredReturn: { roiMultiple: 4 } });
+      const many = Array.from({ length: MEASURED_RETURN_MIN_UNITS }, (_, i) => post(`m${i}`));
+      expect(publishedUnitsOf("x_post_published", many, credit, { unitValueOf, expected }).measuredReturn).toMatchObject({ roiMultiple: 4, learning: false, valueUsd: 20, spentUsd: 5 });
+      const unvalued = publishedUnitsOf("x_post_published", [post("a")], credit);
+      expect(unvalued.measuredReturn).toMatchObject({ roiMultiple: null, unavailableReason: "unit_has_no_value" });
+      expect(unvalued.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "not_priced" });
+      expect(publishedUnitsOf("x_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf }).measuredReturn.unavailableReason).toBe("nothing_spent_yet");
+    });
   });
 });

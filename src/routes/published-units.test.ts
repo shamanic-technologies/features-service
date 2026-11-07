@@ -20,8 +20,10 @@ vi.mock("../middleware/auth.js", () => ({
 const fetchWithRetry = vi.fn();
 vi.mock("../lib/fetch-retry.js", () => ({ fetchWithRetry: (...a: unknown[]) => fetchWithRetry(...a) }));
 
+vi.mock("../lib/offer-lifetime-revenue.js", () => ({ offerLifetimeRevenue: async (stated: number | null | undefined) => (typeof stated === "number" ? { usd: stated, source: "offer_stated" } : { usd: 1000, source: "fleet_median" }) }));
+
 import router from "./published-units.js";
-import { __resetPublishedUnits } from "../lib/published-units-io.js";
+import { __resetPublishedUnits, __setPublishedUnitsModelLoader } from "../lib/published-units-io.js";
 
 const app = express().use(router);
 const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
@@ -44,6 +46,11 @@ beforeEach(() => {
   __resetPublishedUnits();
   for (const [k, v] of Object.entries({ RUNS_SERVICE_URL: "http://runs", RUNS_SERVICE_API_KEY: "k", SOCIAL_SERVICE_URL: "http://social", SOCIAL_SERVICE_API_KEY: "k", META_SERVICE_URL: "http://meta", META_SERVICE_API_KEY: "k", TRANSACTIONAL_EMAIL_SERVICE_URL: "http://te", TRANSACTIONAL_EMAIL_SERVICE_API_KEY: "k" })) process.env[k] = v;
   fetchWithRetry.mockReset();
+  // A catalogue where a post is worth 1/1000 of the lifetime revenue and the X pipe expects $0.10 a post.
+  __setPublishedUnitsModelLoader(async (ltr) => ({
+    steps: new Map([["post_published", { key: "post_published", valueUsd: ltr === null ? null : ltr / 1000 }]]),
+    pipes: new Map([["x|start_to_post_published", { id: "x|start_to_post_published", published: true, outcome: "x_post_published", toStep: "post_published", operatedBy: "platform", expectedCost: { costPerOutcomeUsd: 0.1, source: "default", basis: "default" } }]]),
+  }) as never);
 });
 
 describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
@@ -96,7 +103,7 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
     });
     const res = await request(app).get("/brands/b1/published-units/newsletter_email_sent?pricing=gross");
     expect(res.status).toBe(200);
-    expect(res.body.rows).toEqual([expect.objectContaining({ id: "r1", text: "Hello", account: "newsletter", units: 3, performedBy: "ours", spentUsd: 0.06, visits: 0, signups: 0 })]);
+    expect(res.body.rows).toEqual([expect.objectContaining({ id: "r1", text: "Hello", account: "newsletter", units: 3, performedBy: "ours", spentUsd: 0.06, visits: null, signups: null, visitsUnavailableReason: "no_visit_attribution_on_outcome" })]);
     expect(res.body.totals.all.units).toBe(3);
   });
 
@@ -115,5 +122,40 @@ describe("GET /brands/:brandId/published-units/:outcomeKey", () => {
   it("refuses an outcome it does not serve, and a foreign brand", async () => {
     expect((await request(app).get("/brands/b1/published-units/post_published")).status).toBe(400);
     expect((await request(app).get("/brands/b1/published-units/x_post_published?pricing=vendor")).status).toBe(400);
+  });
+
+  it("X (SOCIAL-OUTCOMES-1107): a retweet is left out, the breakdown sums, each post valued, measured and expected returns served", async () => {
+    const xPost = (id: string, over: Record<string, unknown> = {}) => ({ id, platform: "x", orgId: "org-1", brandId: "b1", username: "DistributeYou", externalId: id, text: `t ${id}`, permalink: `https://x.com/s/${id}`, publishedAt: "2026-11-05T10:00:00.000Z", performedBy: "ours", ourSubjectId: id, outcomeKey: "x_post_published", unitRunId: `run-${id}`, metrics: { views: 40, likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1 }, kind: "post", ...over });
+    fetchWithRetry.mockImplementation(async (url: string) => {
+      if (url.startsWith("http://social/internal/account-posts"))
+        return json({ posts: [xPost("x1"), xPost("rt", { text: "RT @tparsi: big news", kind: "repost", metrics: { views: 30, likes: 9000, replies: 0, reposts: 2701, quotes: 0, bookmarks: 0 } })] });
+      if (url.startsWith("http://runs/internal/outcome-occurrences")) {
+        const q = new URL(url).searchParams;
+        if (q.get("direction") === "produced" && q.get("outcomeKey") === "x_post_published")
+          return json({ occurrences: [{ id: "u1", runId: "run-x1", direction: "produced", outcomeKey: "x_post_published", subjectService: "social-service", subjectId: "x1", cost: { grossCents: "20", netCents: "20" }, consumption: null, tags: { campaignId: null } }], nextCursor: null });
+        return json({ occurrences: [], nextCursor: null });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const res = await request(app).get("/brands/b1/published-units/x_post_published");
+    expect(res.status).toBe(200);
+    expect(res.body.rows.map((r: { id: string }) => r.id)).toEqual(["x1"]);
+    expect(res.body.repostsExcluded).toEqual({ rows: 1, engagements: 11701 });
+    expect(res.body.rows[0]).toMatchObject({ engagements: 4, engagementBreakdown: { likes: 2, replies: 1, reposts: 0, quotes: 0, bookmarks: 1, shares: null, clicks: null }, valuePerUnitUsd: 1, valueUsd: 1, value: { offerId: null, lifetimeRevenueSource: "fleet_median", step: "post_published" }, measuredReturn: { roiMultiple: 5, spentUsd: 0.2, learning: true } });
+    expect(res.body.totals.all).toMatchObject({ engagements: 4, views: 40, valueUsd: 1 });
+    expect(res.body.visitsMeasured).toBe(false);
+    expect(res.body.expectedReturn).toMatchObject({ roiMultiple: 10, valuePerUnitUsd: 1, costPerUnitUsd: 0.1, pipeId: "x|start_to_post_published" });
+  });
+
+  it("a producer that fails is named on the 502 (newsletter: runs-service 500)", async () => {
+    fetchWithRetry.mockImplementation(async (url: string) => {
+      if (url.startsWith("http://te/internal/mailing-list-releases"))
+        return json({ releases: [{ releaseId: "r1", listSlug: "newsletter", subject: "Hello", orgId: "org-1", brandIds: [], unitsRunId: "units-1", emailsSent: 3, unitsDeclared: 3, firstSentAt: "2026-11-02T08:00:00.000Z", createdAt: "2026-11-02T07:00:00.000Z" }] });
+      if (url.startsWith("http://runs/internal/outcome-occurrences")) return { ok: false, status: 500, json: async () => ({}), text: async () => '{"error":"boom"}' };
+      throw new Error(`unexpected ${url}`);
+    });
+    const res = await request(app).get("/brands/b1/published-units/newsletter_email_sent");
+    expect(res.status).toBe(502);
+    expect(res.body).toMatchObject({ reason: "producer_unavailable", producer: "runs-service", producerPath: "/internal/outcome-occurrences", producerStatus: 500 });
   });
 });
