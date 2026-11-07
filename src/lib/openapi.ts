@@ -597,9 +597,11 @@ const revenueCostEconomicsSchema = z.object({
     closedWonRevenueUsd: z.number().describe("What those deals are worth: each at the amount stated on it, else the lifetime revenue a paying client is priced at."),
     spentUsd: z.number().nullable().describe("Every dollar the scope actually spent, whole history (= actualCostUsd): runs that ran, never follow-ups only reserved. Null only on a staff vendor-cost group whose vendor cost is not fully known."),
     roiMultiple: z.number().nullable().describe("closedWonRevenueUsd / spentUsd: the REALIZED return (ROI-CONSISTENCY-1103), whole history, Paid clients our outreach caused over money actually spent. Null when nothing was spent yet."),
-  }).nullable().describe("THE REALIZED RETURN (ROI-CONSISTENCY-1103): revenue of the Paid clients our outreach caused over every dollar actually spent, whole history. A return exists only where a value lands; the pipeline-based roiMultiple / %CAC / $CAC and their maturity pair are deleted. NULL when it cannot be measured on this read: no source of closed deals could be read, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
+  }).nullable().describe("LEDGER-ONLY-1107 on /offers/{offerId}/revenue and /brands/{brandId}/revenue: closedWonCount = the brand's ledger Paid client Units, closedWonRevenueUsd = those Units × the offer's lifetime revenue (null + realizedReturnUnavailableReason when the ledger lacks Paid client Units; channel and per-offer rows read the same brand ledger; campaign groups and campaign / workflow reads null `per_group_not_in_ledger` / `per_campaign_not_in_ledger` / `per_workflow_not_in_ledger`). THE REALIZED RETURN (ROI-CONSISTENCY-1103): revenue of the Paid clients our outreach caused over every dollar actually spent, whole history. A return exists only where a value lands; the pipeline-based roiMultiple / %CAC / $CAC and their maturity pair are deleted. NULL when it cannot be measured on this read: no source of closed deals could be read, or the grain never computes it (lens, per-workflow, cross-org reads). Never a fabricated 0."),
+  realizedReturnUnavailableReason: z.string().nullable().describe("LEDGER-ONLY-1107: why realizedReturn is null (outcome_not_declared_in_ledger, no_producer_declares_outcome, ledger_unreadable, lifetime_revenue_not_stated, per_group_not_in_ledger, per_campaign_not_in_ledger, per_workflow_not_in_ledger).").optional(),
 });
 
+// LEDGER-ONLY-1107: why realizedReturn is null on a ledger-based read.
 // Server-computed "contacted" aggregates for the Overview's Outreach surfaces (stat card + 7-day
 // graph), derived from the SAME leads[] this response returns. Coherent by construction:
 // total === sum(daily[].count) + undatedCount === count(leads with contacted === true).
@@ -1668,7 +1670,7 @@ const revenueGeneratedRef = registry.register(
   z.object({
     realUsd: z.number().nullable().describe("REAL REVENUE GENERATED TO DATE (the headline): money actually won, since inception. Exactly `costEconomics.realizedReturn.closedWonRevenueUsd` (the same deals: closed won, priced to our outreach, stated amount else the offer's lifetime revenue), so it agrees with the paid client count. Null with `realUnavailableReason`."),
     paidClientCount: z.number().nullable().describe("The deals behind `realUsd` (= `costEconomics.realizedReturn.closedWonCount`)."),
-    realUnavailableReason: z.enum(["closed_deals_not_read"]).nullable().describe("Why `realUsd` is null: no source of closed deals could be read (then `realizedReturn` is null too). Null when served."),
+    realUnavailableReason: z.enum(["closed_deals_not_read", "outcome_not_declared_in_ledger", "no_producer_declares_outcome", "ledger_unreadable", "lifetime_revenue_not_stated"]).nullable().describe("Why `realUsd` is null. LEDGER-ONLY-1107: the real half counts the brand ledger's Paid client Units × the offer's lifetime revenue; `outcome_not_declared_in_ledger` = no run declares Paid client Units for this brand (consumed, never produced), `ledger_unreadable` = runs-service unreadable. Null when served."),
     undatedRealUsd: z.number().nullable().describe("Of `realUsd`, sales carrying no won date: counted on `firstDay` so the solid line still ends at `realUsd`."),
     spentUsd: z.number().describe("Money actually spent, whole history: `costEconomics.realizedReturn.spentUsd` (the ROI tile's spend)."),
     expectedToDateUsd: z.number().nullable().describe("EXPECTED REVENUE of the spend to date (secondary figure): `expectedReturn.roiMultiple` (served beside it, the ONE basis every expected figure here rests on) × `spentUsd`, so `expectedToDateUsd` ÷ `spentUsd` IS the expected ROI served beside it. What the money already spent is expected to bring back once its leads have converted, never the Deals board's pipeline (another value model). Null with `expectedUnavailableReason`."),
@@ -3479,6 +3481,48 @@ const funnelCampaignSpendChartsResponseRef = registry.register(
     ).describe("One chart per pipe, in path order. A pipe reads its OWN spend."),
   }),
 );
+const ledgerProducerGapSchema = z
+  .object({
+    declaredElsewhereBy: z.array(z.string()).describe("The services that declare this outcome for other scopes (empty = no service declares it anywhere)."),
+    undeclaredConsumptions: z.number().describe("Occurrences the scope consumed that no run declared producing."),
+  })
+  .describe("Who must declare the outcome in the ledger (runs-service), when the ledger lacks it.");
+const nInt = z.number().int().nullable();
+const ledgerSpendChartSchema = spendChartSchema.extend({
+  outcomeUnavailableReason: z.string().nullable().describe("no_leg | outcome_step_not_counted | outcome_not_declared_in_ledger | no_producer_declares_outcome | ledger_unreadable (LEDGER-ONLY-1107)."),
+  conversionUnavailableReason: z.string().nullable().describe("no_leg | no_entry_population | a ledger reason of the outcome or the leg's FROM step."),
+  daily: z.array(
+    spendChartPointSchema.extend({
+      cumulativeOutcomes: nInt.describe("LEDGER-ONLY-1107: the brand's ledger Units of the outcome step dated on or before the day. Null = the ledger lacks the outcome (outcomeUnavailableReason)."),
+      costPerOutcomeUsd: z.number().nullable().describe("ACTUAL cost per outcome as of the day: cumulativeSpendUsd / cumulativeOutcomes (ledger Units). Null with no Unit or nothing spent."),
+      entered: nInt.describe("Ledger Units of the leg's FROM step that day."),
+      cohortOutcomes: nInt.describe("Always null: the entry-cohort conversion is not a ledger figure (LEDGER-ONLY-1107)."),
+      cumulativeEntered: nInt.describe("Ledger Units of the leg's FROM step on or before the day."),
+      cumulativeConverted: nInt.describe("Ledger Units of the outcome step on or before the day (= cumulativeOutcomes)."),
+      conversionRatePct: z.number().nullable().describe("The ledger yield: cumulativeConverted / cumulativeEntered x 100."),
+      matureConversionRatePct: z.number().nullable().describe("Always null (not a ledger figure)."),
+      matureOutcomes: nInt.describe("Always null (not a ledger figure)."),
+      learning: z.boolean().nullable().describe("cumulativeOutcomes below the leg's Learning bar; null when the ledger lacks the outcome."),
+    }),
+  ),
+  totals: z.object({
+    spendUsd: z.number(),
+    outcomes: nInt.describe("The brand's ledger Units of the outcome step: the SAME count as Today's Target row (campaign-targets offerTargets[].outcomesToDate). Null = the ledger lacks it."),
+    costPerOutcomeUsd: z.number().nullable().describe("ACTUAL: spendUsd / outcomes."),
+    standardCostPerOutcomeUsd: z.number().nullable().describe("STANDARD: the ledger's every-path unit cost of the outcome (= offerTargets[].costPerOutcomeUsd)."),
+    entered: nInt.describe("Ledger Units of the leg's FROM step."),
+    converted: nInt.describe("= outcomes when entered is served."),
+    conversionRatePct: z.number().nullable().describe("The ledger yield: outcomes / entered x 100."),
+    learning: z.boolean().nullable(),
+  }),
+  ledger: z.object({
+    scope: z.literal("brand"),
+    outcomeKeys: z.array(z.string()),
+    entryKeys: z.array(z.string()),
+    producerGap: ledgerProducerGapSchema.nullable(),
+    ledgerDaysMissing: z.array(z.string()),
+  }).describe("LEDGER-ONLY-1107: where the outcome figures come from (the brand's general ledger, runs-service)."),
+});
 const offerSpendChartsResponseRef = registry.register(
   "OfferSpendChartsResponse",
   z.object({
@@ -3487,7 +3531,7 @@ const offerSpendChartsResponseRef = registry.register(
     pricing: z.enum(["gross", "net"]),
     costBasis: z.literal("charged"),
     salesFunnelCampaignIds: z.array(z.string()),
-    offer: spendChartSchema.describe("Every sales funnel campaign of the offer as one scope."),
+    offer: ledgerSpendChartSchema.describe("Every campaign of the offer as one scope for SPEND; its OUTCOMES and conversion are the brand's ledger Units (LEDGER-ONLY-1107)."),
   }),
 );
 const spendChartsDescription =
@@ -9736,9 +9780,9 @@ registry.registerPath({
     "Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, " +
     "else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = now + 24 h ÷ outcomesPerDay; null + `unavailableReason` " +
     "otherwise. `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
-    "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included), else its own people " +
-    "(`countSource`); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
-    "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = the same figures ONE entry per (offer, Target), its campaigns merged. " +
+    "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, " +
+    "LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
+    "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). " +
     "`?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
   tags: ["Sales funnel campaigns"],
   request: {
@@ -9785,14 +9829,15 @@ registry.registerPath({
                   nextExpectedInHours: campaignTargetValue,
                   unavailableReason: z.string().nullable(),
                 }),
-                targetCountSource: z.enum(["ledger", "campaign_people"]).nullable().describe("Where the Target's count comes from (its milestone card's `countSource`)."),
+                targetCountSource: z.enum(["ledger"]).nullable().describe("Where the Target's count comes from (its milestone card's `countSource`): always the ledger (LEDGER-ONLY-1107: `campaign_people` is gone)."),
+                ledgerOutcomeKeys: z.array(z.string()).describe("The outcome keys the Target counts in the ledger (its step + the finer outcomes its pipes' Engines make)."),
                 milestones: z.array(z.object({
                     step: z.string(),
                     label: z.string(),
                     lifecycleRung: z.string().nullable(),
                     isTarget: z.boolean(),
                     count: campaignTargetValue,
-                    countSource: z.enum(["ledger", "campaign_people"]).nullable().describe("`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included); `campaign_people` = no run of the campaign declares this outcome (a reply judged by an org-day run, a signup the client's team makes): its own people count."),
+                    countSource: z.enum(["ledger"]).nullable().describe("`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included). LEDGER-ONLY-1107: no other basis; an outcome the ledger lacks is null with `countUnavailableReason` (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`, `no_unit_makes_it`)."),
                     countUnavailableReason: z.string().nullable(),
                     past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })),
                     pastUnavailableReason: z.string().nullable(),
@@ -9820,13 +9865,13 @@ registry.registerPath({
                   offerId: z.string(),
                   target: z.object({ key: z.string(), label: z.string(), lifecycleRung: z.string().nullable() }).nullable().describe("null = the offer's campaigns that state no Target, merged into one entry."),
                   salesFunnelCampaignIds: z.array(z.string()).describe("The campaigns merged into this entry, oldest first (ids only: Today names no campaign)."),
-                  outcomesToDate: z.number().nullable().describe("Σ the campaigns' Target outcomes (null when one campaign's count is unreadable). A person reaching the Target under two campaigns counts in both: the per-campaign counts carry no person id."),
+                  outcomesToDate: z.number().nullable().describe("LEDGER-ONLY-1107: the BRAND's total Units of the Target outcome in the general ledger (every source, every campaign, each Unit ONCE), never the sum of what the campaigns attributed. Null + outcomesUnavailableReason (`outcome_not_declared_in_ledger` + ledger.producerGap, `no_producer_declares_outcome`, `ledger_unreadable`)."),
                   outcomesUnavailableReason: z.string().nullable(),
-                  spentUsd: z.number().nullable().describe("Σ every unit's spend of every campaign (null when one is unreadable)."),
-                  costPerOutcomeUsd: z.number().nullable().describe("spentUsd ÷ outcomesToDate, on the sums (never an average of the campaigns' $ each)."),
+                  spentUsd: z.number().nullable().describe("What those Units cost to produce: outcomesToDate × costPerOutcomeUsd (ledger)."),
+                  costPerOutcomeUsd: z.number().nullable().describe("The ledger's every-path unit cost of the Target outcome (STANDARD cost; own production cost per Unit where the outcome is no pipe's output, ledger.costPerUnitBasis)."),
                   costPerOutcomeUnavailableReason: z.string().nullable(),
-                  measuredReturn: z.object({ roiMultiple: campaignTargetValue, valueUsd: campaignTargetValue, spentUsd: campaignTargetValue, unavailableReason: z.string().nullable() }).describe("outcomesToDate × the Target's value ÷ spentUsd, on the sums."),
-                  past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })).describe("Σ per UTC day; a campaign whose Target is undated adds its count on the last day."),
+                  measuredReturn: z.object({ roiMultiple: campaignTargetValue, valueUsd: campaignTargetValue, spentUsd: campaignTargetValue, unavailableReason: z.string().nullable() }).describe("outcomesToDate × the Target's value ÷ spentUsd (ledger)."),
+                  past: z.array(z.object({ date: z.string(), outcomes: z.number(), cumulativeOutcomes: z.number() })).describe("The brand's ledger Units of the Target per UTC day, from the first to today; the last cumulative IS outcomesToDate."),
                   pastUnavailableReason: z.string().nullable(),
                   projection: z.object({
                     planComputedAt: z.string().nullable().describe("The most recent plan computation among the campaigns."),
@@ -9842,13 +9887,44 @@ registry.registerPath({
                     unavailableReason: z.string().nullable().describe("null as soon as one campaign projects; else the oldest campaign's reason."),
                     unprojectedCampaignIds: z.array(z.string()).describe("Campaigns of the entry with no projection of their own (they add no expected outcome)."),
                   }),
+                  ledger: z
+                    .object({
+                      scope: z.literal("brand"),
+                      outcomeKeys: z.array(z.string()),
+                      costPerUnitBasis: z.enum(["every_path", "own_production"]).nullable(),
+                      producerGap: ledgerProducerGapSchema.nullable(),
+                      ledgerDaysMissing: z.array(z.string()),
+                    })
+                    .nullable()
+                    .describe("LEDGER-ONLY-1107: the entry's measured figures are the BRAND's ledger total of its Target outcome. Null = no Target, or the ledger was unreadable."),
                 }),
               )
               .describe(
                 "TARGET-ROWS-UNIQUE-1107 (owner 2026-11-07, « Les rows target doivent etre unique »): ONE entry per (offer, Target), every campaign of `targets` sharing it " +
-                  "merged, in order of each entry's oldest campaign. Counts, spend, past and expected outcomes per day are summed; $ each and ROI are recomputed on the sums. " +
-                  "An entry of one campaign equals its `targets` row figure for figure.",
+                  "merged, in order of each entry's oldest campaign. LEDGER-ONLY-1107: its count, $ each, spend, return and past are the BRAND's ledger total of the Target " +
+                  "outcome (never the sum of the campaigns); the projection sums each campaign's expected outcomes per day.",
               ),
+            brandOutcomes: z
+              .array(
+                z.object({
+                  outcomeKey: z.string(),
+                  label: z.string(),
+                  lifecycleRung: z.string().nullable(),
+                  outcomeKeys: z.array(z.string()),
+                  units: z.number().nullable().describe("Total Units of the outcome in the brand's ledger, every source, every campaign, each once."),
+                  unitsUnavailableReason: z.enum(["outcome_not_declared_in_ledger", "no_producer_declares_outcome"]).nullable(),
+                  producerGap: ledgerProducerGapSchema.nullable(),
+                  costPerUnitUsd: z.number().nullable().describe("$ each: the ledger's every-path unit cost, else its own production cost per Unit (costPerUnitBasis)."),
+                  costPerUnitBasis: z.enum(["every_path", "own_production"]).nullable(),
+                  costPerUnitUnavailableReason: z.string().nullable(),
+                  productionCostUsd: z.number().nullable().describe("units × costPerUnitUsd."),
+                  past: z.array(z.object({ date: z.string(), units: z.number(), cumulativeUnits: z.number() })).describe("One point per UTC day from the first Unit to today."),
+                  ledgerDaysMissing: z.array(z.string()),
+                }),
+              )
+              .nullable()
+              .describe("LEDGER-ONLY-1107 (owner 2026-11-07, « ON VEUT LE TOTAL ET LES STATS PAR OUTCOME »): ONE row per outcome the brand's ledger names (produced, or consumed with no declared producer), its total Units, $ each and count over time. Null = ledger unreadable."),
+            brandOutcomesUnavailableReason: z.enum(["ledger_unreadable"]).nullable(),
           }),
         },
       },

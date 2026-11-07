@@ -7,9 +7,9 @@
  * WHICH milestones: the steps the campaign's own UNITS produce, on the chain of units from Start to the Target (units are
  * the campaign's for its life; never the plan line). WHAT is counted: the Units the campaign's runs PRODUCED, read from the
  * runs ledger (any outcome: a Threads post published as much as a positive reply), per UTC day. A step no run of the
- * campaign declares (a reply judged by an org-day run, a signup the client's team makes) falls to the campaign's own people
- * count (its pipe charts, else its funnel read), and says so (`countSource`). Never moves with the Plan; only `projection`
- * reads it.
+ * campaign declares counts 0 when a unit of it makes it, and an outcome the ledger lacks altogether (the brand consumed it,
+ * no run declared producing it) is NULL with the reason (LEDGER-ONLY-1107, owner 2026-11-07 « ERADICATION »: the campaign's
+ * own people count is no basis any more). Never moves with the Plan; only `projection` reads it.
  */
 
 export interface UnitEdge {
@@ -56,8 +56,11 @@ export interface MilestoneCardInput {
   lifecycleRung: string | null;
   /** Units of this step the campaign's runs produced, per UTC day (ledger); empty when none declared one. */
   ledgerByDay: ReadonlyMap<string, number>;
-  /** The campaign's own people at this step (its pipe chart, dated; else its funnel read, undated); null = not counted. */
-  people: { cumulativeByDay: ReadonlyArray<{ date: string; cumulativeOutcomes: number }> | null; count: number | null } | null;
+  /**
+   * LEDGER-ONLY-1107: why the ledger cannot count this milestone (`outcome_not_declared_in_ledger`: the brand consumed it,
+   * no run declared producing it; `ledger_unreadable`), null = counted from the ledger. Never a people count instead.
+   */
+  ledgerUnavailableReason: string | null;
   /** What the units landing on this milestone spent (null = unreadable), and what every unit up to it spent. */
   ownSpendUsd: number | null;
   spendUpToUsd: number | null;
@@ -71,7 +74,7 @@ export interface MilestoneCard {
   lifecycleRung: string | null;
   isTarget: boolean;
   count: number | null;
-  countSource: "ledger" | "campaign_people" | null;
+  countSource: "ledger" | null;
   countUnavailableReason: string | null;
   past: Array<{ date: string; outcomes: number; cumulativeOutcomes: number }>;
   pastUnavailableReason: string | null;
@@ -124,14 +127,10 @@ export function milestoneCardsOf(input: {
   const today = input.now.slice(0, 10);
   const counted = input.milestones.map((m) => {
     const ledgerTotal = [...m.ledgerByDay.values()].reduce((a, n) => a + n, 0);
-    if (ledgerTotal > 0) return { count: ledgerTotal, source: "ledger" as const, series: cumulativeFromDaily(m.ledgerByDay, today) };
-    if (m.people && m.people.cumulativeByDay !== null) {
-      const s = m.people.cumulativeByDay;
-      return { count: s.length > 0 ? s[s.length - 1]!.cumulativeOutcomes : 0, source: "campaign_people" as const, series: s };
-    }
-    if (m.people && m.people.count !== null) return { count: m.people.count, source: "campaign_people" as const, series: null };
+    if (ledgerTotal > 0) return { count: ledgerTotal, source: "ledger" as const, series: cumulativeFromDaily(m.ledgerByDay, today), reason: null };
+    if (m.ledgerUnavailableReason !== null) return { count: null, source: null, series: null, reason: m.ledgerUnavailableReason };
     // A milestone the ledger saw nothing of and the campaign does not count: measured zero only when a unit makes it.
-    return m.ownSpendUsd !== null && m.ownSpendUsd > 0 ? { count: 0, source: "ledger" as const, series: [] } : { count: null, source: null, series: null };
+    return m.ownSpendUsd !== null && m.ownSpendUsd > 0 ? { count: 0, source: "ledger" as const, series: [], reason: null } : { count: null, source: null, series: null, reason: "no_unit_makes_it" };
   });
   return input.milestones.map((m, i) => {
     const c = counted[i]!;
@@ -162,7 +161,7 @@ export function milestoneCardsOf(input: {
       isTarget,
       count: c.count,
       countSource: c.source,
-      countUnavailableReason: c.count === null ? "not_counted_for_this_campaign" : null,
+      countUnavailableReason: c.count === null ? c.reason ?? "not_counted_for_this_campaign" : null,
       past,
       pastUnavailableReason: c.series === null ? (c.count === null ? "not_counted_for_this_campaign" : "not_dated_for_this_campaign") : null,
       costPerUnitUsd,
