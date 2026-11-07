@@ -2,7 +2,8 @@
  * LEDGER-ONLY-1107 IO: a brand's outcome Units from runs-service's general ledger (the pure rule is `scope-outcome-ledger.ts`).
  *
  *  - Units per outcome per day + their own cost + the consumptions of unknown provenance:
- *    `GET /internal/stats/outcome-costs?groupBy=outcomeKey,day&brandId=` (since the ledger's inception).
+ *    `GET /internal/stats/outcome-costs?groupBy=outcomeKey,day&brandId=` (since the ledger's inception); on the same body,
+ *    `producedElsewhere[]` = the lead-state Units another factory produced (LEDGER-OTHER-FACTORY-1107, `factory` dimension).
  *  - The every-path unit cost: the same ledger grouped `outcomeKey,campaignId,orgId` for the brand, rolled up by
  *    `rollUpOutcomeUnitCosts` (each campaign's output = its stated (channel, leg) catalogue `to` step, `campaignOutputsOf`).
  *  - Who declares each outcome anywhere: `GET /internal/stats/outcome-performers?groupBy=outcomeKey,serviceName` (fleet).
@@ -15,7 +16,7 @@ import { rollUpOutcomeUnitCosts } from "./outcome-unit-costs.js";
 import { fetchFleetCampaignRows } from "./fleet-leg-campaigns.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { campaignOutputsOf } from "./campaign-outputs.js";
-import type { ScopeOutcomeLedgerInput, LedgerOutcomeCost } from "./scope-outcome-ledger.js";
+import type { ScopeOutcomeLedgerInput, LedgerOutcomeCost, OtherFactory } from "./scope-outcome-ledger.js";
 
 interface WireCost {
   grossCents?: string;
@@ -26,7 +27,10 @@ interface WireByDay {
   daysMissing?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
   consumed?: Array<{ dimensions?: Record<string, string | null>; unknownProvenance?: string }>;
+  producedElsewhere?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number }>;
 }
+
+const OTHER_FACTORIES: readonly OtherFactory[] = ["another_factory", "no_proof"];
 
 const usd = (c: WireCost | undefined, basis: LedgerBasis): number => {
   const v = basis === "vendor" ? c?.vendorCents : basis === "net" ? c?.netCents : c?.grossCents;
@@ -53,7 +57,19 @@ export function parseScopeLedgerByDay(body: WireByDay, basis: LedgerBasis) {
     const n = Number(g.unknownProvenance ?? 0);
     if (n > 0) undeclaredConsumptions.set(key, (undeclaredConsumptions.get(key) ?? 0) + n);
   }
-  return { producedByDay, ownCostUsd, undeclaredConsumptions, daysMissing: [...(body.daysMissing ?? [])].sort() };
+  // LEDGER-OTHER-FACTORY-1107: another factory's Units (no run, no cost). A group with no day (a non-day groupBy) is no Unit of a day.
+  const elsewhereByDay = new Map<string, Map<string, Map<OtherFactory, number>>>();
+  for (const g of body.producedElsewhere ?? []) {
+    const key = g.dimensions?.outcomeKey;
+    const day = g.dimensions?.day;
+    const factory = g.dimensions?.factory as OtherFactory | undefined;
+    if (!key || !day) throw new Error("[features-service] scope outcome ledger: a producedElsewhere group names no outcomeKey or day");
+    if (!factory || !OTHER_FACTORIES.includes(factory)) throw new Error(`[features-service] scope outcome ledger: a producedElsewhere group names an unknown factory ${String(factory)}`);
+    const days = elsewhereByDay.get(key) ?? elsewhereByDay.set(key, new Map()).get(key)!;
+    const byFactory = days.get(day) ?? days.set(day, new Map()).get(day)!;
+    byFactory.set(factory, (byFactory.get(factory) ?? 0) + (g.occurrences ?? 0));
+  }
+  return { producedByDay, ownCostUsd, undeclaredConsumptions, elsewhereByDay, daysMissing: [...(body.daysMissing ?? [])].sort() };
 }
 
 /** PURE. Fleet performers body as outcome -> services declaring it. */
@@ -152,8 +168,17 @@ export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string
   const producedByDay = new Map<string, Map<string, number>>();
   const ownCostUsd = new Map<string, number>();
   const undeclaredConsumptions = new Map<string, number>();
+  const elsewhereByDay = new Map<string, Map<string, Map<OtherFactory, number>>>();
   const daysMissing = new Set<string>();
   for (const p of parts) {
+    // Another factory's Units carry no campaign (a reach has no run): a campaign-scoped read holds none, merged all the same.
+    for (const [k, days] of p.elsewhereByDay) {
+      const into = elsewhereByDay.get(k) ?? elsewhereByDay.set(k, new Map()).get(k)!;
+      for (const [d, byF] of days) {
+        const f = into.get(d) ?? into.set(d, new Map()).get(d)!;
+        for (const [x, n] of byF) f.set(x, (f.get(x) ?? 0) + n);
+      }
+    }
     for (const [k, days] of p.producedByDay) {
       const into = producedByDay.get(k) ?? producedByDay.set(k, new Map()).get(k)!;
       for (const [d, n] of days) into.set(d, (into.get(d) ?? 0) + n);
@@ -166,6 +191,7 @@ export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string
     producedByDay,
     ownCostUsd,
     undeclaredConsumptions,
+    elsewhereByDay,
     unitCosts: brand.unitCosts,
     fleetProducers: brand.fleetProducers,
     fleetProducersKnown: brand.fleetProducersKnown,
@@ -248,5 +274,5 @@ export function ledgerOfWorkflowSlugs(units: ReadonlyMap<string, ReadonlyMap<str
       const into = producedByDay.get(k) ?? producedByDay.set(k, new Map()).get(k)!;
       for (const [d, n] of byDay) into.set(d, (into.get(d) ?? 0) + n);
     }
-  return { ...brand, producedByDay, ownCostUsd: new Map() };
+  return { ...brand, producedByDay, elsewhereByDay: new Map(), ownCostUsd: new Map() };
 }

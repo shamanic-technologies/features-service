@@ -11,10 +11,13 @@
  * ONE resolver from a catalogue STEP to its ledger outcome keys (`ledgerKeysOfStep`): the step itself, except a step that
  * is the ONLY evidence of its lead state (a click is the only way to `lead_visited`): runs-service declares that state,
  * never the event. Read off `CODED_STEP_LEAD_STATES`, never a list.
+ *
+ * LEDGER-OTHER-FACTORY-1107: a COUNT is the TOTAL Units (ours + another factory's), a conversion divides totals; every
+ * MONEY figure ($ per outcome, the learning price, the cost curve, a value) divides OUR Units only (`ourUnits`).
  */
 import { CODED_STEP_LEAD_STATES, leadStateOf } from "./lead-states.js";
 import { funnelLeg } from "./funnel-legs.js";
-import { scopeOutcomeLedgerRowOf, type LedgerProducerGap, type ScopeOutcomeLedgerInput, type ScopeOutcomeLedgerRow } from "./scope-outcome-ledger.js";
+import { scopeOutcomeLedgerRowOf, type OtherFactoryUnits, type LedgerProducerGap, type ScopeOutcomeLedgerInput, type ScopeOutcomeLedgerRow } from "./scope-outcome-ledger.js";
 
 export const NOT_A_LEDGER_OUTCOME = "not_a_ledger_outcome";
 
@@ -33,7 +36,11 @@ export const ledgerScopeOf = (ledger: ScopeOutcomeLedgerInput | null, reason = "
   ledger === null ? { ledger: null, unavailableReason: reason } : { ledger, unavailableReason: null };
 
 export interface LedgerCount {
+  /** TOTAL Units, every source. */
   units: number | null;
+  /** OUR factory's Units: the only divisor of a money figure. */
+  ourUnits: number | null;
+  otherFactoryUnits: OtherFactoryUnits | null;
   reason: string | null;
   producerGap: LedgerProducerGap | null;
   row: ScopeOutcomeLedgerRow | null;
@@ -41,9 +48,9 @@ export interface LedgerCount {
 
 /** PURE. The scope's Units of a catalogue step. */
 export function ledgerCountOfStep(scope: LedgerScope, step: string): LedgerCount {
-  if (scope.ledger === null) return { units: null, reason: scope.unavailableReason, producerGap: null, row: null };
+  if (scope.ledger === null) return { units: null, ourUnits: null, otherFactoryUnits: null, reason: scope.unavailableReason, producerGap: null, row: null };
   const row = scopeOutcomeLedgerRowOf(ledgerKeysOfStep(step), scope.ledger);
-  return { units: row.units, reason: row.unitsUnavailableReason, producerGap: row.producerGap, row };
+  return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason, producerGap: row.producerGap, row };
 }
 
 export interface LedgerSignalSeries {
@@ -98,6 +105,8 @@ export interface LedgerCountsBlock {
   nullFields: Record<string, string>;
   /** outcome key -> the producer gap (who must declare it). */
   producerGaps: Record<string, LedgerProducerGap>;
+  /** LEDGER-OTHER-FACTORY-1107: outcome key -> the Units of it another factory produced (in the counts, in no money figure). */
+  otherFactoryUnits: Record<string, OtherFactoryUnits>;
   ledgerDaysMissing: string[];
 }
 
@@ -108,14 +117,16 @@ function recorder(scope: LedgerScope, label: string) {
     unavailableReason: scope.unavailableReason,
     nullFields: {},
     producerGaps: {},
+    otherFactoryUnits: {},
     ledgerDaysMissing: scope.ledger?.daysMissing ? [...scope.ledger.daysMissing] : [],
   };
   const count = (field: string, step: string | null): LedgerCount => {
     if (step === null) {
       block.nullFields[field] = NOT_A_LEDGER_OUTCOME;
-      return { units: null, reason: NOT_A_LEDGER_OUTCOME, producerGap: null, row: null };
+      return { units: null, ourUnits: null, otherFactoryUnits: null, reason: NOT_A_LEDGER_OUTCOME, producerGap: null, row: null };
     }
     const c = ledgerCountOfStep(scope, step);
+    if (c.otherFactoryUnits !== null && c.otherFactoryUnits.total > 0 && c.row) block.otherFactoryUnits[c.row.outcomeKeys.join("+")] = c.otherFactoryUnits;
     if (c.units === null) {
       block.nullFields[field] = c.reason ?? "ledger_unreadable";
       if (c.producerGap) for (const k of c.row?.outcomeKeys ?? ledgerKeysOfStep(step)) block.producerGaps[k] = c.producerGap;
@@ -147,7 +158,7 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
     for (const { count: cf, costs, step } of SPEND_COUNTS) {
       const c = count(`spend.${cf ?? costs[0]}`, step);
       if (cf && cf in s) s[cf] = c.units;
-      for (const f of costs) if (f in s) s[f] = div(s[SPEND_NUMERATOR[f] ?? "totalSpentCents"] as number, c.units);
+      for (const f of costs) if (f in s) s[f] = div(s[SPEND_NUMERATOR[f] ?? "totalSpentCents"] as number, c.ourUnits);
     }
     if ("maturity" in s) s.maturity = drop("spend.maturity");
     out.spend = s;
@@ -156,12 +167,12 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
   if (isObj(out.outcomes)) {
     const o: Obj = { ...out.outcomes };
     for (const f of ["recipientsContacted", "recipientsConvertible", "recipientsBounced", "recipientsUnsubscribed"]) if (f in o) o[f] = drop(`outcomes.${f}`);
-    const clicks = count("outcomes.recipientsClicked", "website_visit").units;
-    const replies = count("outcomes.recipientsRepliesPositive", "conversation").units;
-    if ("recipientsClicked" in o) o.recipientsClicked = clicks;
-    if ("recipientsRepliesPositive" in o) o.recipientsRepliesPositive = replies;
-    if ("cpcCents" in o) o.cpcCents = div(o.committedSpentCents as number, clicks);
-    if ("cpprCents" in o) o.cpprCents = div(o.committedSpentCents as number, replies);
+    const clicks = count("outcomes.recipientsClicked", "website_visit");
+    const replies = count("outcomes.recipientsRepliesPositive", "conversation");
+    if ("recipientsClicked" in o) o.recipientsClicked = clicks.units;
+    if ("recipientsRepliesPositive" in o) o.recipientsRepliesPositive = replies.units;
+    if ("cpcCents" in o) o.cpcCents = div(o.committedSpentCents as number, clicks.ourUnits);
+    if ("cpprCents" in o) o.cpprCents = div(o.committedSpentCents as number, replies.ourUnits);
     if ("sending" in o) o.sending = drop("outcomes.sending");
     if ("maturity" in o) o.maturity = drop("outcomes.maturity");
     out.outcomes = o;
@@ -175,13 +186,13 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
     let prev: number | null = null;
     fs.steps = ((fs.steps as Obj[]) ?? []).map((st, i) => {
       const toStep = funnelLeg(String(st.legKey))?.toStep.key ?? null;
-      const c = toStep === null ? { units: null, reason: "leg_unrecognised" } : count(`funnelSteps.steps[${st.legKey}].recipientsReached`, toStep);
+      const c = toStep === null ? { units: null, ourUnits: null, otherFactoryUnits: null, reason: "leg_unrecognised" } : count(`funnelSteps.steps[${st.legKey}].recipientsReached`, toStep);
       const from = i === 0 ? null : prev;
       prev = c.units;
       return {
         ...st,
         recipientsReached: c.units,
-        costPerReachCents: div(spent, c.units),
+        costPerReachCents: div(spent, c.ourUnits),
         ratioBasisRecipientsReached: c.units,
         fromRecipientsReached: from,
         recipientsThroughLeg: from === null ? null : c.units,
@@ -198,10 +209,11 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
     if (c.units === null || c.row === null) out.costPerOutcomeHistory = null;
     else {
       const daily = (h.daily ?? []).map((p) => {
-        const n = cumulativeAt(c.row!, p.date);
+        // A cost curve divides OUR Units only (another factory's carry none of our cost).
+        const n = cumulativeAt(c.row!, p.date, true);
         return { ...p, cumulativeOutcomes: n, costPerOutcomeUsd: div(p.cumulativeSpendUsd, n) };
       });
-      out.costPerOutcomeHistory = { ...h, isMature: null, outcomeObserved: true, daily, datedOutcomes: c.units, undatedOutcomes: 0 };
+      out.costPerOutcomeHistory = { ...h, isMature: null, outcomeObserved: true, daily, datedOutcomes: c.row.ourUnits, undatedOutcomes: 0 };
     }
   }
 
@@ -235,7 +247,9 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
 
   if (isObj(out.learningPhase)) {
     const lp = out.learningPhase as Obj & { outcomeStep?: { key?: string } | null; outcomesRequired?: number; committedSpentUsd?: number | null };
-    const c = lp.outcomeStep?.key ? count("learningPhase.outcomesObserved", lp.outcomeStep.key) : { units: null, row: null };
+    // Learning = what OUR spend produced: OUR Units (a client's own Paid clients prove nothing about our workflow).
+    const lc = lp.outcomeStep?.key ? count("learningPhase.outcomesObserved", lp.outcomeStep.key) : null;
+    const c = { units: lc?.ourUnits ?? null };
     const required = lp.outcomesRequired ?? 10;
     const price = c.units !== null && c.units > 0 && (lp.committedSpentUsd ?? 0) > 0 ? lp.committedSpentUsd! / c.units : null;
     out.learningPhase = {
@@ -260,11 +274,11 @@ export function withLedgerCounts<T extends object>(body: T, scope: LedgerScope, 
   return out as T;
 }
 
-function cumulativeAt(row: ScopeOutcomeLedgerRow, day: string): number {
+function cumulativeAt(row: ScopeOutcomeLedgerRow, day: string, oursOnly = false): number {
   let v = 0;
   for (const p of row.past) {
     if (p.date > day) break;
-    v = p.cumulativeUnits;
+    v = oursOnly ? p.cumulativeOurUnits : p.cumulativeUnits;
   }
   return v;
 }
@@ -346,12 +360,14 @@ export function withLedgerDayChart<T extends object>(input: T, scope: LedgerScop
     : body.summary;
   const nullFields: Record<string, string> = { "metrics.opens": NOT_A_LEDGER_OUTCOME, "summary.openRatePct": NOT_A_LEDGER_OUTCOME };
   const producerGaps: Record<string, LedgerProducerGap> = {};
+  const otherFactoryUnits: Record<string, OtherFactoryUnits> = {};
+  for (const c of Object.values(series)) if (c.otherFactoryUnits !== null && c.otherFactoryUnits.total > 0 && c.row) otherFactoryUnits[c.row.outcomeKeys.join("+")] = c.otherFactoryUnits;
   for (const [k, c] of Object.entries(series))
     if (c.units === null) {
       nullFields[`metrics.${k}.actual`] = c.reason ?? "ledger_unreadable";
       if (c.producerGap) for (const key of c.row?.outcomeKeys ?? []) producerGaps[key] = c.producerGap;
     }
-  const ledgerCounts: LedgerCountsBlock = { basis: "ledger", scope: "brand", unavailableReason: scope.unavailableReason, nullFields, producerGaps, ledgerDaysMissing: [...(scope.ledger?.daysMissing ?? [])] };
+  const ledgerCounts: LedgerCountsBlock = { basis: "ledger", scope: "brand", unavailableReason: scope.unavailableReason, nullFields, producerGaps, otherFactoryUnits, ledgerDaysMissing: [...(scope.ledger?.daysMissing ?? [])] };
   return { ...(input as Obj), days, summary, ledgerCounts } as unknown as T;
 }
 
@@ -367,17 +383,17 @@ const RUNG_STEPS: Readonly<Record<string, readonly string[] | null>> = {
 };
 
 /** PURE. A lifecycle rung's ledger Units in a scope. */
-export function ledgerUnitsOfRung(scope: LedgerScope, rung: string): { units: number | null; reason: string | null } {
+export function ledgerUnitsOfRung(scope: LedgerScope, rung: string): { units: number | null; ourUnits: number | null; otherFactoryUnits: OtherFactoryUnits | null; reason: string | null } {
   const steps = RUNG_STEPS[rung];
-  if (!steps) return { units: null, reason: NOT_A_LEDGER_OUTCOME };
-  if (scope.ledger === null) return { units: null, reason: scope.unavailableReason };
+  if (!steps) return { units: null, ourUnits: null, otherFactoryUnits: null, reason: NOT_A_LEDGER_OUTCOME };
+  if (scope.ledger === null) return { units: null, ourUnits: null, otherFactoryUnits: null, reason: scope.unavailableReason };
   const row = scopeOutcomeLedgerRowOf(steps.flatMap(ledgerKeysOfStep), scope.ledger);
-  return { units: row.units, reason: row.unitsUnavailableReason };
+  return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason };
 }
 
 /**
- * PURE. LEDGER-ONLY-1107-P2: the Deals standing body (Interested / Won). The WON column's value = the ledger's Paid client
- * Units x LTR (never the CRM's won standing), its cards carry none; people / organisation counts on a column are no ledger
+ * PURE. LEDGER-ONLY-1107-P2: the Deals standing body (Interested / Won). The WON column's value = the ledger's OUR Paid client
+ * Units x LTR (its `units` = the total, another factory's included) (never the CRM's won standing), its cards carry none; people / organisation counts on a column are no ledger
  * figure (null). Interested stays the pipeline's expected value (a forecast), its counts null.
  */
 export function withLedgerDealsColumns<T extends { lifetimeRevenueUsd: number | null; columns: Array<Obj & { standing: string; basis: string | null }> }>(r: T, scope: LedgerScope): T {
@@ -385,11 +401,14 @@ export function withLedgerDealsColumns<T extends { lifetimeRevenueUsd: number | 
   const columns = r.columns.map((c) => {
     const base = { ...c, leadCount: null, organizationCount: null, unpricedLeadCount: null };
     if (c.basis !== "won_value") return base;
-    const valueUsd = paid.units === null || r.lifetimeRevenueUsd === null ? null : Math.round(paid.units * r.lifetimeRevenueUsd * 100) / 100;
+    // Value = OUR Paid clients × LTR; another factory's are counted in `units`, worth nothing of ours.
+    const valueUsd = paid.ourUnits === null || r.lifetimeRevenueUsd === null ? null : Math.round(paid.ourUnits * r.lifetimeRevenueUsd * 100) / 100;
     return {
       ...base,
       valueUsd,
       units: paid.units,
+      ourUnits: paid.ourUnits,
+      otherFactoryUnits: paid.otherFactoryUnits,
       unitsUnavailableReason: paid.units === null ? paid.reason : null,
       leads: ((c.leads as Obj[] | undefined) ?? []).map((l) => ({ ...l, valueUsd: null, valueSource: null })),
     };

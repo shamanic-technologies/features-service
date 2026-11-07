@@ -1056,6 +1056,32 @@
                 },
                 "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
               },
+              "otherFactoryUnits": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                },
+                "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
+              },
               "ledgerDaysMissing": {
                 "type": "array",
                 "items": {
@@ -1292,6 +1318,32 @@
                       },
                       "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
                     },
+                    "otherFactoryUnits": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "total": {
+                            "type": "integer"
+                          },
+                          "anotherFactory": {
+                            "type": "integer",
+                            "description": "Reached by the client's CRM, team or site, or before our first touch."
+                          },
+                          "noProof": {
+                            "type": "integer",
+                            "description": "No proof our outreach caused it."
+                          }
+                        },
+                        "required": [
+                          "total",
+                          "anotherFactory",
+                          "noProof"
+                        ],
+                        "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                      },
+                      "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
+                    },
                     "ledgerDaysMissing": {
                       "type": "array",
                       "items": {
@@ -1373,6 +1425,32 @@
                   ]
                 },
                 "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+              },
+              "otherFactoryUnits": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                },
+                "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
               },
               "ledgerDaysMissing": {
                 "type": "array",
@@ -1618,6 +1696,32 @@
                         ]
                       },
                       "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                    },
+                    "otherFactoryUnits": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "total": {
+                            "type": "integer"
+                          },
+                          "anotherFactory": {
+                            "type": "integer",
+                            "description": "Reached by the client's CRM, team or site, or before our first touch."
+                          },
+                          "noProof": {
+                            "type": "integer",
+                            "description": "No proof our outreach caused it."
+                          }
+                        },
+                        "required": [
+                          "total",
+                          "anotherFactory",
+                          "noProof"
+                        ],
+                        "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                      },
+                      "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
                     },
                     "ledgerDaysMissing": {
                       "type": "array",
@@ -4456,6 +4560,32 @@
               ]
             },
             "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+          },
+          "otherFactoryUnits": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "anotherFactory": {
+                  "type": "integer",
+                  "description": "Reached by the client's CRM, team or site, or before our first touch."
+                },
+                "noProof": {
+                  "type": "integer",
+                  "description": "No proof our outreach caused it."
+                }
+              },
+              "required": [
+                "total",
+                "anotherFactory",
+                "noProof"
+              ],
+              "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+            },
+            "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
           },
           "ledgerDaysMissing": {
             "type": "array",
@@ -11386,6 +11516,29 @@
                   "nullable": true,
                   "description": "DISTINCT leads that reached the step, every cause counted, whole history. 0 is measured; null = the producer behind this step was unreadable, or nothing in the fleet counts the step."
                 },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107: of recipientsReached (the ledger's TOTAL), the Units another factory produced; costPerOutcomeUsd and valueUsd divide / multiply OUR Units only."
+                },
                 "spentUsd": {
                   "type": "number",
                   "description": "COMMITTED spend of the campaigns whose leg LANDS on this step (actual + provisioned), whole history, on the requested pricing basis."
@@ -11491,6 +11644,29 @@
                         "type": "integer",
                         "nullable": true,
                         "description": "DISTINCT leads that reached the step, every cause counted, whole history. 0 is measured; null = the producer behind this step was unreadable, or nothing in the fleet counts the step."
+                      },
+                      "otherFactoryUnits": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "total": {
+                            "type": "integer"
+                          },
+                          "anotherFactory": {
+                            "type": "integer",
+                            "description": "Reached by the client's CRM, team or site, or before our first touch."
+                          },
+                          "noProof": {
+                            "type": "integer",
+                            "description": "No proof our outreach caused it."
+                          }
+                        },
+                        "required": [
+                          "total",
+                          "anotherFactory",
+                          "noProof"
+                        ],
+                        "description": "LEDGER-OTHER-FACTORY-1107: of recipientsReached (the ledger's TOTAL), the Units another factory produced; costPerOutcomeUsd and valueUsd divide / multiply OUR Units only."
                       },
                       "spentUsd": {
                         "type": "number",
@@ -11620,6 +11796,29 @@
                       "type": "integer",
                       "nullable": true,
                       "description": "Distinct offer leads that reached the step (every cause). Null = the step is not counted or its producer was unreadable."
+                    },
+                    "otherFactoryUnits": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "anotherFactory": {
+                          "type": "integer",
+                          "description": "Reached by the client's CRM, team or site, or before our first touch."
+                        },
+                        "noProof": {
+                          "type": "integer",
+                          "description": "No proof our outreach caused it."
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "anotherFactory",
+                        "noProof"
+                      ],
+                      "description": "LEDGER-OTHER-FACTORY-1107: of recipientsReached, the Units another factory produced (pricedRecipientsReached = OUR Units)."
                     },
                     "pricedRecipientsReached": {
                       "type": "integer",
@@ -12271,6 +12470,29 @@
                   "otherCausesLeadCount": {
                     "type": "integer",
                     "description": "Paying clients counted but not priced (another cause, or unstated)."
+                  },
+                  "otherFactoryUnits": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "total": {
+                        "type": "integer"
+                      },
+                      "anotherFactory": {
+                        "type": "integer",
+                        "description": "Reached by the client's CRM, team or site, or before our first touch."
+                      },
+                      "noProof": {
+                        "type": "integer",
+                        "description": "No proof our outreach caused it."
+                      }
+                    },
+                    "required": [
+                      "total",
+                      "anotherFactory",
+                      "noProof"
+                    ],
+                    "description": "LEDGER-OTHER-FACTORY-1107: of `count` (the ledger's TOTAL Paid client Units), those another factory produced."
                   }
                 },
                 "required": [
@@ -23885,12 +24107,35 @@
                   "costPerOutcomeUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "ACTUAL: spendUsd / outcomes."
+                    "description": "ACTUAL: spendUsd / OUR Units of the outcome (outcomes minus otherFactoryUnits.total)."
                   },
                   "standardCostPerOutcomeUsd": {
                     "type": "number",
                     "nullable": true,
                     "description": "STANDARD: the ledger's every-path unit cost of the outcome (= offerTargets[].costPerOutcomeUsd)."
+                  },
+                  "otherFactoryUnits": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "total": {
+                        "type": "integer"
+                      },
+                      "anotherFactory": {
+                        "type": "integer",
+                        "description": "Reached by the client's CRM, team or site, or before our first touch."
+                      },
+                      "noProof": {
+                        "type": "integer",
+                        "description": "No proof our outreach caused it."
+                      }
+                    },
+                    "required": [
+                      "total",
+                      "anotherFactory",
+                      "noProof"
+                    ],
+                    "description": "LEDGER-OTHER-FACTORY-1107: the Units of `outcomes` another factory produced (in the count, in no $ / outcome)."
                   },
                   "entered": {
                     "type": "integer",
@@ -23917,6 +24162,7 @@
                   "outcomes",
                   "costPerOutcomeUsd",
                   "standardCostPerOutcomeUsd",
+                  "otherFactoryUnits",
                   "entered",
                   "converted",
                   "conversionRatePct",
@@ -25580,6 +25826,39 @@
                   "type": "number",
                   "nullable": true
                 },
+                "units": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Won column: the brand ledger's TOTAL Paid client Units, every source."
+                },
+                "ourUnits": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Won column (LEDGER-OTHER-FACTORY-1107): OUR Paid client Units; the column's value = these × LTR."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                },
                 "unpricedLeadCount": {
                   "type": "number",
                   "nullable": true,
@@ -25711,6 +25990,39 @@
                 "organizationCount": {
                   "type": "number",
                   "nullable": true
+                },
+                "units": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Won column: the brand ledger's TOTAL Paid client Units, every source."
+                },
+                "ourUnits": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Won column (LEDGER-OTHER-FACTORY-1107): OUR Paid client Units; the column's value = these × LTR."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
                 },
                 "unpricedLeadCount": {
                   "type": "number",
@@ -25932,11 +26244,39 @@
                 "units": {
                   "type": "number",
                   "nullable": true,
-                  "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the rung's outcome (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."
+                  "description": "LEDGER-ONLY-1107-P2: the brand ledger's TOTAL Units of the rung's outcome, every source (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."
                 },
                 "unitsUnavailableReason": {
                   "type": "string",
                   "nullable": true
+                },
+                "ourUnits": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-OTHER-FACTORY-1107: OUR Units of the rung (Paid client's won value = these × LTR)."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
                 },
                 "cards": {
                   "type": "array",
@@ -26029,6 +26369,8 @@
                 "organizationCount",
                 "units",
                 "unitsUnavailableReason",
+                "ourUnits",
+                "otherFactoryUnits",
                 "cards"
               ]
             },
@@ -37415,6 +37757,32 @@
                                 },
                                 "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
                               },
+                              "otherFactoryUnits": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "total": {
+                                      "type": "integer"
+                                    },
+                                    "anotherFactory": {
+                                      "type": "integer",
+                                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                                    },
+                                    "noProof": {
+                                      "type": "integer",
+                                      "description": "No proof our outreach caused it."
+                                    }
+                                  },
+                                  "required": [
+                                    "total",
+                                    "anotherFactory",
+                                    "noProof"
+                                  ],
+                                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                                },
+                                "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
+                              },
                               "ledgerDaysMissing": {
                                 "type": "array",
                                 "items": {
@@ -37496,6 +37864,32 @@
                             ]
                           },
                           "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                        },
+                        "otherFactoryUnits": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "total": {
+                                "type": "integer"
+                              },
+                              "anotherFactory": {
+                                "type": "integer",
+                                "description": "Reached by the client's CRM, team or site, or before our first touch."
+                              },
+                              "noProof": {
+                                "type": "integer",
+                                "description": "No proof our outreach caused it."
+                              }
+                            },
+                            "required": [
+                              "total",
+                              "anotherFactory",
+                              "noProof"
+                            ],
+                            "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                          },
+                          "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
                         },
                         "ledgerDaysMissing": {
                           "type": "array",
@@ -46733,6 +47127,32 @@
                                   ]
                                 },
                                 "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                              },
+                              "otherFactoryUnits": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "total": {
+                                      "type": "integer"
+                                    },
+                                    "anotherFactory": {
+                                      "type": "integer",
+                                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                                    },
+                                    "noProof": {
+                                      "type": "integer",
+                                      "description": "No proof our outreach caused it."
+                                    }
+                                  },
+                                  "required": [
+                                    "total",
+                                    "anotherFactory",
+                                    "noProof"
+                                  ],
+                                  "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                                },
+                                "description": "LEDGER-OTHER-FACTORY-1107: outcome key(s) -> the Units another factory produced. Every count on the body is the TOTAL (ours + these); every $ per outcome, cost curve and learning price divides OUR Units only."
                               },
                               "ledgerDaysMissing": {
                                 "type": "array",
@@ -77674,7 +78094,7 @@
                           "outcomesToDate": {
                             "type": "number",
                             "nullable": true,
-                            "description": "LEDGER-ONLY-1107: the BRAND's total Units of the Target outcome in the general ledger (every source, every campaign, each Unit ONCE), never the sum of what the campaigns attributed. Null + outcomesUnavailableReason (`outcome_not_declared_in_ledger` + ledger.producerGap, `no_producer_declares_outcome`, `ledger_unreadable`)."
+                            "description": "LEDGER-ONLY-1107: the BRAND's total Units of the Target outcome in the general ledger (every source, every campaign, each Unit ONCE; LEDGER-OTHER-FACTORY-1107: another factory's Units included, `ledger.otherFactoryUnits`), never the sum of what the campaigns attributed. Null + outcomesUnavailableReason (`outcome_not_declared_in_ledger` + ledger.producerGap, `no_producer_declares_outcome`, `ledger_unreadable`)."
                           },
                           "outcomesUnavailableReason": {
                             "type": "string",
@@ -77683,7 +78103,7 @@
                           "spentUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "What those Units cost to produce: outcomesToDate × costPerOutcomeUsd (ledger)."
+                            "description": "What OUR Units cost to produce: ledger.ourUnits × costPerOutcomeUsd (ledger)."
                           },
                           "costPerOutcomeUsd": {
                             "type": "number",
@@ -77720,7 +78140,7 @@
                               "spentUsd",
                               "unavailableReason"
                             ],
-                            "description": "outcomesToDate × the Target's value ÷ spentUsd (ledger)."
+                            "description": "ledger.ourUnits × the Target's value ÷ spentUsd (ledger; another factory's Units are no return of ours)."
                           },
                           "past": {
                             "type": "array",
@@ -77896,6 +78316,34 @@
                                 ],
                                 "description": "Who must declare the outcome in the ledger (runs-service), when the ledger lacks it."
                               },
+                              "ourUnits": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "LEDGER-OTHER-FACTORY-1107: OUR Units of the Target (spent, $ each, value and return divide these)."
+                              },
+                              "otherFactoryUnits": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "total": {
+                                    "type": "integer"
+                                  },
+                                  "anotherFactory": {
+                                    "type": "integer",
+                                    "description": "Reached by the client's CRM, team or site, or before our first touch."
+                                  },
+                                  "noProof": {
+                                    "type": "integer",
+                                    "description": "No proof our outreach caused it."
+                                  }
+                                },
+                                "required": [
+                                  "total",
+                                  "anotherFactory",
+                                  "noProof"
+                                ],
+                                "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
+                              },
                               "ledgerDaysMissing": {
                                 "type": "array",
                                 "items": {
@@ -77908,6 +78356,8 @@
                               "outcomeKeys",
                               "costPerUnitBasis",
                               "producerGap",
+                              "ourUnits",
+                              "otherFactoryUnits",
                               "ledgerDaysMissing"
                             ],
                             "description": "LEDGER-ONLY-1107: the entry's measured figures are the BRAND's ledger total of its Target outcome. Null = no Target, or the ledger was unreadable."
@@ -77956,7 +78406,35 @@
                           "units": {
                             "type": "number",
                             "nullable": true,
-                            "description": "Total Units of the outcome in the brand's ledger, every source, every campaign, each once."
+                            "description": "Total Units of the outcome in the brand's ledger, every source (ours + otherFactoryUnits), every campaign, each once."
+                          },
+                          "ourUnits": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "LEDGER-OTHER-FACTORY-1107: OUR Units; costPerUnitUsd and productionCostUsd divide these."
+                          },
+                          "otherFactoryUnits": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "total": {
+                                "type": "integer"
+                              },
+                              "anotherFactory": {
+                                "type": "integer",
+                                "description": "Reached by the client's CRM, team or site, or before our first touch."
+                              },
+                              "noProof": {
+                                "type": "integer",
+                                "description": "No proof our outreach caused it."
+                              }
+                            },
+                            "required": [
+                              "total",
+                              "anotherFactory",
+                              "noProof"
+                            ],
+                            "description": "LEDGER-OTHER-FACTORY-1107 (owner 2026-11-07, « INDEPENDAMMENT DES SOURCES »): the Units of the outcome another factory produced (runs-service `producedElsewhere`). They are IN the count (total = ours + these) and in NO money figure: $ each, cost, value and return divide OUR Units only (IAS 2)."
                           },
                           "unitsUnavailableReason": {
                             "type": "string",
@@ -77992,7 +78470,7 @@
                           "costPerUnitUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "$ each: the ledger's every-path unit cost, else its own production cost per Unit (costPerUnitBasis)."
+                            "description": "$ each over OUR Units: the ledger's every-path unit cost, else its own production cost per Unit (costPerUnitBasis). Null `no_unit_of_ours_yet` when only another factory made it."
                           },
                           "costPerUnitBasis": {
                             "type": "string",
@@ -78010,7 +78488,7 @@
                           "productionCostUsd": {
                             "type": "number",
                             "nullable": true,
-                            "description": "units × costPerUnitUsd."
+                            "description": "ourUnits × costPerUnitUsd."
                           },
                           "past": {
                             "type": "array",
@@ -78025,15 +78503,27 @@
                                 },
                                 "cumulativeUnits": {
                                   "type": "number"
+                                },
+                                "ourUnits": {
+                                  "type": "number"
+                                },
+                                "cumulativeOurUnits": {
+                                  "type": "number"
+                                },
+                                "otherFactoryUnits": {
+                                  "type": "number"
                                 }
                               },
                               "required": [
                                 "date",
                                 "units",
-                                "cumulativeUnits"
+                                "cumulativeUnits",
+                                "ourUnits",
+                                "cumulativeOurUnits",
+                                "otherFactoryUnits"
                               ]
                             },
-                            "description": "One point per UTC day from the first Unit to today."
+                            "description": "One point per UTC day from the first Unit to today: units = total, ourUnits + otherFactoryUnits its two parts."
                           },
                           "ledgerDaysMissing": {
                             "type": "array",
@@ -78048,6 +78538,8 @@
                           "lifecycleRung",
                           "outcomeKeys",
                           "units",
+                          "ourUnits",
+                          "otherFactoryUnits",
                           "unitsUnavailableReason",
                           "producerGap",
                           "costPerUnitUsd",

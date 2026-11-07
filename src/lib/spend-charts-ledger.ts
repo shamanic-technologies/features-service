@@ -24,16 +24,20 @@ export type LedgerSpendChartPoint = Nullable<
 
 export type LedgerSpendChart = Omit<SpendChart, "daily" | "totals"> & {
   daily: LedgerSpendChartPoint[];
-  totals: Nullable<SpendChart["totals"], "outcomes" | "entered" | "converted"> & { standardCostPerOutcomeUsd: number | null };
+  totals: Nullable<SpendChart["totals"], "outcomes" | "entered" | "converted"> & {
+    standardCostPerOutcomeUsd: number | null;
+    /** LEDGER-OTHER-FACTORY-1107: the Units of `outcomes` another factory produced (in no $ / outcome). */
+    otherFactoryUnits: import("./scope-outcome-ledger.js").OtherFactoryUnits | null;
+  };
   ledger: { scope: "brand" | "campaign" | "pipe"; outcomeKeys: string[]; entryKeys: string[]; producerGap: LedgerProducerGap | null; ledgerDaysMissing: string[] };
 };
 
-const cumulativeAt = (row: ScopeOutcomeLedgerRow | null, day: string): number | null => {
+const cumulativeAt = (row: ScopeOutcomeLedgerRow | null, day: string, oursOnly = false): number | null => {
   if (row === null || row.units === null) return null;
   let v = 0;
   for (const p of row.past) {
     if (p.date > day) break;
-    v = p.cumulativeUnits;
+    v = oursOnly ? p.cumulativeOurUnits : p.cumulativeUnits;
   }
   return v;
 };
@@ -54,12 +58,14 @@ export function rebaseSpendChartOnLedger(
   const conversionReason = chart.conversionUnavailableReason ?? (entry === null ? "no_entry_population" : entry.units === null ? entry.unitsUnavailableReason : null);
   const daily: LedgerSpendChartPoint[] = chart.daily.map((p) => {
     const cumulativeOutcomes = cumulativeAt(o, p.date);
+    // LEDGER-OTHER-FACTORY-1107: $ / outcome divides OUR Units only.
+    const cumulativeOurs = cumulativeAt(o, p.date, true);
     const cumulativeEntered = conversionReason === null ? cumulativeAt(e, p.date) : null;
     const converted = conversionReason === null ? cumulativeOutcomes : null;
     return {
       ...p,
       cumulativeOutcomes,
-      costPerOutcomeUsd: cumulativeOutcomes !== null && cumulativeOutcomes > 0 && p.cumulativeSpendUsd > 0 ? p.cumulativeSpendUsd / cumulativeOutcomes : null,
+      costPerOutcomeUsd: cumulativeOurs !== null && cumulativeOurs > 0 && p.cumulativeSpendUsd > 0 ? p.cumulativeSpendUsd / cumulativeOurs : null,
       entered: conversionReason === null ? unitsOn(e, p.date) : null,
       cohortOutcomes: null,
       cohortConversionPct: null,
@@ -72,6 +78,7 @@ export function rebaseSpendChartOnLedger(
     };
   });
   const units = o?.units ?? null;
+  const ours = o?.ourUnits ?? null;
   const entered = conversionReason === null ? e?.units ?? null : null;
   return {
     ...chart,
@@ -81,7 +88,8 @@ export function rebaseSpendChartOnLedger(
     totals: {
       spendUsd: chart.totals.spendUsd,
       outcomes: units,
-      costPerOutcomeUsd: units !== null && units > 0 && chart.totals.spendUsd > 0 ? chart.totals.spendUsd / units : null,
+      costPerOutcomeUsd: ours !== null && ours > 0 && chart.totals.spendUsd > 0 ? chart.totals.spendUsd / ours : null,
+      otherFactoryUnits: o?.otherFactoryUnits ?? null,
       standardCostPerOutcomeUsd: o?.costPerUnitUsd ?? null,
       entered,
       converted: entered === null ? null : units,

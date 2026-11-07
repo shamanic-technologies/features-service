@@ -31,21 +31,22 @@ export type RevenueRealUnavailableReason = "closed_deals_not_read" | "outcome_no
  */
 export function withLedgerRealHalf(
   rg: RevenueGenerated,
-  paid: { units: number | null; unitsUnavailableReason: string | null; past: ReadonlyArray<{ date: string; units: number; cumulativeUnits: number }> } | null,
+  // LEDGER-OTHER-FACTORY-1107: revenue WE generated = OUR Paid client Units only (another factory's are no revenue of ours).
+  paid: { units: number | null; ourUnits: number | null; unitsUnavailableReason: string | null; past: ReadonlyArray<{ date: string; ourUnits: number; cumulativeOurUnits: number }> } | null,
   lifetimeRevenueUsd: number | null,
 ): RevenueGenerated {
   const reason: RevenueRealUnavailableReason | null =
     paid === null ? "ledger_unreadable" : paid.units === null ? (paid.unitsUnavailableReason as RevenueRealUnavailableReason) : lifetimeRevenueUsd === null ? "lifetime_revenue_not_stated" : null;
-  if (reason !== null || paid === null || paid.units === null || lifetimeRevenueUsd === null) {
+  if (reason !== null || paid === null || paid.ourUnits === null || lifetimeRevenueUsd === null) {
     return { ...rg, realUsd: null, paidClientCount: null, realUnavailableReason: reason, undatedRealUsd: null, points: rg.points.map((p) => ({ ...p, realUsd: null, realCumulativeUsd: null })) };
   }
   const ltr = lifetimeRevenueUsd;
-  const units = paid.units;
+  const units = paid.ourUnits;
   const cumAt = (day: string) => {
     let v = 0;
     for (const p of paid.past) {
       if (p.date > day) break;
-      v = p.cumulativeUnits;
+      v = p.cumulativeOurUnits;
     }
     return v;
   };
@@ -62,7 +63,7 @@ export function withLedgerRealHalf(
         : {
             ...p,
             // Units dated before the chart's first day land on it, so the curve still ends at the total.
-            realUsd: round(((paid.past.find((x) => x.date === p.date)?.units ?? 0) + (p.date === firstPoint ? cumAt(addDays(p.date, -1)) : 0)) * ltr),
+            realUsd: round(((paid.past.find((x) => x.date === p.date)?.ourUnits ?? 0) + (p.date === firstPoint ? cumAt(addDays(p.date, -1)) : 0)) * ltr),
             realCumulativeUsd: round(cumAt(p.date) * ltr),
           },
     ),
