@@ -109,7 +109,7 @@ router.put("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     }
     // A typo would store an assignment no row ever matches, so the dynasty must be one workflow-service
     // describes for this channel (any status: a retired lineage can still be deprecated on a leg).
-    const catalogue = await fetchStatedPublicWorkflows(featureSlug, "all");
+    const catalogue = await fetchStatedPublicWorkflows(featureSlug, "all", true);
     if (!catalogue.some((w) => w.workflowDynastySlug === workflowDynastySlug)) {
       res.status(404).json({
         error: `workflow-service describes no dynasty ${workflowDynastySlug} for ${featureSlug}`,

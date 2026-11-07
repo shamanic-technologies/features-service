@@ -88,6 +88,16 @@ export interface FetchRetryOptions {
    * (`lib/runs-ledger-read.ts`) must not stack a second hold on top of its own.
    */
   backgroundShare?: false;
+  /**
+   * OUTSIDE a view compute (fleet builds, warm passes, loops, plain routes), hold this read for this long in the
+   * background store (BOX-LOAD-1107): concurrent askers share the in-flight read, a successful answer is reused for the
+   * window (never served past it, never re-read behind), a failure never. Only for an input that moves slower than the
+   * window AND whose caller never reads it right after writing it (a write path asks `fresh`). Prod 2026-11-07: the agent
+   * catalogue model (`loadModel`: every catalogue read, the factory shadow pass, every expected-return model) re-read
+   * workflow-service's whole catalogue once per feature on every build, ~1,036 `/public/workflows` reads a minute
+   * (68 KB, 0.27 s each) from the serving process. Off when `RUNS_READ_SHARE_MS=0` (the test suites).
+   */
+  holdOutsideViewMs?: number;
 }
 
 /**
@@ -193,6 +203,10 @@ export async function fetchWithRetry(
     const bg = backgroundReadMs();
     if (bg > 0 && opts?.backgroundShare !== false && isRunsServiceRead(input) && sharedKey(input, init) !== null) {
       return toResponse(await readShared(input, init, opts, bg, false, backgroundReads));
+    }
+    const hold = opts?.holdOutsideViewMs ?? 0;
+    if (bg > 0 && hold > 0 && opts?.backgroundShare !== false && sharedKey(input, init) !== null) {
+      return toResponse(await readShared(input, init, opts, hold, false, backgroundReads));
     }
     return fetchWithRetryOnce(input, init, opts);
   }
