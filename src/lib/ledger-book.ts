@@ -6,6 +6,7 @@
  * fleet (never half the pipes on each).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { readRunsLedger } from "./runs-ledger-read.js";
 import { matureCutParams, type LedgerBasis } from "./outcome-cost-totals-client.js";
 import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
@@ -104,10 +105,16 @@ export function monthRanges(first: string, last: string): Array<[string, string]
   return out;
 }
 
+/**
+ * A month read answers every basis's book built within 5 min of it (the books of one fleet build ask gross, net, vendor and
+ * unpriced back to back); a book is then held 15 min as before, so it stands on a read at most 20 min old.
+ */
+const BOOK_READ_HOLD_MS = 5 * 60_000;
+
 async function readRange(groupBy: string, since: string, until: string, runStartUntil?: string, depth = 0): Promise<Wire> {
-  const r = await fetchWithRetry(`${process.env.RUNS_SERVICE_URL}/internal/stats/outcome-costs?groupBy=${groupBy}&since=${since}&until=${until}${matureCutParams(runStartUntil)}`, {
-    headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" },
-  });
+  // LEDGER-LOAD-1107: one runs-service read per month URL for EVERY basis (gross, net, vendor, unpriced each parse it),
+  // shared process-wide and held as long as a book is.
+  const r = await readRunsLedger(`/internal/stats/outcome-costs?groupBy=${groupBy}&since=${since}&until=${until}${matureCutParams(runStartUntil)}`, BOOK_READ_HOLD_MS);
   // over runs-service's group cap: the range splits in halves (every section is additive over disjoint days)
   // ...and on a server error too, up to 3 halvings: a month that times out under load (runs-service 500, statement
   // timeout, 2026-11-01) reads as two smaller ones. Every section is additive over disjoint days either way.
@@ -117,8 +124,8 @@ async function readRange(groupBy: string, since: string, until: string, runStart
     const after = new Date(Date.parse(`${mid}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
     return concatWire([await readRange(groupBy, since, mid, runStartUntil, depth + 1), await readRange(groupBy, after, until, runStartUntil, depth + 1)]);
   }
-  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy} ${since}..${until}) ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return (await r.json()) as Wire;
+  if (!r.ok) throw new Error(`[features-service] runs-service outcome-costs (${groupBy} ${since}..${until}) ${r.status}: ${r.text.slice(0, 200)}`);
+  return r.json as Wire;
 }
 
 /** PURE. Disjoint day ranges of one read as one body: rows concatenated (every reader sums them), missing days unioned. */

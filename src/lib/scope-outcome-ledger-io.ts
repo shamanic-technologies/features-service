@@ -10,7 +10,7 @@
  *
  * FAIL-LOUD: the caller decides how to degrade. Brand reads held 60 s, fleet reads 15 min.
  */
-import { fetchWithRetry } from "./fetch-retry.js";
+import { campaignLedgerByDayPath, readRunsLedgerJson } from "./runs-ledger-read.js";
 import { parseOutcomeLedgerTotals, type LedgerBasis } from "./outcome-cost-totals-client.js";
 import { rollUpOutcomeUnitCosts } from "./outcome-unit-costs.js";
 import { fetchFleetCampaignRows } from "./fleet-leg-campaigns.js";
@@ -82,11 +82,16 @@ export function parseFleetProducers(body: { groups?: Array<{ outcomeKey?: string
   return new Map([...out].map(([k, s]) => [k, [...s].sort()]));
 }
 
-const runs = (path: string) =>
-  fetchWithRetry(`${process.env.RUNS_SERVICE_URL}${path}`, { headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "" } }).then(async (r) => {
-    if (!r.ok) throw new Error(`[features-service] runs-service ${path.split("?")[0]} ${r.status}: ${(await r.text()).slice(0, 200)}`);
-    return r.json();
-  });
+/** LEDGER-LOAD-1107: every ledger GET goes through the process-wide shared read (one runs-service read per URL, held `holdMs`). */
+const runs = (path: string, holdMs: number) => readRunsLedgerJson(path, holdMs);
+
+/** A parse of one held wire body, kept while that body is (same body = same parse, whoever asks). */
+function parsedOnce<T>(memo: WeakMap<object, Map<string, T>>, wire: unknown, key: string, make: () => T): T {
+  const w = wire as object;
+  const byKey = memo.get(w) ?? memo.set(w, new Map()).get(w)!;
+  if (!byKey.has(key)) byKey.set(key, make());
+  return byKey.get(key)!;
+}
 
 function held<T>(store: Map<string, { at: number; value: Promise<T> }>, key: string, ms: number, make: () => Promise<T>): Promise<T> {
   const h = store.get(key);
@@ -98,7 +103,13 @@ function held<T>(store: Map<string, { at: number; value: Promise<T> }>, key: str
 }
 
 const fleetStore = new Map<string, { at: number; value: Promise<unknown> }>();
-const brandStore = new Map<string, { at: number; value: Promise<ScopeOutcomeLedgerInput> }>();
+
+/** Test seam. */
+export function __resetScopeLedgerHolds(): void {
+  fleetStore.clear();
+  lastGoodProducers = null;
+  producersFailedAt = null;
+}
 const FLEET_MS = 15 * 60_000;
 const BRAND_MS = 60_000;
 
@@ -109,15 +120,26 @@ let lastGoodProducers: Map<string, string[]> | null = null;
  * count, so a failed read (runs-service's fleet performers read hits its statement timeout under load, prod 2026-11-07)
  * serves the last good map, else `null` (unknown: no gap claimed), logged; never every count of every scope nulled.
  */
+/**
+ * LEDGER-LOAD-1107: a failed read is not re-asked for this long (the last good map, else null, answers meanwhile, exactly
+ * what a failure answers). Before, `held` dropped the failure, so EVERY brand ledger read re-sent the fleet performers read
+ * that had just timed out (prod 2026-11-07: 24 s, then a 500, behind each brand read).
+ */
+const PRODUCERS_FAILURE_HOLD_MS = 5 * 60_000;
+let producersFailedAt: number | null = null;
+
 async function fleetProducers(): Promise<Map<string, string[]> | null> {
+  if (producersFailedAt !== null && Date.now() - producersFailedAt < PRODUCERS_FAILURE_HOLD_MS && !fleetStore.has("producers")) return lastGoodProducers;
   try {
     const m = (await held(fleetStore, "producers", FLEET_MS, async () => {
       const since = new Date(Date.now() - 399 * 86_400_000).toISOString().slice(0, 10);
-      return parseFleetProducers((await runs(`/internal/stats/outcome-performers?since=${since}&groupBy=outcomeKey,serviceName`)) as never);
+      return parseFleetProducers((await runs(`/internal/stats/outcome-performers?since=${since}&groupBy=outcomeKey,serviceName`, 0)) as never);
     })) as Map<string, string[]>;
     lastGoodProducers = m;
+    producersFailedAt = null;
     return m;
   } catch (err) {
+    producersFailedAt = Date.now();
     console.error(`[features-service] scope outcome ledger: fleet producers unreadable (${lastGoodProducers ? "last good map served" : "no producer gap named"}): ${(err as Error).message}`);
     return lastGoodProducers;
   }
@@ -130,30 +152,44 @@ function campaignOutputs(): Promise<ReturnType<typeof campaignOutputsOf>> {
   }) as Promise<ReturnType<typeof campaignOutputsOf>>;
 }
 
-/** The brand's ledger, every outcome, since inception, on the pricing basis (gross | net). */
-export function fetchBrandOutcomeLedger(brandId: string, basis: LedgerBasis): Promise<ScopeOutcomeLedgerInput> {
-  return held(brandStore, `${brandId}|${basis}`, BRAND_MS, async () => {
-    const b = encodeURIComponent(brandId);
-    const [byDay, totals, producers, outputs] = await Promise.all([
-      runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,day&brandId=${b}`),
-      runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId&brandId=${b}`),
-      fleetProducers(),
-      campaignOutputs(),
-    ]);
-    const parsed = parseScopeLedgerByDay(byDay as WireByDay, basis);
-    const t = parseOutcomeLedgerTotals(totals as never, basis);
-    const units = rollUpOutcomeUnitCosts(t.produced, t.consumed, outputs.outputOf, outputs.pipeOutputs).units;
-    const unitCosts = new Map<string, LedgerOutcomeCost>([...units].map(([k, u]) => [k, { unitCostUsd: u.unitCostUsd }]));
-    return { ...parsed, unitCosts, fleetProducers: producers ?? new Map(), fleetProducersKnown: producers !== null, today: new Date().toISOString().slice(0, 10) };
-  });
+interface BrandLedgerParse {
+  totals: unknown;
+  producers: Map<string, string[]> | null;
+  outputs: ReturnType<typeof campaignOutputsOf>;
+  value: ScopeOutcomeLedgerInput;
+}
+const brandParses = new WeakMap<object, Map<string, BrandLedgerParse>>();
+
+/**
+ * The brand's ledger, every outcome, since inception, on the pricing basis (gross | net). The two runs-service bodies are
+ * read once per brand for every basis (held 60 s, LEDGER-LOAD-1107: gross and net used to read them twice), each basis
+ * parsed once per body.
+ */
+export async function fetchBrandOutcomeLedger(brandId: string, basis: LedgerBasis): Promise<ScopeOutcomeLedgerInput> {
+  const b = encodeURIComponent(brandId);
+  const [byDay, totals, producers, outputs] = await Promise.all([
+    runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,day&brandId=${b}`, BRAND_MS),
+    runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,campaignId,orgId&brandId=${b}`, BRAND_MS),
+    fleetProducers(),
+    campaignOutputs(),
+  ]);
+  const byBasis = brandParses.get(byDay as object) ?? brandParses.set(byDay as object, new Map()).get(byDay as object)!;
+  const prior = byBasis.get(basis);
+  if (prior && prior.totals === totals && prior.producers === producers && prior.outputs === outputs) return prior.value;
+  const parsed = parseScopeLedgerByDay(byDay as WireByDay, basis);
+  const t = parseOutcomeLedgerTotals(totals as never, basis);
+  const units = rollUpOutcomeUnitCosts(t.produced, t.consumed, outputs.outputOf, outputs.pipeOutputs).units;
+  const unitCosts = new Map<string, LedgerOutcomeCost>([...units].map(([k, u]) => [k, { unitCostUsd: u.unitCostUsd }]));
+  const value = { ...parsed, unitCosts, fleetProducers: producers ?? new Map(), fleetProducersKnown: producers !== null, today: new Date().toISOString().slice(0, 10) };
+  byBasis.set(basis, { totals, producers, outputs, value });
+  return value;
 }
 
-const campaignStore = new Map<string, { at: number; value: Promise<ReturnType<typeof parseScopeLedgerByDay>> }>();
+const campaignParses = new WeakMap<object, Map<string, ReturnType<typeof parseScopeLedgerByDay>>>();
 
-function campaignByDay(campaignId: string, basis: LedgerBasis) {
-  return held(campaignStore, `${campaignId}|${basis}`, BRAND_MS, async () =>
-    parseScopeLedgerByDay((await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,day&campaignId=${encodeURIComponent(campaignId)}`)) as WireByDay, basis),
-  );
+async function campaignByDay(campaignId: string, basis: LedgerBasis) {
+  const wire = await runs(campaignLedgerByDayPath(campaignId), BRAND_MS);
+  return parsedOnce(campaignParses, wire, basis, () => parseScopeLedgerByDay(wire as WireByDay, basis));
 }
 
 /**
@@ -206,7 +242,7 @@ const audienceStore = new Map<string, { at: number; value: Promise<Map<string, M
 export async function fetchAudienceUnits(brandId: string, campaignIds: readonly string[] | null): Promise<Map<string, Map<string, number>>> {
   const read = (q: string) =>
     held(audienceStore, q, BRAND_MS, async () => {
-      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,audienceId&${q}`)) as WireByDay;
+      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,audienceId&${q}`, 0)) as WireByDay;
       const out = new Map<string, Map<string, number>>();
       for (const g of body.produced ?? []) {
         const a = g.dimensions?.audienceId;
@@ -238,7 +274,7 @@ const workflowStore = new Map<string, { at: number; value: Promise<Map<string, M
 export async function fetchWorkflowUnits(brandId: string, campaignIds: readonly string[] | null): Promise<Map<string, Map<string, Map<string, number>>>> {
   const read = (q: string) =>
     held(workflowStore, q, BRAND_MS, async () => {
-      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,workflowSlug,day&${q}`)) as WireByDay;
+      const body = (await runs(`/internal/stats/outcome-costs?groupBy=outcomeKey,workflowSlug,day&${q}`, 0)) as WireByDay;
       const out = new Map<string, Map<string, Map<string, number>>>();
       for (const g of body.produced ?? []) {
         const w = g.dimensions?.workflowSlug;

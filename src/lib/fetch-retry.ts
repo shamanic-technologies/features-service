@@ -83,6 +83,11 @@ export interface FetchRetryOptions {
    * a read-only POST, which is the only kind a call site may mark.
    */
   shareForMs?: number;
+  /**
+   * `false` = never answered from the background share (LEDGER-LOAD-1107): a caller that holds its answers itself
+   * (`lib/runs-ledger-read.ts`) must not stack a second hold on top of its own.
+   */
+  backgroundShare?: false;
 }
 
 /**
@@ -126,6 +131,32 @@ interface SharedEntry {
 
 const sharedReads = new Map<string, SharedEntry>();
 
+/**
+ * SHARED runs-service READS OUTSIDE A VIEW COMPUTE (LEDGER-LOAD-1107-FEATURES, 2026-11-07).
+ *
+ * Fleet builds and warm passes (the showcase engine pass per (org, brand), outcome prices, Research, the catalogue figures)
+ * run outside any interactive view and asked runs-service the IDENTICAL cost aggregate again and again: in 20 min of prod
+ * traffic the server process sent 307 fleet vendor-cost reads over 19 distinct URLs (each a multi-second runs-service
+ * statement). A GET to runs-service with the same URL and the same headers (minus `x-run-id`, see `sharedKey`) issued
+ * outside a view compute is answered once: concurrent askers share the in-flight read, a successful answer is reused for
+ * {@link backgroundReadMs} (30 s, the Gold cells' own refresh rate, so no view serves an aggregate older than its own
+ * cadence), a failure never. Its own store: an interactive read (3 s) never takes a background answer.
+ * `RUNS_READ_SHARE_MS=0` switches it off (the test suites do).
+ */
+function backgroundReadMs(): number {
+  const raw = process.env.RUNS_READ_SHARE_MS;
+  if (raw === undefined || raw === "") return 30_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 30_000;
+}
+
+const backgroundReads = new Map<string, SharedEntry>();
+
+function isRunsServiceRead(input: string): boolean {
+  const base = process.env.RUNS_SERVICE_URL;
+  return !!base && input.startsWith(`${base}/`);
+}
+
 function sharedKey(input: string, init?: RequestInit, allowBody = false): string | null {
   const method = (init?.method ?? "GET").toUpperCase();
   if (!allowBody && (method !== "GET" || init?.body)) return null;
@@ -148,6 +179,7 @@ function sharedKey(input: string, init?: RequestInit, allowBody = false): string
 /** Test seam. */
 export function __resetSharedReads(): void {
   sharedReads.clear();
+  backgroundReads.clear();
 }
 
 export async function fetchWithRetry(
@@ -156,7 +188,15 @@ export async function fetchWithRetry(
   opts?: FetchRetryOptions,
 ): Promise<Response> {
   const ttl = sharedReadMs();
-  const key = ttl > 0 && insideInteractiveView() ? sharedKey(input, init, opts?.shareForMs !== undefined) : null;
+  const interactive = insideInteractiveView();
+  if (!interactive) {
+    const bg = backgroundReadMs();
+    if (bg > 0 && opts?.backgroundShare !== false && isRunsServiceRead(input) && sharedKey(input, init) !== null) {
+      return toResponse(await readShared(input, init, opts, bg, false, backgroundReads));
+    }
+    return fetchWithRetryOnce(input, init, opts);
+  }
+  const key = ttl > 0 ? sharedKey(input, init, opts?.shareForMs !== undefined) : null;
   if (key === null) return fetchWithRetryOnce(input, init, opts);
   if (opts?.shareForMs !== undefined) {
     return toResponse(await readShared(input, init, opts, Math.max(ttl, opts.shareForMs), true));
@@ -188,7 +228,9 @@ async function readShared(
   // Serve a successful answer up to 2 × ttl old while ONE background read replaces it — used for
   // the past half of a lifetime cost read, so no refresh ever waits on the expensive scan.
   revalidate = false,
+  store: Map<string, SharedEntry> = sharedReads,
 ): Promise<SharedAnswer> {
+  const sharedReads = store;
   const key = sharedKey(input, init, true)!;
 
   const now = Date.now();
