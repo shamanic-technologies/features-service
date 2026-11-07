@@ -170,6 +170,9 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
       // No catalogue pipe prices the outcome: expected cost = what one cost to date (ours), never blank.
       const noPipe = publishedUnitsOf("x_post_published", [post("a"), post("b")], credit, { unitValueOf, expected: expectedReturnOf(2, null, null) });
       expect(noPipe.expectedReturn).toMatchObject({ roiMultiple: 4, costPerUnitUsd: 0.5, costSource: "own_spend", basis: "measured", pipeId: null, unavailableReason: null });
+      // Units with no declared cost are no evidence of a cost: $0.30 on 1 costed post of 3 = $0.30 a post, never $0.10.
+      const mixed = publishedUnitsOf("x_post_published", [post("c", { performedBy: "client_team" }), post("h1", { performedBy: "client_team" }), post("h2")], (s) => (s.id === "c" ? { spentUsd: 0.3, visits: 0, signups: 0 } : { spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf, expected: expectedReturnOf(2, null, null) });
+      expect(mixed.expectedReturn).toMatchObject({ costPerUnitUsd: 0.3, roiMultiple: 6.67, costSource: "own_spend" });
       const free = publishedUnitsOf("linkedin_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf, expected: expectedReturnOf(2, null, null) });
       expect(free.expectedReturn).toMatchObject({ roiMultiple: null, unavailableReason: "nothing_spent_on_outcome" });
       expect(publishedUnitsOf("x_post_published", [post("a")], () => ({ spentUsd: 0, visits: 0, signups: 0 }), { unitValueOf }).measuredReturn.unavailableReason).toBe("nothing_spent_yet");
