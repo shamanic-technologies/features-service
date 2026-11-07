@@ -12,8 +12,8 @@
  * cached per scope (this route's response shape), refreshed behind a stale read.
  */
 import { Router } from "express";
-import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
-import { scopeOutcomeLedgerRowOf } from "../lib/scope-outcome-ledger.js";
+import { fetchBrandOutcomeLedger, fetchCampaignSetOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+import { ledgerCountOfStep, ledgerScopeOf } from "../lib/ledger-counts.js";
 import { rebaseSpendChartOnLedger, type LedgerSpendChart } from "../lib/spend-charts-ledger.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
@@ -36,7 +36,7 @@ const EXPECTED_COLD_WAIT_MS = 25_000;
 
 type PipeSteps = ReadonlyMap<string, { fromStep: string | null; toStep: string }>;
 
-export interface PipeChart extends SpendChart {
+export interface PipeChart extends LedgerSpendChart {
   campaignId: string;
   pipeId: string;
   featureSlug: string;
@@ -50,7 +50,7 @@ export interface FunnelCampaignSpendChartsBody {
   offerId: string;
   pricing: Pricing;
   costBasis: "charged";
-  campaign: SpendChart;
+  campaign: LedgerSpendChart;
   pipes: PipeChart[];
 }
 
@@ -179,14 +179,33 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
   const [{ pipeSteps }, ctx] = await Promise.all([funnelCopiesFor([row.salesFunnelId]), chartContext(brandId, row.units.map((u) => u.campaignId), pricing, headers)]);
   const lead = leadingUnit(row.units, pipeSteps);
   const ordered = unitsInPathOrder(row.units, pipeSteps);
+  // LEDGER-ONLY-1107-P2: every outcome / $ per outcome / conversion of the campaign's chart = the Units its units' runs
+  // produced (runs-service ledger), a pipe's = its own campaign's; never the people a lead read counted.
+  const basis = pricing === "gross" ? "gross" : "net";
+  const onLedger = async (chart: SpendChart, campaignIds: readonly string[], scope: "campaign" | "pipe"): Promise<LedgerSpendChart> => {
+    const ledger = await fetchCampaignSetOutcomeLedger(campaignIds, brandId, basis).catch((err: Error) => {
+      console.error(`[features-service] funnel campaign spend charts: ledger of ${row.id} (${scope}) unreadable (outcomes null): ${err.message}`);
+      return null;
+    });
+    const step = chart.outcomeStep;
+    const from = chart.leg?.fromStep ?? null;
+    const scopeOf = ledgerScopeOf(ledger);
+    return rebaseSpendChartOnLedger(
+      chart,
+      step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(scopeOf, step).row,
+      from === null || ledger === null ? null : ledgerCountOfStep(scopeOf, from).row,
+      chart.leg?.learningOutcomesRequired ?? 10,
+      scope,
+    );
+  };
   const [campaign, pipes] = await Promise.all([
-    expectedReturnForFunnelCampaign(identity, brandId, row.offerId, row.salesFunnelId, null, EXPECTED_COLD_WAIT_MS).then((e) =>
-      chartOf(ctx, groupScope([row], lead ? legOf(lead, pipeSteps) : null), e),
+    expectedReturnForFunnelCampaign(identity, brandId, row.offerId, row.salesFunnelId, null, EXPECTED_COLD_WAIT_MS).then(async (e) =>
+      onLedger(await chartOf(ctx, groupScope([row], lead ? legOf(lead, pipeSteps) : null), e), row.units.map((u) => u.campaignId), "campaign"),
     ),
     Promise.all(
       ordered.map(async (u): Promise<PipeChart> => {
         const expected = await expectedReturnForCampaign(identity, brandId, { offerId: row.offerId, featureSlug: u.featureSlug, legKeys: [u.legKey] }, null);
-        const chart = await chartOf(ctx, pipeScope(row, u, pipeSteps), expected);
+        const chart = await onLedger(await chartOf(ctx, pipeScope(row, u, pipeSteps), expected), [u.campaignId], "pipe");
         return { campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status, ...chart };
       }),
     ),
@@ -236,8 +255,8 @@ export async function computeOfferSpendCharts(
   const from = measured.leg?.fromStep ?? null;
   const offer = rebaseSpendChartOnLedger(
     measured,
-    step === null ? null : ledger === null ? "ledger_unreadable" : scopeOutcomeLedgerRowOf([step], ledger),
-    from === null || ledger === null ? null : scopeOutcomeLedgerRowOf([from], ledger),
+    step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(ledgerScopeOf(ledger), step).row,
+    from === null || ledger === null ? null : ledgerCountOfStep(ledgerScopeOf(ledger), from).row,
     measured.leg?.learningOutcomesRequired ?? 10,
   );
   return { offerId, brandId, pricing, costBasis: "charged", salesFunnelCampaignIds: rows.map((r) => r.id).sort(), offer };

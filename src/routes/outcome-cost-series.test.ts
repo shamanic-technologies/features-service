@@ -54,6 +54,22 @@ vi.mock("../lib/expected-return.js", async (orig) => ({
 }));
 
 import { computeOutcomeCostSeries } from "./outcome-cost-series.js";
+import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+
+// LEDGER-ONLY-1107-P2: each step's outcomes are the brand ledger's Units (2 positive replies, 1 meeting booked; a
+// producer declares signups elsewhere, none for this brand = a measured 0).
+const LEDGER = {
+  producedByDay: new Map([
+    ["conversation", new Map([["2026-07-09", 1], ["2026-07-20", 1]])],
+    ["meeting_booked", new Map([["2026-08-05", 1]])],
+  ]),
+  ownCostUsd: new Map(),
+  unitCosts: new Map(),
+  undeclaredConsumptions: new Map(),
+  fleetProducers: new Map([["conversation", ["instantly-service"]], ["meeting_booked", ["lead-service"]], ["signup", ["lead-service"]]]),
+  daysMissing: [],
+  today: "2026-10-27",
+};
 import * as expectedReturn from "../lib/expected-return.js";
 
 const rows = [
@@ -77,6 +93,7 @@ describe("computeOutcomeCostSeries (OUTCOME-COST-SERIES-1027)", () => {
   beforeEach(() => {
     spendCalls.length = 0;
     peopleCalls.length = 0;
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValue(LEDGER as never);
   });
 
   it("reads the offer spend chart's scope (legacy campaigns + brand-level) and divides the same spend for every step", async () => {

@@ -384,7 +384,8 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
 
   it("serves the REALIZED return: the brand ledger's Paid client Units x LTR over money actually spent (LEDGER-ONLY-1107)", async () => {
     mockFetch({ closes: true });
-    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(2) as never);
+    // LEDGER-ONLY-1107-P2: read twice (the counts overlay, then the realized return).
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(2) as never).mockResolvedValueOnce(ledgerOf(2) as never);
     const res = await body();
     const rr = res.costEconomics.realizedReturn;
     expect(rr.closedWonCount).toBe(2);
@@ -395,7 +396,7 @@ describe("ROI, %CAC and $CAC are measured on the MATURE cohort", () => {
 
   it("nothing closed is a MEASURED 0, not a null (the ledger holds no Paid client Unit, a producer declares them)", async () => {
     mockFetch();
-    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(0) as never);
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValueOnce(ledgerOf(0) as never).mockResolvedValueOnce(ledgerOf(0) as never);
     const res = await body();
     expect(res.costEconomics.realizedReturn).toMatchObject({ closedWonCount: 0, closedWonRevenueUsd: 0, roiMultiple: 0 });
   });

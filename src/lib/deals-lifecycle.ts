@@ -36,7 +36,6 @@
  * (`measured` | `default_entry`).
  */
 import { LIFECYCLE_RUNGS, type LifecycleRungKey } from "./lifecycle-ladder.js";
-import { isClosedWonOurs } from "./ratio-basis.js";
 import {
   contactedEntryRatesOf,
   contactedExpired,
@@ -80,7 +79,12 @@ export type LifecycleCardZeroReason =
   /** Bounced or unsubscribed: it cannot convert. */
   | "cannot_convert"
   /** lead-service places it on Contacted, but no send reached our records yet. */
-  | "not_sent";
+  | "not_sent"
+  /**
+   * LEDGER-ONLY-1107-P2: on the Paid client rung. A won value is the ledger's Paid client Units x the offer's lifetime
+   * revenue, stated on the rung; the ledger names no card, so a card carries none.
+   */
+  | "won_counted_on_ledger";
 
 export type LifecycleValueKind = "contacted_expected_value" | "expected_value" | "won_value";
 export type EntryRateSource = "measured" | "default_entry";
@@ -116,8 +120,12 @@ export interface LifecycleRungValue {
   expected: boolean;
   assumptions: LifecycleAssumption[];
   cardCount: number;
-  leadCount: number;
-  organizationCount: number;
+  /** LEDGER-ONLY-1107-P2: people / organisations on a rung are no ledger figure: null. */
+  leadCount: number | null;
+  organizationCount: number | null;
+  /** LEDGER-ONLY-1107-P2: the ledger's Units of the rung's outcome (null + reason when it has no twin or the ledger lacks it). */
+  units: number | null;
+  unitsUnavailableReason: string | null;
   cards: LifecycleCard[];
 }
 
@@ -155,6 +163,11 @@ interface PersonValue {
 
 /** The board's inputs (`priceLifecycleColumns`). */
 export interface LifecycleBoardInput {
+  /**
+   * LEDGER-ONLY-1107-P2: the scope's ledger Units per rung (`ledgerCountOfStep` of the rung key; contacted / engaged have
+   * no twin). Paid client's Units price the won column (never `isClosedWonOurs` on the CRM's deals).
+   */
+  ledgerUnitsOf: (rung: BoardRungKey) => { units: number | null; reason: string | null };
   rows: readonly LifecycleBoardRow[];
   persons: readonly EnginePerson[];
   paths: ResolvedPath[];
@@ -202,14 +215,9 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
       // (REVENUE-GENERATED-1107: 13 companies on the Paid client rung with no sale of ours read $6,500 won beside
       // 0 paid clients). A person on the rung with no sale of ours (the customer's own sale, a rung lead-service
       // places from another source) is worth 0 here.
-      if (!isClosedWonOurs(p)) {
-        return { v: 0, zero: (p.deadSignals ?? []).includes("closeWin") ? "ruled_out" : "not_ours", source: null, entry: null };
-      }
-      const email = p.email?.trim().toLowerCase() ?? null;
-      const stated = email ? (input.statedWonAmountUsdByEmail?.get(email) ?? null) : null;
-      return stated !== null
-        ? { v: stated, zero: null, source: "stated_amount", entry: null }
-        : { v: ltr!, zero: null, source: "lifetime_revenue", entry: null };
+      // LEDGER-ONLY-1107-P2 (supersedes `isClosedWonOurs` on the CRM's deals): the won value is the ledger's Paid client
+      // Units x LTR, on the rung; no card carries it (the ledger names no card).
+      return { v: 0, zero: "won_counted_on_ledger", source: null, entry: null };
     }
     if (rung !== "contacted") return engagedValue(p);
     // Contacted: the engine may already know more (an engaged lead is priced as one, never guessed down).
@@ -276,9 +284,7 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
     const valueKind: LifecycleValueKind = key === "paid_client" ? "won_value" : key === "contacted" ? "contacted_expected_value" : "expected_value";
     const assumptions: LifecycleAssumption[] = [...ltrAssumption];
     if (key === "contacted") for (const s of [...entrySources].sort()) assumptions.push({ input: "entry_rate", source: s });
-    const organizationCount = new Set(
-      cards.flatMap((c) => c.leadIds.map((id) => orgKey(byLead.get(id)!))),
-    ).size;
+    const ledger = input.ledgerUnitsOf(key);
     return {
       key,
       rank: r.rank,
@@ -289,8 +295,10 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
       expected: !(key === "paid_client" && cards.length > 0 && allStated),
       assumptions,
       cardCount: cards.length,
-      leadCount: leadIds.size,
-      organizationCount,
+      leadCount: null,
+      organizationCount: null,
+      units: ledger.units,
+      unitsUnavailableReason: ledger.units === null ? ledger.reason : null,
       cards,
     };
   });
@@ -312,16 +320,14 @@ export function priceLifecycleBoard(input: LifecycleBoardInput): {
       perRung.set(rung, (perRung.get(rung) ?? 0) + v);
       organizationValues.set(org, (organizationValues.get(org) ?? 0) + v);
     }
-    for (const [org, v] of orgMaxByRung.get("paid_client") ?? new Map<string, number>()) {
-      organizationValues.set(org, (organizationValues.get(org) ?? 0) + v);
-    }
     for (const r of pipelineRungs) r.valueUsd = round(perRung.get(r.key) ?? 0);
     const won = rungs.find((r) => r.key === "paid_client");
-    if (won) won.valueUsd = round([...(orgMaxByRung.get("paid_client") ?? new Map()).values()].reduce((s, v) => s + v, 0));
+    if (won) won.valueUsd = won.units === null ? null : round(won.units * ltr!);
   }
 
+  // A rung the ledger cannot value (won Units unknown) makes every total including it unknown, never a partial sum.
   const sum = (rs: LifecycleRungValue[]): number | null =>
-    unvaluedReason !== null ? null : round(rs.reduce((s, r) => s + (r.valueUsd ?? 0), 0));
+    unvaluedReason !== null || rs.some((r) => r.valueUsd === null) ? null : round(rs.reduce((s, r) => s + (r.valueUsd ?? 0), 0));
   const board: DealsLifecycleResult = {
     columns: "lifecycle",
     lifetimeRevenueUsd: ltr,

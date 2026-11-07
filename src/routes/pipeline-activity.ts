@@ -5,6 +5,8 @@ import { features } from "../db/schema.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { withLedgerDayChart } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { fetchActiveAudiences, fetchAudienceMemberEmails, type Audience } from "../lib/human-client.js";
 import { fetchEmailOutcomes } from "../lib/email-status-client.js";
 import {
@@ -948,7 +950,7 @@ export async function computeOfferPipelineActivity(
       econ: pricedFingerprint(priced),
     }),
     orgId: input.headers.orgId,
-    compute: async (): Promise<PipelineActivityResponse> => {
+    compute: async (): Promise<PipelineActivityResponse> => withLedgerDayChart(await (async (): Promise<PipelineActivityResponse> => {
       const today = dateInTimeZone(new Date(), timezone);
       const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
       const expected = emptyExpected(
@@ -981,7 +983,7 @@ export async function computeOfferPipelineActivity(
           undatedFormSubmissions: null,
         },
       };
-    },
+    })(), await readLedgerScope(input.brandId, ledgerBasisOf(input.pricing), null, "offer pipeline activity")),
   });
   return { ok: true, body };
 }
@@ -1044,7 +1046,7 @@ export async function computeBrandPipelineActivity(
       econ: pricedFingerprint(priced),
     }),
     orgId: input.headers.orgId,
-    compute: async (): Promise<PipelineActivityResponse> => {
+    compute: async (): Promise<PipelineActivityResponse> => withLedgerDayChart(await (async (): Promise<PipelineActivityResponse> => {
       const today = dateInTimeZone(new Date(), timezone);
       const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
       const [expected, dailyBudgetUsd, actualByDate, observed] = await Promise.all([
@@ -1089,7 +1091,7 @@ export async function computeBrandPipelineActivity(
           undatedFormSubmissions: observed ? observed.undated.form_submission : null,
         },
       };
-    },
+    })(), await readLedgerScope(input.brandId, ledgerBasisOf(input.pricing), null, "brand pipeline activity")),
   });
   return { ok: true, body };
 }
@@ -1153,7 +1155,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         econ: pricedFingerprint(priced),
       }),
       orgId: auth.orgId,
-      compute: async (): Promise<PipelineActivityResponse> => {
+      compute: async (): Promise<PipelineActivityResponse> => withLedgerDayChart(await (async (): Promise<PipelineActivityResponse> => {
     const today = dateInTimeZone(new Date(), timezone);
     const dates = Array.from({ length: days }, (_, index) => addDays(today, index));
     // An OFFER-scoped chart states its ACTUAL activity and NOTHING it cannot measure at that grain.
@@ -1201,7 +1203,7 @@ router.get("/features/:featureSlug/pipeline-activity", apiKeyAuth, async (req, r
         undatedFormSubmissions: observed ? observed.undated.form_submission : null,
       },
     };
-      },
+      })(), await readLedgerScope(brandId, ledgerBasisOf(pricing), null, "pipeline activity")),
     });
 
     res.json(response);

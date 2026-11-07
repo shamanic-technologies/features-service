@@ -165,7 +165,21 @@ const get = (path: string) => request(app).get(path).set(AUTH);
 const column = (body: { columns: Array<{ standing: string; valueUsd: number | null; leads: Array<{ leadId: string }> }> }, s: string) =>
   body.columns.find((c) => c.standing === s)!;
 
-beforeEach(() => vi.clearAllMocks());
+import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+// LEDGER-ONLY-1107-P2: the brand ledger holds no Paid client Unit while a producer declares them (a measured 0 won).
+const ZERO_PAID_LEDGER = {
+  producedByDay: new Map(),
+  ownCostUsd: new Map(),
+  unitCosts: new Map(),
+  undeclaredConsumptions: new Map(),
+  fleetProducers: new Map([["paid_client", ["lead-service"]], ["signup", ["lead-service"]], ["form_submitted", ["crm-service"]], ["meeting_booked", ["lead-service"]], ["meeting_attended", ["lead-service"]]]),
+  daysMissing: [],
+  today: "2026-11-07",
+};
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(fetchBrandOutcomeLedger).mockResolvedValue(ZERO_PAID_LEDGER as never);
+});
 
 describe("GET /offers/:offerId/deals-value", () => {
   it("puts only the offer's own people on its board, and the two offers add up to the brand", async () => {
@@ -353,9 +367,13 @@ describe("GET /offers/:offerId/deals-value?columns=company_lifecycle (DEALS-LIFE
     expect(counts).toMatchObject({ lead_found: 0, contacted: 20, engaged: 1, paid_client: 0 });
     expect(res.body.noRungOrganizationCount).toBe(0);
     expect(res.body.outOfScopeRowCount).toBe(11);
-    // Consistent with the lifecycle board: one person per company here, so the counts are the board's.
+    // Consistent with the lifecycle board's cards: one person per company here (the board serves no organisation count:
+    // LEDGER-ONLY-1107-P2, people on a rung are no ledger figure).
     const board = await get("/offers/offer-a/deals-value?brandId=brand-1&columns=lifecycle");
-    for (const r of board.body.rungs as Array<{ key: string; organizationCount: number }>) expect(counts[r.key]).toBe(r.organizationCount);
+    for (const r of board.body.rungs as Array<{ key: string; cardCount: number; organizationCount: number | null }>) {
+      expect(r.organizationCount).toBeNull();
+      expect(counts[r.key]).toBe(r.cardCount);
+    }
   });
 
   it("refuses campaignId on this mode", async () => {

@@ -1006,6 +1006,74 @@
               "type": "number",
               "nullable": true
             }
+          },
+          "ledgerCounts": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "ledger"
+                ],
+                "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+              },
+              "scope": {
+                "type": "string",
+                "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+              },
+              "nullFields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+              },
+              "producerGaps": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ]
+                },
+                "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+              },
+              "ledgerDaysMissing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Ledger days runs-service has not computed yet: counts there may still move."
+              }
+            },
+            "required": [
+              "basis",
+              "scope",
+              "unavailableReason",
+              "ledgerDaysMissing"
+            ],
+            "additionalProperties": {
+              "nullable": true
+            },
+            "description": "LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."
           }
         },
         "required": [
@@ -1174,6 +1242,74 @@
                     "type": "number",
                     "nullable": true
                   }
+                },
+                "ledgerCounts": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "ledger"
+                      ],
+                      "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+                    },
+                    "scope": {
+                      "type": "string",
+                      "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+                    },
+                    "nullFields": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+                    },
+                    "producerGaps": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "declaredElsewhereBy": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "undeclaredConsumptions": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "declaredElsewhereBy",
+                          "undeclaredConsumptions"
+                        ]
+                      },
+                      "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                    },
+                    "ledgerDaysMissing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Ledger days runs-service has not computed yet: counts there may still move."
+                    }
+                  },
+                  "required": [
+                    "basis",
+                    "scope",
+                    "unavailableReason",
+                    "ledgerDaysMissing"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."
                 }
               },
               "required": [
@@ -1188,6 +1324,74 @@
               "type": "number",
               "nullable": true
             }
+          },
+          "ledgerCounts": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "ledger"
+                ],
+                "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+              },
+              "scope": {
+                "type": "string",
+                "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+              },
+              "nullFields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+              },
+              "producerGaps": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ]
+                },
+                "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+              },
+              "ledgerDaysMissing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Ledger days runs-service has not computed yet: counts there may still move."
+              }
+            },
+            "required": [
+              "basis",
+              "scope",
+              "unavailableReason",
+              "ledgerDaysMissing"
+            ],
+            "additionalProperties": {
+              "nullable": true
+            },
+            "description": "LEDGER-ONLY-1107-P2: every recipient / lead count is the scope's ledger Units; a count with no ledger twin is dropped (null), so is every rate and $ dividing it."
           },
           "maturity": {
             "allOf": [
@@ -1365,6 +1569,74 @@
                     "type": "number",
                     "nullable": true
                   }
+                },
+                "ledgerCounts": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "ledger"
+                      ],
+                      "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+                    },
+                    "scope": {
+                      "type": "string",
+                      "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+                    },
+                    "nullFields": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+                    },
+                    "producerGaps": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "declaredElsewhereBy": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "undeclaredConsumptions": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "declaredElsewhereBy",
+                          "undeclaredConsumptions"
+                        ]
+                      },
+                      "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                    },
+                    "ledgerDaysMissing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Ledger days runs-service has not computed yet: counts there may still move."
+                    }
+                  },
+                  "required": [
+                    "basis",
+                    "scope",
+                    "unavailableReason",
+                    "ledgerDaysMissing"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."
                 }
               },
               "required": [
@@ -3372,6 +3644,9 @@
             ],
             "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
           },
+          "ledgerCounts": {
+            "$ref": "#/components/schemas/LedgerCounts"
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -4133,6 +4408,73 @@
           "conversionRateHistory",
           "learningPhase"
         ]
+      },
+      "LedgerCounts": {
+        "type": "object",
+        "properties": {
+          "basis": {
+            "type": "string",
+            "enum": [
+              "ledger"
+            ],
+            "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+          },
+          "nullFields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+          },
+          "producerGaps": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "declaredElsewhereBy": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "undeclaredConsumptions": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "declaredElsewhereBy",
+                "undeclaredConsumptions"
+              ]
+            },
+            "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+          },
+          "ledgerDaysMissing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ledger days runs-service has not computed yet: counts there may still move."
+          }
+        },
+        "required": [
+          "basis",
+          "scope",
+          "unavailableReason",
+          "ledgerDaysMissing"
+        ],
+        "additionalProperties": {
+          "nullable": true
+        },
+        "description": "LEDGER-ONLY-1107-P2: every count, $ per outcome, conversion and curve of this body is the scope's ledger Units (brand / offer = the brand's ledger; a campaign = its campaigns' runs; a workflow = its versions' runs). A field named in `nullFields` is served null (series, counts and their ratios, `maturity` blocks); lists of people are records, untouched."
       },
       "FeatureRevenueGroupedResponse": {
         "type": "object",
@@ -9789,6 +10131,9 @@
               "workflowSlugs"
             ],
             "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
+          },
+          "ledgerCounts": {
+            "$ref": "#/components/schemas/LedgerCounts"
           },
           "funnelSteps": {
             "type": "object",
@@ -19070,6 +19415,9 @@
             ],
             "description": "WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read."
           },
+          "ledgerCounts": {
+            "$ref": "#/components/schemas/LedgerCounts"
+          },
           "funnelSteps": {
             "type": "object",
             "nullable": true,
@@ -25462,7 +25810,7 @@
           "wonUsd": {
             "type": "number",
             "nullable": true,
-            "description": "The Paid client rung's value. `expectedPipelineUsd + wonUsd = totalUsd`."
+            "description": "The Paid client rung's value = the brand ledger's Paid client Units x the offer's lifetime revenue (LEDGER-ONLY-1107-P2; null when the ledger lacks Paid client Units, then `totalUsd` is null too). `expectedPipelineUsd + wonUsd = totalUsd`."
           },
           "outOfScopeCardCount": {
             "type": "number",
@@ -25533,13 +25881,27 @@
                   "description": "What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."
                 },
                 "cardCount": {
-                  "type": "number"
+                  "type": "number",
+                  "description": "Cards listed on the rung (records)."
                 },
                 "leadCount": {
-                  "type": "number"
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."
                 },
                 "organizationCount": {
-                  "type": "number"
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."
+                },
+                "units": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the rung's outcome (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."
+                },
+                "unitsUnavailableReason": {
+                  "type": "string",
+                  "nullable": true
                 },
                 "cards": {
                   "type": "array",
@@ -25579,9 +25941,10 @@
                           "expired",
                           "cannot_convert",
                           "not_sent",
+                          "won_counted_on_ledger",
                           null
                         ],
-                        "description": "Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
+                        "description": "Why the card reads exactly 0: `won_counted_on_ledger` (Paid client: the won value is the ledger's Units x LTR on the rung, LEDGER-ONLY-1107-P2),  `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."
                       },
                       "valueSource": {
                         "type": "string",
@@ -25629,6 +25992,8 @@
                 "cardCount",
                 "leadCount",
                 "organizationCount",
+                "units",
+                "unitsUnavailableReason",
                 "cards"
               ]
             },
@@ -36965,6 +37330,74 @@
                               "type": "number",
                               "nullable": true
                             }
+                          },
+                          "ledgerCounts": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "ledger"
+                                ],
+                                "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+                              },
+                              "scope": {
+                                "type": "string",
+                                "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+                              },
+                              "nullFields": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+                              },
+                              "producerGaps": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "declaredElsewhereBy": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "undeclaredConsumptions": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "declaredElsewhereBy",
+                                    "undeclaredConsumptions"
+                                  ]
+                                },
+                                "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                              },
+                              "ledgerDaysMissing": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Ledger days runs-service has not computed yet: counts there may still move."
+                              }
+                            },
+                            "required": [
+                              "basis",
+                              "scope",
+                              "unavailableReason",
+                              "ledgerDaysMissing"
+                            ],
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."
                           }
                         },
                         "required": [
@@ -36979,6 +37412,74 @@
                         "type": "number",
                         "nullable": true
                       }
+                    },
+                    "ledgerCounts": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "basis": {
+                          "type": "string",
+                          "enum": [
+                            "ledger"
+                          ],
+                          "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+                        },
+                        "scope": {
+                          "type": "string",
+                          "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+                        },
+                        "nullFields": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+                        },
+                        "producerGaps": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "declaredElsewhereBy": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "undeclaredConsumptions": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "declaredElsewhereBy",
+                              "undeclaredConsumptions"
+                            ]
+                          },
+                          "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                        },
+                        "ledgerDaysMissing": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Ledger days runs-service has not computed yet: counts there may still move."
+                        }
+                      },
+                      "required": [
+                        "basis",
+                        "scope",
+                        "unavailableReason",
+                        "ledgerDaysMissing"
+                      ],
+                      "additionalProperties": {
+                        "nullable": true
+                      },
+                      "description": "LEDGER-ONLY-1107-P2: every recipient / lead count is the scope's ledger Units; a count with no ledger twin is dropped (null), so is every rate and $ dividing it."
                     },
                     "maturity": {
                       "allOf": [
@@ -46148,6 +46649,74 @@
                               "type": "number",
                               "nullable": true
                             }
+                          },
+                          "ledgerCounts": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "basis": {
+                                "type": "string",
+                                "enum": [
+                                  "ledger"
+                                ],
+                                "description": "Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."
+                              },
+                              "scope": {
+                                "type": "string",
+                                "description": "Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."
+                              },
+                              "nullFields": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "description": "Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."
+                              },
+                              "producerGaps": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "properties": {
+                                    "declaredElsewhereBy": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "undeclaredConsumptions": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "declaredElsewhereBy",
+                                    "undeclaredConsumptions"
+                                  ]
+                                },
+                                "description": "Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."
+                              },
+                              "ledgerDaysMissing": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Ledger days runs-service has not computed yet: counts there may still move."
+                              }
+                            },
+                            "required": [
+                              "basis",
+                              "scope",
+                              "unavailableReason",
+                              "ledgerDaysMissing"
+                            ],
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."
                           }
                         },
                         "required": [

@@ -206,6 +206,21 @@ const campaignIdentitySchema = z.object({
   representativeId: z.string().describe("The member to render the identity's line on: the live campaign when there is one, else the most recently created member."),
 });
 
+/**
+ * LEDGER-ONLY-1107-P2: the block every body whose counts are re-based on the cost-accounting ledger carries.
+ */
+const ledgerCountsSchema = z
+  .object({
+    basis: z.literal("ledger").describe("Every count on this body is Units in runs-service's general ledger; every $ per outcome = spend ÷ those Units; every conversion = Units ÷ Units."),
+    scope: z.string().describe("Whose Units: `brand` (every source and campaign of the brand, Today's count), `campaign` (the campaigns' own runs), `workflow`, `audience`."),
+    unavailableReason: z.string().nullable().describe("Why the scope has no ledger at all (`ledger_unreadable`, `per_workflow_not_in_ledger`, `lens_not_in_ledger`, `no_brand_scope`): every count null."),
+    nullFields: z.record(z.string(), z.string()).optional().describe("Field path -> why it is null: `not_a_ledger_outcome` (no catalogue outcome counts it: people contacted, opened, delivered), `outcome_not_declared_in_ledger` / `no_producer_declares_outcome` (the ledger lacks the outcome), or the scope's reason."),
+    producerGaps: z.record(z.string(), z.object({ declaredElsewhereBy: z.array(z.string()), undeclaredConsumptions: z.number() })).optional().describe("Outcome key -> who must declare it: the services declaring it for other scopes, and the occurrences this scope consumed that no run declared."),
+    ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: counts there may still move."),
+  })
+  .passthrough()
+  .openapi("LedgerCounts");
+
 const statsGroupSchema = z.object({
   workflowSlug: z.string().nullable().optional(),
   workflowDynastySlug: z.string().nullable().optional(),
@@ -215,6 +230,7 @@ const statsGroupSchema = z.object({
   featureSlug: z.string().nullable().optional(),
   systemStats: systemStatsSchema,
   stats: z.record(z.string(), z.number().nullable()),
+  ledgerCounts: ledgerCountsSchema.nullable().optional().describe("LEDGER-ONLY-1107-P2: the group's counts are its ledger Units (a campaign identity's campaigns, a brand); a count with no ledger twin is dropped (its key and every ratio dividing it null)."),
 });
 
 const featureStatsResponseSchema = z.object({
@@ -224,6 +240,7 @@ const featureStatsResponseSchema = z.object({
   systemStats: systemStatsSchema,
   groups: z.array(statsGroupSchema).optional(),
   stats: z.record(z.string(), z.number().nullable()).optional(),
+  ledgerCounts: ledgerCountsSchema.nullable().optional().describe("LEDGER-ONLY-1107-P2: every recipient / lead count is the scope's ledger Units; a count with no ledger twin is dropped (null), so is every rate and $ dividing it."),
   maturity: scopeMaturitySchema.nullable().describe("Non-grouped reads with a brand: the scope's per-leg figures on both bases and its verdict — the byte-same object /revenue serves for this campaign, offer or brand. The costPer* stats keep their meaning (everything to date); display maturity.legs[].mature. Null on a workflow-narrowed read or when it could not be read.").optional(),
 });
 
@@ -965,6 +982,7 @@ const featureRevenueResponseSchema = z.object({
     workflowDynastyName: z.string().nullable().describe("Human name of the dynasty. Null when workflow-service describes no version of it."),
     workflowSlugs: z.array(z.string()).describe("Every versioned slug the catalogue folds into it, ascending — nothing is hidden. EMPTY when workflow-service describes none, which is the dynasty-of-one case: the read still answers, over the leads and the spend frozen on that single slug."),
   }).describe("WHAT THIS BODY ANSWERED FOR, present ONLY on a ?workflow= read. The drill-down narrows every block above to ONE workflow of the scope: the leads are the ones lead-service FROZE on that workflow at serve time, the spend is the runs / email-gateway spend frozen on the dynasty's versioned slugs, and each leg is resolved through the SAME workflow-service catalogue — neither is ever inferred from the campaign row's CURRENT workflow, which mis-attributes everything spent before a switch. Absent on an un-narrowed read.").optional(),
+  ledgerCounts: ledgerCountsSchema.optional().describe("LEDGER-ONLY-1107-P2: every count, $ per outcome, conversion and curve of this body is the scope's ledger Units (brand / offer = the brand's ledger; a campaign = its campaigns' runs; a workflow = its versions' runs). A field named in `nullFields` is served null (series, counts and their ratios, `maturity` blocks); lists of people are records, untouched."),
   funnelSteps: funnelStepBreakdownSchema.nullable().describe("THE FUNNEL, WALKED STEP BY STEP — per rung of the sales funnel being read: how many distinct leads reached it, what reaching it cost, and what share of the rung before it converted. Built from the SAME deduped leads and the SAME committed cents as `outcomes` and the money above, so a rung's count agrees with leads[] row for row and the rate between two rungs of one funnel is a rate rather than two scopes divided into each other. NULL when there is no ONE funnel to walk: no funnel is wired for the channel (the leads were never read), the lensed (?lens=) response (a SUBSET of the brand's leads beside the brand's whole spend — the same gate as `spend`), or a read priced on SEVERAL declared funnels at once, which has several chains and no single one to state. A read priced on ONE funnel always carries it, priced or not — 'we could not price this' and 'this reached nobody' are different statements. Each rung also carries `customerCost`: what the CUSTOMER states the leg they worked themselves cost them, and the average per person who crossed it — reported BESIDE the charged cost, never folded into it, and scoped by the same campaigns the committed cents are."),
   costPerOutcomeHistory: costPerOutcomeHistorySchema.nullable().describe("WHAT ONE OUTCOME HAS COST THIS SCOPE, DAY BY DAY — the dated twin of the cost-per-outcome the `outcomes` block states as a scalar, so a customer can see whether it is getting cheaper and how fast. BOTH legs are CUMULATIVE since the scope's first day, because spend on a day buys outcomes that land weeks later, so a period-grain ratio oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase uses. MEASURED on both legs and divided by nobody downstream — the spend is runs' dated COMMITTED buckets (the basis outcomes.committedSpentCents rides) and the outcomes are the same deduped leads outcomes.recipientsClicked / recipientsRepliesPositive count, so the FINAL point IS that block's cpcCents/cpprCents divided by the leg's own rate, to the sub-cent rounding roiHistory's terminal ROI also carries (runs returns fractional cents per group and each grouping rounds once: measured in prod 2026-09-17, $7.9740 against a served $7.9735, both rendering $7.97). NOT learningPhase.expectedCostPerOutcomeUsd, which answers a different question — that one is pooled over the cells that OBSERVED an outcome because its job is to found a spend target and exploration spend must not price into it; this is the OBSERVED accounting figure, every dollar spent over every outcome produced. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) or the dated-spend read degraded — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. Null means 'we could not measure this', never 'it cost nothing'. (features-service#980)"),
   conversionRateHistory: conversionRateHistorySchema.nullable().describe("WHAT SHARE OF THE PEOPLE THIS SCOPE REACHED HAVE CONVERTED, DAY BY DAY — the dated twin of the conversion rate the outcomes block states as a scalar, and the third curve of the campaign Overview beside roiHistory and costPerOutcomeHistory. BOTH legs are CUMULATIVE since the scope's first day, because outreach on a day earns conversions weeks later, so a period-grain rate oscillates between 0 and absurd and describes nothing actionable. The outcome is the scope's OWN leg's step, resolved ONCE by the same leader resolution learningPhase and costPerOutcomeHistory use, so the three curves can never be denominated in different things; the denominator is REACH, the identical base funnelSteps.contactedRecipients states. BOTH legs come off the SAME leads[] rows of the SAME campaign-scoped snapshot — no producer is re-asked and nothing is narrowed — so a campaign-scoped read divides that campaign's own population by CONSTRUCTION and can never borrow its brand's. scopeConversionRatePct is the whole scope's rate including the undated and reconciles with the outcomes block; the curve's last point covers the dated population alone, and undatedContacted / undatedOutcomes state the difference. A point's rate is null ONLY when nobody has been reached yet; a measured 0 means people were reached and nobody converted. OVERVIEW ONLY, the same gate roiHistory and spend ride: null on the lensed (?lens=) read, absent on the lean (?groupBy=) groups. NULL also when the scope names no priceable outcome step (no campaign, no leg stated, a rate the brand never declared) — learningPhase.unmeasuredReason beside it names which, so no reason vocabulary is duplicated. (features-service#992)"),
@@ -3940,7 +3958,7 @@ const lifecycleCardSchema = z.object({
   relationKey: z.string().nullable(),
   leadIds: z.array(z.string()).describe("The row's leads this scope holds (the ones priced)."),
   valueUsd: z.number().nullable().describe("What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."),
-  zeroValueReason: z.enum(["ruled_out", "step_not_priced", "not_ours", "expired", "cannot_convert", "not_sent"]).nullable().describe("Why the card reads exactly 0: `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."),
+  zeroValueReason: z.enum(["ruled_out", "step_not_priced", "not_ours", "expired", "cannot_convert", "not_sent", "won_counted_on_ledger"]).nullable().describe("Why the card reads exactly 0: `won_counted_on_ledger` (Paid client: the won value is the ledger's Units x LTR on the rung, LEDGER-ONLY-1107-P2),  `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."),
   valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."),
   entryRateSource: z.enum(["measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
 });
@@ -3957,7 +3975,7 @@ const offerDealsLifecycleResponseRef = registry.register(
     unvaluedReason: z.enum(["no_economics", "no_client_value"]).nullable().describe("Set only when the offer prices on nothing: every value is then null (people still listed)."),
     totalUsd: z.number().nullable().describe("Σ `rungs[].valueUsd`, exactly."),
     expectedPipelineUsd: z.number().nullable().describe("Σ of every rung but Paid client: the expected pipeline (the board's title)."),
-    wonUsd: z.number().nullable().describe("The Paid client rung's value. `expectedPipelineUsd + wonUsd = totalUsd`."),
+    wonUsd: z.number().nullable().describe("The Paid client rung's value = the brand ledger's Paid client Units x the offer's lifetime revenue (LEDGER-ONLY-1107-P2; null when the ledger lacks Paid client Units, then `totalUsd` is null too). `expectedPipelineUsd + wonUsd = totalUsd`."),
     outOfScopeCardCount: z.number().describe("Unibox rows on a board rung none of whose leads this scope served (not on this board)."),
     rungs: z.array(z.object({
       key: z.enum(["contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"]).describe("The lifecycle ladder key (GET /public/catalogue/steps `lifecycleLadder`); Lead found is not on the board."),
@@ -3967,9 +3985,11 @@ const offerDealsLifecycleResponseRef = registry.register(
       valueUsd: z.number().nullable().describe("Company-level: one organisation = one client = the MAX over its members on the rung, organisations summed. 0 when nobody stands here, never absent."),
       expected: z.boolean().describe("True unless every card is a human-stated sale: the figure is an expectation."),
       assumptions: z.array(z.object({ input: z.enum(["lifetime_revenue", "entry_rate"]), source: z.string() })).describe("What the figure rests on: the lifetime revenue's source and, on Contacted, each entry-rate source used (`measured`, `default_entry`)."),
-      cardCount: z.number(),
-      leadCount: z.number(),
-      organizationCount: z.number(),
+      cardCount: z.number().describe("Cards listed on the rung (records)."),
+      leadCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (people on a rung are no ledger figure)."),
+      organizationCount: z.number().nullable().describe("LEDGER-ONLY-1107-P2: null (organisations on a rung are no ledger figure)."),
+      units: z.number().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the rung's outcome (Signed up = signup + form submitted Units). Null + `unitsUnavailableReason` on Contacted / Engaged (`not_a_ledger_outcome`) or when the ledger lacks the outcome."),
+      unitsUnavailableReason: z.string().nullable(),
       cards: z.array(lifecycleCardSchema).describe("One card per Unibox row on the rung, ordered by humanId then companyKey."),
     })).describe("Every board rung, ladder order, always all six."),
   }),

@@ -14,6 +14,9 @@ import { ContactedValueUnavailableError, contactedValueUnavailableBody } from ".
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { applyDisqualifiedMarks, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { Router } from "express";
+import { withLedgerOfferOutcomes } from "../lib/ledger-offer-outcomes.js";
+import { ledgerScopeOf } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
@@ -252,7 +255,13 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
           conversionOf: (step, reached) => (reached ? stepConversion(step, reached, sets, pricedFunnelKeys) : null),
         });
         const maturityDays = Math.max(0, ...partition.groups.map((g) => maturityDaysForLeg(g.legKey)));
-        return {
+        // LEDGER-ONLY-1107-P2: every count / $ per outcome on the ledger (brand Units per step, each leg its campaigns').
+        const basis = ledgerBasisOf(pricing);
+        const brandLedger = await readLedgerScope(brandId, basis, null, "offer outcomes");
+        const legScopes = new Map(
+          await Promise.all(partition.groups.map(async (g) => [[...g.campaignIds].sort().join(","), await readLedgerScope(brandId, basis, g.campaignIds, "offer outcomes leg")] as const)),
+        );
+        return withLedgerOfferOutcomes({
           offerId,
           brandId,
           costBasis: "charged" as const,
@@ -280,7 +289,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
                 }
               : null,
           }))),
-        };
+        }, brandLedger, (ids) => legScopes.get([...ids].sort().join(",")) ?? ledgerScopeOf(null, "leg_campaigns_not_read"));
       },
     });
     sendSnapshotJson(res, payload);

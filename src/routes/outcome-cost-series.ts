@@ -8,6 +8,9 @@
  * spend chart's and the brand offers row's. Gold cached per scope on this route's response shape.
  */
 import { Router } from "express";
+import { ledgerCountOfStep, ledgerUnitDays } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
+import { withLedgerStepSeries, type LedgerStepSeries } from "../lib/ledger-outcome-cost-series.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
@@ -25,6 +28,7 @@ import { expectedForOffer, offerExpectedModel, ExpectedModelComputing } from "..
 import type { SalesPath } from "../lib/offer-sales-paths.js";
 import { expectedRouteFigures } from "../lib/outcome-accounting.js";
 import {
+  OUTCOME_COST_STEPS,
   buildOutcomeCostSeries,
   contactedOutcomeLeads,
   expectedStepCosts,
@@ -51,7 +55,8 @@ export interface OutcomeCostSeriesBody {
   costBasis: "charged";
   /** The offer's first spend day: an outcome before it is not the offer's. Null when the offer never spent. */
   firstSpendDay: string | null;
-  steps: OutcomeCostStepSeries[];
+  steps: Array<OutcomeCostStepSeries | LedgerStepSeries>;
+  ledger: { basis: "ledger"; scope: "brand"; unavailableReason: string | null; ledgerDaysMissing: string[] };
 }
 
 interface ExpectedPerStep {
@@ -107,7 +112,11 @@ export async function computeOutcomeCostSeries(
   const handedAll = new Set(handedRows.map((r) => r.leadId));
   const { persons, servedLeadIds } = await readScopePeople(brandId, scope.personCampaignIds, handedAll, headers);
   const outcomes = contactedOutcomeLeads(persons, servedLeadIds, handedActed, firstSpendDay);
-  const outcomeDays = new Map([...outcomes].map(([step, m]) => [step, [...m.values()].map((o) => o.day)] as const));
+  // LEDGER-ONLY-1107-P2: each step's outcomes = the brand's ledger Units of it (the count Today prints), one day per Unit;
+  // the people our campaigns contacted are no longer counted. An outcome the ledger lacks = every count null + reason.
+  const brandLedger = await readLedgerScope(brandId, ledgerBasisOf(pricing), null, "outcome cost series");
+  const ledgerOf = new Map(OUTCOME_COST_STEPS.map((step) => [step, ledgerCountOfStep(brandLedger, step)] as const));
+  const outcomeDays = new Map(OUTCOME_COST_STEPS.map((step) => [step, ledgerUnitDays(ledgerOf.get(step)!)] as const));
 
   // OUTCOME-ACCOUNTING-1107. The Engine making each step = the offer's units whose pipe lands on it (or makes it), and
   // the funnel campaigns whose Target it is (campaign-service's `target`, else the funnel's last step).
@@ -196,7 +205,25 @@ export async function computeOutcomeCostSeries(
     },
     today,
   });
-  return { offerId, brandId, pricing, costBasis: "charged", firstSpendDay, steps };
+  // LEDGER-ONLY-1107-P2: the accounting's measured halves on the ledger: cost per Unit = the landing units' spend ÷ the
+  // Units THEIR runs produced, the measured return = the target campaigns' Units; the per-person yield is no ledger figure.
+  const landingLedger = new Map(
+    await Promise.all([...landing].map(async ([step, us]) => [step, ledgerCountOfStep(await readLedgerScope(brandId, ledgerBasisOf(pricing), us.map((u) => u.campaignId), "outcome cost series landing"), step)] as const)),
+  );
+  const targetLedger = new Map(
+    await Promise.all([...targetsByStep].map(async ([step, ts]) => [step, ledgerCountOfStep(await readLedgerScope(brandId, ledgerBasisOf(pricing), ts.flatMap((t) => t.unitCampaignIds), "outcome cost series target"), step)] as const)),
+  );
+  return {
+    offerId,
+    brandId,
+    pricing,
+    costBasis: "charged",
+    firstSpendDay,
+    steps: steps.map((st) =>
+      withLedgerStepSeries(st, ledgerOf.get(st.stepKey)!, landingLedger.get(st.stepKey) ?? null, landing.has(st.stepKey) ? (landingSpend.get(st.stepKey) ?? null) : null, targetLedger.get(st.stepKey) ?? null, targetsByStep.has(st.stepKey) ? (targetSpend.get(st.stepKey) ?? null) : null),
+    ),
+    ledger: { basis: "ledger", scope: "brand", unavailableReason: brandLedger.unavailableReason, ledgerDaysMissing: [...(brandLedger.ledger?.daysMissing ?? [])] },
+  };
 }
 
 router.get("/offers/:offerId/outcome-cost-series", apiKeyAuth, async (req, res) => {

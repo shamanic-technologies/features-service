@@ -24,6 +24,11 @@ import { describeIdentity, EMPTY_CAMPAIGN_FAMILIES, type CampaignIdentityView } 
 import { runsFeatureSlugsParam } from "../lib/feature-scope.js";
 import { dynastyMembers, NO_MERGES, pooledDynastyOf } from "../lib/dynasty-merges.js";
 import { fetchDynastyMerges } from "../lib/public-stats-clients.js";
+import { withLedgerRawStats, ledgerScopeOf, type LedgerScope } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
+
+/** LEDGER-ONLY-1107-P2: the registry's raw COUNT keys (re-based on the ledger or dropped). */
+const STATS_COUNT_KEYS: ReadonlySet<string> = new Set(Object.entries(STATS_REGISTRY).filter(([, d]) => d.kind === "raw" && d.type === "count").map(([k]) => k));
 
 const RUNS_SERVICE_URL = process.env.RUNS_SERVICE_URL!;
 const RUNS_SERVICE_API_KEY = process.env.RUNS_SERVICE_API_KEY!;
@@ -90,6 +95,8 @@ interface SystemStats {
 }
 
 interface StatsGroup {
+  /** LEDGER-ONLY-1107-P2: which counts are ledger Units, which are null and why. */
+  ledgerCounts?: unknown;
   workflowSlug?: string | null;
   workflowDynastySlug?: string | null;
   brandId?: string | null;
@@ -1361,16 +1368,27 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
       // added, counting a person once per campaign they were served under.
       if (engagementSnapshot && (foldSingleIntoTotal || (offerCampaignIds?.length ?? 0) > 1)) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
 
+      // LEDGER-ONLY-1107-P2: every count is the scope's ledger Units (brand / offer = the brand's, a campaign = its
+      // identity's campaigns'); a count with no ledger twin is dropped, so it and every ratio dividing it serve null.
+      const statsBrand = filters.brandId ?? identityBrandId;
+      const statsLedger: LedgerScope =
+        filters.workflowSlug || filters.workflowDynastySlug
+          ? ledgerScopeOf(null, "per_workflow_not_in_ledger")
+          : !statsBrand
+            ? ledgerScopeOf(null, "no_brand_scope")
+            : await readLedgerScope(statsBrand, ledgerBasisOf(pricing), filters.campaignId ? (requestedIdentity?.campaignIds ?? [filters.campaignId]) : null, "feature stats");
+      const rebased = withLedgerRawStats(rawStats, STATS_COUNT_KEYS, statsLedger, filters.campaignId ? "campaign" : "brand");
+
       return {
         // ACCOUNTING — the cost figures here are what this customer was CHARGED; comped spend is
         // absent from them. See lib/cost-basis.ts.
         costBasis: "charged" as const,
         featureSlug,
         systemStats: buildSystemStats(runsStatsMap.get("__total__"), activeCampaigns),
-        stats: computeAllDerivedStats(rawStats),
-        // The scope's per-leg figures on both bases and its verdict. The `costPer*` keys above keep
-        // their meaning (everything to date); `maturity.legs[].mature` is the figure to display.
-        maturity: wantMaturity ? scopeMaturity : null,
+        stats: computeAllDerivedStats(rebased.raw),
+        ledgerCounts: rebased.ledgerCounts,
+        // LEDGER-ONLY-1107-P2: the per-leg flash / mature person figures are not ledger figures.
+        maturity: null,
       };
     }
 
@@ -1393,6 +1411,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     }
 
     const totals = aggregateRunsTotals(runsStatsMap);
+    const statsBrandOf = (_groupKey: string): string | null => filters.brandId ?? identityBrandId;
     const groups: StatsGroup[] = [];
 
     for (const groupKey of allGroupKeys) {
@@ -1420,9 +1439,19 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
         if ((identityMembers.get(groupKey) ?? [groupKey]).length > 1) delete rawStats[UNOWNED_ENGAGEMENT_KEY];
       }
 
+      // LEDGER-ONLY-1107-P2: a campaign group's counts = its identity's ledger Units, a brand group's = the brand's; a
+      // workflow group has no ledger scope (counts null).
+      const groupLedger: LedgerScope =
+        groupBy === "campaignId" && (statsBrandOf(groupKey))
+          ? await readLedgerScope(statsBrandOf(groupKey)!, ledgerBasisOf(pricing), identityMembers.get(groupKey) ?? [groupKey], "feature stats grouped")
+          : groupBy === "brandId"
+            ? await readLedgerScope(groupKey, ledgerBasisOf(pricing), null, "feature stats grouped")
+            : ledgerScopeOf(null, groupBy === "campaignId" ? "no_brand_scope" : "per_workflow_not_in_ledger");
+      const groupRebased = withLedgerRawStats(rawStats, STATS_COUNT_KEYS, groupLedger, groupBy === "brandId" ? "brand" : "campaign");
       const group: StatsGroup = {
         systemStats: buildSystemStats(runsStatsMap.get(groupKey) as RunsStatsEntry | undefined, activeCampaigns),
-        stats: computeAllDerivedStats(rawStats),
+        stats: computeAllDerivedStats(groupRebased.raw),
+        ledgerCounts: groupRebased.ledgerCounts,
       };
 
       if (groupBy === "workflowSlug") group.workflowSlug = groupKey;

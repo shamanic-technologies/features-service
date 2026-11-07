@@ -1,4 +1,7 @@
 import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
+import { withLedgerCounts, ledgerScopeOf } from "../lib/ledger-counts.js";
+import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
+import { fetchBrandOutcomeLedger, fetchWorkflowUnits, ledgerOfWorkflowSlugs } from "../lib/scope-outcome-ledger-io.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { createHash } from "node:crypto";
 import { applyDisqualifiedMarks, deferLoud, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
@@ -2525,6 +2528,23 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             });
           }
 
+          // LEDGER-ONLY-1107-P2: each workflow's counts = the Units its versions' runs produced (runs-service
+          // `workflowSlug`), in the read's campaign scope; an outcome the brand's ledger lacks stays null + reason.
+          const workflowLedgerIds = workflowCampaignScope === undefined ? null : campaignScopeIds(workflowCampaignScope);
+          const [brandLedgerForWorkflows, unitsByWorkflow] = await Promise.all([
+            fetchBrandOutcomeLedger(brandId, ledgerBasisOf(workflowPricing)).catch(() => null),
+            fetchWorkflowUnits(brandId, workflowLedgerIds).catch((err: Error) => {
+              console.error(`[features-service] revenue by workflow: ledger per workflow of ${brandId} unreadable (counts null): ${err.message}`);
+              return null;
+            }),
+          ]);
+          const ledgerGroups = groups.map((g) =>
+            withLedgerCounts(
+              { ...g, maturity: null },
+              brandLedgerForWorkflows && unitsByWorkflow ? ledgerScopeOf(ledgerOfWorkflowSlugs(unitsByWorkflow, g.workflowSlugs, brandLedgerForWorkflows)) : ledgerScopeOf(null),
+              "workflow",
+            ),
+          );
           return servedRevenueBody({
             featureSlug,
             costBasis: "charged" as const,
@@ -2533,7 +2553,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
             // campaign's family rather than infer it from a number that moved — the byte-same block
             // the un-grouped campaign read and `/audience-stats` already carry. Absent brand-wide.
             campaignIdentity: campaignId ? describeIdentity(workflowIdentity, campaignId) : undefined,
-            groups,
+            groups: ledgerGroups,
           });
         },
       });
@@ -2585,7 +2605,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
               // `maturity`: the offer's own per-leg figures and verdict — the object every surface about
               // this offer serves, so the row agrees with the offer's own reads.
               const expectedReturn = await expectedReturnForOffer(headers, brandId, id, body.costEconomics.maturity);
-              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, expectedReturn };
+              return { offerId: id, campaignIds, headline: body.headline, costEconomics: body.costEconomics, maturity: null, expectedReturn };
             }),
           );
 
@@ -2663,6 +2683,9 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                           { offerId: identity?.offerId ?? null, featureSlug, legKeys: identity?.legKeys ?? [] },
                           body.costEconomics.maturity,
                         );
+                  // LEDGER-ONLY-1107-P2: the group's outcome counts are its identity's campaigns' ledger Units.
+                  const groupLedger = await readLedgerScope(brandId, ledgerBasisOf(campaignPricing), scope, "feature revenue grouped");
+                  const ledgerOutcomes = (withLedgerCounts({ outcomes: body.outcomes }, groupLedger, "campaign") as { outcomes: typeof body.outcomes; ledgerCounts: unknown });
                   return idsWithRuns.map((cid) => stamp({
                     campaignId: cid,
                     campaignIdentity: describeIdentity(identity, cid),
@@ -2674,10 +2697,10 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                     // over the family's WHOLE membership), and deduped inside it, so a lead served under
                     // two member rows is ONE person here as it is one person to the brand. Every member
                     // of an identity therefore carries the identical block, like the money.
-                    outcomes: body.outcomes,
-                    // The identity's per-leg figures and verdict (`lib/scope-maturity.ts`) — the same
-                    // object its own `?campaignId=` read serves, so a row and its page cannot disagree.
-                    maturity: body.maturity ?? null,
+                    outcomes: ledgerOutcomes.outcomes,
+                    ledgerCounts: ledgerOutcomes.ledgerCounts,
+                    // LEDGER-ONLY-1107-P2: per-leg flash / mature person figures are not ledger figures.
+                    maturity: null,
                   }));
                 });
               }),
@@ -2813,9 +2836,15 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 ? await expectedReturnForOffer(headers, brandId, offerId, body.costEconomics.maturity)
                 : await expectedReturnForBrand(headers, brandId, body.costEconomics.maturity);
         // LEDGER-ONLY-1107: the realized return counts the brand's ledger Paid client Units; a campaign or workflow read carries none.
+        // LEDGER-ONLY-1107-P2: every count / $ per outcome / conversion / curve is the scope's ledger (brand, or the campaign
+        // identity's own campaigns); a workflow slice or a lens has no ledger scope (null + reason).
+        const ledgerScope =
+          lens || workflowScope
+            ? ledgerScopeOf(null, lens ? "lens_not_in_ledger" : "per_workflow_not_in_ledger")
+            : await readLedgerScope(brandId, ledgerBasisOf(pricing), campaignId && !offerId ? campaignScopeIds(campaignScope) : null, "feature revenue");
         return servedRevenueBody(
           await withLedgerRealizedReturn(
-            {
+            withLedgerCounts({
           featureSlug,
           costBasis: "charged" as const,
           ...applyLeadDetail(body, leadDetail),
@@ -2832,7 +2861,7 @@ async function handleFeatureRevenue(req: Request, res: Response, costBasis: Reve
                 workflowSlugs: workflowScope.workflowSlugs,
               }
             : undefined,
-        },
+        }, ledgerScope, campaignId && !offerId ? "campaign" : "brand"),
             brandId,
             pricing === "gross" ? "gross" : "net",
             campaignId ? "per_campaign_not_in_ledger" : workflowScope ? "per_workflow_not_in_ledger" : null,
