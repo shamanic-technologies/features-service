@@ -190,6 +190,12 @@ describe("published units (OUTCOME-FINEST-1106): each creative with what the led
       });
       expect(noPipe.accounting.costPerUnit).toMatchObject({ actualUsd: 0.3, expectedUsd: 0.3, expectedSource: "own_spend" });
       expect(noPipe.accounting.costFromStart.expectedUsd).toBe(0.3);
+      // Ours at $0 on the ledger is a true $0 (our run declared all it metered): 1 post at $0.30 + 2 at $0 = $0.10 each.
+      const zero = publishedUnitsOf("linkedin_post_published", [post("p1"), post("p2"), post("p3"), post("hand", { performedBy: "client_team" })], (s) => (s.id === "p1" ? { spentUsd: 0.3, visits: 0, signups: 0 } : { spentUsd: 0, visits: 0, signups: 0 }), {
+        unitValueOf,
+        accounting: { ...accounting, figures: { ...figures, costPerUnitUsd: null, costPerUnitBasis: null, costPerUnitUnavailableReason: "leg_cost_unavailable", costFromStartUsd: null, costFromStartUnavailableReason: "leg_cost_unavailable" } },
+      });
+      expect(zero.accounting.costPerUnit).toMatchObject({ actualUsd: 0.1, expectedUsd: 0.1, variance: { usd: 0 } });
     });
   });
 });
