@@ -150,13 +150,15 @@ import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib
 import {
   buildShowcaseCandidates,
   furthestRungReached,
-  isStaffOnlyOrg,
-  pickRecentlyStartedByMeetings,
+  isStaffOnlyBrand,
+  pickByMostMeetings,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
+  walkComplete,
+  type RecentShowcaseCounts,
+  type ShowcaseCandidate,
   type ShowcaseGroupPick,
 } from "../lib/showcase-clients.js";
-import { fetchBrandFirstBilledDay } from "../lib/revenue-history-client.js";
 import {
   channelStepCatalogue,
   funnelLegCatalogue,
@@ -885,11 +887,10 @@ export async function handleBest(
 
 // ── The per-brand fleet snapshot the homepage's client pick ranks ────────────────────────────────
 //
-// For every (org, brand) running a cold-email channel: when it was first billed and the furthest rung its
-// funnel reached (one engine pass per pair, minutes across the fleet), written to `fleet_return_snapshots`
-// (historical table name) OFF the request path, so the showcase pick costs one indexed SELECT. It used to
-// carry each brand's pipeline and spend for the public return medians; those reads are deleted
-// (ROI-CONSISTENCY-1103: a return exists only where a value lands).
+// For every (org, brand) running a cold-email channel: the furthest rung its funnel reached and its meetings
+// booked + positive replies, EVERY conversion (one engine pass per pair, minutes across the fleet), written to
+// `fleet_return_snapshots` (historical table name) OFF the request path, so the showcase pick costs one indexed
+// SELECT (SHOWCASE-MAX-1107: the hero row = the most meetings booked, then the most positive replies).
 
 /** How many (org, brand) engine passes the warm runs at once: each reads a brand's whole lead population. */
 const FLEET_SNAPSHOT_PAIR_CONCURRENCY = 4;
@@ -904,26 +905,35 @@ const FLEET_SNAPSHOT_BRAND_TIMEOUT_MS = 300_000;
 const FLEET_SNAPSHOT_LATE_WAIT_MS = 600_000;
 /** Single-flight guard, per feature slug — a burst of cold reads must kick exactly ONE warm. */
 const fleetSnapshotWarmInFlight = new Map<string, Promise<void>>();
-/** The floor the first-billed-day read looks back from: earlier than this fleet's first billed dollar by years. */
-const FIRST_BILLED_FLOOR_ISO = "2020-01-01T00:00:00.000Z";
 
 /** Test seam — await any in-flight fleet snapshot warm(s) so a follow-up read observes the snapshot. */
 export async function __awaitFleetSnapshotWarm(): Promise<void> {
   await Promise.allSettled([...fleetSnapshotWarmInFlight.values()]);
 }
 
+/** One (org, brand) pair's stored ingredients. */
+interface PairSnapshot {
+  brandId: string;
+  outcomeCount: number | null;
+  meetingsBooked: number | null;
+  positiveReplies: number | null;
+}
+
 /**
- * One (org, brand) pair: the furthest RUNG its funnel reached (`furthestRungReached`, off the engine pass's own
- * `funnelSteps`) and the first UTC day it was billed on the channel. Null when the membership is stale (the brand
- * moved orgs). The first-billed day is SOFT: a blip leaves the brand undated (not a recency candidate), never dated
- * with a stand-in.
+ * One (org, brand) pair: the furthest RUNG its funnel reached (`furthestRungReached`) and its meetings booked +
+ * positive replies, every conversion, the counts the client's own dashboard reads. Null when the membership is
+ * stale (the brand moved orgs).
  */
-async function computePairSnapshot(featureSlug: string, funnel: ReturnType<typeof getFunnel>, orgId: string, brandId: string): Promise<{ brandId: string; outcomeCount: number | null; startedOn: string | null } | null> {
+async function computePairSnapshot(featureSlug: string, funnel: ReturnType<typeof getFunnel>, orgId: string, brandId: string): Promise<PairSnapshot | null> {
   const headers: DownstreamHeaders = { orgId, featureSlug };
-  let outcomeCount: number | null;
   try {
     const body = await computeFeatureRevenue(featureSlug, brandId, undefined, funnel, headers, undefined, undefined, false, "net");
-    outcomeCount = furthestRungReached(body.funnelSteps);
+    return {
+      brandId,
+      outcomeCount: furthestRungReached(body.funnelSteps),
+      meetingsBooked: body.meetingsBooked.total,
+      positiveReplies: body.recipientsRepliesPositive.total,
+    };
   } catch (error) {
     if (error instanceof BrandOwnershipError) {
       console.log(`[features-service] fleet snapshot: skipping stale feature membership featureSlug=${featureSlug}, orgId=${orgId}, brandId=${brandId}`);
@@ -931,18 +941,45 @@ async function computePairSnapshot(featureSlug: string, funnel: ReturnType<typeo
     }
     throw error;
   }
-  let startedOn: string | null = null;
-  try {
-    startedOn = await fetchBrandFirstBilledDay(orgId, brandId, featureSlug, FIRST_BILLED_FLOOR_ISO);
-  } catch (err) {
-    console.error(`[features-service] fleet snapshot: first-billed day unreadable for brand ${brandId} (org ${orgId}): it is not a recency candidate:`, err);
+}
+
+/** PURE: a + b where null means "not counted". */
+function addCount(a: number | null, b: number | null): number | null {
+  if (b === null) return a;
+  return (a ?? 0) + b;
+}
+
+/**
+ * PURE: fold the per-pair results into one row per brand (leads are disjoint per org, so counts sum). A brand ANY
+ * of whose passes FAILED keeps its PRIOR stored row when it has one: a transient lead-service or email-gateway 502
+ * must not drop the fleet's biggest client off the homepage for an hour (prod 2026-11-07: Doc Dinners' pass died on
+ * an email-gateway 502).
+ */
+export function foldFleetSnapshotRows(
+  computed: ReadonlyArray<PairSnapshot | null>,
+  failedBrandIds: ReadonlySet<string>,
+  prior: readonly BrandSnapshotRow[] | null,
+): BrandSnapshotRow[] {
+  const byBrand = new Map<string, BrandSnapshotRow & { outcomeCount: number | null; meetingsBooked: number | null; positiveReplies: number | null }>();
+  for (const c of computed) {
+    if (c === null) continue;
+    const agg = byBrand.get(c.brandId) ?? { brandId: c.brandId, outcomeCount: null, meetingsBooked: null, positiveReplies: null };
+    agg.outcomeCount = addCount(agg.outcomeCount, c.outcomeCount);
+    agg.meetingsBooked = addCount(agg.meetingsBooked, c.meetingsBooked);
+    agg.positiveReplies = addCount(agg.positiveReplies, c.positiveReplies);
+    byBrand.set(c.brandId, agg);
   }
-  return { brandId, outcomeCount, startedOn };
+  const priorByBrand = new Map((prior ?? []).map((r) => [r.brandId, r]));
+  for (const brandId of failedBrandIds) {
+    const kept = priorByBrand.get(brandId);
+    if (kept) byBrand.set(brandId, { brandId, outcomeCount: kept.outcomeCount ?? null, meetingsBooked: kept.meetingsBooked ?? null, positiveReplies: kept.positiveReplies ?? null });
+  }
+  return [...byBrand.values()];
 }
 
 /**
  * Recompute one channel's per-brand rows and persist them. Runs OFF the request path. PER-BRAND RESILIENT: one
- * brand's failed or hung pass is logged loud and contributes no row, rather than aborting the warm.
+ * brand's failed or hung pass is logged loud and the brand keeps its prior row, rather than aborting the warm.
  */
 export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void> {
   const existing = fleetSnapshotWarmInFlight.get(featureSlug);
@@ -950,8 +987,9 @@ export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void>
 
   const run = (async () => {
     const funnel = getFunnel(featureSlug);
-    const memberships = await fetchFeatureMemberships(featureSlug);
+    const [memberships, prior] = await Promise.all([fetchFeatureMemberships(featureSlug), readFleetReturnSnapshotSoft(featureSlug)]);
     const pairs = [...new Map(memberships.map((m) => [`${m.orgId}::${m.brandId}`, { orgId: m.orgId, brandId: m.brandId }])).values()];
+    const failed = new Set<string>();
 
     // A pass still running at the timeout is NOT dropped: its own promise is awaited AFTER the others for up to
     // FLEET_SNAPSHOT_LATE_WAIT_MS more. No second pass is started (the first keeps the load).
@@ -966,7 +1004,8 @@ export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void>
           late.push({ index, orgId, brandId, pass });
           return null;
         }
-        console.error(`[features-service] fleet snapshot warm: brand ${brandId} (org ${orgId}) failed and contributes no row:`, err);
+        console.error(`[features-service] fleet snapshot warm: brand ${brandId} (org ${orgId}) failed, its prior row is kept:`, err);
+        failed.add(brandId);
         return null;
       }
     });
@@ -974,26 +1013,14 @@ export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void>
       try {
         computed[l.index] = await withTimeout(l.pass, FLEET_SNAPSHOT_LATE_WAIT_MS, `fleet snapshot warm ${featureSlug} brand ${l.brandId} (late)`);
       } catch (err) {
-        console.error(`[features-service] fleet snapshot warm: brand ${l.brandId} (org ${l.orgId}) failed and contributes no row:`, err);
+        console.error(`[features-service] fleet snapshot warm: brand ${l.brandId} (org ${l.orgId}) failed, its prior row is kept:`, err);
+        failed.add(l.brandId);
       }
     }
 
-    // A brand claimed by several orgs is ONE brand: ONE beginning (the earliest; `YYYY-MM-DD` sorts lexically) and its
-    // rung counts summed (leads are disjoint per org; an upper bound, read only as a `> 0` prefilter).
-    const byBrand = new Map<string, { startedOn: string | null; outcomes: number; hasOutcomes: boolean }>();
-    for (const c of computed) {
-      if (c === null) continue;
-      const agg = byBrand.get(c.brandId) ?? { startedOn: null, outcomes: 0, hasOutcomes: false };
-      if (c.startedOn !== null && (agg.startedOn === null || c.startedOn < agg.startedOn)) agg.startedOn = c.startedOn;
-      if (c.outcomeCount !== null) {
-        agg.outcomes += c.outcomeCount;
-        agg.hasOutcomes = true;
-      }
-      byBrand.set(c.brandId, agg);
-    }
-    const rows: BrandSnapshotRow[] = [...byBrand].map(([brandId, a]) => ({ brandId, startedOn: a.startedOn, outcomeCount: a.hasOutcomes ? a.outcomes : null }));
+    const rows = foldFleetSnapshotRows(computed, failed, prior?.brands ?? null);
     await writeFleetReturnSnapshotSoft(featureSlug, rows, new Date());
-    console.log(`[features-service] fleet snapshot warm complete for ${featureSlug}: ${rows.length} brand(s) of ${pairs.length} membership pair(s)`);
+    console.log(`[features-service] fleet snapshot warm complete for ${featureSlug}: ${rows.length} brand(s) of ${pairs.length} membership pair(s), ${failed.size} kept from the prior snapshot`);
   })()
     .catch((err) => {
       console.error(`[features-service] fleet snapshot warm failed for ${featureSlug}:`, err);
@@ -2825,9 +2852,9 @@ export function __resetShowcaseFunnelsCache(): void {
  *  each one drives (leads, runs, brand, email-gateway), not about the list's length. */
 const SHOWCASE_BRAND_CONCURRENCY = 2;
 
-/** The recent group walks deeper: it looks for 3 clients with a booked meeting, rarer than any rung
- *  (prod 2026-10-19: 20 dated clients with a rung past the base). It stops once 3 are found. */
-const SHOWCASE_MAX_RECENT_WALKS = 30;
+/** How far down the snapshot order the hero walk may go: the head of the order is the biggest figures, so
+ *  the walk normally stops after 3; the rest absorbs failed reads and stale snapshot counts. */
+const SHOWCASE_MAX_RECENT_WALKS = 15;
 
 /** Walk every funnel one showcase brand's campaigns sell, under the org that owns its leads. */
 async function computeShowcaseBrand(
@@ -2911,19 +2938,15 @@ async function computeShowcaseBrand(
       false, // brandLevelSpend
       undefined, // perOfferPricing
       undefined, // listedOrganizationKeys
-      // COUNT ONLY OUR WINS (owner 2026-10-29, SHOWCASE-OUR-WINS-1029): every person count this card
-      // prints (each rung, positive replies, meetings booked) keeps only the outcomes our outreach
-      // caused, per lead-service's stored verdict. Doc Dinners' CRM imported 149 meetings, 7 of them
-      // after our email to that person.
-      true,
+      // EVERY CONVERSION IS COUNTED, as on the client's own dashboard: the "outreach-caused only" filter of
+      // 2026-10-29 is removed (owner 2026-11-07, SHOWCASE-MAX-1107: « enlève ce putain de filtre »).
     );
     // The money half rides the SAME body: each rung already carries what it cost.
     if (body.funnelSteps) funnels.push(showcaseFunnelOf(body.funnelSteps));
     if (heroCounts === null && body.funnelSteps) {
       heroCounts = {
         positiveReplies: body.recipientsRepliesPositive.total,
-        // lead-service's statements unreadable (`counts` null) → no verdict to count meetings on: null.
-        meetingsBooked: body.outcomeCauses.counts === null ? null : body.meetingsBooked.total,
+        meetingsBooked: body.meetingsBooked.total,
         committedSpentCents: body.funnelSteps.committedSpentCents,
       };
     }
@@ -3016,22 +3039,19 @@ export function warmShowcaseFunnelsOnBoot(): void {
  * THE PICK COSTS ONE INDEXED SELECT PER CHANNEL: the per-brand engine passes already happened, off the request
  * path, in the fleet snapshot warm; this reads the rows they wrote. See `lib/showcase-clients.ts`.
  */
-/** The candidate brands every claiming org of which is a staff test org (all members staff). */
+/** The candidate brands that are ours: every claiming org with members is a staff test org (`isStaffOnlyBrand`). */
 async function staffOnlyBrandIds(
   brandIds: readonly string[],
   orgsByBrand: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<Set<string>> {
   const orgIds = [...new Set(brandIds.flatMap((id) => [...(orgsByBrand.get(id) ?? [])]))];
-  const verdicts = await mapWithConcurrency(orgIds, SHOWCASE_BRAND_CONCURRENCY * 3, async (orgId) => ({
+  const members = await mapWithConcurrency(orgIds, SHOWCASE_BRAND_CONCURRENCY * 3, async (orgId) => ({
     orgId,
-    staffOnly: isStaffOnlyOrg(await fetchOrgUserEmails(orgId)),
+    emails: await fetchOrgUserEmails(orgId),
   }));
-  const staffOrgs = new Set(verdicts.filter((v) => v.staffOnly).map((v) => v.orgId));
+  const membersByOrg = new Map(members.map((m) => [m.orgId, m.emails]));
   return new Set(
-    brandIds.filter((id) => {
-      const orgs = orgsByBrand.get(id);
-      return orgs !== undefined && orgs.size > 0 && [...orgs].every((o) => staffOrgs.has(o));
-    }),
+    brandIds.filter((id) => isStaffOnlyBrand([...(orgsByBrand.get(id) ?? [])].map((o) => membersByOrg.get(o) ?? null))),
   );
 }
 
@@ -3115,15 +3135,16 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
     }
   };
 
-  // The hero row (owner 2026-10-19, SHOWCASE-MEETINGS-1019): walk newest first until 3 clients with a
-  // booked meeting are found (or the cap), then name them, filling from the newest positive-reply
-  // clients. Each client is judged on the counts its card states (`showcaseOutcomesOf`), so a card
-  // never shows 0 meetings and 0 positive replies, and website visits never qualify anybody.
+  // The hero row (owner 2026-11-07, SHOWCASE-MAX-1107): walk the snapshot order (most meetings booked, then
+  // most positive replies) until 3 clients qualify on the counts their own cards state (`showcaseOutcomesOf`)
+  // and no unwalked candidate could displace the third; then name them, biggest first. A failed read is
+  // skipped and the next candidate fills its seat, so the row stays at 3. Website visits never qualify.
+  const candidateById = new Map((candidates ?? []).map((c) => [c.brandId, c] as const));
   const confirmRecent = async (pick: ShowcaseGroupPick, walkable: string[]): Promise<ShowcaseGroupPick> => {
-    const counted: { brandId: string; meetingsBooked: number | null; positiveReplies: number | null }[] = [];
+    const counted: RecentShowcaseCounts[] = [];
     const BATCH = 3;
-    let verdict = pickRecentlyStartedByMeetings([], pick.requestedCount);
-    for (let cursor = 0; cursor < walkable.length && !verdict.complete; cursor += BATCH) {
+    let verdict = pickByMostMeetings([], pick.requestedCount);
+    for (let cursor = 0; cursor < walkable.length; cursor += BATCH) {
       const batch = walkable.slice(cursor, cursor + BATCH);
       await walkAll(batch);
       for (const id of batch) {
@@ -3132,14 +3153,16 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
         const countOf = (key: string) => outcomes.find((o) => o.key === key)?.peopleReached ?? null;
         counted.push({ brandId: id, meetingsBooked: countOf("meeting_booked"), positiveReplies: countOf("conversation") });
       }
-      verdict = pickRecentlyStartedByMeetings(counted, pick.requestedCount);
+      verdict = pickByMostMeetings(counted, pick.requestedCount);
+      const next: ShowcaseCandidate | undefined = candidateById.get(walkable[cursor + BATCH] ?? "");
+      if (walkComplete(verdict, next, pick.requestedCount)) break;
     }
     if (verdict.rejected > 0) {
       console.log(
-        `[features-service] showcase recentlyStarted: ${verdict.rejected} candidate(s) had no meeting booked and no positive reply and were not named`,
+        `[features-service] showcase hero row: ${verdict.rejected} walked candidate(s) showed no meeting booked and no positive reply and were not named`,
       );
     }
-    const qualifying = Math.max(0, pick.qualifyingCount - verdict.rejected);
+    const qualifying = Math.max(verdict.qualifying, pick.qualifyingCount - verdict.rejected);
     return verdict.brandIds.length > 0
       ? { ...pick, brandIds: verdict.brandIds, qualifyingCount: qualifying }
       : {
@@ -3147,7 +3170,7 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
           brandIds: [],
           measured: false,
           unmeasuredReason: pick.unmeasuredReason ?? "no_qualifying_clients",
-          qualifyingCount: qualifying,
+          qualifyingCount: 0,
         };
   };
 

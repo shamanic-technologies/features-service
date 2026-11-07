@@ -4,9 +4,9 @@
  * ONE downstream fixture drives every case, shaped like what the homepage actually states: clients
  * selling different funnels, one with a rung nobody has reached. What the cases pin:
  *
- *   - the PICK is the service's, ALREADY ORDERED: meeting clients first, then positive-reply clients,
- *     newest first, never one qualified by website visits alone; the best-return group is deleted
- *     (ROI-CONSISTENCY-1103) and no field states a return;
+ *   - the PICK is the service's, ALREADY ORDERED: most meetings booked first, then most positive
+ *     replies, whenever the client began (SHOWCASE-MAX-1107), never one qualified by website visits
+ *     alone; the best-return group is deleted (ROI-CONSISTENCY-1103) and no field states a return;
  *   - a group with nobody SAYS WHICH SILENCE it is, and a SHORT group is a stated fact;
  *   - the route NAMES NO BRAND: a `?brandId=` on the request changes nothing;
  *   - the chain is the funnel's OWN steps in the funnel's OWN order, the outreach base first, and a
@@ -62,7 +62,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
-const { __resetShowcaseFunnelsCache } = await import("./public.js");
+const { __resetShowcaseFunnelsCache, foldFleetSnapshotRows } = await import("./public.js");
 const { brandReadingFunnels } = await import("../lib/showcase-funnels.js");
 const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 const { funnelLeg } = await import("../lib/funnel-legs.js");
@@ -213,8 +213,9 @@ interface Fixture {
 /** One stored row of the persisted fleet snapshot — what the pick has to work with. */
 interface SnapshotRow {
   brandId: string;
-  startedOn?: string | null;
   outcomeCount?: number | null;
+  meetingsBooked?: number | null;
+  positiveReplies?: number | null;
 }
 
 function mockFetch(fixture: Fixture): void {
@@ -377,14 +378,15 @@ function mockFetch(fixture: Fixture): void {
  *   shockwave      — no lead membership at all: we cannot resolve whose org to read it under.
  */
 /**
- * THE SNAPSHOT THE PICK RANKS OVER. By recency: outsider (Sep) > shockwave (Aug) > opsfolio (Jun) >
- * docdinners (Mar). The outsider began most recently and has produced nothing: the prefilter keeps it out.
+ * THE SNAPSHOT THE PICK RANKS OVER: each client's meetings booked and positive replies. Docdinners leads
+ * (1 meeting); opsfolio and shockwave tie on 1 positive reply; the outsider has produced nothing and is
+ * never walked.
  */
 const SNAPSHOT: SnapshotRow[] = [
-  { brandId: DOC, startedOn: "2026-03-01", outcomeCount: 2 },
-  { brandId: OPS, startedOn: "2026-06-01", outcomeCount: 1 },
-  { brandId: SHOCK, startedOn: "2026-08-01", outcomeCount: 1 },
-  { brandId: OUTSIDER, startedOn: "2026-09-01", outcomeCount: 0 },
+  { brandId: DOC, outcomeCount: 2, meetingsBooked: 1, positiveReplies: 2 },
+  { brandId: OPS, outcomeCount: 1, meetingsBooked: 0, positiveReplies: 1 },
+  { brandId: SHOCK, outcomeCount: 1, meetingsBooked: 0, positiveReplies: 1 },
+  { brandId: OUTSIDER, outcomeCount: 0, meetingsBooked: 0, positiveReplies: 0 },
 ];
 
 const BASE: Fixture = {
@@ -415,10 +417,9 @@ const READABLE_SHOCK: Fixture = {
 };
 
 /**
- * Living Vital's production shape: sells the REPLY funnel, began most recently, clicked twice and
- * replied never — so a gate counting clicks lets it through while its own chain shows nothing past
- * `contacted`. Its snapshot row carries the count the OLD warm wrote, which is exactly the stale state
- * the route has to be robust to until the next warm rewrites it.
+ * Living Vital's production shape: sells the REPLY funnel, clicked twice and replied never, so its own
+ * chain shows nothing past `contacted`. Its snapshot row carries a STALE claim (5 positive replies),
+ * which is exactly the state the route has to be robust to until the next warm rewrites it.
  */
 const WITH_VITAL: Fixture = {
   ...READABLE_SHOCK,
@@ -432,7 +433,7 @@ const WITH_VITAL: Fixture = {
   memberships: [...(READABLE_SHOCK.memberships ?? []), VITAL],
   snapshot: [
     ...SNAPSHOT,
-    { brandId: VITAL, startedOn: "2026-09-10", outcomeCount: 2 },
+    { brandId: VITAL, outcomeCount: 2, meetingsBooked: 0, positiveReplies: 5 },
   ],
 };
 
@@ -494,13 +495,13 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(plain.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
   });
 
-  it("serves ONE group, already ordered: meeting clients first, then reply clients newest first, and no return", async () => {
+  it("serves ONE group, already ordered: most meetings booked first, then most positive replies, and no return", async () => {
     mockFetch(READABLE_SHOCK);
     const body = await get();
 
-    // The hero row proves BOOKED MEETINGS (owner 2026-10-19): docdinners booked one, so it leads even
-    // though it began first; Shockwave (August) then opsfolio (June) fill with a positive reply each.
-    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK, OPS]);
+    // The hero row shows the BIGGEST figures (owner 2026-11-07, SHOWCASE-MAX-1107): docdinners booked one
+    // meeting, so it leads; opsfolio and shockwave fill with 1 positive reply each (tie: brand id).
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([DOC, OPS, SHOCK]);
     expect(body.groups.recentlyStarted.measured).toBe(true);
     expect(body.groups.recentlyStarted.unmeasuredReason).toBeNull();
     // The best-return group and its floor are deleted (ROI-CONSISTENCY-1103).
@@ -508,7 +509,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     expect(body).not.toHaveProperty("minSpendUsd");
     expect(JSON.stringify(body)).not.toMatch(/returnPerDollar|highestReturn/);
     // `brands` is the group's clients, in its order.
-    expect(body.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK, OPS]);
+    expect(body.brands.map((b) => b.brand.id)).toEqual([DOC, OPS, SHOCK]);
     expect(brandOf(body, DOC).brand.domain).toBe(`${DOC}.com`);
     expect(body.groups.recentlyStarted.brands.find((b) => b.brand.id === DOC)).toEqual(brandOf(body, DOC));
   });
@@ -516,16 +517,15 @@ describe("GET /public/stats/showcase-funnels", () => {
   it("never names a STAFF TEST client, even one that booked a meeting", async () => {
     mockFetch({ ...READABLE_SHOCK, staffOrgBrands: [DOC] });
     const body = await get();
-    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([SHOCK, OPS]);
+    expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).toEqual([OPS, SHOCK]);
     expect(body.brands.map((b) => b.brand.id)).not.toContain(DOC);
   });
 
-  it("the OUTCOME gate keeps out the client that began most recently and produced nothing", async () => {
+  it("the OUTCOME gate keeps out the client that produced nothing", async () => {
     mockFetch(READABLE_SHOCK);
     const body = await get();
 
-    // The outsider began in September — later than every client named — and has moved nobody past
-    // outreach, so the row of live cards does not lead with it.
+    // The outsider's snapshot counts 0 meetings and 0 positive replies: never walked, never named.
     expect(body.groups.recentlyStarted.brands.map((b) => b.brand.id)).not.toContain(OUTSIDER);
     expect(body.groups.recentlyStarted.brands[0].brand.id).toBe(DOC);
   });
@@ -537,7 +537,7 @@ describe("GET /public/stats/showcase-funnels", () => {
   // warm counted clicks — a signal its funnel has no rung for. Its chain read `contacted` and then 0 on
   // every rung. The id below is deliberately a fresh one: nothing here excludes anybody by name.
 
-  it("a client whose chain shows NOTHING past the outreach base is not named, whatever its snapshot said", async () => {
+  it("a client whose chain shows NOTHING past the outreach base is not named, whatever its snapshot said, and the next one fills its seat", async () => {
     mockFetch(WITH_VITAL);
     const body = await get();
     const recent = body.groups.recentlyStarted;
@@ -555,9 +555,9 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(WITH_VITAL);
     const recent = (await get()).groups.recentlyStarted;
 
-    // Vital (clicks only, newest) is refused; the meeting client leads, the positive-reply clients fill.
-    expect(recent.brands.map((b) => b.brand.id)).toEqual([DOC, SHOCK, OPS]);
-    // Four passed the snapshot prefilter; one had neither a meeting nor a positive reply.
+    // Vital (clicks only, stale snapshot claim) is walked and refused; the walk goes on to fill the row.
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([DOC, OPS, SHOCK]);
+    // Four passed the snapshot gate; one showed neither a meeting nor a positive reply on its own chain.
     expect(recent.qualifyingCount).toBe(3);
     expect(recent.requestedCount).toBe(3);
   });
@@ -805,10 +805,10 @@ describe("GET /public/stats/showcase-funnels", () => {
   });
 });
 
-// ── THE HERO ROW ON A WIDER FLEET (owner 2026-10-19, SHOWCASE-MEETINGS-1019) ─────────────────────
+// ── THE HERO ROW ON A WIDER FLEET (owner 2026-11-07, SHOWCASE-MAX-1107) ─────────────────────────
 describe("the hero row on a wider fleet", () => {
-  const ANECDOTE = "aaaaaaaa-0000-4000-8000-000000000001"; // newest, 1 positive reply
-  const FOUR = "aaaaaaaa-0000-4000-8000-000000000002"; // 4 positive replies: still under
+  const ANECDOTE = "aaaaaaaa-0000-4000-8000-000000000001"; // 1 positive reply: the obra.cam shape
+  const FOUR = "aaaaaaaa-0000-4000-8000-000000000002";
   const P5 = "aaaaaaaa-0000-4000-8000-000000000003";
   const P6 = "aaaaaaaa-0000-4000-8000-000000000004";
   const P7 = "aaaaaaaa-0000-4000-8000-000000000005";
@@ -823,15 +823,7 @@ describe("the hero row on a wider fleet", () => {
   const FIXTURE: Fixture = {
     brands: brandsOf(SPEC),
     memberships: SPEC.map(([id]) => id),
-    snapshot: [
-      // Newest first by start day.
-      { brandId: ANECDOTE, startedOn: "2026-10-01", outcomeCount: 5 },
-      { brandId: FOUR, startedOn: "2026-09-25", outcomeCount: 5 },
-      { brandId: P5, startedOn: "2026-09-20", outcomeCount: 5 },
-      { brandId: P6, startedOn: "2026-09-10", outcomeCount: 6 },
-      { brandId: P7, startedOn: "2026-09-01", outcomeCount: 7 },
-      { brandId: OLDEST, startedOn: "2026-03-01", outcomeCount: 9 },
-    ],
+    snapshot: SPEC.map(([brandId, n]) => ({ brandId, outcomeCount: n, meetingsBooked: 0, positiveReplies: n })),
   };
 
   beforeEach(() => {
@@ -841,20 +833,26 @@ describe("the hero row on a wider fleet", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("the hero row needs only ONE positive reply when nobody booked a meeting", async () => {
+  it("names the BIGGEST figures, never the 1-positive-reply client while bigger ones exist", async () => {
     mockFetch(FIXTURE);
     const recent = (await get()).groups.recentlyStarted;
-    expect(recent.brands.map((b) => b.brand.id)).toEqual([ANECDOTE, FOUR, P5]);
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([OLDEST, P7, P6]);
+    expect(recent.brands.map((b) => b.brand.id)).not.toContain(ANECDOTE);
   });
 
-  it("the hero row names the newest clients with a BOOKED MEETING first, older ones included, then fills with replies", async () => {
+  it("most meetings booked first, ties and fill by most positive replies", async () => {
     mockFetch({
       ...FIXTURE,
       brands: {
         ...FIXTURE.brands,
         [P6]: { funnelKey: CONVERSATION, leads: replies(P6, 6), stated: { meeting_booked: ["r0"] } },
-        [OLDEST]: { funnelKey: CONVERSATION, leads: replies(OLDEST, 9), stated: { meeting_booked: ["r0", "r1"] } },
+        [P5]: { funnelKey: CONVERSATION, leads: replies(P5, 5), stated: { meeting_booked: ["r0", "r1"] } },
       },
+      snapshot: [
+        ...SPEC.filter(([id]) => id !== P5 && id !== P6).map(([brandId, n]) => ({ brandId, outcomeCount: n, meetingsBooked: 0, positiveReplies: n })),
+        { brandId: P6, outcomeCount: 6, meetingsBooked: 1, positiveReplies: 6 },
+        { brandId: P5, outcomeCount: 5, meetingsBooked: 2, positiveReplies: 5 },
+      ],
     });
     const res = await request(app).get("/public/stats/showcase-outcomes");
     expect(res.status).toBe(200);
@@ -862,11 +860,37 @@ describe("the hero row on a wider fleet", () => {
       brand: { id: string };
       outcomes: Array<{ key: string; peopleReached: number | null }>;
     }>;
-    expect(recent.map((b) => b.brand.id)).toEqual([P6, OLDEST, ANECDOTE]);
+    expect(recent.map((b) => b.brand.id)).toEqual([P5, P6, OLDEST]);
     const count = (b: (typeof recent)[number], key: string) => b.outcomes.find((o) => o.key === key)?.peopleReached;
-    expect(recent.map((b) => [count(b, "meeting_booked"), count(b, "conversation")])).toEqual([[1, 6], [2, 9], [0, 1]]);
+    expect(recent.map((b) => [count(b, "meeting_booked"), count(b, "conversation")])).toEqual([[2, 5], [1, 6], [0, 9]]);
   });
 
+  it("a client whose read fails is replaced by the next biggest: the row stays at 3", async () => {
+    mockFetch({ ...FIXTURE, brands: { ...FIXTURE.brands, [OLDEST]: { funnelKey: CONVERSATION, leads: replies(OLDEST, 9), campaignsFail: true } } });
+    const recent = (await get()).groups.recentlyStarted;
+    expect(recent.brands.map((b) => b.brand.id)).toEqual([P7, P6, P5]);
+  });
+});
+
+describe("foldFleetSnapshotRows (the snapshot warm)", () => {
+  const pair = (brandId: string, meetingsBooked: number | null, positiveReplies: number | null) => ({ brandId, outcomeCount: 1, meetingsBooked, positiveReplies });
+
+  it("sums a brand's counts across its orgs", () => {
+    expect(foldFleetSnapshotRows([pair("a", 1, 4), pair("a", 2, 3), null], new Set(), null)).toEqual([
+      { brandId: "a", outcomeCount: 2, meetingsBooked: 3, positiveReplies: 7 },
+    ]);
+  });
+
+  it("a brand whose pass FAILED keeps its prior row, never a partial or missing one", () => {
+    const prior = [{ brandId: "doc", outcomeCount: 64, meetingsBooked: 3, positiveReplies: 20 }];
+    const rows = foldFleetSnapshotRows([pair("doc", 0, 0), pair("other", 0, 1)], new Set(["doc"]), prior);
+    expect(rows).toEqual(expect.arrayContaining([prior[0], { brandId: "other", outcomeCount: 1, meetingsBooked: 0, positiveReplies: 1 }]));
+    expect(rows).toHaveLength(2);
+  });
+
+  it("a failed brand with no prior row keeps whatever its other orgs counted", () => {
+    expect(foldFleetSnapshotRows([pair("new", 0, 2)], new Set(["new"]), [])).toEqual([{ brandId: "new", outcomeCount: 1, meetingsBooked: 0, positiveReplies: 2 }]);
+  });
 });
 
 describe("brandReadingFunnels", () => {
@@ -940,9 +964,9 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
     expect(JSON.stringify(outcomes)).not.toMatch(/funnel/i);
   });
 
-  // SHOWCASE-OUR-WINS-1029 (owner 2026-10-29): the public card counts only what OUR outreach caused, per
-  // lead-service's stored verdict. Doc Dinners' CRM imported 149 meetings; 7 came after our email.
-  it("counts only outreach-caused outcomes: a CRM meeting not ours (false) or undecided (null) is left out of every count", async () => {
+  // SHOWCASE-MAX-1107 (owner 2026-11-07, « enlève ce putain de filtre »): the public card counts EVERY
+  // conversion, the same counts the client reads on its own dashboard, whatever caused it.
+  it("counts every conversion: a CRM meeting not caused by our outreach (false) or undecided (null) still counts", async () => {
     mockFetch({
       ...BASE,
       brands: {
@@ -950,20 +974,14 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
         [DOC]: {
           ...BASE.brands[DOC],
           stated: { meeting_booked: ["l1", "l2", "l3"], meeting_attended: ["l1", "l2"], sale: [] },
-          // l1 booked after our email; l2 booked before it; l3 we never emailed (no verdict).
           causes: { l1: true, l2: false, l3: null },
         },
       },
     });
-    const funnels = await get();
-    const doc = funnels.brands.find((b) => b.brand.id === DOC)!;
-    const rung = (key: string) => doc.funnels[0].steps.find((st) => st.key === key)?.peopleReached;
-    expect(rung("conversation_to_meeting_booked")).toBe(1);
-    expect(rung("meeting_booked_to_meeting_attended")).toBe(1);
     const res = await request(app).get("/public/stats/showcase-outcomes");
     const twin = (res.body as OutcomesBody).brands.find((b) => b.brand.id === DOC)!;
-    expect(twin.outcomes.find((o) => o.key === "meeting_booked")?.peopleReached).toBe(1);
-    expect(twin.outcomes.find((o) => o.key === "meeting_attended")?.peopleReached).toBe(1);
+    expect(twin.outcomes.find((o) => o.key === "meeting_booked")?.peopleReached).toBe(3);
+    expect(twin.outcomes.find((o) => o.key === "meeting_attended")?.peopleReached).toBe(2);
   });
 
   it("every walked client failing to read is a failure, never a cached empty row (lead-service down, 2026-10-29)", async () => {
