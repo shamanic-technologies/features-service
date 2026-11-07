@@ -15,10 +15,9 @@ vi.mock("../lib/plays-store.js", () => ({ loadPlayCatalogue: () => catalogueOf()
 const briefOf = vi.fn();
 vi.mock("./factory-shadow.js", () => ({ briefPlayOfUnit: (...a: unknown[]) => briefOf(...a) }));
 const engineOf = vi.fn();
-vi.mock("../lib/engine-strategy-io.js", async (orig) => ({ ...(await orig<typeof import("../lib/engine-strategy-io.js")>()), engineStrategyOfCampaign: (...a: unknown[]) => engineOf(...a) }));
+vi.mock("../lib/engine-strategy-io.js", () => ({ engineStrategyOfCampaign: (...a: unknown[]) => engineOf(...a) }));
 
 import router from "./script-strategy.js";
-import { EngineStrategyHeldError } from "../lib/engine-strategy-io.js";
 import { buildPlayCatalogue, type Strategy } from "../lib/plays.js";
 
 const at = "2026-11-06T00:00:00.000Z";
@@ -71,22 +70,45 @@ describe("GET /internal/script-strategy", () => {
     expect((await get("?campaignId=c1&outcome=lead_found")).body).toMatchObject({ strategyId: null, keptDynasties: ["dy_catch", "dy_valid"] });
   });
 
-  it("a row naming no campaign runs nothing (422); no brief and no verdict yet = 503, retried", async () => {
-    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: null, salesFunnelCampaignId: null });
-    expect((await get("?campaignId=c1&outcome=lead_found")).body.reason).toBe("campaign_states_no_campaign");
-    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
-    engineOf.mockRejectedValue(new EngineStrategyHeldError("f1", "lead_found"));
+  it("keeps the Engine's scripts the unit's strategy allows", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: "start_to_lead_found@lead-sourcing~valid-only" });
+    playOf.mockResolvedValue({ answer: { id: "p~valid-only", pipeId: "p", strategyId: "valid-only", strategyName: "Valid only", default: false, source: "sales_funnel" }, excludedReason: () => null });
     const r = await get("?campaignId=c1&outcome=lead_found");
-    expect(r.status).toBe(503);
-    expect(r.body.reason).toBe("campaign_states_no_brief");
+    expect(r.status).toBe(200);
+    expect(playOf).toHaveBeenCalledWith("lead-sourcing", "start_to_lead_found", "start_to_lead_found@lead-sourcing~valid-only");
+    expect(r.body).toMatchObject({ campaignId: "c1", outcome: "lead_found", strategyId: "valid-only", strategySource: "sales_funnel", keptDynasties: ["dy_valid"], scriptTacticIds: ["catch-all"] });
+    expect(r.body.scripts).toHaveLength(2);
+  });
+
+  it("the campaign's BRIEF picks the strategy over the play its funnel names (MIGRATE-1105 S0b)", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: "start_to_lead_found@lead-sourcing~valid-only", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
+    playOf.mockResolvedValue({ answer: { id: "p~valid-only", pipeId: "p", strategyId: "valid-only", strategyName: "Valid only", default: false, source: "sales_funnel" }, excludedReason: () => null });
+    briefOf.mockResolvedValue({ playId: "p~wide", strategyId: "wide", source: "jev", confidence: 0.9 });
+    const r = await get("?campaignId=c1&outcome=lead_found");
+    expect(briefOf).toHaveBeenCalledWith({ salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1", featureSlug: "lead-sourcing", legKey: "start_to_lead_found" });
+    expect(r.body).toMatchObject({ strategyId: "wide", strategySource: "brief", briefPlayId: "p~wide", keptDynasties: ["dy_catch"] });
+  });
+
+  it("a brief that picks nothing on the pipe leaves the funnel's play, and an unjudgeable brief fails closed", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: "start_to_lead_found@lead-sourcing~valid-only", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
+    playOf.mockResolvedValue({ answer: { id: "p~valid-only", pipeId: "p", strategyId: "valid-only", strategyName: "Valid only", default: false, source: "sales_funnel" }, excludedReason: () => null });
+    expect((await get("?campaignId=c1&outcome=lead_found")).body).toMatchObject({ strategyId: "valid-only", strategySource: "sales_funnel", keptDynasties: ["dy_valid"] });
+    briefOf.mockRejectedValue(new Error("chat-service platform-judgments 502"));
+    expect((await get("?campaignId=c1&outcome=lead_found")).status).toBe(502);
+  });
+
+  it("no strategy on the unit's pipe keeps every script of the Engine", async () => {
+    unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: null });
+    playOf.mockResolvedValue(null);
+    const r = await get("?campaignId=c1&outcome=lead_found");
+    expect(r.body).toMatchObject({ strategyId: null, strategySource: "no_strategy", keptDynasties: ["dy_catch", "dy_valid"] });
   });
 
   it("refuses without both parameters, 404s an unknown campaign, 502s an unreadable catalogue (fail closed)", async () => {
     expect((await get("?campaignId=c1")).status).toBe(400);
     unitOf.mockResolvedValue({ found: false });
     expect((await get("?campaignId=nope&outcome=lead_found")).body.reason).toBe("campaign_not_found");
-    unitOf.mockResolvedValue({ found: true, featureSlug: null, legKey: null, salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
-    engineOf.mockResolvedValue({ kind: "kept", row: { source: "judge", strategyId: null }, strategy: null });
+    unitOf.mockResolvedValue({ found: true, featureSlug: null, legKey: null, salesFunnelId: null });
     scriptsOf.mockRejectedValue(new Error("workflow-service 503"));
     const r = await get("?campaignId=c1&outcome=lead_found");
     expect(r.status).toBe(502);
