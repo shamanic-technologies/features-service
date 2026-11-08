@@ -198,7 +198,7 @@
                 },
                 "source": {
                   "type": "string",
-                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
+                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | pipe_history | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
                 }
               },
               "required": [
@@ -25761,6 +25761,138 @@
               ]
             },
             "description": "One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."
+          },
+          "ledgerOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "outcomeKey": {
+                  "type": "string",
+                  "description": "The catalogue outcome key (GET /public/catalogue names it), e.g. `google_search_click`. Any key the brand's ledger holds, never a fixed list."
+                },
+                "units": {
+                  "type": "integer",
+                  "description": "TOTAL Units since inception in the brand's general ledger (ours + another factory's)."
+                },
+                "ourUnits": {
+                  "type": "integer",
+                  "description": "Units OUR factory produced: the divisor of every money figure."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "Units another factory produced (in `units`, in no money figure)."
+                },
+                "costPerUnitUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "$ each over OUR Units (the ledger's every-path unit cost, else own production cost per Unit). Null + reason when none of ours (`no_unit_of_ours_yet`) or unpriced."
+                },
+                "costPerUnitBasis": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "every_path",
+                    "own_production",
+                    null
+                  ]
+                },
+                "costPerUnitUnavailableReason": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "productionCostUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "What OUR Units cost to produce (0 for a spend-free outcome such as a Search Console click)."
+                },
+                "producerGap": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The services that declare this outcome for other scopes (empty = no service declares it anywhere)."
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number",
+                      "description": "Occurrences the scope consumed that no run declared producing."
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ],
+                  "description": "Who must declare the outcome in the ledger (runs-service), when the ledger lacks it."
+                },
+                "daily": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": {
+                        "type": "string",
+                        "description": "UTC day (YYYY-MM-DD) of the occurrence."
+                      },
+                      "units": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "TOTAL Units that day. 0 = the ledger states none; null = runs-service has not computed the day yet (`ledgerDaysMissing`)."
+                      },
+                      "ourUnits": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "otherFactoryUnits": {
+                        "type": "integer",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "date",
+                      "units",
+                      "ourUnits",
+                      "otherFactoryUnits"
+                    ]
+                  },
+                  "description": "One point per UTC day from the earlier of the first Unit and today - 27 days, to today (at least 28 points). Σ units = `units` when no day is null."
+                }
+              },
+              "required": [
+                "outcomeKey",
+                "units",
+                "ourUnits",
+                "otherFactoryUnits",
+                "costPerUnitUsd",
+                "costPerUnitBasis",
+                "costPerUnitUnavailableReason",
+                "productionCostUsd",
+                "producerGap",
+                "daily"
+              ]
+            },
+            "description": "GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."
           }
         },
         "required": [
@@ -25769,7 +25901,8 @@
           "pricing",
           "costBasis",
           "firstSpendDay",
-          "steps"
+          "steps",
+          "ledgerOutcomes"
         ]
       },
       "BrandOutcomeCostSeriesResponse": {
@@ -25795,6 +25928,138 @@
             "type": "string",
             "nullable": true,
             "description": "The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."
+          },
+          "ledgerOutcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "outcomeKey": {
+                  "type": "string",
+                  "description": "The catalogue outcome key (GET /public/catalogue names it), e.g. `google_search_click`. Any key the brand's ledger holds, never a fixed list."
+                },
+                "units": {
+                  "type": "integer",
+                  "description": "TOTAL Units since inception in the brand's general ledger (ours + another factory's)."
+                },
+                "ourUnits": {
+                  "type": "integer",
+                  "description": "Units OUR factory produced: the divisor of every money figure."
+                },
+                "otherFactoryUnits": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "anotherFactory": {
+                      "type": "integer",
+                      "description": "Reached by the client's CRM, team or site, or before our first touch."
+                    },
+                    "noProof": {
+                      "type": "integer",
+                      "description": "No proof our outreach caused it."
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "anotherFactory",
+                    "noProof"
+                  ],
+                  "description": "Units another factory produced (in `units`, in no money figure)."
+                },
+                "costPerUnitUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "$ each over OUR Units (the ledger's every-path unit cost, else own production cost per Unit). Null + reason when none of ours (`no_unit_of_ours_yet`) or unpriced."
+                },
+                "costPerUnitBasis": {
+                  "type": "string",
+                  "nullable": true,
+                  "enum": [
+                    "every_path",
+                    "own_production",
+                    null
+                  ]
+                },
+                "costPerUnitUnavailableReason": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "productionCostUsd": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "What OUR Units cost to produce (0 for a spend-free outcome such as a Search Console click)."
+                },
+                "producerGap": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "declaredElsewhereBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The services that declare this outcome for other scopes (empty = no service declares it anywhere)."
+                    },
+                    "undeclaredConsumptions": {
+                      "type": "number",
+                      "description": "Occurrences the scope consumed that no run declared producing."
+                    }
+                  },
+                  "required": [
+                    "declaredElsewhereBy",
+                    "undeclaredConsumptions"
+                  ],
+                  "description": "Who must declare the outcome in the ledger (runs-service), when the ledger lacks it."
+                },
+                "daily": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": {
+                        "type": "string",
+                        "description": "UTC day (YYYY-MM-DD) of the occurrence."
+                      },
+                      "units": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "TOTAL Units that day. 0 = the ledger states none; null = runs-service has not computed the day yet (`ledgerDaysMissing`)."
+                      },
+                      "ourUnits": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "otherFactoryUnits": {
+                        "type": "integer",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "date",
+                      "units",
+                      "ourUnits",
+                      "otherFactoryUnits"
+                    ]
+                  },
+                  "description": "One point per UTC day from the earlier of the first Unit and today - 27 days, to today (at least 28 points). Σ units = `units` when no day is null."
+                }
+              },
+              "required": [
+                "outcomeKey",
+                "units",
+                "ourUnits",
+                "otherFactoryUnits",
+                "costPerUnitUsd",
+                "costPerUnitBasis",
+                "costPerUnitUnavailableReason",
+                "productionCostUsd",
+                "producerGap",
+                "daily"
+              ]
+            },
+            "description": "GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."
           },
           "offerIds": {
             "type": "array",
@@ -26278,6 +26543,7 @@
           "pricing",
           "costBasis",
           "firstSpendDay",
+          "ledgerOutcomes",
           "offerIds",
           "steps"
         ]
@@ -66771,6 +67037,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",
@@ -67302,6 +67569,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",
@@ -67894,6 +68162,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",

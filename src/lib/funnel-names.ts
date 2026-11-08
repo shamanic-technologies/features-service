@@ -175,6 +175,33 @@ function answersOfTrigger(triggerId: string): string | undefined {
 /** The trigger a pipe answers (`<channel slug>|<leg key>` -> trigger id), null when proactive or unknown. */
 export type PipeTriggerOf = (channelSlug: string, legKey: string) => string | null;
 
+/**
+ * The channel the customer's own team works on a funnel's ENTRY leg (out of Start), `{slug, name}`, null when none
+ * (NEWSLETTER-FUNNEL-NAME-1108). A funnel id names only the channels WE run (`@<slug>`), so a funnel opened by the
+ * customer's own channel (their newsletter) carries its channel nowhere in the id: the catalogue states it.
+ */
+export type EntryChannelOf = (legKey: string) => { slug: string; name: string } | null;
+
+/** PURE: the entry-channel lookup of a catalogue: every customer-operated channel's legs out of Start, first one wins. */
+export function entryChannelLookup(
+  channels: ReadonlyArray<{ slug: string; name: string; operatedBy: string; stepTransitions: ReadonlyArray<{ from: { key: string } | null; legKey: string }> }>,
+): EntryChannelOf {
+  const byLeg = new Map<string, { slug: string; name: string }>();
+  for (const c of channels) {
+    if (c.operatedBy !== "customer") continue;
+    for (const t of c.stepTransitions) if (t.from === null && !byLeg.has(t.legKey)) byLeg.set(t.legKey, { slug: c.slug, name: c.name });
+  }
+  return (legKey) => byLeg.get(legKey) ?? null;
+}
+
+/** What the customer's own entry channel does, in name words: a stated action, else its own name ("Newsletter"); the
+ *  generic "your team" channels name nothing (null: the funnel keeps its other name). */
+function entryActionOf(entry: { slug: string; name: string } | null): string | null {
+  if (entry === null || entry.slug.startsWith("your-team-")) return null;
+  const words = ACTION[entry.slug] ?? entry.name.replace(/[^A-Za-z ]/g, " ").trim().split(/\s+/).filter(Boolean).join(" ");
+  return words.length > 0 && wordCount(words) <= 2 ? words : null;
+}
+
 /** Steps that are a means, never what a funnel brings while a further step follows. */
 const MEANS = new Set(["lead_found", "website_visit", "email_sent"]);
 
@@ -218,7 +245,7 @@ function motionStep(legs: readonly KeyLeg[]): string {
  * PURE: the names a funnel may take, best first, each 2 or 3 words. The first one nobody holds is given
  * (`nextFunnelName`). Never empty.
  */
-export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () => null): string[] {
+export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () => null, entryChannelOf: EntryChannelOf = () => null): string[] {
   const { headTrigger, legs } = parseFunnelKey(key);
   const ours = legs.filter((l) => l.channel !== null);
   const sourcing = ours.find((l) => isSourcing(l.channel!)) ?? null;
@@ -244,6 +271,17 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
   const startsAt = legs[0]?.fromStep ?? "start";
   // A legacy id out of Lead found (before the sourcing leg was named) is a Lead Sourcing funnel: proactive.
   const proactive = reactiveHead === null && (startsAt === "start" || (startsAt === "lead_found" && legs[0]?.channel !== null && PERSON_OUTREACH.has(legs[0].channel!)));
+
+  if (!first && !sourcing && reactiveHead === null && startsAt === "start" && legs[0]) {
+    // No leg of ours: the customer's own channel opens it (their newsletter). It is named like any channel: what it
+    // does, then what it brings ("Newsletter Signups"), never "New Leads" (NEWSLETTER-FUNNEL-NAME-1108).
+    const entryAction = entryActionOf(entryChannelOf(`${legs[0].fromStep}_to_${legs[0].toStep}`));
+    if (entryAction) {
+      add(entryAction, resultOf(motion));
+      if (motion !== "paid_client") add(entryAction, resultOf("paid_client"));
+      if (out.length > 0) return out;
+    }
+  }
 
   if (!first) {
     // Only a sourcing leg of ours: we find people.
@@ -313,8 +351,8 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
 }
 
 /** PURE: true when `name` is one this composer gives `key`. A numbered name ("Cold Email Replies 6") never is. */
-export function isComposedNameOf(key: string, name: string, triggerOf?: PipeTriggerOf): boolean {
-  return funnelNameCandidates(key, triggerOf).includes(name);
+export function isComposedNameOf(key: string, name: string, triggerOf?: PipeTriggerOf, entryChannelOf?: EntryChannelOf): boolean {
+  return funnelNameCandidates(key, triggerOf, entryChannelOf).includes(name);
 }
 
 /**
@@ -323,8 +361,8 @@ export function isComposedNameOf(key: string, name: string, triggerOf?: PipeTrig
  * what this composer does not name; a brand running both reads them apart by their sentence
  * (`lib/funnel-short-descriptions.ts`).
  */
-export function nextFunnelName(key: string, taken: ReadonlySet<string>, triggerOf?: PipeTriggerOf): string {
-  const candidates = funnelNameCandidates(key, triggerOf);
+export function nextFunnelName(key: string, taken: ReadonlySet<string>, triggerOf?: PipeTriggerOf, entryChannelOf?: EntryChannelOf): string {
+  const candidates = funnelNameCandidates(key, triggerOf, entryChannelOf);
   return candidates.find((c) => !taken.has(c)) ?? candidates[0];
 }
 

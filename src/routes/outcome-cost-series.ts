@@ -11,6 +11,7 @@ import { Router } from "express";
 import { ledgerCountOfStep, ledgerUnitDays } from "../lib/ledger-counts.js";
 import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { withLedgerStepSeries, type LedgerStepSeries } from "../lib/ledger-outcome-cost-series.js";
+import { brandLedgerOutcomes, type BrandLedgerOutcome } from "../lib/brand-ledger-outcomes.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
@@ -58,6 +59,11 @@ export interface OutcomeCostSeriesBody {
   firstSpendDay: string | null;
   steps: Array<OutcomeCostStepSeries | LedgerStepSeries>;
   ledger: { basis: "ledger"; scope: "brand"; unavailableReason: string | null; ledgerDaysMissing: string[] };
+  /**
+   * GSC-CONNECTOR-1108: EVERY outcome the brand's ledger holds Units of, whatever its key (a connector's outcome included),
+   * with its daily Units. Empty when the ledger is unreadable (`ledger.unavailableReason`).
+   */
+  ledgerOutcomes: BrandLedgerOutcome[];
 }
 
 /** BRAND-GRAIN-READS-1107: the offer body one level up (every offer of the brand); `offerIds` instead of `offerId`. */
@@ -359,6 +365,7 @@ async function computeScopeOutcomeCostSeries(
     firstSpendDay,
     steps: mixOf === null ? ledgerSteps : await Promise.all(ledgerSteps.map(async (st) => ({ ...st, offerMix: await mixOf!(st.stepKey) }))),
     ledger: { basis: "ledger", scope: "brand", unavailableReason: brandLedger.unavailableReason, ledgerDaysMissing: [...(brandLedger.ledger?.daysMissing ?? [])] },
+    ledgerOutcomes: brandLedger.ledger === null ? [] : brandLedgerOutcomes(brandLedger.ledger),
   };
 }
 

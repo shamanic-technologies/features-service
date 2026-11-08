@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
-import { meetingBookedPrice, pickLegPrice, websiteVisitPrice } from "./outcome-prices.js";
+import { meetingBookedPrice, pickLegPrice, pipeHistoryCostPerOutcomeUsd, websiteVisitPrice } from "./outcome-prices.js";
 import { buildMeetingLegFleet, isInternalPipe, MEETING_BOOKING_LEG_KEY } from "./meeting-leg-fleet.js";
 import { meetingReportingFrom } from "./meeting-population.js";
 import type { WorkflowMetadata } from "./public-stats-clients.js";
@@ -220,6 +220,28 @@ describe("one measure rule for every pipe (owner 2026-10-10: no special case)", 
     const orbit = new Map(fleet.byDynasty).get("orbit")!;
     expect(orbit.legKey).toBe("conversation_to_booking_call");
     expect(orbit.flash).toMatchObject({ contacted: 2, outcomes: 2, spentUsd: 2 });
+  });
+});
+
+describe("pipeHistoryCostPerOutcomeUsd (LEAD-SOURCING-EXPECTED-COST-1108)", () => {
+  const SOURCE = "start_to_lead_found";
+  // Every workflow retired (the pipe runs on a script): the pick prices nothing, the history still does.
+  const byDynasty = new Map([
+    ["a", wf(SOURCE, [163.37, 4256, 4256], [163.37, 4256, 4256])],
+    ["b", wf(SOURCE, [326.08, 3910, 3910], [326.08, 3910, 3910])],
+    ["never", wf(SOURCE, [0, 0, 0], [0, 0, 0])],
+  ]);
+
+  it("pools every workflow's flash spend over its outcomes, runnable or not", () => {
+    const all = new Set(byDynasty.keys());
+    expect(pickLegPrice({ legKey: SOURCE, featureSlug: "zz-source", byDynasty, excluded: all, campaignCount: 3 }).costPerOutcomeUsd).toBeNull();
+    expect(pipeHistoryCostPerOutcomeUsd(byDynasty)).toBeCloseTo((163.37 + 326.08) / (4256 + 3910), 10);
+  });
+
+  it("a play leaves out its strategy's exclusions; no outcome = null", () => {
+    expect(pipeHistoryCostPerOutcomeUsd(byDynasty, new Set(["b"]))).toBeCloseTo(163.37 / 4256, 10);
+    expect(pipeHistoryCostPerOutcomeUsd(byDynasty, new Set(["a", "b"]))).toBeNull();
+    expect(pipeHistoryCostPerOutcomeUsd(new Map())).toBeNull();
   });
 });
 
