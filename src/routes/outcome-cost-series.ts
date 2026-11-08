@@ -41,6 +41,7 @@ import {
   type StepValue,
 } from "../lib/outcome-cost-series.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { offerMixOfStep, type OfferMixStep, type OfferStepInput } from "../lib/brand-offer-mix.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 
 const router = Router();
@@ -60,10 +61,18 @@ export interface OutcomeCostSeriesBody {
 }
 
 /** BRAND-GRAIN-READS-1107: the offer body one level up (every offer of the brand); `offerIds` instead of `offerId`. */
-export type BrandOutcomeCostSeriesBody = Omit<OutcomeCostSeriesBody, "offerId"> & {
+export type BrandOutcomeCostSeriesBody = Omit<OutcomeCostSeriesBody, "offerId" | "steps"> & {
   /** Every offer the series covers: each offer any campaign of the brand states. */
   offerIds: string[];
+  /** BRAND-VALUE-ROI-1108: each step + its value, expected and measured figures traced per offer (`lib/brand-offer-mix.ts`). */
+  steps: Array<(OutcomeCostStepSeries | LedgerStepSeries) & { offerMix: OfferMixStep }>;
 };
+
+/** One offer's expected model figures, for the brand's per-offer trace (BRAND-VALUE-ROI-1108). */
+interface OfferExpected {
+  offerId: string;
+  expected: ExpectedPerStep;
+}
 
 interface ExpectedPerStep {
   costs: Map<string, StepExpectedCost>;
@@ -81,13 +90,18 @@ function expectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerId:
   return expectedCostsOfModel(() => offerExpectedModel({ orgId: headers.orgId, userId: headers.userId, runId: headers.runId }, brandId, offerId, EXPECTED_COLD_WAIT_MS), `offer ${offerId}`);
 }
 
-/** The same, off the brand's picked offer model (`pickBrandModel`): one offer = that offer's model. */
-function brandExpectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerIds: readonly string[]): Promise<ExpectedPerStep> {
+/**
+ * The same, off the brand's picked offer model (`pickBrandModel`): one offer = that offer's model. Also every offer's own
+ * figures (BRAND-VALUE-ROI-1108), each soft on its own: one offer's model unreadable nulls only that offer.
+ */
+function brandExpectedCostsSoft(headers: DownstreamHeaders, brandId: string, offerIds: readonly string[]): { picked: Promise<ExpectedPerStep>; perOffer: Promise<OfferExpected[]> } {
   const identity = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
-  return expectedCostsOfModel(
-    async () => pickBrandModel((await Promise.all(offerIds.map((o) => offerExpectedModel(identity, brandId, o, EXPECTED_COLD_WAIT_MS)))).filter((m): m is OfferExpectedModel => m !== null)),
-    `brand ${brandId}`,
-  );
+  const loads = offerIds.map((o) => offerExpectedModel(identity, brandId, o, EXPECTED_COLD_WAIT_MS));
+  // Each load is awaited by both readers: a rejection is handled by each (no unhandled rejection).
+  for (const l of loads) l.catch(() => undefined);
+  const picked = expectedCostsOfModel(async () => pickBrandModel((await Promise.all(loads)).filter((m): m is OfferExpectedModel => m !== null)), `brand ${brandId}`);
+  const perOffer = Promise.all(offerIds.map(async (offerId, i) => ({ offerId, expected: await expectedCostsOfModel(() => loads[i]!, `offer ${offerId} of brand ${brandId}`) })));
+  return { picked, perOffer };
 }
 
 async function expectedCostsOfModel(load: () => Promise<OfferExpectedModel | null>, what: string): Promise<ExpectedPerStep> {
@@ -132,9 +146,10 @@ export async function computeBrandOutcomeCostSeries(
   headers: DownstreamHeaders,
   today: string = utcToday(),
 ): Promise<BrandOutcomeCostSeriesBody> {
-  const body = await computeScopeOutcomeCostSeries(brandId, rows, channels, pricing, headers, brandExpectedCostsSoft(headers, brandId, offerIds), `brand ${brandId}`, today);
+  const reads = brandExpectedCostsSoft(headers, brandId, offerIds);
+  const body = await computeScopeOutcomeCostSeries(brandId, rows, channels, pricing, headers, reads.picked, `brand ${brandId}`, today, { offerIds, perOffer: reads.perOffer });
   const { brandId: _brand, ...rest } = body;
-  return { brandId, offerIds: [...offerIds], ...rest };
+  return { brandId, offerIds: [...offerIds], ...rest } as BrandOutcomeCostSeriesBody;
 }
 
 async function computeScopeOutcomeCostSeries(
@@ -146,6 +161,7 @@ async function computeScopeOutcomeCostSeries(
   expectedRead: Promise<ExpectedPerStep>,
   what: string,
   today: string,
+  mix?: { offerIds: readonly string[]; perOffer: Promise<OfferExpected[]> },
 ): Promise<Omit<OutcomeCostSeriesBody, "offerId">> {
   const scope = groupScope(rows, null, offerChannels);
   const unitIds = rows.flatMap((r) => r.units.map((u) => u.campaignId));
@@ -265,14 +281,83 @@ async function computeScopeOutcomeCostSeries(
   const targetLedger = new Map(
     await Promise.all([...targetsByStep].map(async ([step, ts]) => [step, ledgerCountOfStep(await readLedgerScope(brandId, ledgerBasisOf(pricing), ts.flatMap((t) => t.unitCampaignIds), "outcome cost series target"), step)] as const)),
   );
+  const ledgerSteps = steps.map((st) =>
+    withLedgerStepSeries(st, ledgerOf.get(st.stepKey)!, landingLedger.get(st.stepKey) ?? null, landing.has(st.stepKey) ? (landingSpend.get(st.stepKey) ?? null) : null, targetLedger.get(st.stepKey) ?? null, targetsByStep.has(st.stepKey) ? (targetSpend.get(st.stepKey) ?? null) : null),
+  );
+  // BRAND-VALUE-ROI-1108: at the brand grain, each step's value and returns TRACED per offer (`lib/brand-offer-mix.ts`):
+  // a Unit carries the value of the offer its campaign states, never a stated share nor one picked offer's model.
+  let mixOf: ((step: OutcomeCostStep) => Promise<OfferMixStep>) | null = null;
+  if (mix) {
+    const perOffer = new Map((await mix.perOffer).map((p) => [p.offerId, p.expected] as const));
+    const months = (ledgerSteps[0]?.months ?? []).map((m) => m.month).filter((m): m is string => m !== null);
+    // One read per campaign set (the same set asked by several steps is read once).
+    const spendReads = new Map<string, Promise<Map<string, number> | null>>();
+    const spendByDayOf = (ids: readonly string[], slugs: readonly string[]): Promise<Map<string, number> | null> => {
+      const uniq = [...new Set(ids)].sort();
+      if (uniq.length === 0) return Promise.resolve(new Map());
+      const key = uniq.join("+");
+      if (!spendReads.has(key)) {
+        spendReads.set(
+          key,
+          fetchBrandCommittedSpendByDay(brandId, uniq, [...new Set(slugs)].sort(), headers, pricing).catch((err: Error) => {
+            console.error(`[features-service] outcome cost series offer mix: spend unreadable (${what}): ${err.message}`);
+            return null;
+          }),
+        );
+      }
+      return spendReads.get(key)!;
+    };
+    const ledgerReads = new Map<string, Promise<Awaited<ReturnType<typeof readLedgerScope>>>>();
+    const ledgerOfSet = (ids: readonly string[]) => {
+      const uniq = [...new Set(ids)].sort();
+      const key = uniq.join("+");
+      if (!ledgerReads.has(key)) ledgerReads.set(key, readLedgerScope(brandId, ledgerBasisOf(pricing), uniq, "outcome cost series offer mix"));
+      return ledgerReads.get(key)!;
+    };
+    mixOf = async (step: OutcomeCostStep): Promise<OfferMixStep> => {
+      const inputs = await Promise.all(
+        mix.offerIds.map(async (offerId): Promise<OfferStepInput> => {
+          const e = perOffer.get(offerId) ?? null;
+          // The offer's route for the step: its expected path when it walks the step, else its best-ranked path that does.
+          const p = !e ? null : e.path && e.path.legs.some((l) => l.toStep.key === step) ? e.path : (e.paths.find((x) => x.legs.some((l) => l.toStep.key === step)) ?? e.path);
+          const figures = p ? expectedRouteFigures(pathRouteLegs(p), step, p.lifetimeRevenueUsd ?? null) : null;
+          const valuePer = !p || !figures ? null : step === "paid_client" ? (p.lifetimeRevenueUsd ?? null) : figures.netValuePerUnitUsd;
+          const reason = !e ? "expected_model_unavailable" : !p ? (e.costs.get(step)?.unavailableReason ?? "no_priced_sales_path") : valuePer === null ? figures!.netValueUnavailableReason : figures!.costFromStartUsd === null ? figures!.costFromStartUnavailableReason : null;
+          const ts = rows.filter((r) => r.offerId === offerId && targetOf(r) === step);
+          const tIds = ts.flatMap((r) => r.units.map((u) => u.campaignId));
+          const tSlugs = ts.flatMap((r) => r.units.map((u) => u.featureSlug));
+          const making = rows.filter((r) => r.offerId === offerId).flatMap((r) => r.units).filter((u) => {
+            const st = stepsOf(u.pipeId);
+            return st !== null && (st.toStep === step || st.outcome === step);
+          });
+          const [tSpend, tLedger, mSpend] = await Promise.all([
+            ts.length === 0 ? Promise.resolve(new Map<string, number>()) : spendByDayOf(tIds, tSlugs),
+            ts.length === 0 ? Promise.resolve(null) : ledgerOfSet(tIds),
+            spendByDayOf(making.map((u) => u.campaignId), making.map((u) => u.featureSlug)),
+          ]);
+          const tCount = tLedger ? ledgerCountOfStep(tLedger, step) : null;
+          return {
+            offerId,
+            costFromStartUsd: figures?.costFromStartUsd ?? null,
+            valuePerOutcomeUsd: valuePer,
+            figuresUnavailableReason: reason,
+            targetCampaignIds: ts.map((r) => r.id),
+            targetSpendByDay: tSpend,
+            targetUnitsByDay: tCount === null || tCount.units === null ? null : (tCount.row?.past ?? []).map((x) => ({ date: x.date, ourUnits: x.ourUnits })),
+            targetUnitsUnavailableReason: tCount?.reason ?? null,
+            makingSpendUsd: mSpend === null ? null : [...mSpend].filter(([d]) => d <= today).reduce((a, [, v]) => a + v, 0),
+          };
+        }),
+      );
+      return offerMixOfStep(inputs, months, today);
+    };
+  }
   return {
     brandId,
     pricing,
     costBasis: "charged",
     firstSpendDay,
-    steps: steps.map((st) =>
-      withLedgerStepSeries(st, ledgerOf.get(st.stepKey)!, landingLedger.get(st.stepKey) ?? null, landing.has(st.stepKey) ? (landingSpend.get(st.stepKey) ?? null) : null, targetLedger.get(st.stepKey) ?? null, targetsByStep.has(st.stepKey) ? (targetSpend.get(st.stepKey) ?? null) : null),
-    ),
+    steps: mixOf === null ? ledgerSteps : await Promise.all(ledgerSteps.map(async (st) => ({ ...st, offerMix: await mixOf!(st.stepKey) }))),
     ledger: { basis: "ledger", scope: "brand", unavailableReason: brandLedger.unavailableReason, ledgerDaysMissing: [...(brandLedger.ledger?.daysMissing ?? [])] },
   };
 }
