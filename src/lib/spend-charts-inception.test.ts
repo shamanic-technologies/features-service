@@ -23,7 +23,7 @@ import { groupScope } from "../routes/spend-charts.js";
 import type { SalesFunnelCampaignRow } from "./sales-funnel-campaigns-client.js";
 import type { ExpectedReturn } from "./expected-return.js";
 
-const coldEmail = { channelSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", fromStep: "lead_found", toStep: "conversation" };
+const coldEmail = { step: "conversation", fromStep: "lead_found", source: "campaign_target" as const };
 
 const funnelRow = {
   id: "sfc1",

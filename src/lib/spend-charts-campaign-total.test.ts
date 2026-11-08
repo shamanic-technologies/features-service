@@ -35,7 +35,7 @@ process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
 process.env.CAMPAIGN_SERVICE_API_KEY = "campaign-key";
 
 const { computeSpendChart } = await import("./spend-charts-io.js");
-const { groupScope, leadingUnit, pipeScope } = await import("../routes/spend-charts.js");
+const { groupScope, campaignTargetOf, pipeScope } = await import("../routes/spend-charts.js");
 
 const HEADERS = { orgId: "org-1", userId: "u1", runId: "r1" };
 
@@ -123,10 +123,10 @@ describe("funnel campaign spend chart total (CAMPAIGN-TOTAL-POSREPLY-1106-B)", (
 
   it("sourcing + cold email + reply closing: the campaign total counts the cold email unit's 2 positive replies", async () => {
     mockServices();
-    const lead = leadingUnit(FUNNEL_CAMPAIGN.units, PIPE_STEPS)!;
-    expect(lead.campaignId).toBe(COLD_EMAIL);
+    // A campaign whose Target is Positive reply charts Positive reply, from the first milestone of its chain (Lead found).
+    const target = campaignTargetOf({ ...FUNNEL_CAMPAIGN, target: "conversation" }, PIPE_STEPS, () => null)!;
+    expect(target).toEqual({ step: "conversation", fromStep: "lead_found", source: "campaign_target" });
     const coldEmailUnit = FUNNEL_CAMPAIGN.units.find((u) => u.campaignId === COLD_EMAIL)!;
-    const leg = { channelSlug: lead.featureSlug, legKey: lead.legKey, ...PIPE_STEPS.get(lead.pipeId)! };
     const chart = (scope: ReturnType<typeof groupScope>) =>
       computeSpendChart({
         brandId: "brand-1",
@@ -140,7 +140,7 @@ describe("funnel campaign spend chart total (CAMPAIGN-TOTAL-POSREPLY-1106-B)", (
         today: "2026-11-06",
       });
 
-    const [campaign, pipe] = await Promise.all([chart(groupScope([FUNNEL_CAMPAIGN], leg)), chart(pipeScope(FUNNEL_CAMPAIGN, coldEmailUnit, PIPE_STEPS))]);
+    const [campaign, pipe] = await Promise.all([chart(groupScope([FUNNEL_CAMPAIGN], target)), chart(pipeScope(FUNNEL_CAMPAIGN, coldEmailUnit, PIPE_STEPS))]);
 
     expect(pipe.totals.outcomes).toBe(2);
     expect(campaign.totals.outcomes).toBe(2);
