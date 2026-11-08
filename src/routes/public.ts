@@ -50,8 +50,10 @@ import { refresherBaseUrl } from "../lib/view-refresher.js";
 import {
   meetingBookedPrice,
   pickLegPrice,
+  pipeHistoryCostPerOutcomeUsd,
   websiteVisitPrice,
   type LegPrice,
+  type PipeLegPrice,
   type MeetingPriceArithmetic,
   type OutcomePrice,
 } from "../lib/outcome-prices.js";
@@ -3664,10 +3666,11 @@ async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
  * attribution); every other pipe the generic leg maturity. A pipe nobody runs answers `no_campaigns_on_leg`
  * without walking anything. (Read by the agent catalogue, `routes/agent-catalogue.ts`.)
  */
-export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<LegPrice> {
+export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<PipeLegPrice> {
   // ONE rule for every pipe (`fleetPipeFigures`), the same one the workflow ranking reads.
   const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
-  return pickLegPrice({ legKey, featureSlug, byDynasty: new Map(figures.byDynasty), excluded, campaignCount: figures.campaignCount });
+  const byDynasty = new Map(figures.byDynasty);
+  return { ...pickLegPrice({ legKey, featureSlug, byDynasty, excluded, campaignCount: figures.campaignCount }), historyCostPerOutcomeUsd: pipeHistoryCostPerOutcomeUsd(byDynasty) };
 }
 
 /**
@@ -3679,12 +3682,13 @@ export async function fleetPlayPrices(
   featureSlug: string,
   legKey: string,
   strategyExclusions: (dynasties: readonly string[]) => ReadonlyArray<ReadonlySet<string>>,
-): Promise<LegPrice[]> {
+): Promise<PipeLegPrice[]> {
   const [figures, excluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
   const byDynasty = new Map(figures.byDynasty);
-  return strategyExclusions([...byDynasty.keys()]).map((more) =>
-    pickLegPrice({ legKey, featureSlug, byDynasty, excluded: new Set([...excluded, ...more]), campaignCount: figures.campaignCount }),
-  );
+  return strategyExclusions([...byDynasty.keys()]).map((more) => ({
+    ...pickLegPrice({ legKey, featureSlug, byDynasty, excluded: new Set([...excluded, ...more]), campaignCount: figures.campaignCount }),
+    historyCostPerOutcomeUsd: pipeHistoryCostPerOutcomeUsd(byDynasty, more),
+  }));
 }
 
 export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {

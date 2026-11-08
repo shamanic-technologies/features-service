@@ -198,7 +198,7 @@
                 },
                 "source": {
                   "type": "string",
-                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
+                  "description": "The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | pipe_history | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."
                 }
               },
               "required": [
@@ -67037,6 +67037,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",
@@ -67568,6 +67569,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",
@@ -68160,6 +68162,7 @@
                                   "default",
                                   "benchmark",
                                   "flash",
+                                  "pipe_history",
                                   "same_leg_fleet",
                                   "same_step_fleet",
                                   "own_spend",

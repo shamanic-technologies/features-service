@@ -550,3 +550,24 @@ describe("expected cost of a pipe that produced nothing yet (FACTORY-P1)", () =>
     expect(expectedPipeCost(pipe("zz-new|form_submitted_to_meeting_booked", "form_submitted", "meeting_booked", null), [])).toBeNull();
   });
 });
+
+describe("expected cost of a pipe whose workflows are all retired but which ran (LEAD-SOURCING-EXPECTED-COST-1108)", () => {
+  // A sourcing pipe (Start -> Lead found) now run by a script: no runnable workflow priced it (`basis: null`, eligible spend 0),
+  // but its own history over every workflow it ran is a fact (prod 2026-11-08 Lead Sourcing: 14,571 leads for $1,096).
+  const ran = (m: Partial<PipeMeasurement>) =>
+    ({ id: "zz-source|start_to_lead_found", channelSlug: "zz-source", computedLegKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", operatedBy: "platform", measurement: { basis: null, costPerOutcomeUsd: null, conversionRatePct: null, workflowDynastySlug: null, spentUsd: 0, ...m } }) as unknown as Parameters<typeof expectedPipeCost>[0];
+  const other = (cost: number) =>
+    ({ id: "zz-origin|start_to_lead_found", channelSlug: "zz-origin", computedLegKey: "start_to_lead_found", fromStep: null, toStep: "lead_found", operatedBy: "platform", measurement: { basis: "mature", costPerOutcomeUsd: cost, conversionRatePct: 100, workflowDynastySlug: "x", spentUsd: 10 } }) as unknown as Parameters<typeof expectedPipeCost>[0];
+
+  it("prices on its own pooled history, named, before another channel's price", () => {
+    expect(expectedPipeCost(ran({ historyCostPerOutcomeUsd: 0.0752 }), [])).toEqual({ costPerOutcomeUsd: 0.0752, source: "pipe_history", basis: "fleet" });
+    expect(expectedPipeCost(ran({ historyCostPerOutcomeUsd: 0.0752 }), [other(3)])).toEqual({ costPerOutcomeUsd: 0.0752, source: "pipe_history", basis: "fleet" });
+  });
+
+  it("a mature runnable workflow still wins; no history keeps the previous rungs", () => {
+    expect(expectedPipeCost(ran({ basis: "mature", costPerOutcomeUsd: 0.05, historyCostPerOutcomeUsd: 0.0752 }), [])).toEqual({ costPerOutcomeUsd: 0.05, source: "workflow", basis: "measured" });
+    expect(expectedPipeCost(ran({ historyCostPerOutcomeUsd: null }), [other(3)])).toEqual({ costPerOutcomeUsd: 3, source: "same_leg_fleet", basis: "fleet" });
+    expect(expectedPipeCost(ran({}), [])).toBeNull();
+  });
+});
+
