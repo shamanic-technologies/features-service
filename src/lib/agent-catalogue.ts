@@ -87,7 +87,8 @@
  *   an assumption, each named with its basis (`lib/expected-return.ts` words: measured < stated < fleet < default):
  *     pipe cost per outcome  mature workflow (`workflow`, measured) > seeded default for (leg, channel) (`default`)
  *                            > market benchmark (`benchmark`, default) > the pipe's early flash figure (`flash`,
- *                            fleet) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
+ *                            fleet) > the pipe's own pooled history, every workflow it ran, runnable or not
+ *                            (`pipe_history`, fleet; LEAD-SOURCING-EXPECTED-COST-1108) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
  *                            fleet) > the fleet's mature price of the same OUTCOME from any step, the highest, never
  *                            below what the pipe already spent producing none (`same_step_fleet`, fleet) > that own
  *                            spend alone (`own_spend`, default; FACTORY-P1 2026-10-28). The customer's own team costs nothing. One rule for every pipe, no slug.
@@ -214,6 +215,9 @@ export interface PipeMeasurement {
   workflowDynastySlug: string | null;
   /** What its workflows spent on the leg to date (flash, all together); null/absent = not read. */
   spentUsd?: number | null;
+  /** The pipe's OWN history: every workflow's flash spend ÷ outcomes on the leg, runnable or not (`PipeLegPrice`,
+   *  LEAD-SOURCING-EXPECTED-COST-1108); null/absent = none or not read. Only the expected cascade reads it. */
+  historyCostPerOutcomeUsd?: number | null;
 }
 
 export interface CatalogueInputs {
@@ -390,7 +394,7 @@ export interface CataloguePipe {
 }
 
 /** Where an expected pipe cost comes from (see the header). */
-export type ExpectedCostSource = "workflow" | "default" | "benchmark" | "flash" | "same_leg_fleet" | "same_step_fleet" | "own_spend";
+export type ExpectedCostSource = "workflow" | "default" | "benchmark" | "flash" | "pipe_history" | "same_leg_fleet" | "same_step_fleet" | "own_spend";
 
 export interface ExpectedPipeCost {
   costPerOutcomeUsd: number;
@@ -675,6 +679,9 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
   const benchmark = SALES_PATH_COST_BENCHMARKS.get(key)?.costPerOutcomeUsd;
   if (usable(benchmark)) return { costPerOutcomeUsd: benchmark, source: "benchmark", basis: "default" };
   if (p.measurement?.basis === "flash" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "flash", basis: "fleet" };
+  // The pipe's own history over every workflow it ran, runnable or not (LEAD-SOURCING-EXPECTED-COST-1108): a pipe now run by
+  // a script whose workflows are all retired made its outcomes at that price, a fact of its own before any other channel's.
+  if (usable(p.measurement?.historyCostPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement!.historyCostPerOutcomeUsd!, source: "pipe_history", basis: "fleet" };
   // Another channel's mature price on the same leg (same from and to step), the highest: an assumption that never flatters.
   let sibling: number | null = null;
   for (const q of all) {

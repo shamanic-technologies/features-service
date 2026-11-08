@@ -32,7 +32,7 @@ const expectedReturnRef = registry.register(
             input: z.enum(["lifetime_revenue", "rate", "cost", "sales_path"]),
             legKey: z.string().nullable().describe("The leg a rate or a cost is about. Null otherwise."),
             basis: expectedBasisSchema,
-            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
+            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | pipe_history | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
           }),
         )
         .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
@@ -7801,7 +7801,7 @@ const catalogueExpectedDetail = catalogueExpectedRow.extend({
       outcomesNeededPerPayingClient: z.number().nullable(),
       pipeId: z.string().nullable(),
       costPerOutcomeUsd: z.number().nullable().describe("0 on a leg the customer's own team works."),
-      costSource: z.enum(["workflow", "default", "benchmark", "flash", "same_leg_fleet", "same_step_fleet", "own_spend", "customer_team"]).nullable(),
+      costSource: z.enum(["workflow", "default", "benchmark", "flash", "pipe_history", "same_leg_fleet", "same_step_fleet", "own_spend", "customer_team"]).nullable(),
       costBasis: catalogueExpectedBasis.nullable().describe("Null on a customer-team leg (costs nothing) or when unpriced."),
     }),
   ),

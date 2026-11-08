@@ -116,7 +116,7 @@ import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.j
 import { pipeLegKeyOf, servedCombinationKeyOf, servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { listLegAssignments, listRunnableLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
-import type { LegPrice } from "../lib/outcome-prices.js";
+import type { PipeLegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
 import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
@@ -256,7 +256,14 @@ async function computeMeasurements(): Promise<MeasurementStore> {
   // `measurement_unreadable` after a restart). Only a pipe never measured reads unreadable.
   const previous = measurementStore?.value.byPipe ?? new Map<string, PipeMeasurement>();
   const previousPlays = measurementStore?.value.byPlay ?? new Map<string, PipeMeasurement>();
-  const measured = (price: LegPrice): PipeMeasurement => ({ basis: price.basis, costPerOutcomeUsd: price.costPerOutcomeUsd, conversionRatePct: price.conversionRatePct, workflowDynastySlug: price.workflowDynastySlug, spentUsd: price.spentUsd ?? null });
+  const measured = (price: PipeLegPrice): PipeMeasurement => ({
+    basis: price.basis,
+    costPerOutcomeUsd: price.costPerOutcomeUsd,
+    conversionRatePct: price.conversionRatePct,
+    workflowDynastySlug: price.workflowDynastySlug,
+    spentUsd: price.spentUsd ?? null,
+    historyCostPerOutcomeUsd: price.historyCostPerOutcomeUsd ?? null,
+  });
   await mapWithConcurrency(pipes, MEASUREMENT_CONCURRENCY, async (p) => {
     // A pipe cataloguing plays prices each on its best ALLOWED workflow; its default play is the pipe's own figure.
     const catalogued = plays.playsByPipe.get(p.id) ?? [];
