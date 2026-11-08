@@ -369,6 +369,13 @@ export async function retirePlay(input: { pipeId: string; strategyId: string; re
   return result;
 }
 
+/** MIGRATE-1105 S6: the Engines (outcomes) a strategy is the conservative DEFAULT of (the full new list; [] = none). */
+export async function setStrategyDefaultForOutcomes(id: string, outcomes: string[]): Promise<boolean> {
+  const rows = await db.update(strategies).set({ defaultForOutcomes: [...new Set(outcomes)].sort() }).where(sql`${strategies.id} = ${id}`).returning();
+  invalidatePlayCatalogue();
+  return rows.length > 0;
+}
+
 /** The tables as rows, read now (never the 30 s shared copy): a uniqueness check reads what is stored. */
 async function loadPlayCatalogueFresh(): Promise<{ tactics: Tactic[]; strategies: Strategy[] }> {
   const [t, s] = await Promise.all([db.select().from(tactics), db.select().from(strategies)]);

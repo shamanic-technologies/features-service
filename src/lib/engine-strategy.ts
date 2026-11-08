@@ -127,6 +127,7 @@ export function engineStrategyQuestion(options: readonly EngineStrategyOption[])
       "A client wrote a BRIEF for one sales campaign, in plain language (in the state). The campaign runs the ENGINE described in the state: " +
       "the scripts that make one outcome. Each option is a STRATEGY for that Engine: a condition deciding who its scripts reach or how they work. " +
       "Pick the strategy the brief asks for on this Engine. When nothing in the brief bears on this Engine, pick the option marked DEFAULT. " +
+      "Every strategy already leaves out people who asked to stop, unsubscribed or opted out: a brief asking that does not choose between the options. " +
       "Judge on the brief's words only, never on the options' names.",
     criteria: Object.fromEntries(options.map((o, i) => [`o${i}`, `${o.isDefault ? "DEFAULT. " : ""}${o.description}`])),
   };

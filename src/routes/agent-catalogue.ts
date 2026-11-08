@@ -120,7 +120,7 @@ import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWork
 import type { PipeLegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
-import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { insertPlay, retirePlay, setStrategyDefaultForOutcomes, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
@@ -2024,6 +2024,7 @@ const strategyRowOf = (c: PlayCatalogue, st: Strategy) => ({
   requires: st.requiresTacticIds.map((id) => ({ id, name: c.tactics.get(id)?.name ?? id })),
   excludes: st.excludesTacticIds.map((id) => ({ id, name: c.tactics.get(id)?.name ?? id })),
   pipeIds: [...c.playsByPipe].filter(([, ps]) => ps.some((x) => x.strategyId === st.id)).map(([pipeId]) => pipeId).sort(),
+  defaultForOutcomes: st.defaultForOutcomes ?? [],
 });
 
 router.get("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
@@ -2189,7 +2190,23 @@ router.patch("/internal/catalogue/strategies/:id", apiKeyOnly, async (req, res) 
     const requires = optionalTacticIds(body, "requires");
     const excludes = optionalTacticIds(body, "excludes");
     const description = body.description === undefined ? undefined : text(body, "description", 500);
-    if (requires === undefined && excludes === undefined && description === undefined) throw bad("edit_empty", "send at least one of requires, excludes, description");
+    // MIGRATE-1105 S6: the Engines (outcomes) this strategy is the DEFAULT of, the full new list ([] = none): what a
+    // campaign keeps on that Engine when its brief says nothing about it (lib/engine-strategy.ts).
+    const rawDefaults = (body as Record<string, unknown>).defaultForOutcomes;
+    if (rawDefaults !== undefined && (!Array.isArray(rawDefaults) || rawDefaults.length > 20 || rawDefaults.some((o) => typeof o !== "string" || !/^[a-z0-9_]{2,80}$/.test(o)))) {
+      throw bad("default_for_outcomes_invalid", "defaultForOutcomes is the full list of outcome keys (snake_case, at most 20)");
+    }
+    const defaultForOutcomes = rawDefaults as string[] | undefined;
+    if (requires === undefined && excludes === undefined && description === undefined && defaultForOutcomes === undefined) throw bad("edit_empty", "send at least one of requires, excludes, description, defaultForOutcomes");
+    if (defaultForOutcomes !== undefined) {
+      if (!(await setStrategyDefaultForOutcomes(req.params.id, defaultForOutcomes))) throw new DeclarationError(404, "strategy_not_found", `no strategy ${req.params.id}`);
+      console.log(`[features-service] agent catalogue: strategy ${req.params.id} is the default of ${JSON.stringify(defaultForOutcomes)} (by ${updatedBy})`);
+    }
+    if (requires === undefined && excludes === undefined && description === undefined) {
+      const c = await loadPlayCatalogue();
+      const st = c.strategies.get(req.params.id)!;
+      return void res.json({ ...strategyRowOf(c, st), changed: true });
+    }
     const { current, next, changed } = await proposeStrategyEdit({ id: req.params.id, requiresTacticIds: requires, excludesTacticIds: excludes, description, updatedBy });
     let st = current;
     if (changed) {
