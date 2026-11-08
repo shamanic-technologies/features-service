@@ -189,6 +189,8 @@ router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request
 router.post("/internal/engine-strategies/eval", apiKeyOnly, async (req: Request, res: Response) => {
   try {
     const only = Array.isArray(req.body?.campaignIds) ? new Set((req.body.campaignIds as unknown[]).map(String)) : null;
+    // A PROPOSED brief per campaign, judged instead of the stored one (nothing written): the replay of a brief rewrite.
+    const proposed: Record<string, string> = req.body?.briefs && typeof req.body.briefs === "object" ? (req.body.briefs as Record<string, string>) : {};
     const units = (await fetchFleetCampaignRows()).map((r) => r as Record<string, unknown>).filter((u) => u.status === "ongoing" && str(u.salesFunnelCampaignId));
     const owner = new Map<string, { orgId: string; brandId: string }>();
     for (const u of units) {
@@ -205,7 +207,7 @@ router.post("/internal/engine-strategies/eval", apiKeyOnly, async (req: Request,
         const list = await fetchSalesFunnelCampaigns(o.brandId, null, { orgId: o.orgId });
         for (const c of list) briefs.set(c.id, c.brief ?? null);
       }
-      const brief = briefs.get(r.campaignId) ?? null;
+      const brief = typeof proposed[r.campaignId] === "string" ? proposed[r.campaignId]! : (briefs.get(r.campaignId) ?? null);
       const options = engineStrategyOptions(r.outcome, scripts, catalogue, r.strategyId ? [r.strategyId] : []);
       const base = { campaignId: r.campaignId, orgId: r.orgId, outcome: r.outcome, stored: r.strategyId, storedSource: r.source };
       if (!brief?.trim()) {

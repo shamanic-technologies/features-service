@@ -6347,7 +6347,7 @@ registry.registerPath({
   summary: "Replay the brief judge on every stored per-Engine verdict, storing nothing (internal, api-key, staff)",
   description: "MIGRATE-1105 S6. For every live campaign (or `campaignIds`), each stored (campaign, Engine) verdict beside what the brief judge picks NOW with today's options, descriptions and question. Nothing is stored: the before/after of a change to what the judge sees.",
   tags: ["Internal"],
-  request: { body: { content: { "application/json": { schema: z.object({ campaignIds: z.array(z.string()).optional() }) } } } },
+  request: { body: { content: { "application/json": { schema: z.object({ campaignIds: z.array(z.string()).optional(), briefs: z.record(z.string(), z.string()).optional().describe("A proposed brief per campaign id, judged instead of the stored one (nothing written).") }) } } } },
   responses: { 200: { description: "One row per verdict", content: { "application/json": { schema: z.object({ count: z.number(), differ: z.number(), rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), outcome: z.string(), stored: z.string().nullable(), storedSource: z.string(), picked: z.string().nullable(), confidence: z.number().nullable(), note: z.string().nullable() })) }) } } }, 502: { description: "engine_strategy_eval_failed" } },
 });
 
