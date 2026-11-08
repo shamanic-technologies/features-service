@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { funnelNameCandidates, funnelNamingOrder, isComposedNameOf, nextFunnelName, parseFunnelKey } from "./funnel-names.js";
+import { entryChannelLookup, funnelNameCandidates, funnelNamingOrder, isComposedNameOf, nextFunnelName, parseFunnelKey } from "./funnel-names.js";
 import { planFunnelRenames, SALES_PATH_NAME_POOL } from "./sales-path-names.js";
 import { FUNNEL_EXTRA_WORDS } from "./catalogue-names.js";
 
@@ -131,5 +131,45 @@ describe("a sales funnel's name says what it does (owner 2026-10-16, FUNNEL-NAME
       { combinationKey: COLD_REPLIES, from: "Zenith", to: "Email Replies" },
     ]);
     expect(planFunnelRenames(rows.map((r) => ({ ...r, name: plan.find((p) => p.combinationKey === r.combinationKey)?.to ?? r.name })), new Set(["Robin"]), [], () => null)).toEqual([]);
+  });
+});
+
+describe("a funnel opened by the customer's own channel is named after it (NEWSLETTER-FUNNEL-NAME-1108)", () => {
+  const NEWSLETTER = "start_to_newsletter_email_sent+newsletter_email_sent_to_website_visit+website_visit_to_signup+signup_to_paid_client";
+  const catalogue = [
+    { slug: "newsletter", name: "Newsletter", operatedBy: "customer", stepTransitions: [{ from: null, legKey: "start_to_newsletter_email_sent" }] },
+    { slug: "organic-market", name: "Organic Market", operatedBy: "customer", stepTransitions: [{ from: { key: "newsletter_email_sent" }, legKey: "newsletter_email_sent_to_website_visit" }] },
+    { slug: "your-team-website", name: "Your Team Website", operatedBy: "customer", stepTransitions: [{ from: null, legKey: "start_to_website_visit" }] },
+    { slug: "organic-x-publishing", name: "X Posting", operatedBy: "platform", stepTransitions: [{ from: null, legKey: "start_to_x_post_published" }] },
+  ];
+  const entryOf = entryChannelLookup(catalogue);
+
+  it("reads what the channel does and what it brings, never New Leads", () => {
+    expect(funnelNameCandidates(NEWSLETTER, () => null, entryOf)).toEqual(["Newsletter Signups", "Newsletter Deals"]);
+    expect(nextFunnelName(NEWSLETTER, new Set(["Newsletter Signups"]), () => null, entryOf)).toBe("Newsletter Deals");
+    for (const name of funnelNameCandidates(NEWSLETTER, () => null, entryOf)) expect(name).not.toMatch(/\b(pipe|leg|channel|play|workflow)\b|\d/i);
+  });
+
+  it("is a rule on every customer entry channel, keyed on no slug", () => {
+    const podcast = entryChannelLookup([{ slug: "own-podcast", name: "Own Podcast", operatedBy: "customer", stepTransitions: [{ from: null, legKey: "start_to_episode_published" }] }]);
+    expect(funnelNameCandidates("start_to_episode_published+episode_published_to_website_visit+website_visit_to_purchase+purchase_to_paid_client", () => null, podcast)[0]).toBe("Own Podcast Orders");
+  });
+
+  it("leaves every other funnel's name as it was", () => {
+    const others = [
+      "signup_to_paid_client",
+      "website_visit_to_signup+signup_to_paid_client",
+      "start_to_website_visit+website_visit_to_signup+signup_to_paid_client",
+      "start_to_x_post_published@organic-x-publishing+x_post_published_to_website_visit+website_visit_to_signup+signup_to_paid_client",
+      COLD_REPLIES,
+    ];
+    for (const k of others) expect(funnelNameCandidates(k, () => null, entryOf)).toEqual(funnelNameCandidates(k));
+    // Before the rule, the newsletter funnel read "New Leads"; it is renamed, and nothing else is.
+    expect(isComposedNameOf(NEWSLETTER, "New Leads")).toBe(true);
+    const rows = [
+      { combinationKey: NEWSLETTER, name: "New Leads", assignedAt: new Date("2026-11-08T07:56:58Z") },
+      { combinationKey: "signup_to_paid_client", name: "New Leads", assignedAt: new Date("2026-10-10T13:08:23Z") },
+    ];
+    expect(planFunnelRenames(rows, new Set(), [], () => null, entryOf)).toEqual([{ combinationKey: NEWSLETTER, from: "New Leads", to: "Newsletter Signups" }]);
   });
 });
