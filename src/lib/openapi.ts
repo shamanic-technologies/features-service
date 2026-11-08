@@ -3867,6 +3867,31 @@ const outcomeCostSeriesResponseSchema = z.object({
   steps: z
     .array(outcomeCostStepSchema)
     .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
+  ledgerOutcomes: z
+    .array(
+      z.object({
+        outcomeKey: z.string().describe("The catalogue outcome key (GET /public/catalogue names it), e.g. `google_search_click`. Any key the brand's ledger holds, never a fixed list."),
+        units: z.number().int().describe("TOTAL Units since inception in the brand's general ledger (ours + another factory's)."),
+        ourUnits: z.number().int().describe("Units OUR factory produced: the divisor of every money figure."),
+        otherFactoryUnits: otherFactoryUnitsSchema.describe("Units another factory produced (in `units`, in no money figure)."),
+        costPerUnitUsd: z.number().nullable().describe("$ each over OUR Units (the ledger's every-path unit cost, else own production cost per Unit). Null + reason when none of ours (`no_unit_of_ours_yet`) or unpriced."),
+        costPerUnitBasis: z.enum(["every_path", "own_production"]).nullable(),
+        costPerUnitUnavailableReason: z.string().nullable(),
+        productionCostUsd: z.number().nullable().describe("What OUR Units cost to produce (0 for a spend-free outcome such as a Search Console click)."),
+        producerGap: ledgerProducerGapSchema.nullable(),
+        daily: z
+          .array(
+            z.object({
+              date: z.string().describe("UTC day (YYYY-MM-DD) of the occurrence."),
+              units: z.number().int().nullable().describe("TOTAL Units that day. 0 = the ledger states none; null = runs-service has not computed the day yet (`ledgerDaysMissing`)."),
+              ourUnits: z.number().int().nullable(),
+              otherFactoryUnits: z.number().int().nullable(),
+            }),
+          )
+          .describe("One point per UTC day from the earlier of the first Unit and today - 27 days, to today (at least 28 points). Σ units = `units` when no day is null."),
+      }),
+    )
+    .describe("GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."),
 });
 const outcomeCostSeriesResponseRef = registry.register("OfferOutcomeCostSeriesResponse", outcomeCostSeriesResponseSchema);
 const brandOutcomeCostSeriesResponseRef = registry.register(
