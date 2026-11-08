@@ -13,11 +13,11 @@
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { briefHashOf } from "../lib/engine-strategy.js";
+import { briefHashOf, engineStrategyOptions, engineStrategyState } from "../lib/engine-strategy.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
-import { engineOutcomeOfPipe, listEngineStrategies, readEngineStrategy, writeEngineStrategy } from "../lib/engine-strategy-io.js";
+import { askJev, engineOutcomeOfPipe, labelOfOutcome, listEngineStrategies, readEngineStrategy, writeEngineStrategy } from "../lib/engine-strategy-io.js";
 import { fetchCampaignPipe, fetchFleetCampaignRows } from "../lib/fleet-leg-campaigns.js";
 import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.js";
 import { playOfLegRead } from "./workflow-projection.js";
@@ -177,6 +177,58 @@ router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request
   } catch (error) {
     console.error("[features-service] engine strategy carry failed:", error);
     res.status(502).json({ error: (error as Error).message, reason: "engine_strategy_carry_failed" });
+  }
+});
+
+/**
+ * POST /internal/engine-strategies/eval {campaignIds?: string[]} (api key, staff): the brief judge REPLAYED on every
+ * stored verdict of the live campaigns (or the ones named), with today's options and question, NOTHING stored. Answers
+ * per (campaign, Engine) the stored strategy beside what the judge picks now: the before/after of a change to what the
+ * judge sees (a strategy description, the question).
+ */
+router.post("/internal/engine-strategies/eval", apiKeyOnly, async (req: Request, res: Response) => {
+  try {
+    const only = Array.isArray(req.body?.campaignIds) ? new Set((req.body.campaignIds as unknown[]).map(String)) : null;
+    const units = (await fetchFleetCampaignRows()).map((r) => r as Record<string, unknown>).filter((u) => u.status === "ongoing" && str(u.salesFunnelCampaignId));
+    const owner = new Map<string, { orgId: string; brandId: string }>();
+    for (const u of units) {
+      const brandId = Array.isArray(u.brandIds) ? str(u.brandIds[0]) : null;
+      if (brandId && str(u.orgId)) owner.set(str(u.salesFunnelCampaignId)!, { orgId: str(u.orgId)!, brandId });
+    }
+    const stored = (await listEngineStrategies(null)).filter((r) => owner.has(r.campaignId) && (!only || only.has(r.campaignId)));
+    const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+    const briefs = new Map<string, string | null>();
+    const rows: Array<Record<string, unknown>> = [];
+    for (const r of stored) {
+      const o = owner.get(r.campaignId)!;
+      if (!briefs.has(r.campaignId)) {
+        const list = await fetchSalesFunnelCampaigns(o.brandId, null, { orgId: o.orgId });
+        for (const c of list) briefs.set(c.id, c.brief ?? null);
+      }
+      const brief = briefs.get(r.campaignId) ?? null;
+      const options = engineStrategyOptions(r.outcome, scripts, catalogue, r.strategyId ? [r.strategyId] : []);
+      const base = { campaignId: r.campaignId, orgId: r.orgId, outcome: r.outcome, stored: r.strategyId, storedSource: r.source };
+      if (!brief?.trim()) {
+        rows.push({ ...base, picked: options[0]?.strategyId ?? null, confidence: null, note: "no brief: the Engine's default" });
+        continue;
+      }
+      if (options.length <= 1) {
+        rows.push({ ...base, picked: options[0]?.strategyId ?? null, confidence: null, note: "single option" });
+        continue;
+      }
+      try {
+        const pick = await askJev(engineStrategyState(brief, { outcome: r.outcome, label: labelOfOutcome(r.outcome) }), options);
+        rows.push({ ...base, picked: pick.option.strategyId, confidence: pick.confidence, note: null });
+      } catch (error) {
+        rows.push({ ...base, picked: null, confidence: null, note: `judge failed: ${(error as Error).message}` });
+      }
+    }
+    const differ = rows.filter((x) => x.picked !== x.stored).length;
+    console.log(`[features-service] engine strategy eval: ${rows.length} verdict(s) replayed, ${differ} differ from the stored one`);
+    res.json({ count: rows.length, differ, rows });
+  } catch (error) {
+    console.error("[features-service] engine strategy eval failed:", error);
+    res.status(502).json({ error: (error as Error).message, reason: "engine_strategy_eval_failed" });
   }
 });
 

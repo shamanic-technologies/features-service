@@ -128,7 +128,7 @@ interface JevPick {
   model: string;
 }
 
-async function askJev(state: Record<string, unknown>, options: readonly EngineStrategyOption[]): Promise<JevPick> {
+export async function askJev(state: Record<string, unknown>, options: readonly EngineStrategyOption[]): Promise<JevPick> {
   const base = process.env.CHAT_SERVICE_URL;
   const apiKey = process.env.CHAT_SERVICE_API_KEY;
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
