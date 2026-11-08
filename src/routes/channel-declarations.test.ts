@@ -321,10 +321,10 @@ describe("/public/channels serves the outcome and trigger catalogues (owner 2026
     const res = await request(app).get("/public/channels");
     expect(res.status).toBe(200);
     expect(res.body.outcomes).toEqual(res.body.steps);
-    expect(res.body.outcomes.find((o: { key: string }) => o.key === "lead_found")).toMatchObject({ label: "Lead", pluralLabel: "Leads" });
+    expect(res.body.outcomes.find((o: { key: string }) => o.key === "lead_found")).toMatchObject({ label: "Lead found", pluralLabel: "Leads found" });
     const byId = new Map((res.body.triggers as Array<{ id: string }>).map((t) => [t.id, t]));
     expect(byId.get("positive_reply_received")).toMatchObject({ label: "Positive reply", type: "outcome", outcomeKey: "conversation", callable: true });
-    expect(byId.get("lead_found")).toMatchObject({ label: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true });
+    expect(byId.get("lead_found")).toMatchObject({ label: "Lead found", type: "outcome", outcomeKey: "lead_found", callable: true });
     expect(byId.get("signup_not_paid_24_hours")).toMatchObject({ type: "condition", outcomeKey: null, callable: false });
     // Entry doors only (2026-10-16): the inline triggers are our services asking each other, never offered.
     expect(byId.has("lead_requested")).toBe(false);

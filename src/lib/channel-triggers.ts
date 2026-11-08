@@ -175,7 +175,7 @@ export const CHANNEL_TRIGGER_TYPES: readonly ChannelTriggerType[] = [
     // OUTCOME TRIGGERS of the two outcomes that had none (owner 2026-10-15: one trigger per outcome, no exception).
     // A caller (API / MCP / Copilot) reports the fact through campaign-service's door; lead-service rings the same door.
     id: "lead_found",
-    label: "Lead",
+    label: "Lead found",
     description: "A person matching your target was found.",
     icon: "identification-card",
     fromStep: "lead_found",

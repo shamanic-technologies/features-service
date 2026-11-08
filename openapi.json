@@ -34074,7 +34074,7 @@
                 },
                 "pluralLabel": {
                   "type": "string",
-                  "description": "The label's plural for counts: 'Leads', 'Positive replies', 'Meetings booked'."
+                  "description": "The label's plural for counts: 'Leads found', 'Positive replies', 'Meetings booked'."
                 }
               },
               "required": [
@@ -34085,7 +34085,7 @@
                 "pluralLabel"
               ]
             },
-            "description": "THE OUTCOME CATALOGUE (owner 2026-10-15): the same rows as `steps` (a valued result a person reaches: Lead, Positive reply, Meeting booked, Paid client...), each with its plural label. Keys never move; only labels do (`lead_found` reads 'Lead' since 2026-10-15). Every outcome has exactly one outcome trigger in `triggers` (`type: outcome`, `outcomeKey` = its key)."
+            "description": "THE OUTCOME CATALOGUE (owner 2026-10-15): the same rows as `steps` (a valued result a person reaches: Lead found, Positive reply, Meeting booked, Paid client...), each with its plural label. Keys never move; only labels do (`lead_found` reads 'Lead found' / 'Leads found' since 2026-11-08; 'Lead' 2026-10-15..11-08). Every outcome has exactly one outcome trigger in `triggers` (`type: outcome`, `outcomeKey` = its key)."
           },
           "steps": {
             "type": "array",
@@ -34129,7 +34129,7 @@
                 "pluralLabel"
               ]
             },
-            "description": "Same rows as `outcomes` (kept for its readers). The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead' since 2026-10-15, 'Lead found' before) is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
+            "description": "Same rows as `outcomes` (kept for its readers). The step vocabulary itself, published so a consumer never hardcodes it to join a channel's legs against a funnel's. It spans EVERY step of every funnel, not only the ones a funnel can start from — a channel performing an internal leg names the step it moves a lead OUT of, and that step is never one a funnel starts at. `lead_found` ('Lead found'; 'Lead' 2026-10-15..11-08) is a normal step since 2026-10-09: the sourcing channels move a lead from nothing to it; no declared funnel names it yet."
           },
           "triggers": {
             "type": "array",
@@ -34142,7 +34142,7 @@
                 },
                 "label": {
                   "type": "string",
-                  "description": "Customer-facing name, unique. An outcome trigger is named by its outcome's label ('Positive reply', 'Lead'), drawn with the ⚡ trigger glyph; a condition trigger has its own ('Signup Not Paid In 24 Hours')."
+                  "description": "Customer-facing name, unique. An outcome trigger is named by its outcome's label ('Positive reply', 'Lead found'), drawn with the ⚡ trigger glyph; a condition trigger has its own ('Signup Not Paid In 24 Hours')."
                 },
                 "description": {
                   "type": "string",

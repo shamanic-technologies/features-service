@@ -85,7 +85,7 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
     expect(funnelById(model, p.shadow!.funnelId)?.id).toBe(p.shadow!.funnelId);
     expect(p.shadow!.funnelId.startsWith(`${p.shadow!.lineId}+`)).toBe(true);
     expect(p.shadow?.figures).toMatchObject({ costPerTargetUsd: 60, roi: 2.5 });
-    expect(p.shadow?.line).toBe("Start → [Apollo Cold Filters] → Lead → [Sales Cold Email Outreach] → Positive reply");
+    expect(p.shadow?.line).toBe("Start → [Apollo Cold Filters] → Lead found → [Sales Cold Email Outreach] → Positive reply");
   });
 
   it("a proactive plan starts on a proactive pipe, never on a pipe waiting for a trigger", () => {

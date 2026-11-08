@@ -152,7 +152,7 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(mem.patches[0].url).toBe("http://campaign/sales-funnel-campaigns/sfc-1");
     expect(mem.patches[0].headers["x-user-id"]).toBe("system-features-service");
     // The channel of every pipe it runs, and the play of each (the pipe judge keeps the campaign on its channels).
-    expect(mem.patches[0].body.brief).toBe("Use only these channels:\nUse Lead Sourcing (Start to Lead).\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    expect(mem.patches[0].body.brief).toBe("Use only these channels:\nUse Lead Sourcing (Start to Lead found).\nUse Sales Cold Email Outreach (Lead found to Positive reply): Everyone. Email every lead found.");
     expect(mem.pipeCalls).toBeGreaterThan(0);
     const verdicts = mem.plans.get("sfc-1").body.pipeVerdicts;
     expect(verdicts.filter((v: any) => v.inRunningFunnel).every((v: any) => v.excluded === false)).toBe(true);
@@ -179,10 +179,10 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
   });
 
   it("our own unedited brief follows what we write now; an edited one is never touched", async () => {
-    mem.prefills.set("sfc-9", "On Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
+    mem.prefills.set("sfc-9", "On Sales Cold Email Outreach (Lead found to Positive reply): Everyone. Email every lead found.");
     mem.prefills.set("sfc-8", "Our old words.");
     mem.campaigns = [
-      { ...campaign("On Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found."), id: "sfc-9" },
+      { ...campaign("On Sales Cold Email Outreach (Lead found to Positive reply): Everyone. Email every lead found."), id: "sfc-9" },
       { ...campaign("Edited by the owner since."), id: "sfc-8" },
     ];
     const res = await request(app).post("/internal/factory-shadow/prefill-briefs").set({ "x-api-key": "test-key" }).send({ apply: true });
@@ -194,12 +194,12 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
   });
 
   it("our brief is composed from the funnel the campaign was BORN on, never the plan it now runs (no lock-in)", async () => {
-    mem.prefills.set("sfc-10", "Use only these channels:\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found.");
-    mem.campaigns = [{ ...campaign("Use only these channels:\nUse Sales Cold Email Outreach (Lead to Positive reply): Everyone. Email every lead found."), id: "sfc-10", followsPlan: true, runningSalesFunnelId: "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client" }];
+    mem.prefills.set("sfc-10", "Use only these channels:\nUse Sales Cold Email Outreach (Lead found to Positive reply): Everyone. Email every lead found.");
+    mem.campaigns = [{ ...campaign("Use only these channels:\nUse Sales Cold Email Outreach (Lead found to Positive reply): Everyone. Email every lead found."), id: "sfc-10", followsPlan: true, runningSalesFunnelId: "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client" }];
     const res = await request(app).post("/internal/factory-shadow/prefill-briefs").set({ "x-api-key": "test-key" }).send({ apply: true });
     expect(res.body).toMatchObject({ rewritten: 1 });
     const patched = mem.patches.filter((p) => p.url.endsWith("/sfc-10"));
-    expect(patched[0].body.brief).toContain("Use Lead Sourcing (Start to Lead).");
+    expect(patched[0].body.brief).toContain("Use Lead Sourcing (Start to Lead found).");
     expect(patched[0].body.brief).not.toContain("Apollo");
   });
 
