@@ -94,6 +94,7 @@ import type { PublicChannel } from "../lib/channel-catalogue.js";
 import { campaignsOnTrigger, campaignsRunningFunnel, fetchFleetCampaignRows, fetchFleetLegCampaignsFor, type FleetCampaignRef } from "../lib/fleet-leg-campaigns.js";
 import { actorOf, DeclarationError, isTriggerCoded, parseLegInput, refuseCustomer, requestedByOrgIdOf, runnableOnlyOf, type TriggerTypeRecord } from "../lib/channel-declarations.js";
 import { allNamesByKey, renameFunnelsToDescriptiveNames, salesPathNamesFor, SalesPathNamePoolExhaustedError, seedPipeTriggerOf } from "../lib/sales-path-names.js";
+import { entryChannelLookup } from "../lib/funnel-names.js";
 import { funnelTriggerLabel } from "../lib/funnel-descriptions.js";
 import { pluralLabelOf, triggerOutcomeKeyOf, triggerTypeOf, triggerValueOf } from "../lib/outcome-vocabulary.js";
 import { canonicalTriggerId, IncludeInlineQueryError, includeInlineOf, isEntryDoor, triggerCallable } from "../lib/channel-triggers.js";
@@ -1835,7 +1836,8 @@ router.post("/internal/catalogue/sales-funnels/descriptive-names", apiKeyOnly, a
     const triggerOf = (slug: string, legKey: string) => triggers.get(`${slug}|${legKey}`) ?? seedPipeTriggerOf(slug, legKey);
     // A campaign's funnel id is read as the funnel it resolves to (legacy id, retired play): that funnel is named first.
     const canonicalFirstKeys = [...new Set((firstKeys as string[]).map((k) => funnelById(model, k)?.id ?? k))];
-    const plan = await renameFunnelsToDescriptiveNames({ apply: body.apply === true, firstKeys: canonicalFirstKeys, triggerOf });
+    const entryChannelOf = entryChannelLookup(cat.channels);
+    const plan = await renameFunnelsToDescriptiveNames({ apply: body.apply === true, firstKeys: canonicalFirstKeys, triggerOf, entryChannelOf });
     const renames = plan.map((r) => {
       const f = funnelById(model, r.combinationKey);
       return { ...r, shortDescription: f ? funnelShortDescriptionOf(model, f).shortDescription : null };
