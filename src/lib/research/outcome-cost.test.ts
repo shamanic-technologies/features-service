@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { outcomeCostStudy } from "./outcome-cost.js";
 import { rollUpOutcomeUnitCosts, type ConsumedRow, type ProducedRow } from "../outcome-unit-costs.js";
 
-const labels: Record<string, string> = { lead_found: "Lead", email_checked: "Email checked", message_sent: "Message sent", conversation: "Positive reply", message_written: "Message written" };
+const labels: Record<string, string> = { lead_found: "Lead found", email_checked: "Email checked", message_sent: "Message sent", conversation: "Positive reply", message_written: "Message written" };
 const outputOf = (c: string) => ({ c1: "conversation" })[c] ?? null;
 const pipeOutputs = new Set(["conversation", "website_visit", "meeting_booked"]);
 const roll = (p: ProducedRow[], c: ConsumedRow[] = []) => rollUpOutcomeUnitCosts(p, c, outputOf, pipeOutputs);

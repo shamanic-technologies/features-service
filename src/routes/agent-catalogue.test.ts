@@ -242,7 +242,7 @@ describe("agent catalogue lists (context-window sized)", () => {
       expect(r.icon).toBe("waves");
     }
     // The priced path ranks first (its cost per paying client rests on default rates: estimated; learning last).
-    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Start → Lead → Positive reply → Meeting booked → Meeting attended → Paid client" });
+    expect(res.body.rows[0]).toMatchObject({ status: "estimated", roiBasis: "estimated", line: "Start → Lead found → Positive reply → Meeting booked → Meeting attended → Paid client" });
     expect(res.body.rows[0].name).toBe("Danube");
   });
 
@@ -524,8 +524,8 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(pub.body.rows).toHaveLength(staff.size);
     for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
     expect(pub.body.rows.find((r: { key: string }) => r.key === "conversation")).toMatchObject({ icon: "chat-circle-text" });
-    // Owner 2026-10-15: the outcome "Lead" (key unchanged) and a plural for counts.
-    expect(pub.body.rows.find((r: { key: string }) => r.key === "lead_found")).toMatchObject({ name: "Lead", pluralName: "Leads" });
+    // LEAD-FOUND-LABEL-1108 (owner 2026-11-08): the outcome "Lead found" (key unchanged) and its plural "Leads found".
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "lead_found")).toMatchObject({ name: "Lead found", pluralName: "Leads found" });
     expect(JSON.stringify(pub.body)).not.toMatch(/valueUsd|costUsd|roi/);
     // LEAD-STATES-1024: the two lead states are steps, every step names the state it reaches (runs-service reads it).
     const byKey = new Map(pub.body.rows.map((r: { key: string }) => [r.key, r]));
@@ -737,7 +737,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(f.status).toBe(201);
     expect(f.body.id).toBe("trigger:lead_found+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
     // Every pipe answers the trigger, the proactive cold email included: the funnel is reactive, never "mixed".
-    expect(f.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_found", name: "Lead" }, triggerLabel: "Lead", mixed: false });
+    expect(f.body).toMatchObject({ type: "reactive", trigger: { slug: "lead_found", name: "Lead found" }, triggerLabel: "Lead found", mixed: false });
     expectComposedFunnelName(f.body.id, f.body.name);
     // Stated, it reads back by id and lists under its path.
     const again = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(f.body.id)}`).set(KEY);
@@ -745,7 +745,7 @@ describe("agent catalogue creates (data, never a PR)", () => {
     expect(again.body).toMatchObject({ id: f.body.id, type: "reactive", trigger: { slug: "lead_found" } });
     const path = await request(app).get(`/internal/catalogue/sales-paths/${encodeURIComponent("trigger:lead_found+lead_found_to_conversation+conversation_to_paid_client")}`).set(KEY);
     expect(path.status).toBe(200);
-    expect(path.body.line).toBe("⚡ Lead → Positive reply → Paid client");
+    expect(path.body.line).toBe("⚡ Lead found → Positive reply → Paid client");
     // The same legs without a trigger are still the proactive funnel's legs (no existing id moves).
     const plain = await request(app).post("/internal/catalogue/sales-funnels").set(KEY).send({ pipeIds: ["sourcing-apollo-cold-filters|start_to_lead_found", ...pipeIds], createdBy: "agent" });
     expect(plain.body.id).toBe("start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
@@ -1012,7 +1012,7 @@ describe("agent catalogue triggers (owner 2026-10-11, the staff Triggers section
     // Owner 2026-10-15: an outcome trigger reports its outcome, is callable and carries the outcome's value.
     expect(reply).toMatchObject({ type: "outcome", outcomeKey: "conversation", callable: true });
     expect(reply.valueUsd).toBeTypeOf("number");
-    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead", type: "outcome", outcomeKey: "lead_found", callable: true, coded: true });
+    expect(r.body.rows.find((x: { id: string }) => x.id === "lead_found")).toMatchObject({ name: "Lead found", type: "outcome", outcomeKey: "lead_found", callable: true, coded: true });
     expect(r.body.rows.find((x: { id: string }) => x.id === "github_issue_in_prod")).toMatchObject({ type: "condition", outcomeKey: null, callable: false, valueUsd: null });
   });
 

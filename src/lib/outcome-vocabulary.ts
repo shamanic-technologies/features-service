@@ -2,7 +2,7 @@
  * OUTCOMES AND TRIGGERS ARE TWO CATALOGUES (owner 2026-10-15, standard-vocabulary decision, MUST-HAVE list).
  *
  *  - An OUTCOME is a valued result a person reaches (Lead, Positive reply, Meeting booked, Paid client). Served as
- *    `outcomes[]` beside the legacy `steps[]` (same rows; the KEYS never move, only labels do: `lead_found` reads "Lead").
+ *    `outcomes[]` beside the legacy `steps[]` (same rows; the KEYS never move, only labels do: `lead_found` reads "Lead found", LEAD-FOUND-LABEL-1108).
  *  - A TRIGGER is an entry door of a reactive campaign. Two types:
  *      `outcome`   "⚡ <outcome>": exactly one per outcome, named by the outcome's own label (no name of its own; ⚡ is
  *                  the glyph it is drawn with, never in the name).
@@ -79,7 +79,7 @@ export function triggerValueOf(
  *  dashboard draws its own lightning icon beside the name). */
 export const TRIGGER_GLYPH = "⚡";
 
-/** PURE: an outcome trigger's name: its outcome's served label, nothing else ("Lead"). */
+/** PURE: an outcome trigger's name: its outcome's served label, nothing else ("Lead found"). */
 export const outcomeTriggerLabel = (outcomeLabel: string): string => outcomeLabel;
 
 const pluralWord = (w: string): string => {

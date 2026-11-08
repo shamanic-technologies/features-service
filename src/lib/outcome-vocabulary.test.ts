@@ -31,8 +31,9 @@ const source = (over: Partial<OutcomeTriggerSource>): OutcomeTriggerSource => ({
 });
 
 describe("outcome vocabulary (owner 2026-10-15)", () => {
-  it("names the outcome Lead, the key unchanged", () => {
-    expect(CHANNEL_STEPS.lead_found.label).toBe("Lead");
+  it("names the outcome Lead found, plural Leads found, the key unchanged (LEAD-FOUND-LABEL-1108)", () => {
+    expect(CHANNEL_STEPS.lead_found.label).toBe("Lead found");
+    expect(pluralLabelOf(CHANNEL_STEPS.lead_found.label)).toBe("Leads found");
   });
 
   it("serves a plural for every coded outcome", () => {
@@ -47,7 +48,7 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
       form_submitted: "Forms submitted",
       purchase: "Direct purchases",
       paid_client: "Paid clients",
-      lead_found: "Leads",
+      lead_found: "Leads found",
     });
     expect(pluralLabelOf("Email sent")).toBe("Emails sent");
     expect(pluralLabelOf("X post published")).toBe("X posts published");
