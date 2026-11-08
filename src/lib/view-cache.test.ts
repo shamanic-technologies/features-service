@@ -557,6 +557,17 @@ describe("servedCached with the view refresher", () => {
     }
   });
 
+  it("a refresher that is UNREACHABLE never has its compute run here: an error, never the serving process's heap (MIGRATE-1105 S6)", async () => {
+    try {
+      globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
+      const compute = vi.fn().mockResolvedValue({ pipeline: 1 });
+      await expect(inRequest(() => servedCached({ view: "brand-revenue", scopeKey: "k-down", orgId: "o", compute }))).rejects.toThrow(/refresher is restarting/);
+      expect(compute).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it("EVERY view a request computes is delegated with its own target — not only the first", async () => {
     try {
       const first = vi.fn().mockResolvedValue({ rates: 1 });

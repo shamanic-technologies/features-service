@@ -276,7 +276,7 @@ export function refresherBaseUrl(): string | null {
  * `undefined` (after a loud log) when it could not, so the caller computes locally — which also means
  * an error surfaces here as the typed status its handler maps (a 404/409 stays a 404/409).
  */
-export async function computeViaRefresher(url: string, headers: Record<string, string>): Promise<{ json: string } | undefined> {
+export async function computeViaRefresher(url: string, headers: Record<string, string>): Promise<{ json: string } | undefined | null> {
   try {
     const res = await fetch(url, { headers });
     const text = await res.text();
@@ -287,8 +287,23 @@ export async function computeViaRefresher(url: string, headers: Record<string, s
     }
     return { json };
   } catch (err) {
-    console.error(`[features-service] view refresher unreachable (computing locally): ${(err as Error).message}`);
-    return undefined;
+    // UNREACHABLE (crashed, restarting, out of memory): never computed here instead (`RefresherDownError`).
+    console.error(`[features-service] view refresher unreachable (not computed on the serving process): ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * The refresher is DOWN (unreachable or restarting) while a request needs a view compute (MIGRATE-1105 S6, prod
+ * 2026-11-08 07:05 UTC: the refresher died out of memory on a heavy view, the same compute then ran on the SERVING
+ * process, which died out of memory too: every caller of features-service got `fetch failed` and billing held client
+ * campaigns). The serving process never takes the refresher's work: a stored cell is served as it is, none = this
+ * error (the caller answers it as unavailable and retries).
+ */
+export class RefresherDownError extends Error {
+  constructor(readonly view: string) {
+    super(`the view refresher is restarting: ${view} is not computed on the serving process, retry in a minute`);
+    this.name = "RefresherDownError";
   }
 }
 
