@@ -54090,6 +54090,13 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "briefs": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "A proposed brief per campaign id, judged instead of the stored one (nothing written)."
                   }
                 }
               }
