@@ -8341,7 +8341,7 @@ catalogueCreate(
 catalogueCreate(
   "/internal/catalogue/plays",
   "Catalogue a play on a pipe (internal, api-key)",
-  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`. A pipe's DEFAULT play is staff-only: PUT /internal/catalogue/pipes/{pipeId}/default-play.",
+  "A pipe x a strategy, catalogued per pipe so its ROI compares across clients (never invented per campaign). The pipe must be a platform pipe (400 `pipe_not_ours`); a pipe that catalogues no play yet takes one too (its default play stays every assigned workflow, the new play narrows it). Idempotent: an existing play answers 200 `created: false`.",
   z.object({ pipeId: z.string(), strategyId: z.string(), createdBy: z.string() }),
   catalogueTacticPlayRow.extend({ created: z.boolean(), salesFunnels: catalogueFunnelsCarryingPlay }),
 );
@@ -8529,50 +8529,11 @@ registry.registerPath({
 });
 
 registry.registerPath({
-  method: "put",
-  path: "/internal/catalogue/pipes/{pipeId}/default-play",
-  summary: "Set a pipe's DEFAULT play (internal, api-key, staff)",
-  description:
-    "Makes a strategy the pipe's DEFAULT play: what every campaign naming no strategy on the pipe runs (the bare pipe id names it). Fleet-wide, so staff-only (never on the public play creates). One transaction: the play is catalogued if new, the previous default stays a play of the pipe. Refused 409 `default_play_runs_nothing` while the strategy allows none of the pipe's ACTIVE workflows, judged now (a workflow not judged on a tactic the strategy names is not allowed): every running campaign of the pipe would have nothing to run.",
-  tags: ["Internal"],
-  request: {
-    params: z.object({ pipeId: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded.") }),
-    body: { content: { "application/json": { schema: z.object({ strategyId: z.string(), decidedBy: z.string().describe("Who decides (staff identity).") }) } } },
-  },
-  responses: {
-    200: { description: "The pipe's default play now.", content: { "application/json": { schema: catalogueTacticPlayRow.extend({ created: z.boolean().describe("true when the play was catalogued by this write."), defaultChanged: z.boolean().describe("false when the strategy already was the default.") }) } } },
-    400: { description: "A field is missing or invalid, or `pipe_not_ours`." },
-    401: { description: "Missing or wrong service key." },
-    404: { description: "`pipe_not_found` or `strategy_not_found`." },
-    409: { description: "`default_play_runs_nothing`." },
-  },
-});
-
-registry.registerPath({
-  method: "delete",
-  path: "/internal/catalogue/pipes/{pipeId}/default-play",
-  summary: "Remove a pipe's DEFAULT play (internal, api-key, staff)",
-  description:
-    "The pipe has no default play any more (owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020): every campaign naming no strategy on the pipe runs every assigned workflow, ranked as usual. The previous default stays a play of the pipe. `changed:false` when the pipe had no default.",
-  tags: ["Internal"],
-  request: {
-    params: z.object({ pipeId: z.string().describe("A pipe id (`<channel slug>|<leg key>`), URL-encoded.") }),
-    body: { content: { "application/json": { schema: z.object({ decidedBy: z.string().describe("Who decides (staff identity).") }) } } },
-  },
-  responses: {
-    200: { description: "The pipe now, with no default play.", content: { "application/json": { schema: catalogueTacticPlayRow.extend({ changed: z.boolean().describe("false when the pipe had no default play."), previousStrategyId: z.string().nullable().describe("The strategy that was the default, null when none was.") }) } } },
-    400: { description: "A field is missing or invalid, or `pipe_not_ours`." },
-    401: { description: "Missing or wrong service key." },
-    404: { description: "`pipe_not_found`." },
-  },
-});
-
-registry.registerPath({
   method: "post",
   path: "/internal/catalogue/plays/{id}/retire",
   summary: "Retire a non-default play from its pipe (internal, api-key, staff)",
   description:
-    "PLAY-RETIRE-1022 (owner 2026-10-22): takes a NON-default play off its pipe when its strategy belongs on another pipe. Every campaign whose sales funnel names the play runs the pipe's DEFAULT play from its next run on, with no client action and no unit held: a funnel id, pipe id or play id naming the retired play reads as the bare pipe (`GET /internal/catalogue/pipes/{id}`, `/sales-funnels/{id}`, the leg-keyed workflow projection's `play.source: retired_play`). The catalogue lists the play no more; the row is kept (who retired it, when, why). Re-cataloguing it (`POST /internal/catalogue/plays`) revives it. Refused 409 `default_play_not_retirable` for the pipe's DEFAULT play (its bare id, or the strategy the pipe defaults to): change or clear the default first (`PUT`/`DELETE /internal/catalogue/pipes/{pipeId}/default-play`). Already retired = 200 `changed: false`.",
+    "PLAY-RETIRE-1022 (owner 2026-10-22): takes a NON-default play off its pipe when its strategy belongs on another pipe. Every campaign whose sales funnel names the play runs the pipe's DEFAULT play from its next run on, with no client action and no unit held: a funnel id, pipe id or play id naming the retired play reads as the bare pipe (`GET /internal/catalogue/pipes/{id}`, `/sales-funnels/{id}`, the leg-keyed workflow projection's `play.source: retired_play`). The catalogue lists the play no more; the row is kept (who retired it, when, why). Re-cataloguing it (`POST /internal/catalogue/plays`) revives it. Refused 409 `default_play_not_retirable` for the pipe's DEFAULT play (its bare id, or the strategy the pipe defaults to). Already retired = 200 `changed: false`.",
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("A play id (`<pipe id>~<strategy id>`), URL-encoded.") }),

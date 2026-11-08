@@ -450,100 +450,13 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect(again.body.created).toBe(false);
   });
 
-  it("a strategy keeping a script working the pipe may be its DEFAULT play, workflows or none (MIGRATE-1105 S5)", async () => {
-    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
-    const url = `/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`;
-    mem.assignments.push({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null });
-    // nova not judged: Valid + Catch-all allows no workflow; with no script working the pipe it is refused.
-    expect((await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" })).status).toBe(409);
-    const { readRunnableScriptsForCatalogue } = await import("../lib/script-catalogue-client.js");
-    vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([{ id: "v", outcome: "website_visit", dynasty: "dy_visit", version: 1, description: "", tactics: { channel: "sales-cold-email-outreach" }, code: "" }]);
-    try {
-      const made = await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" });
-      expect(made.status).toBe(200);
-    } finally {
-      vi.mocked(readRunnableScriptsForCatalogue).mockResolvedValue([]);
-    }
-  });
-
-  it("staff make a strategy a pipe's DEFAULT play only while it runs one of the pipe's active workflows", async () => {
-    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
-    const url = `/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`;
-    mem.assignments.push(
-      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
-      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null },
-    );
-    // nova not judged yet: Valid + Catch-all allows nothing, so it cannot be the default.
-    const refused = await request(app).put(url).set(KEY).send({ strategyId: "valid-catch-all", decidedBy: "test" });
-    expect(refused.status).toBe(409);
-    expect(refused.body.reason).toBe("default_play_runs_nothing");
-    expect(playState.added).toEqual([]);
-
-    // Valid only allows orion (judged no on catch-all): it becomes the default, the bare pipe id names it.
-    const made = await request(app).put(url).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
-    expect(made.status).toBe(200);
-    expect(made.body).toMatchObject({ created: true, defaultChanged: true, id: VISIT, strategyId: "valid-only", default: true, allowedActiveWorkflowCount: 1 });
-    playState.verdicts.push(verdict("nova-v1", "nova", true));
-    const added = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
-    expect(added.status).toBe(201);
-    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
-    expect(plays.map((p: any) => [p.id, p.strategyId, p.default, p.allowedActiveWorkflowCount])).toEqual([
-      [VISIT, "valid-only", true, 1],
-      [`${VISIT}~valid-catch-all`, "valid-catch-all", false, 1],
-    ]);
-    // Re-stating the same default changes nothing.
-    const again = await request(app).put(url).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
-    expect(again.status).toBe(200);
-    expect(again.body).toMatchObject({ created: false, defaultChanged: false });
-  });
-
   // RANKING-SOURCE-LEG-1014: Lead Sourcing's default was set to Valid only, yet its row kept `bestWorkflowSlug: samaya`
-  // (the catch-all copy) for up to 15 min, the figures having been priced before the default existed.
-  it("setting a default rebuilds the pipe's figures at once: its best workflow is one the strategy allows", async () => {
-    const VISIT = "sales-cold-email-outreach|lead_found_to_website_visit";
-    mem.assignments.push(
-      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "orion", state: "active", decidedBy: "t", decidedAt: "", note: null },
-      { featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_website_visit", workflowDynastySlug: "nova", state: "active", decidedBy: "t", decidedAt: "", note: null },
-    );
-    playState.verdicts.push(verdict("nova-v1", "nova", true));
-    __setCatalogueMeasurementsForTest(new Map([[VISIT, { basis: "mature", costPerOutcomeUsd: 1, conversionRatePct: 1, workflowDynastySlug: "nova" }]]), new Map());
-    const before = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
-    expect(before[0].bestWorkflowSlug).toBe("nova");
-
-    const made = await request(app).put(`/internal/catalogue/pipes/${encodeURIComponent(VISIT)}/default-play`).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
-    expect(made.status).toBe(200);
-    await __awaitCatalogueMeasurementsForTest();
-    const after = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
-    expect(after.map((p: any) => [p.id, p.strategyId, p.bestWorkflowSlug])).toEqual([[VISIT, "valid-only", "orion"]]);
-
-    // The catch-all play, catalogued next, is priced on nova at once too.
-    await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: VISIT, strategyId: "valid-catch-all", createdBy: "test" });
-    await __awaitCatalogueMeasurementsForTest();
-    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: VISIT }).set(KEY)).body.rows;
-    expect(plays.map((p: any) => [p.strategyId, p.bestWorkflowSlug])).toEqual([["valid-only", "orion"], ["valid-catch-all", "nova"]]);
-  });
-
   it("the public play create never touches the default", async () => {
     const res = await request(app).post("/internal/catalogue/plays").set(KEY).send({ pipeId: COLD, strategyId: "valid-catch-all", default: true, createdBy: "test" });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ created: false, default: false });
     const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
     expect(plays.map((p: any) => [p.strategyId, p.default])).toEqual([["valid-only", true], ["valid-catch-all", false]]);
-  });
-
-  // DOTTEREL-NO-DEFAULT-1020 (owner 2026-10-20: "Dotterel doit avoir aucune strategy par défaut").
-  it("staff clear a pipe's DEFAULT play: the pipe runs every assigned workflow, the old default stays a play", async () => {
-    const url = `/internal/catalogue/pipes/${encodeURIComponent(COLD)}/default-play`;
-    const cleared = await request(app).delete(url).set(KEY).send({ decidedBy: "test" });
-    expect(cleared.status).toBe(200);
-    expect(cleared.body).toMatchObject({ changed: true, previousStrategyId: "valid-only", id: COLD });
-    const plays = (await request(app).get("/internal/catalogue/plays").query({ pipe: COLD }).set(KEY)).body.rows;
-    expect(plays.some((p: any) => p.default === true && p.strategyId !== null)).toBe(false);
-    expect(plays.map((p: any) => p.strategyId)).toContain("valid-only");
-    const again = await request(app).delete(url).set(KEY).send({ decidedBy: "test" });
-    expect(again.body).toMatchObject({ changed: false, previousStrategyId: null });
-    expect((await request(app).delete(url).set(KEY).send({})).status).toBe(400);
-    expect((await request(app).delete(`/internal/catalogue/pipes/${encodeURIComponent("nope|x")}/default-play`).set(KEY).send({ decidedBy: "t" })).status).toBe(404);
   });
 
   // PLAY-RETIRE-1022 (owner 2026-10-22): "Valid only" / "Valid + Catch-all" belong on Lead Sourcing, not on the
@@ -630,11 +543,6 @@ describe("plays (owner 2026-10-13): a pipe x a strategy, ROI per play", () => {
     expect((await request(app).patch("/internal/catalogue/tactics/catch-all").set(KEY).send({ appliesTo: "people", updatedBy: "u" })).body.reason).toBe("applies_to_invalid");
   });
 
-  it("an unknown pipe is 404", async () => {
-    const res = await request(app).put(`/internal/catalogue/pipes/${encodeURIComponent("nope|start_to_lead_found")}/default-play`).set(KEY).send({ strategyId: "valid-only", decidedBy: "test" });
-    expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("pipe_not_found");
-  });
 });
 
 // STRATEGY-EDIT-PUBLIC-1014: a new tactic (unknown-email) leaked into older strategies naming nothing about it.
