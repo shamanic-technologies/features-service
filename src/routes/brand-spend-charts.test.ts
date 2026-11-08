@@ -11,6 +11,7 @@ vi.mock("./agent-catalogue.js", () => ({
       ["p-email", { fromStep: "lead_found", toStep: "conversation" }],
       ["p-book", { fromStep: "conversation", toStep: "meeting_booked" }],
     ]),
+    pathOf: () => null,
   })),
 }));
 vi.mock("./public.js", () => ({ fleetLegConversionRatesFromOutcomePrices: () => new Map() }));

@@ -80,6 +80,36 @@ export interface ExpectedCostPerOutcome {
   source: SalesPathCostSource;
 }
 
+/**
+ * SPEND-CHART-TARGET-1108: one leg of the priced route an expected figure is read off, in path order. Held OFF the wire
+ * (`expectedRouteOf`, a WeakMap on the figure): the spend chart reads it to price the campaign's TARGET (its cost from
+ * the route's start and its conversion from the chart's entry step), never served inside `expectedReturn`.
+ */
+export interface ExpectedRouteLeg {
+  legKey: string;
+  /** The channel working the leg in this route (null = none named). */
+  channelSlug: string | null;
+  /** Null = from nothing (Start). */
+  fromStep: string | null;
+  toStep: string;
+  /** The leg's rate in %, null when the route prices none (its entry leg). */
+  ratePct: number | null;
+  rateBasis: ExpectedBasis | null;
+  /** One outcome of the leg's step: 0 on a leg the customer's own team works, null when unpriced. */
+  costPerOutcomeUsd: number | null;
+  costBasis: ExpectedBasis | null;
+}
+
+const routes = new WeakMap<ExpectedReturn, ExpectedRouteLeg[]>();
+
+/** The route an expected figure was read off (null on a measured figure, an unavailable one, or one built without a route). */
+export const expectedRouteOf = (e: ExpectedReturn): ExpectedRouteLeg[] | null => routes.get(e) ?? null;
+
+const withRoute = (e: ExpectedReturn, legs: ExpectedRouteLeg[]): ExpectedReturn => {
+  routes.set(e, legs);
+  return e;
+};
+
 export interface ExpectedReturn {
   /** Never null unless `unavailableReason`. */
   roiMultiple: number | null;
@@ -155,14 +185,26 @@ export function expectedFromPath(
     if (i > 0 && l.rateSource) assumptions.push({ input: "rate", legKey: l.legKey, basis: RATE_BASIS[l.rateSource], source: l.rateSource });
     if (l.costSource) assumptions.push({ input: "cost", legKey: l.legKey, basis: COST_BASIS[l.costSource], source: l.costSource });
   });
-  return {
-    roiMultiple: path.roi,
-    basis: weakest(assumptions.map((a) => a.basis)),
-    assumptions,
-    combinationKey: path.combinationKey,
-    costPerOutcome: costOn(path, legKey),
-    unavailableReason: null,
-  };
+  return withRoute(
+    {
+      roiMultiple: path.roi,
+      basis: weakest(assumptions.map((a) => a.basis)),
+      assumptions,
+      combinationKey: path.combinationKey,
+      costPerOutcome: costOn(path, legKey),
+      unavailableReason: null,
+    },
+    path.legs.map((l) => ({
+      legKey: l.legKey,
+      channelSlug: l.channel?.slug ?? null,
+      fromStep: l.fromStep?.key ?? null,
+      toStep: l.toStep.key,
+      ratePct: l.conversionRatePct,
+      rateBasis: l.rateSource ? RATE_BASIS[l.rateSource] : null,
+      costPerOutcomeUsd: l.workedBy === "human" ? 0 : l.costPerOutcomeUsd,
+      costBasis: l.workedBy === "human" ? null : l.costSource ? COST_BASIS[l.costSource] : null,
+    })),
+  );
 }
 
 /** One offer's model, as `expected-return` reads it. */
@@ -279,24 +321,38 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
   let needed = 1;
   let cost = 0;
   let costOfFirstPlatform: ExpectedCostPerOutcome | null = null;
+  const route: ExpectedRouteLeg[] = [];
   const rateOf = (legKey: string) => {
     const r = rates.get(legKey);
     return r && r.effectiveRatePct !== null && r.effectiveRatePct > 0 && r.source !== null ? r : null;
   };
   for (let i = legs.length - 1; i >= 0; i -= 1) {
     const l = legs[i];
+    const routeLeg: ExpectedRouteLeg = {
+      legKey: l.legKey,
+      channelSlug: l.slug,
+      fromStep: l.def!.fromStep?.key ?? null,
+      toStep: l.def!.toStep.key,
+      ratePct: null,
+      rateBasis: null,
+      costPerOutcomeUsd: 0,
+      costBasis: null,
+    };
+    route.unshift(routeLeg);
     if (l.slug) {
       const k = `${l.legKey}|${l.slug}`;
       const c = resolveLegChannelCost(inputs.prices.get(k), inputs.fleetPrices.get(k), DEFAULT_COST_PER_OUTCOME_USD.get(k));
       if (c.costPerOutcomeUsd === null || c.costSource === null) return null;
       cost += c.costPerOutcomeUsd * needed;
       assumptions.push({ input: "cost", legKey: l.legKey, basis: COST_BASIS[c.costSource], source: c.costSource });
+      Object.assign(routeLeg, { costPerOutcomeUsd: c.costPerOutcomeUsd, costBasis: COST_BASIS[c.costSource] });
       costOfFirstPlatform = { costPerOutcomeUsd: c.costPerOutcomeUsd, legKey: l.legKey, stepKey: l.def!.toStep.key, basis: COST_BASIS[c.costSource], source: c.costSource };
     }
     if (i === 0) break;
     const r = rateOf(l.legKey);
     if (!r) return null;
     assumptions.push({ input: "rate", legKey: l.legKey, basis: RATE_WORD[r.source!].basis, source: RATE_WORD[r.source!].source(r) });
+    Object.assign(routeLeg, { ratePct: r.effectiveRatePct, rateBasis: RATE_WORD[r.source!].basis });
     needed /= r.effectiveRatePct! / 100;
   }
   if (!(cost > 0)) return null;
@@ -312,14 +368,17 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
     added = ltr - needed * ltr * route.p;
     assumptions.push({ input: "sales_path", legKey: legs[0].legKey, basis: route.basis, source: `value_added_from:${from}` });
   }
-  return {
-    roiMultiple: added / cost,
-    basis: weakest(assumptions.map((a) => a.basis)),
-    assumptions,
-    combinationKey: key,
-    costPerOutcome: costOfFirstPlatform,
-    unavailableReason: null,
-  };
+  return withRoute(
+    {
+      roiMultiple: added / cost,
+      basis: weakest(assumptions.map((a) => a.basis)),
+      assumptions,
+      combinationKey: key,
+      costPerOutcome: costOfFirstPlatform,
+      unavailableReason: null,
+    },
+    route,
+  );
 }
 
 /** PURE: a campaign's (one channel × leg) expected return: best selected path running it, else best path running it, else the offer's. */
@@ -363,7 +422,7 @@ export function pickBrandModel(models: readonly OfferExpectedModel[]): OfferExpe
 export function withMeasuredReturn(model: ExpectedReturn, measured: MeasuredReturnPair | null | undefined): ExpectedReturn {
   const roi = measured?.isMature === true ? (measured.mature?.roiMultiple ?? null) : null;
   if (roi === null || !Number.isFinite(roi)) return model;
-  return {
+  const out: ExpectedReturn = {
     roiMultiple: roi,
     basis: "measured",
     assumptions: [],
@@ -371,6 +430,9 @@ export function withMeasuredReturn(model: ExpectedReturn, measured: MeasuredRetu
     costPerOutcome: model.costPerOutcome,
     unavailableReason: null,
   };
+  // The model's route rides along with its cost per outcome (the expected one).
+  const route = expectedRouteOf(model);
+  return route ? withRoute(out, route) : out;
 }
 
 // ── IO: the memoized per-offer model ─────────────────────────────────────────────────────────────
@@ -618,7 +680,7 @@ const servedCostSourceOf = (source: string): SalesPathCostSource =>
  * PURE: a catalogue funnel's `expected` figure (`expectedFunnelEconomics`: the catalogue's, the GTM Factory planner's
  * and the funnel lists' one formula, every leg known: a play's own allowed workflows, a declared leg, a trigger-headed
  * funnel, the value ADDED over the takeover step) as an expected return. Its cost per outcome = the first platform leg
- * that does more than find people (the leg the campaign's spend chart counts, `leadingUnit`). Null when the catalogue
+ * that does more than find people (its route rides `expectedRouteOf`: the spend chart prices the campaign's Target off it). Null when the catalogue
  * cannot price it either (its own `unavailableReason`, logged by the caller) or when it ends after Paid client.
  */
 export function expectedFromCatalogueFunnel(funnel: CatalogueFunnel, lifetimeRevenueSource: LifetimeRevenueSource | null): ExpectedReturn | null {
@@ -640,7 +702,27 @@ export function expectedFromCatalogueFunnel(funnel: CatalogueFunnel, lifetimeRev
       }
     }
   });
-  return { roiMultiple: e.roi, basis: e.basis, assumptions, combinationKey: funnel.id, costPerOutcome, unavailableReason: null };
+  return withRoute({ roiMultiple: e.roi, basis: e.basis, assumptions, combinationKey: funnel.id, costPerOutcome, unavailableReason: null }, catalogueRouteOf(funnel));
+}
+
+/** PURE: a catalogue funnel's expected route, leg by leg (a leg its catalogue cannot price reads a null cost, its rate kept). */
+function catalogueRouteOf(funnel: CatalogueFunnel): ExpectedRouteLeg[] {
+  return funnel.expected.legs.flatMap((l, i) => {
+    const pipe = funnel.legs[i]?.pipe ?? null;
+    if (!pipe) return [];
+    return [
+      {
+        legKey: l.legKey,
+        channelSlug: pipe.channelSlug,
+        fromStep: pipe.fromStep,
+        toStep: pipe.toStep,
+        ratePct: l.ratePct,
+        rateBasis: l.rateBasis,
+        costPerOutcomeUsd: l.costPerOutcomeUsd,
+        costBasis: l.costBasis,
+      },
+    ];
+  });
 }
 
 interface CatalogueEntry {
@@ -679,7 +761,10 @@ async function computeCatalogueExpected(m: OfferExpectedModel, salesFunnelId: st
   console.warn(
     `[features-service] expected return: funnel ${salesFunnelId} (offer ${m.offerId}) unpriced on the catalogue too: ${funnel ? funnel.expected.unavailableReason : "funnel_not_in_catalogue"}`,
   );
-  return unavailableExpectedReturn("own_sales_path_unpriced");
+  // Unpriced, but its legs' rates stand: the spend chart still reads the expected % to the campaign's Target off them
+  // (SPEND-CHART-TARGET-1108); its cost walk stops on the unpriced leg (`route_leg_unpriced`).
+  const unpriced = unavailableExpectedReturn("own_sales_path_unpriced");
+  return funnel ? withRoute(unpriced, catalogueRouteOf(funnel)) : unpriced;
 }
 
 /**
