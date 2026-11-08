@@ -96,6 +96,7 @@ const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   createdAt: r.createdAt.toISOString(),
   updatedBy: r.updatedBy,
   updatedAt: r.updatedAt?.toISOString() ?? null,
+  defaultForOutcomes: [...(r.defaultForOutcomes ?? [])].sort(),
 });
 const sweepOf = (r: typeof tacticJudgingSweeps.$inferSelect): TacticJudgingSweep => ({
   tacticId: r.tacticId,
