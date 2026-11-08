@@ -218,8 +218,44 @@ function fallbackAction(slug: string): string {
 }
 
 const actionOf = (slug: string): string => ACTION[slug] ?? fallbackAction(slug);
-const resultOf = (step: string): string => RESULT[step] ?? step.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+const title = (w: string): string => w[0].toUpperCase() + w.slice(1);
+const plural = (w: string): string => (/[^aeiou]y$/.test(w) ? `${w.slice(0, -1)}ies` : /s$/.test(w) ? w : `${w}s`);
+
+/**
+ * What a step brings, as a plural noun. A step this file does not list reads as its FAMILY noun (THREADS-FUNNEL-NAME-1108):
+ * a fine outcome "<what>_<noun>_<done>" (`threads_post_published`, `x_post_published`) is the noun before its past
+ * participle, plural ("Posts"); its qualifier is already the channel's own word. Never the raw step label: "Threads Post
+ * Threads Post Published" was 5 words.
+ */
+function resultOf(step: string): string {
+  const listed = RESULT[step];
+  if (listed) return listed;
+  const words = step.split("_").filter(Boolean);
+  if (words.length >= 2 && /ed$/.test(words[words.length - 1])) return title(plural(words[words.length - 2]));
+  return words.map(title).join(" ");
+}
 const wordCount = (s: string): number => s.split(" ").filter(Boolean).length;
+
+/**
+ * PURE: a name never says a word twice (THREADS-FUNNEL-NAME-1108): a word followed by itself, or by its own plural, is
+ * said once ("Threads Post" + "Posts" = "Threads Posts").
+ */
+function sayOnce(name: string): string {
+  const words = name.split(" ").filter(Boolean);
+  const out: string[] = [];
+  for (const w of words) {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && (w.toLowerCase() === prev.toLowerCase() || w.toLowerCase() === plural(prev.toLowerCase()))) out.pop();
+    out.push(w);
+  }
+  return out.join(" ");
+}
+
+/** PURE: the last-resort name, never over 3 words: the action's first words give way to what the funnel brings. */
+function lastResort(parts: readonly string[]): string {
+  const words = sayOnce(parts.filter(Boolean).join(" ")).split(" ");
+  return words.length > 3 ? words.slice(words.length - 3).join(" ") : words.join(" ");
+}
 
 /** PURE: the step a funnel brings: the furthest one our legs reach (a sourcing-only funnel: Lead found). */
 function broughtStep(legs: readonly KeyLeg[]): string {
@@ -255,7 +291,7 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
   const motion = motionStep(legs);
   const out: string[] = [];
   const add = (...parts: Array<string | null>) => {
-    const name = parts.filter((p): p is string => !!p).join(" ");
+    const name = sayOnce(parts.filter((p): p is string => !!p).join(" "));
     if (wordCount(name) >= 2 && wordCount(name) <= 3 && !out.includes(name)) out.push(name);
   };
 
@@ -347,7 +383,7 @@ export function funnelNameCandidates(key: string, triggerOf: PipeTriggerOf = () 
   }
   if (out.length > 0) return out;
   const mark = [windowWord, strategyWho].filter((w): w is string => !!w);
-  return [mark.length > 0 ? `${mark.join(" ")} ${action}` : `${action} ${result}`];
+  return [lastResort(mark.length > 0 ? [...mark, action] : [action, result])];
 }
 
 /** PURE: true when `name` is one this composer gives `key`. A numbered name ("Cold Email Replies 6") never is. */

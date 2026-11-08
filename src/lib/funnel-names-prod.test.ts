@@ -12,7 +12,7 @@ import { registerTriggerConditions } from "./trigger-conditions.js";
 
 // FUNNEL-NAMES-NO-NUMBERS-1027 (owner 2026-10-27): « j'ai marre de tes campagnes avec des noms avec des chiffres » and
 // « chaque description doit être unique dans une brand ». Captured from prod the same day: every funnel the catalogue
-// named (1,358 ids) and, per brand running two funnels or more, the funnel ids its campaigns run (brands anonymised).
+// named (1,358 ids; 1,599 with the funnels named up to 2026-11-08, THREADS-FUNNEL-NAME-1108) and, per brand running two funnels or more, the funnel ids its campaigns run (brands anonymised).
 const ALL = JSON.parse(readFileSync(new URL("./__fixtures__/prod-funnel-keys.json", import.meta.url), "utf8")) as string[];
 const BRANDS = JSON.parse(readFileSync(new URL("./__fixtures__/prod-brand-funnel-keys.json", import.meta.url), "utf8")) as string[][];
 const DOC_DINNERS_FOLLOW_UP_DUE = "start_to_lead_found@lead-sourcing~lead-follow-up-due+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client";
