@@ -30,7 +30,7 @@ describe("funnelPathView", () => {
     const v = funnelPathView(model, funnelById(model, BLISS)!);
     expect(read(v)).toEqual([
       "Start", "[Lead Sourcing]",
-      "Lead", "[Sales Cold Email Outreach]", "Positive reply",
+      "Lead found", "[Sales Cold Email Outreach]", "Positive reply",
       "[Your Team Meeting Booking]", "Meeting booked",
       "[Your Team Meeting Attendance]", "Meeting attended",
       "[Your Team Closing Calls]", "Paid client",
@@ -44,7 +44,7 @@ describe("funnelPathView", () => {
 
   it("a single-source funnel reads its one source on the sourcing leg", () => {
     const v = funnelPathView(model, funnelById(model, `start_to_lead_found@sourcing-apollo-cold-filters+${BLISS}`)!);
-    expect(read(v).slice(0, 3)).toEqual(["Start", "[Apollo Cold Filters]", "Lead"]);
+    expect(read(v).slice(0, 3)).toEqual(["Start", "[Apollo Cold Filters]", "Lead found"]);
   });
 
   it("Moving and Motivate, reactive funnels, start with their TRIGGER (owner 2026-10-11); Moving's booking call leg is the customer's team's", () => {

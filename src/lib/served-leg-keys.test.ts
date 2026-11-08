@@ -73,7 +73,7 @@ describe("the served body", () => {
     expect(served.campaigns[0]).toEqual({
       featureSlug: COLD,
       legKey: "lead_found_to_website_visit",
-      fromStep: { key: "lead_found", label: "Lead" },
+      fromStep: { key: "lead_found", label: "Lead found" },
       toStep: { key: "website_visit", label: "Website visit" },
     });
     expect(served.campaigns[1].legKey).toBe("start_to_website_visit");
@@ -99,7 +99,7 @@ describe("the served body", () => {
       legKeys: ["lead_found_to_conversation", "conversation_to_paid_client"],
       entryLegKey: "lead_found_to_conversation",
     });
-    expect(served.paths[0].legs[0].fromStep).toEqual({ key: "lead_found", label: "Lead" });
+    expect(served.paths[0].legs[0].fromStep).toEqual({ key: "lead_found", label: "Lead found" });
     expect(served.campaigns[0]).toEqual({
       campaignKey: "campaign:sales-cold-email-outreach|lead_found_to_conversation",
     });
