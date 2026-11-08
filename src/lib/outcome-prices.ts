@@ -101,6 +101,29 @@ export function pickLegPrice(input: {
   };
 }
 
+/**
+ * A pipe's price for the agent catalogue: the pick above, plus the pipe's OWN measured history (LEAD-SOURCING-EXPECTED-COST-1108).
+ * `historyCostPerOutcomeUsd` = every workflow's flash spend on the leg ÷ every workflow's flash outcomes, runnable or not
+ * (a workflow no run can pick any more still paid for what the pipe made), minus the dynasties `historyExcluded` names
+ * (a play's strategy exclusions); null with no outcome. Lead Sourcing runs on a script since MIGRATE-1105 and every
+ * workflow it ran is retired: the pick above priced nothing (prod 2026-11-08: 14,571 leads found for $1,096, read
+ * `no_fleet_history`), so every funnel through it read no expected cost. Never a price anybody buys: only the expected
+ * cascade's rung (`expectedPipeCost`, `pipe_history`).
+ */
+export type PipeLegPrice = LegPrice & { historyCostPerOutcomeUsd: number | null };
+
+/** PURE. The pipe's pooled cost per outcome over every workflow's flash figures (see `PipeLegPrice`). */
+export function pipeHistoryCostPerOutcomeUsd(byDynasty: ReadonlyMap<string, LegMaturityFigures>, historyExcluded: ReadonlySet<string> = new Set()): number | null {
+  let spent = 0;
+  let outcomes = 0;
+  for (const [slug, f] of byDynasty) {
+    if (historyExcluded.has(slug) || !f.flash) continue;
+    spent += f.flash.spentUsd;
+    outcomes += f.flash.outcomes;
+  }
+  return outcomes > 0 && spent > 0 ? spent / outcomes : null;
+}
+
 /** One outcome a customer can buy, priced. */
 export interface OutcomePrice {
   /** `mature` when EVERY leg it rests on is priced on mature evidence; `early` when any leg is flash. */

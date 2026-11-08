@@ -40,7 +40,7 @@ import type { ChannelStepTransitionWire, PublicChannel } from "./channel-catalog
 import { campaignNameKeyOf } from "./offer-sales-paths.js";
 import { servedNameKeyOf } from "./funnel-legs.js";
 import { FUNNEL_EXTRA_WORDS, PATH_RIVER_WORDS, PIPE_BIRD_WORDS, familyNameCandidates, nameFamilyOfKey, type NameFamily } from "./catalogue-names.js";
-import { funnelNamingOrder, isComposedNameOf, nextFunnelName, type PipeTriggerOf } from "./funnel-names.js";
+import { entryChannelLookup, funnelNamingOrder, isComposedNameOf, nextFunnelName, type EntryChannelOf, type PipeTriggerOf } from "./funnel-names.js";
 import { SEED_FEATURES } from "../seed/features.js";
 
 /** Append-only in spirit: add words at the END; a word already given stays given whatever happens here. */
@@ -116,7 +116,12 @@ export const seedPipeTriggerOf: PipeTriggerOf = (channelSlug, legKey) => {
  * `used` holds nor one given earlier in the same call. A sales funnel's name is composed from its key
  * (`nextFunnelName`); a pipe or path family that is exhausted throws.
  */
-export function nextNamesForKeys(keys: readonly string[], used: ReadonlySet<string>, triggerOf: PipeTriggerOf = seedPipeTriggerOf): string[] {
+export function nextNamesForKeys(
+  keys: readonly string[],
+  used: ReadonlySet<string>,
+  triggerOf: PipeTriggerOf = seedPipeTriggerOf,
+  entryChannelOf: EntryChannelOf = () => null,
+): string[] {
   const taken = new Set(used);
   const iterators = new Map<NameFamily, Generator<string>>();
   const missingByFamily = new Map<NameFamily, number>();
@@ -124,7 +129,7 @@ export function nextNamesForKeys(keys: readonly string[], used: ReadonlySet<stri
   for (const key of keys) {
     const family = nameFamilyOfKey(key);
     if (family === "sales_funnel") {
-      const name = nextFunnelName(key, taken, triggerOf);
+      const name = nextFunnelName(key, taken, triggerOf, entryChannelOf);
       taken.add(name);
       out.push(name);
       continue;
@@ -184,12 +189,22 @@ async function namesByStoredKey(keysInRankOrder: readonly string[]): Promise<Map
     const missing = keys.filter((k) => !named.has(k));
     if (missing.length === 0) return named;
     const used = await usedNames(tx);
-    const words = nextNamesForKeys(missing, used);
+    // A funnel opened by the customer's own channel is named after it (NEWSLETTER-FUNNEL-NAME-1108): the catalogue
+    // states that channel, its id does not. Read only when a funnel is being named.
+    const entryChannelOf = missing.some((k) => nameFamilyOfKey(k) === "sales_funnel") ? await loadEntryChannelOf() : undefined;
+    const words = nextNamesForKeys(missing, used, seedPipeTriggerOf, entryChannelOf);
     await tx.insert(salesPathCombinationNames).values(missing.map((combinationKey, i) => ({ combinationKey, name: words[i] })));
     missing.forEach((k, i) => named.set(k, words[i]));
     console.log(`[features-service] sales-path names: named ${missing.map((k, i) => `${words[i]}=${k}`).join(", ")}`);
     return named;
   });
+}
+
+/** The customer channel working each entry leg, from THE catalogue (every channel, published or not). Imported at
+ *  call time: the catalogue store reaches this module through the channel build. */
+export async function loadEntryChannelOf(): Promise<EntryChannelOf> {
+  const { loadChannelCatalogue } = await import("./channel-declarations-store.js");
+  return entryChannelLookup((await loadChannelCatalogue({ publishedOnly: false })).channels);
 }
 
 /** Every name ever given: the live ones AND the retired ones (a retired name is never given again). */
@@ -249,9 +264,10 @@ export function planFunnelRenames(
   held: ReadonlySet<string>,
   firstKeys: readonly string[],
   triggerOf: PipeTriggerOf,
+  entryChannelOf?: EntryChannelOf,
 ): FunnelRename[] {
   const funnels = rows.filter((r) => nameFamilyOfKey(r.combinationKey) === "sales_funnel");
-  const todo = funnels.filter((r) => !isComposedNameOf(r.combinationKey, r.name, triggerOf));
+  const todo = funnels.filter((r) => !isComposedNameOf(r.combinationKey, r.name, triggerOf, entryChannelOf));
   const taken = new Set(held);
   for (const r of funnels) if (!todo.includes(r)) taken.add(r.name);
   const firstRank = new Map(firstKeys.map((k, i) => [k, i] as const));
@@ -267,7 +283,7 @@ export function planFunnelRenames(
   for (const r of funnels) if (!todo.includes(r) && firstRank.has(r.combinationKey)) customerTaken.add(r.name);
   return ordered.map(({ row }) => {
     const first = firstRank.has(row.combinationKey);
-    const to = nextFunnelName(row.combinationKey, first ? customerTaken : taken, triggerOf);
+    const to = nextFunnelName(row.combinationKey, first ? customerTaken : taken, triggerOf, entryChannelOf);
     taken.add(to);
     if (first) customerTaken.add(to);
     return { combinationKey: row.combinationKey, from: row.name, to };
@@ -280,7 +296,12 @@ export function planFunnelRenames(
  * given again. Idempotent (a composed name stays), under the assignment lock. Dry run unless `apply`. `firstKeys`: the
  * funnels customers run, named first so they get the plain name (the caller reads them from campaign-service).
  */
-export async function renameFunnelsToDescriptiveNames(opts: { apply: boolean; firstKeys: readonly string[]; triggerOf: PipeTriggerOf }): Promise<FunnelRename[]> {
+export async function renameFunnelsToDescriptiveNames(opts: {
+  apply: boolean;
+  firstKeys: readonly string[];
+  triggerOf: PipeTriggerOf;
+  entryChannelOf?: EntryChannelOf;
+}): Promise<FunnelRename[]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${NAME_ASSIGNMENT_LOCK})`);
     const rows = await tx
@@ -288,7 +309,7 @@ export async function renameFunnelsToDescriptiveNames(opts: { apply: boolean; fi
       .from(salesPathCombinationNames);
     const retired = await tx.select({ name: retiredNames.name }).from(retiredNames);
     const held = new Set([...rows.filter((r) => nameFamilyOfKey(r.combinationKey) !== "sales_funnel").map((r) => r.name), ...retired.map((r) => r.name)]);
-    const plan = planFunnelRenames(rows, held, opts.firstKeys, opts.triggerOf);
+    const plan = planFunnelRenames(rows, held, opts.firstKeys, opts.triggerOf, opts.entryChannelOf);
     if (!opts.apply || plan.length === 0) return plan;
     for (const r of plan) {
       await tx.insert(retiredNames).values({ name: r.from, combinationKey: r.combinationKey, replacedBy: r.to, reason: "funnel_renamed_descriptive" });

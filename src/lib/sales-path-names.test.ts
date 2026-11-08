@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // An in-memory stand-in for the one table: rows persist across calls like the real store.
 const store = vi.hoisted(() => ({ rows: [] as Array<{ combinationKey: string; name: string }> }));
+// The catalogue states which customer channel opens a funnel (NEWSLETTER-FUNNEL-NAME-1108): none here.
+vi.mock("./channel-declarations-store.js", () => ({ loadChannelCatalogue: async () => ({ channels: [], declared: { channels: [], legs: [], triggers: [] } }) }));
 vi.mock("../db/index.js", () => {
   const selectAll = (cols: Record<string, unknown>) => ({
     from: () => {
