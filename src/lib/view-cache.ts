@@ -10,6 +10,8 @@ import {
   forcedRefresh,
   keeperRefreshesStale,
   refresherDelegation,
+  refresherRestarting,
+  RefresherDownError,
   viewCacheRole,
 } from "./view-refresher.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
@@ -470,15 +472,21 @@ async function serveCell(
   // Server role, inside a request: every compute runs in the refresher process, never on the serving
   // event loop (lib/view-refresher.ts). Outside a request (boot warms, fleet sweeps) it runs here.
   const delegation = refresherDelegation(view, family, orgId);
+  // A request whose refresher is down (crashed, restarting) never computes here: RefresherDownError (MIGRATE-1105 S6).
+  const inRequestWhileDown = delegation === null && currentRequestReplay() !== null && refresherRestarting();
   const compute: () => Promise<Computed> =
     delegation
       ? async () => {
           const remote = await computeViaRefresher(delegation.url, delegation.headers);
           // The refresher ran the same handler, which persisted the cell itself. Its answer stays TEXT
           // until somebody needs the value — a background refresh never does.
+          if (remote === null) throw new RefresherDownError(view);
           return remote ? { body: bodyFromText(remote.json), persisted: true } : { body: await localCompute(), persisted: false };
         }
-      : async () => ({ body: await localCompute(), persisted: false });
+      : async () => {
+          if (inRequestWhileDown) throw new RefresherDownError(view);
+          return { body: await localCompute(), persisted: false };
+        };
   const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
@@ -524,7 +532,13 @@ async function serveCell(
     }
     if (ageMs >= maxStale) {
       countRefresh(view, "miss");
-      return computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
+      try {
+        return await computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta);
+      } catch (err) {
+        // The refresher is down: the stored cell, however old, beats taking its compute onto the serving process.
+        if (err instanceof RefresherDownError) return servedBody();
+        throw err;
+      }
     }
     // The keeper refreshing a cell nobody read for a day: compute it now, inside the keeper's own
     // concurrency bound (lib/view-keeper.ts), rather than behind an answer nobody waits for.
