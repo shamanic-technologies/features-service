@@ -54072,6 +54072,106 @@
         }
       }
     },
+    "/internal/engine-strategies/eval": {
+      "post": {
+        "summary": "Replay the brief judge on every stored per-Engine verdict, storing nothing (internal, api-key, staff)",
+        "description": "MIGRATE-1105 S6. For every live campaign (or `campaignIds`), each stored (campaign, Engine) verdict beside what the brief judge picks NOW with today's options, descriptions and question. Nothing is stored: the before/after of a change to what the judge sees.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "campaignIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One row per verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "number"
+                    },
+                    "differ": {
+                      "type": "number"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "campaignId": {
+                            "type": "string"
+                          },
+                          "orgId": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "stored": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "storedSource": {
+                            "type": "string"
+                          },
+                          "picked": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "note": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "campaignId",
+                          "orgId",
+                          "outcome",
+                          "stored",
+                          "storedSource",
+                          "picked",
+                          "confidence",
+                          "note"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "differ",
+                    "rows"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "engine_strategy_eval_failed"
+          }
+        }
+      }
+    },
     "/public/stats/leg-workflow-ranking": {
       "get": {
         "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
