@@ -354,7 +354,7 @@ export async function retirePlay(input: { pipeId: string; strategyId: string; re
     const [row] = await tx.select().from(plays).where(sql`${plays.pipeId} = ${input.pipeId} AND ${plays.strategyId} = ${input.strategyId}`).for("update");
     if (!row) throw new DeclarationError(404, "play_not_found", `no play ${input.strategyId} on ${input.pipeId} (GET /internal/catalogue/plays)`);
     if (row.isDefault) {
-      throw new DeclarationError(409, "default_play_not_retirable", `${input.strategyId} is the DEFAULT play of ${input.pipeId}: change or clear the default first (PUT or DELETE /internal/catalogue/pipes/{pipeId}/default-play)`);
+      throw new DeclarationError(409, "default_play_not_retirable", `${input.strategyId} is the DEFAULT play of ${input.pipeId}`);
     }
     if (row.retiredAt) return { changed: false, retiredAt: row.retiredAt.toISOString() };
     const [updated] = await tx
@@ -366,17 +366,6 @@ export async function retirePlay(input: { pipeId: string; strategyId: string; re
   });
   invalidatePlayCatalogue();
   return result;
-}
-
-/**
- * The pipe has NO default play any more (owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020: "Dotterel doit avoir aucune strategy
- * par défaut"): every campaign naming no strategy on it runs every assigned workflow. The previous default stays
- * catalogued as a non-default play. `changed:false` when the pipe had no default.
- */
-export async function clearDefaultPlay(pipeId: string): Promise<{ changed: boolean; previousStrategyId: string | null }> {
-  const cleared = await db.update(plays).set({ isDefault: false }).where(sql`${plays.pipeId} = ${pipeId} AND ${plays.isDefault}`).returning();
-  invalidatePlayCatalogue();
-  return { changed: cleared.length > 0, previousStrategyId: cleared[0]?.strategyId ?? null };
 }
 
 /** The tables as rows, read now (never the 30 s shared copy): a uniqueness check reads what is stored. */

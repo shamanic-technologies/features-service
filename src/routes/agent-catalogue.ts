@@ -119,7 +119,7 @@ import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWork
 import type { LegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
-import { clearDefaultPlay, insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
@@ -2291,19 +2291,6 @@ router.get("/internal/catalogue/plays/:id", apiKeyOnly, async (req, res) => {
 });
 
 /**
- * A pipe's DEFAULT play is what every campaign naming no strategy runs: making a strategy the default is refused while
- * it allows no ACTIVE workflow assigned to the pipe, judged NOW (a workflow not judged on a tactic the strategy names is
- * not allowed): the switch would leave every running campaign of the pipe with nothing to run.
- */
-async function assertDefaultPlayRuns(pipeId: string, strategyId: string): Promise<void> {
-  invalidatePlayCatalogue();
-  const [c, assignments, scripts, { model }] = await Promise.all([loadPlayCatalogue(), listRunnableLegAssignments(), readRunnableScriptsForCatalogue(), loadModel()]);
-  const st = c.strategies.get(strategyId);
-  if (!st) throw new DeclarationError(404, "strategy_not_found", `no strategy ${strategyId} (GET /internal/catalogue/strategies)`);
-  assertStrategyRunsOnPipe(c, assignments, pipeId, st, "as the default play, every campaign of the pipe would have nothing to run", scriptsKeptOnPipe(c, model.pipes.get(pipeId), scripts, st));
-}
-
-/**
  * MIGRATE-1105 S5: the runnable scripts working the pipe (`scriptWorksPipe`) that `st` keeps, judged now. A pipe its
  * Engine runs (no workflow left) runs a default play that keeps one of them.
  */
@@ -2334,7 +2321,7 @@ function assertStrategyRunsOnPipe(c: PlayCatalogue, assignments: readonly LegAss
 /**
  * Catalogue a play on a pipe (`{pipeId, strategyId, createdBy, default?}`): plays are per pipe, never invented per
  * campaign. A pipe that catalogues no play yet takes one too: its default stays "every assigned workflow" and the play
- * narrows it. A pipe's DEFAULT play is set by staff only (`PUT /internal/catalogue/pipes/:pipeId/default-play`).
+ * narrows it.
  */
 router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
@@ -2404,61 +2391,6 @@ router.delete("/internal/catalogue/pipes/:pipeId/outcome", apiKeyOnly, async (re
 });
 
 /**
- * STAFF: make a strategy the pipe's DEFAULT play (`{strategyId, decidedBy}`), what every campaign naming no strategy on
- * the pipe runs. Fleet-wide, so never on the public creates (`POST plays` is open to every client through the gateway).
- * One transaction: the play is catalogued if new, the previous default stays a play of the pipe. Refused 409
- * `default_play_runs_nothing` while the strategy allows none of the pipe's active workflows.
- */
-router.put("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (req, res) => {
-  const body = (req.body ?? {}) as Body;
-  try {
-    const decidedBy = text(body, "decidedBy", 200);
-    const strategyId = text(body, "strategyId", 100);
-    const pipeId = req.params.pipeId;
-    const before = await loadModel();
-    const pipe = before.model.pipes.get(pipeId);
-    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
-    if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
-    await assertDefaultPlayRuns(pipeId, strategyId);
-    const { created, defaultChanged } = await insertPlay({ pipeId, strategyId, createdBy: decidedBy, isDefault: true });
-    const { model } = await loadModel();
-    const play = model.pipes.get(pipeId);
-    if (!play) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
-    console.log(`[features-service] agent catalogue: ${pipeId} default play ${defaultChanged ? "set to" : "already"} ${strategyId} by ${decidedBy}${created ? " (play catalogued)" : ""}`);
-    if (created || defaultChanged) void refreshCatalogueMeasurementsAfterPlayWrite();
-    res.json({ created, defaultChanged, ...playRowOf(model, play) });
-  } catch (err) {
-    fail(res, err, "create play");
-  }
-});
-
-/**
- * STAFF: the pipe has NO default play any more (`{decidedBy}`; owner 2026-10-20, DOTTEREL-NO-DEFAULT-1020): every
- * campaign naming no strategy on the pipe runs every assigned workflow, ranked as usual. The previous default stays a
- * play of the pipe. Re-stating it changes nothing (`changed:false`).
- */
-router.delete("/internal/catalogue/pipes/:pipeId/default-play", apiKeyOnly, async (req, res) => {
-  const body = (req.body ?? {}) as Body;
-  try {
-    const decidedBy = text(body, "decidedBy", 200);
-    const pipeId = req.params.pipeId;
-    const before = await loadModel();
-    const pipe = before.model.pipes.get(pipeId);
-    if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
-    if (pipe.operatedBy !== "platform") throw bad("pipe_not_ours", `${pipeId} is worked by the customer's own team: no workflow of ours runs it, so no strategy chooses one`);
-    const { changed, previousStrategyId } = await clearDefaultPlay(pipeId);
-    const { model } = await loadModel();
-    const after = model.pipes.get(pipeId);
-    if (!after) throw new Error(`pipe ${pipeId} vanished from the catalogue`);
-    console.log(`[features-service] agent catalogue: ${pipeId} default play ${changed ? `cleared (was ${previousStrategyId})` : "already none"} by ${decidedBy}`);
-    if (changed) void refreshCatalogueMeasurementsAfterPlayWrite();
-    res.json({ changed, previousStrategyId, ...playRowOf(model, after) });
-  } catch (err) {
-    fail(res, err, "clear default play");
-  }
-});
-
-/**
  * STAFF: RETIRE a non-default play from its pipe (`{retiredBy, note?}`; owner 2026-10-22, PLAY-RETIRE-1022: the
  * "Valid only" and "Valid + Catch-all" plays belong on Lead Sourcing, not on the Sales Cold Email pipe). Every campaign
  * whose funnel names the play runs the pipe's DEFAULT play from then on (no client action, no unit held: its funnel id
@@ -2477,7 +2409,7 @@ router.post("/internal/catalogue/plays/:id/retire", apiKeyOnly, async (req, res)
     const pipe = before.model.pipes.get(pipeId);
     if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
     if (!strategyId) {
-      throw new DeclarationError(409, "default_play_not_retirable", `${pipeId} is the pipe's DEFAULT play: change or clear the default first (PUT or DELETE /internal/catalogue/pipes/{pipeId}/default-play)`);
+      throw new DeclarationError(409, "default_play_not_retirable", `${pipeId} is the pipe's DEFAULT play`);
     }
     const { changed, retiredAt } = await retirePlay({ pipeId, strategyId, retiredBy, note });
     const { model } = await loadModel();
