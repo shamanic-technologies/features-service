@@ -3775,15 +3775,58 @@ const outcomeCostMonthSchema = z.object({
   cumulativeCostPerOutcomeUsd: z.number().nullable().describe("Cumulative spend / cumulative outcomes as of the month end. Null at 0 outcomes. The last month equals sinceInception.costPerOutcomeUsd."),
   learning: z.boolean().nullable().describe("True while cumulativeOutcomes is below learningOutcomesRequired. Null with the outcomes."),
 });
-const outcomeCostSeriesResponseSchema = z.object({
-  offerId: z.string(),
-  brandId: z.string(),
-  pricing: z.enum(["gross", "net"]),
-  costBasis: z.literal("charged"),
-  firstSpendDay: z.string().nullable().describe("The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."),
-  steps: z
-    .array(
-      z.object({
+const offerMixReturnSchema = z.object({ roiMultiple: z.number().nullable(), unavailableReason: z.string().nullable() });
+const offerMixStepSchema = z
+  .object({
+    rule: z.literal("traced_per_offer").describe("A Unit carries the value of the offer its campaign states (traced, never allocated by a stated share)."),
+    weightBasis: z
+      .enum(["single_offer", "target_campaign_spend", "making_campaign_spend"])
+      .describe("What weights the offers in the expected figures: one offer = its own figures; else the whole-history spend of each offer's campaigns whose Target is this outcome, else of its campaigns making it (a flexible budget at the actual spend mix)."),
+    offers: z
+      .array(
+        z.object({
+          offerId: z.string(),
+          weightUsd: z.number().nullable().describe("The spend weighting this offer (null on single_offer, or unreadable)."),
+          weightShare: z.number().nullable().describe("weightUsd / the sum of the weights (0..1). Null when nothing was spent or unreadable."),
+          valuePerOutcomeUsd: z.number().nullable().describe("This offer's value of one outcome, NET, on its own expected route (Paid client = its lifetime revenue)."),
+          expectedCostPerOutcomeUsd: z.number().nullable().describe("This offer's expected cost from Start of one outcome."),
+          isCampaignTarget: z.boolean().describe("A campaign selling this offer targets this outcome."),
+          expectedReturn: offerMixReturnSchema.describe("This offer's EXPECTED return on the outcome: value / expected cost from Start. Only at its campaigns' Target."),
+          measuredReturn: offerMixReturnSchema
+            .extend({ targetUnits: z.number().int().nullable(), valueUsd: z.number().nullable(), spentUsd: z.number().nullable() })
+            .describe("This offer's MEASURED return: our Target Units its Target campaigns made x its value / their spend. Only at its campaigns' Target."),
+          unavailableReason: z.string().nullable().describe("Why this offer's expected figures are null (expected_model_unavailable, expected_model_computing, no_priced_sales_path...)."),
+        }),
+      )
+      .describe("Every offer of the brand, its own figures (ascending offerId)."),
+    valuePerOutcomeUsd: z.number().nullable().describe("The brand's value of one outcome: each offer's value weighted by the outcomes its spend is expected to make (sum(w/C x V) / sum(w/C)). Null with valueUnavailableReason."),
+    valueUnavailableReason: z.string().nullable().describe("no_spend_yet | spend_unreadable | an offer's own reason. Null when served."),
+    expectedCostPerOutcomeUsd: z.number().nullable().describe("The brand's EXPECTED $ / outcome: the weights' spend / the outcomes it is expected to make (sum(w) / sum(w/C)). No history: today's standard (the chart's dotted line). The MEASURED $ / outcome over time is `months[].cumulativeCostPerOutcomeUsd`."),
+    expectedCostUnavailableReason: z.string().nullable(),
+    isCampaignTarget: z.boolean().describe("A campaign of at least one offer targets this outcome. False = no return on this row (ROI-CONSISTENCY-1103): show $ / outcome and value per outcome only."),
+    expectedReturn: offerMixReturnSchema.describe("EXPECTED return of the outcome at the brand: sum(w/C x V) / sum(w), the same money as measuredReturn. No history (a standard is never restated over past months). Null + outcome_is_no_campaign_target below a Target."),
+    measuredReturn: offerMixReturnSchema
+      .extend({
+        targetUnits: z.number().int().nullable(),
+        valueUsd: z.number().nullable().describe("Traced value: sum over offers of our Target Units x that offer's value per Unit."),
+        spentUsd: z.number().nullable().describe("Whole-history spend of every offer's Target campaigns for this outcome."),
+        learning: z.boolean().describe("Fewer than 10 Target Units (or unreadable)."),
+        months: z
+          .array(
+            z.object({
+              month: z.string().describe("YYYY-MM (UTC), the series' axis."),
+              spentUsd: z.number().describe("Cumulative to the month end."),
+              targetUnits: z.number().int(),
+              valueUsd: z.number().nullable(),
+              roiMultiple: z.number().nullable().describe("valueUsd / spentUsd to the month end; null before the first Target Unit or with no spend. The last month = the since-inception roiMultiple."),
+            }),
+          )
+          .describe("The measured return over time (the chart's solid line); [] when the outcome is no Target or unreadable."),
+      })
+      .describe("MEASURED return of the outcome at the brand, since inception: traced value / the Target campaigns' spend. REALIZED/EXPECTED only, never a pipeline."),
+  })
+  .describe("BRAND-VALUE-ROI-1108: the outcome's value and returns TRACED per offer (`lib/brand-offer-mix.ts`). The client states nothing: every Unit's offer is the one its campaign states.");
+const outcomeCostStepSchema = z.object({
         stepKey: z.enum(["paid_client", "meeting_attended", "meeting_booked", "signup", "form_submitted", "conversation", "website_visit", "lead_found"]),
         learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
         sinceInception: z.object({
@@ -3804,15 +3847,25 @@ const outcomeCostSeriesResponseSchema = z.object({
           .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
         months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
         accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."),
-      }),
-    )
+      });
+const outcomeCostSeriesResponseSchema = z.object({
+  offerId: z.string(),
+  brandId: z.string(),
+  pricing: z.enum(["gross", "net"]),
+  costBasis: z.literal("charged"),
+  firstSpendDay: z.string().nullable().describe("The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."),
+  steps: z
+    .array(outcomeCostStepSchema)
     .describe("One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."),
 });
 const outcomeCostSeriesResponseRef = registry.register("OfferOutcomeCostSeriesResponse", outcomeCostSeriesResponseSchema);
 const brandOutcomeCostSeriesResponseRef = registry.register(
   "BrandOutcomeCostSeriesResponse",
-  outcomeCostSeriesResponseSchema.omit({ offerId: true }).extend({
+  outcomeCostSeriesResponseSchema.omit({ offerId: true, steps: true }).extend({
     offerIds: z.array(z.string()).describe("Every offer the series covers: each offer any campaign of the brand states."),
+    steps: z
+      .array(outcomeCostStepSchema.extend({ offerMix: offerMixStepSchema }))
+      .describe("One series per outcome step, most advanced first. `expected`, `value` and `accounting` are the PICKED offer model's (best expected ROI, BRAND-GRAIN-READS-1107): a brand selling several offers reads its value and returns on `offerMix` (BRAND-VALUE-ROI-1108)."),
   }),
 );
 
@@ -3841,7 +3894,7 @@ registry.registerPath({
   path: "/brands/{brandId}/outcome-cost-series",
   summary: "Cost of one outcome per month and since inception, every outcome step of a whole brand (every offer)",
   description:
-    "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+    "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte, plus `steps[].offerMix`. BRAND-VALUE-ROI-1108: `steps[].offerMix` = the value, expected $ / outcome and the expected + measured returns (measured over time) TRACED per offer: each Unit carries the value of the offer its campaign states; expected figures are a flexible budget at the actual spend mix; returns only at a campaign Target. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,

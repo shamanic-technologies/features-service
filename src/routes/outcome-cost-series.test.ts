@@ -167,9 +167,11 @@ describe("computeBrandOutcomeCostSeries (BRAND-GRAIN-READS-1107)", () => {
     const offer = await computeOutcomeCostSeries("o1", "b1", rows, CH, "net", H, "2026-10-27");
     const brand = await computeBrandOutcomeCostSeries("b1", ["o1"], rows, CH, "net", H, "2026-10-27");
     const { offerId: _o, ...offerRest } = offer;
-    const { offerIds, ...brandRest } = brand;
+    const { offerIds, steps, ...brandRest } = brand;
     expect(offerIds).toEqual(["o1"]);
-    expect(brandRest).toEqual(offerRest);
+    // BRAND-VALUE-ROI-1108: the brand adds `offerMix` per step, nothing else.
+    expect({ ...brandRest, steps: steps.map(({ offerMix: _m, ...st }) => st) }).toEqual(offerRest);
+    expect(steps.every((st) => st.offerMix.weightBasis === "single_offer")).toBe(true);
   });
 
   it("…and with a priced expected model (the picked brand model IS the offer's)", async () => {
@@ -181,9 +183,16 @@ describe("computeBrandOutcomeCostSeries (BRAND-GRAIN-READS-1107)", () => {
     const offer = await computeOutcomeCostSeries("o1", "b1", rows, CH, "net", H, "2026-10-27");
     const brand = await computeBrandOutcomeCostSeries("b1", ["o1"], rows, CH, "net", H, "2026-10-27");
     const { offerId: _o, ...offerRest } = offer;
-    const { offerIds: _i, ...brandRest } = brand;
+    const { offerIds: _i, steps, ...brandRest } = brand;
     expect(offer.steps.find((s) => s.stepKey === "meeting_booked")!.expected.unavailableReason).not.toBe("expected_model_unavailable");
-    expect(brandRest).toEqual(offerRest);
+    expect({ ...brandRest, steps: steps.map(({ offerMix: _m, ...st }) => st) }).toEqual(offerRest);
+    // BRAND-VALUE-ROI-1108: one offer = its own figures; the traced value and expected return are the offer's own.
+    for (const st of steps) {
+      const own = offer.steps.find((x) => x.stepKey === st.stepKey)!;
+      expect(st.offerMix.offers.map((o) => o.offerId)).toEqual(["o1"]);
+      expect(st.offerMix.expectedReturn.roiMultiple).toBe(own.accounting!.returns.expected.roiMultiple);
+      if (st.offerMix.isCampaignTarget) expect(st.offerMix.measuredReturn.roiMultiple).toBe(own.accounting!.returns.measured.roiMultiple);
+    }
   });
 });
 

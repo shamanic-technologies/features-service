@@ -25640,6 +25640,13 @@
             "nullable": true,
             "description": "The offer's first spend day (YYYY-MM-DD): an outcome dated before it is not the offer's. Null when the offer never spent."
           },
+          "offerIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every offer the series covers: each offer any campaign of the brand states."
+          },
           "steps": {
             "type": "array",
             "items": {
@@ -25837,6 +25844,261 @@
                       "description": "OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."
                     }
                   ]
+                },
+                "offerMix": {
+                  "type": "object",
+                  "properties": {
+                    "rule": {
+                      "type": "string",
+                      "enum": [
+                        "traced_per_offer"
+                      ],
+                      "description": "A Unit carries the value of the offer its campaign states (traced, never allocated by a stated share)."
+                    },
+                    "weightBasis": {
+                      "type": "string",
+                      "enum": [
+                        "single_offer",
+                        "target_campaign_spend",
+                        "making_campaign_spend"
+                      ],
+                      "description": "What weights the offers in the expected figures: one offer = its own figures; else the whole-history spend of each offer's campaigns whose Target is this outcome, else of its campaigns making it (a flexible budget at the actual spend mix)."
+                    },
+                    "offers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "offerId": {
+                            "type": "string"
+                          },
+                          "weightUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The spend weighting this offer (null on single_offer, or unreadable)."
+                          },
+                          "weightShare": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "weightUsd / the sum of the weights (0..1). Null when nothing was spent or unreadable."
+                          },
+                          "valuePerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "This offer's value of one outcome, NET, on its own expected route (Paid client = its lifetime revenue)."
+                          },
+                          "expectedCostPerOutcomeUsd": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "This offer's expected cost from Start of one outcome."
+                          },
+                          "isCampaignTarget": {
+                            "type": "boolean",
+                            "description": "A campaign selling this offer targets this outcome."
+                          },
+                          "expectedReturn": {
+                            "type": "object",
+                            "properties": {
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "roiMultiple",
+                              "unavailableReason"
+                            ],
+                            "description": "This offer's EXPECTED return on the outcome: value / expected cost from Start. Only at its campaigns' Target."
+                          },
+                          "measuredReturn": {
+                            "type": "object",
+                            "properties": {
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "unavailableReason": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "targetUnits": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "valueUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "spentUsd": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "roiMultiple",
+                              "unavailableReason",
+                              "targetUnits",
+                              "valueUsd",
+                              "spentUsd"
+                            ],
+                            "description": "This offer's MEASURED return: our Target Units its Target campaigns made x its value / their spend. Only at its campaigns' Target."
+                          },
+                          "unavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Why this offer's expected figures are null (expected_model_unavailable, expected_model_computing, no_priced_sales_path...)."
+                          }
+                        },
+                        "required": [
+                          "offerId",
+                          "weightUsd",
+                          "weightShare",
+                          "valuePerOutcomeUsd",
+                          "expectedCostPerOutcomeUsd",
+                          "isCampaignTarget",
+                          "expectedReturn",
+                          "measuredReturn",
+                          "unavailableReason"
+                        ]
+                      },
+                      "description": "Every offer of the brand, its own figures (ascending offerId)."
+                    },
+                    "valuePerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The brand's value of one outcome: each offer's value weighted by the outcomes its spend is expected to make (sum(w/C x V) / sum(w/C)). Null with valueUnavailableReason."
+                    },
+                    "valueUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "no_spend_yet | spend_unreadable | an offer's own reason. Null when served."
+                    },
+                    "expectedCostPerOutcomeUsd": {
+                      "type": "number",
+                      "nullable": true,
+                      "description": "The brand's EXPECTED $ / outcome: the weights' spend / the outcomes it is expected to make (sum(w) / sum(w/C)). No history: today's standard (the chart's dotted line). The MEASURED $ / outcome over time is `months[].cumulativeCostPerOutcomeUsd`."
+                    },
+                    "expectedCostUnavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "isCampaignTarget": {
+                      "type": "boolean",
+                      "description": "A campaign of at least one offer targets this outcome. False = no return on this row (ROI-CONSISTENCY-1103): show $ / outcome and value per outcome only."
+                    },
+                    "expectedReturn": {
+                      "type": "object",
+                      "properties": {
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "roiMultiple",
+                        "unavailableReason"
+                      ],
+                      "description": "EXPECTED return of the outcome at the brand: sum(w/C x V) / sum(w), the same money as measuredReturn. No history (a standard is never restated over past months). Null + outcome_is_no_campaign_target below a Target."
+                    },
+                    "measuredReturn": {
+                      "type": "object",
+                      "properties": {
+                        "roiMultiple": {
+                          "type": "number",
+                          "nullable": true
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "targetUnits": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "valueUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Traced value: sum over offers of our Target Units x that offer's value per Unit."
+                        },
+                        "spentUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Whole-history spend of every offer's Target campaigns for this outcome."
+                        },
+                        "learning": {
+                          "type": "boolean",
+                          "description": "Fewer than 10 Target Units (or unreadable)."
+                        },
+                        "months": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "month": {
+                                "type": "string",
+                                "description": "YYYY-MM (UTC), the series' axis."
+                              },
+                              "spentUsd": {
+                                "type": "number",
+                                "description": "Cumulative to the month end."
+                              },
+                              "targetUnits": {
+                                "type": "integer"
+                              },
+                              "valueUsd": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "roiMultiple": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "valueUsd / spentUsd to the month end; null before the first Target Unit or with no spend. The last month = the since-inception roiMultiple."
+                              }
+                            },
+                            "required": [
+                              "month",
+                              "spentUsd",
+                              "targetUnits",
+                              "valueUsd",
+                              "roiMultiple"
+                            ]
+                          },
+                          "description": "The measured return over time (the chart's solid line); [] when the outcome is no Target or unreadable."
+                        }
+                      },
+                      "required": [
+                        "roiMultiple",
+                        "unavailableReason",
+                        "targetUnits",
+                        "valueUsd",
+                        "spentUsd",
+                        "learning",
+                        "months"
+                      ],
+                      "description": "MEASURED return of the outcome at the brand, since inception: traced value / the Target campaigns' spend. REALIZED/EXPECTED only, never a pipeline."
+                    }
+                  },
+                  "required": [
+                    "rule",
+                    "weightBasis",
+                    "offers",
+                    "valuePerOutcomeUsd",
+                    "valueUnavailableReason",
+                    "expectedCostPerOutcomeUsd",
+                    "expectedCostUnavailableReason",
+                    "isCampaignTarget",
+                    "expectedReturn",
+                    "measuredReturn"
+                  ],
+                  "description": "BRAND-VALUE-ROI-1108: the outcome's value and returns TRACED per offer (`lib/brand-offer-mix.ts`). The client states nothing: every Unit's offer is the one its campaign states."
                 }
               },
               "required": [
@@ -25848,17 +26110,11 @@
                 "expected",
                 "value",
                 "months",
-                "accounting"
+                "accounting",
+                "offerMix"
               ]
             },
-            "description": "One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."
-          },
-          "offerIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Every offer the series covers: each offer any campaign of the brand states."
+            "description": "One series per outcome step, most advanced first. `expected`, `value` and `accounting` are the PICKED offer model's (best expected ROI, BRAND-GRAIN-READS-1107): a brand selling several offers reads its value and returns on `offerMix` (BRAND-VALUE-ROI-1108)."
           }
         },
         "required": [
@@ -25866,8 +26122,8 @@
           "pricing",
           "costBasis",
           "firstSpendDay",
-          "steps",
-          "offerIds"
+          "offerIds",
+          "steps"
         ]
       },
       "BrandConversionRatesResponse": {
@@ -47415,7 +47671,7 @@
     "/brands/{brandId}/outcome-cost-series": {
       "get": {
         "summary": "Cost of one outcome per month and since inception, every outcome step of a whole brand (every offer)",
-        "description": "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "description": "BRAND-GRAIN-READS-1107: GET /offers/{offerId}/outcome-cost-series at the BRAND grain. Same rule, same body (`offerIds` instead of `offerId`): the scope is every sales funnel campaign of every offer and every campaign each offer ran (the union of the offers' scopes, + the brand's campaign-less work), outcomes are the brand ledger's Units; expected costs and values are read off the picked offer model (the best expected ROI among the offers running a funnel campaign, else among all). A brand selling ONE offer reads its offer's series byte for byte, plus `steps[].offerMix`. BRAND-VALUE-ROI-1108: `steps[].offerMix` = the value, expected $ / outcome and the expected + measured returns (measured over time) TRACED per offer: each Unit carries the value of the offer its campaign states; expected figures are a flexible budget at the actual spend mix; returns only at a campaign Target. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
         "tags": [
           "Stats"
         ],
