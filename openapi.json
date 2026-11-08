@@ -53291,6 +53291,15 @@
                 "properties": {
                   "apply": {
                     "type": "boolean"
+                  },
+                  "childOutcomes": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               }
