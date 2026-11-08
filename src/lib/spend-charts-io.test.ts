@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { chartPersonsOf, expectedConversionOf, expectedCostAndReturnOf } from "./spend-charts-io.js";
-import { leadingUnit, unitsInPathOrder } from "../routes/spend-charts.js";
+import type { SalesFunnelCampaignRow } from "./sales-funnel-campaigns-client.js";
+import { campaignTargetOf, groupTargetOf, unitsInPathOrder } from "../routes/spend-charts.js";
 import type { EnginePerson } from "./revenue-engine.js";
 import type { SalesFunnelUnitRow } from "./sales-funnel-campaigns-client.js";
 
@@ -62,7 +63,7 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
 
   it("a leg that finds people: nobody enters, every served person is an outcome on its serve day", () => {
     const out = chartPersonsOf(
-      { channelSlug: "lead-sourcing", legKey: "start_to_lead_found", fromStep: null, toStep: "lead_found" },
+      { fromStep: null, toStep: "lead_found" },
       [p("a", "u1", {}, {}, "2026-10-03T00:00:00Z")],
       new Set(["a"]),
       new Map(),
@@ -114,7 +115,52 @@ describe("spend charts: a campaign's pipes in path order", () => {
     expect(unitsInPathOrder(units, steps).map((u) => u.campaignId)).toEqual(["a", "b", "c"]);
   });
 
-  it("charts a campaign on its first pipe that does more than find people", () => {
-    expect(leadingUnit(units, steps)?.campaignId).toBe("b");
+  // SPEND-CHART-TARGET-1108: the chart counts the campaign's TARGET, never a pipe's step.
+  const campaign = (over: Partial<SalesFunnelCampaignRow> = {}): SalesFunnelCampaignRow => ({
+    id: "sfc",
+    brandId: "b",
+    offerId: "o",
+    salesFunnelId: "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client",
+    salesFunnelName: "Wide Email",
+    status: "ongoing",
+    stopReason: null,
+    createdAt: "2026-10-27T00:00:00Z",
+    units,
+    ...over,
+  });
+  const pathOf = () => ({ legs: [{ toStep: "lead_found" }, { toStep: "conversation" }, { toStep: "paid_client" }] });
+
+  it("Target Paid client: charts Paid client, counted from Lead found (Wide Email, prod 2026-11-08)", () => {
+    expect(campaignTargetOf(campaign({ target: "paid_client" }), steps, pathOf)).toEqual({ step: "paid_client", fromStep: "lead_found", source: "campaign_target" });
+  });
+
+  it("Target Positive reply: still charts Positive reply", () => {
+    expect(campaignTargetOf(campaign({ target: "conversation" }), steps, pathOf)).toEqual({ step: "conversation", fromStep: "lead_found", source: "campaign_target" });
+  });
+
+  it("no Target stated: the last step of the funnel it runs, never the first pipe past sourcing", () => {
+    expect(campaignTargetOf(campaign({ target: null }), steps, pathOf)).toEqual({ step: "paid_client", fromStep: "lead_found", source: "funnel_last_step" });
+  });
+
+  it("a Target off the units chain is still the Target (appended to the chain)", () => {
+    expect(campaignTargetOf(campaign({ target: "meeting_booked" }), steps, pathOf)?.step).toBe("meeting_booked");
+  });
+
+  it("a reactive campaign counts from its trigger step", () => {
+    const meeting = [unit("m", "ai-meeting-booking|conversation_to_meeting_booked")];
+    const s = new Map([["ai-meeting-booking|conversation_to_meeting_booked", { fromStep: "conversation", toStep: "meeting_booked" }]]);
+    expect(campaignTargetOf(campaign({ target: "meeting_booked", units: meeting }), s, () => null)).toEqual({ step: "meeting_booked", fromStep: "conversation", source: "campaign_target" });
+  });
+
+  it("an offer charts the Target most of its LIVE campaigns state, never the pipe most of them lead with", () => {
+    const rows = [
+      campaign({ id: "1", target: "paid_client" }),
+      campaign({ id: "2", target: "meeting_booked", status: "stopped", createdAt: "2026-11-01T00:00:00Z" }),
+      campaign({ id: "3", target: "meeting_booked", status: "stopped", createdAt: "2026-11-02T00:00:00Z" }),
+    ];
+    expect(groupTargetOf(rows, steps, pathOf)?.step).toBe("paid_client");
+    // None live: most campaigns; ties to the most recent one.
+    expect(groupTargetOf(rows.map((r) => ({ ...r, status: "stopped" })), steps, pathOf)?.step).toBe("meeting_booked");
+    expect(groupTargetOf([campaign({ id: "a", target: "paid_client", createdAt: "2026-11-03T00:00:00Z" }), campaign({ id: "b", target: "conversation" })], steps, pathOf)?.step).toBe("paid_client");
   });
 });

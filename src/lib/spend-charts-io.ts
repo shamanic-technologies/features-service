@@ -31,7 +31,8 @@ import { pipeLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { STEP_SIGNAL } from "./value-added.js";
 import { ACT_IS_OUTCOME_STEPS } from "./funnel-campaign-activity.js";
 import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
-import type { ExpectedReturn } from "./expected-return.js";
+import { expectedRouteOf, type ExpectedReturn } from "./expected-return.js";
+import { expectedTargetFigures, targetLegKeyOf, type ChartTarget } from "./spend-chart-target.js";
 import type { Pricing } from "./pricing.js";
 import type { ChannelStepKey } from "./acquisition-channels.js";
 import { buildSpendChartDays, type ChartPerson, type SpendChartExpected, type SpendChartPoint, type TaskSpendRow } from "./spend-charts.js";
@@ -39,7 +40,7 @@ import { buildSpendChartDays, type ChartPerson, type SpendChartExpected, type Sp
 /** The engine signal a person carries once they reached a step (`STEP_SIGNAL` + the attended rung). */
 const SIGNAL_OF_STEP: Readonly<Record<string, string>> = { ...STEP_SIGNAL, meeting_attended: "meetingAttended", purchase: "closeWin" };
 
-/** The leg a chart is drawn on: the pipe's (or the scope's leading pipe's) own leg. */
+/** The leg a PIPE's chart is drawn on: the pipe's own leg (a campaign, an offer, a brand chart its Target, `ChartTarget`). */
 export interface ChartLeg {
   /** The channel performing it. */
   channelSlug: string;
@@ -59,7 +60,13 @@ export interface ChartScope {
   personCampaignIds: string[];
   /** The units whose HANDED people join the population (a leg starting at a later step). */
   actingCampaignIds: string[];
+  /** A pipe's own leg; null on a group scope (it reads `target`). */
   leg: ChartLeg | null;
+  /**
+   * SPEND-CHART-TARGET-1108: a campaign / offer / brand chart counts its TARGET outcome (`lib/spend-chart-target.ts`),
+   * never a pipe's step. Null on a pipe (its own leg) and on a group scope whose Target is unknown.
+   */
+  target: ChartTarget | null;
   /** A pipe: its own unit, read with the pipe's own spend attribution. */
   pipe: { campaignId: string; featureSlug: string } | null;
   /**
@@ -70,9 +77,11 @@ export interface ChartScope {
 }
 
 export interface SpendChart {
-  /** The leg the outcome and the conversion are read on; null when the scope runs no leg we perform. */
+  /** A pipe's chart: the leg the outcome and the conversion are read on. Null on a campaign / offer / brand chart (`target`). */
   leg: (ChartLeg & { maturityDays: number; learningOutcomesRequired: number }) | null;
-  /** The step every outcome here is counted in (the leg's TO step). */
+  /** A campaign / offer / brand chart: the Target counted and the step its conversion counts from (SPEND-CHART-TARGET-1108). */
+  target: (ChartTarget & { maturityDays: number; learningOutcomesRequired: number }) | null;
+  /** The step every outcome here is counted in (the pipe leg's TO step, or the Target). */
   outcomeStep: string | null;
   /** Why the outcome curves are empty, when they are (`no_leg`, `outcome_step_not_counted`). */
   outcomeUnavailableReason: string | null;
@@ -98,7 +107,10 @@ type Headers = { orgId: string; userId?: string; runId?: string };
 const dayOf = (iso: string | null | undefined): string | null => (iso ? iso.slice(0, 10) : null);
 
 /** Is the leg an ENTRY leg (from nothing or from Lead found): its people enter on their first message. */
-export const isEntryLeg = (leg: ChartLeg): boolean => leg.fromStep === null || leg.fromStep === "lead_found";
+export const isEntryLeg = (leg: StepPair): boolean => leg.fromStep === null || leg.fromStep === "lead_found";
+
+/** The two steps a chart reads: from (null = Start) and to. */
+export type StepPair = Pick<ChartLeg, "fromStep" | "toStep">;
 
 /** One scope's people, and which of them its campaigns SERVED (the others were only handed to its units). */
 export interface ScopePeople {
@@ -151,7 +163,7 @@ export async function readScopePeople(
  *   - a leg TO Lead found: nobody enters; every served person is an outcome on their serve day.
  */
 export function chartPersonsOf(
-  leg: ChartLeg,
+  leg: StepPair,
   persons: readonly EnginePerson[],
   /** The leads the scope's campaigns served (`ScopePeople.servedLeadIds`), never re-derived from campaign ids. */
   servedLeadIds: ReadonlySet<string>,
@@ -269,6 +281,9 @@ export async function computeSpendChart(args: {
   const { brandId, scope, handedRows, expected, fleetConversions, brandRateOf, pricing, headers } = args;
   const today = args.today ?? utcToday();
   const leg = scope.leg;
+  const target = scope.target;
+  // What the chart counts: the Target of a campaign / offer / brand, a pipe's own leg (never both).
+  const reading: StepPair | null = target ? { fromStep: target.fromStep, toStep: target.step } : leg;
 
   const readSpend = async (): Promise<{ byDay: Map<string, number>; tasks: TaskSpendRow[] | null; tasksReason: string | null }> => {
     const [ownByDay, brandLevel, tasks] = await Promise.all([
@@ -295,7 +310,7 @@ export async function computeSpendChart(args: {
       ? { byDay: new Map<string, number>(), tasks: [] as TaskSpendRow[], tasksReason: null }
       : await withPipeSpendAttribution(attribution, readSpend);
 
-  const acting = new Set(leg && !isEntryLeg(leg) ? scope.actingCampaignIds : []);
+  const acting = new Set(reading && !isEntryLeg(reading) ? scope.actingCampaignIds : []);
   const handed = new Map<string, { claimedAt: string | null; actedAt: string | null; acted: boolean }>();
   for (const r of handedRows) {
     if (!acting.has(r.actingCampaignId)) continue;
@@ -308,10 +323,10 @@ export async function computeSpendChart(args: {
     });
   }
 
-  const people = leg ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : null;
+  const people = reading ? await readScopePeople(brandId, scope.personCampaignIds, new Set(handed.keys()), headers) : null;
   const spendDays = [...spend.byDay.keys()].sort();
-  const chartPersons = leg && people ? chartPersonsOf(leg, people.persons, people.servedLeadIds, handed, spendDays[0] ?? null) : null;
-  const maturity = leg ? legMaturity(storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey))) : null;
+  const chartPersons = reading && people ? chartPersonsOf(reading, people.persons, people.servedLeadIds, handed, spendDays[0] ?? null) : null;
+  const maturity = target ? legMaturity(targetLegKeyOf(target)) : leg ? legMaturity(storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey))) : null;
   const daily = buildSpendChartDays({
     spendByDay: spend.byDay,
     taskRows: spend.tasks,
@@ -321,14 +336,23 @@ export async function computeSpendChart(args: {
     today,
   });
   const last = daily.at(-1) ?? null;
-  const outcomeStep = leg && chartPersons ? leg.toStep : null;
+  // A Target's outcome is counted on the ledger whatever the people read can see (`rebaseSpendChartOnLedger`).
+  const outcomeStep = target ? target.step : leg && chartPersons ? leg.toStep : null;
   const funnelLegKey = leg ? storedLegKeyOf(pipeLegKeyOf(leg.channelSlug, leg.legKey)) : null;
   const conversion = leg ? expectedConversionOf(leg, fleetConversions, funnelLegKey ? brandRateOf(funnelLegKey) : null) : null;
+  const expectedFigures = target
+    ? expectedTargetFigures(expectedRouteOf(expected), target, fleetConversions, expected.unavailableReason)
+    : {
+        ...expectedCostAndReturnOf(expected, outcomeStep),
+        ...(conversion ?? { conversionRatePct: null, conversionBasis: null, conversionSource: null, conversionUnavailableReason: "no_leg" }),
+      };
+  const noEntry = target ? target.fromStep === null : leg?.toStep === "lead_found";
   return {
-    leg: leg && maturity ? { ...leg, maturityDays: maturity.durationDays, learningOutcomesRequired: maturity.outcomesRequired } : null,
+    leg: !target && leg && maturity ? { ...leg, maturityDays: maturity.durationDays, learningOutcomesRequired: maturity.outcomesRequired } : null,
+    target: target && maturity ? { ...target, maturityDays: maturity.durationDays, learningOutcomesRequired: maturity.outcomesRequired } : null,
     outcomeStep,
-    outcomeUnavailableReason: !leg ? "no_leg" : chartPersons === null ? "outcome_step_not_counted" : null,
-    conversionUnavailableReason: !leg ? "no_leg" : leg.toStep === "lead_found" ? "no_entry_population" : null,
+    outcomeUnavailableReason: !reading ? "no_leg" : !target && chartPersons === null ? "outcome_step_not_counted" : null,
+    conversionUnavailableReason: !reading ? "no_leg" : noEntry ? "no_entry_population" : null,
     daily,
     spendByActionUnavailableReason: spend.tasksReason,
     totals: {
@@ -340,9 +364,6 @@ export async function computeSpendChart(args: {
       conversionRatePct: last?.conversionRatePct ?? null,
       learning: last && outcomeStep ? last.learning : null,
     },
-    expected: {
-      ...expectedCostAndReturnOf(expected, outcomeStep),
-      ...(conversion ?? { conversionRatePct: null, conversionBasis: null, conversionSource: null, conversionUnavailableReason: "no_leg" }),
-    },
+    expected: expectedFigures,
   };
 }

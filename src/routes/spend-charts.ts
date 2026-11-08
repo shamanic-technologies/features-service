@@ -39,6 +39,7 @@ import { getBrandEffectiveRates } from "../lib/effective-conversion-rates.js";
 import { computeSpendChart, fetchFollowupActionRows, type ChartLeg, type ChartScope, type SpendChart } from "../lib/spend-charts-io.js";
 import type { FollowupActionRow } from "../lib/followup-actions-client.js";
 import { fetchOfferChannelMap, type OfferChannel } from "../lib/offer-channels.js";
+import { campaignChartTarget, groupChartTarget, type ChartTarget } from "../lib/spend-chart-target.js";
 
 const router = Router();
 
@@ -46,6 +47,8 @@ const router = Router();
 const EXPECTED_COLD_WAIT_MS = 25_000;
 
 type PipeSteps = ReadonlyMap<string, { fromStep: string | null; toStep: string }>;
+/** A funnel's path (the catalogue's), to read its last step. */
+type PathOf = (salesFunnelId: string) => { legs: ReadonlyArray<{ toStep: string }> } | null;
 
 export interface PipeChart extends LedgerSpendChart {
   campaignId: string;
@@ -85,8 +88,11 @@ export interface OfferSpendChartsBody {
   offer: LedgerSpendChart;
 }
 
+/** A unit's pipe steps (a play id reads its base pipe's). */
+const stepsOfUnit = (u: SalesFunnelUnitRow, steps: PipeSteps) => steps.get(u.pipeId) ?? steps.get(u.pipeId.split("~")[0]!) ?? null;
+
 const legOf = (u: SalesFunnelUnitRow, steps: PipeSteps): ChartLeg | null => {
-  const s = steps.get(u.pipeId);
+  const s = stepsOfUnit(u, steps);
   return s ? { channelSlug: u.featureSlug, legKey: u.legKey, fromStep: s.fromStep, toStep: s.toStep } : null;
 };
 
@@ -112,10 +118,17 @@ export function unitsInPathOrder(units: readonly SalesFunnelUnitRow[], steps: Pi
   return [...out, ...units.filter((u) => !out.includes(u))];
 }
 
-/** PURE. The leg a campaign is charted on: its first pipe (path order) that does not only FIND people, else its first. */
-export function leadingUnit(units: readonly SalesFunnelUnitRow[], steps: PipeSteps): SalesFunnelUnitRow | null {
-  const ordered = unitsInPathOrder(units, steps);
-  return ordered.find((u) => steps.has(u.pipeId) && steps.get(u.pipeId)!.toStep !== "lead_found") ?? ordered[0] ?? null;
+/**
+ * PURE (SPEND-CHART-TARGET-1108). What a funnel campaign's chart counts: its TARGET (campaign-service's `target`, else
+ * the last step of the funnel it runs), from the first milestone of its own units chain. Never a pipe's step.
+ */
+export function campaignTargetOf(row: SalesFunnelCampaignRow, steps: PipeSteps, pathOf: PathOf): ChartTarget | null {
+  const lastStep = pathOf(row.runningSalesFunnelId ?? row.salesFunnelId)?.legs.at(-1)?.toStep ?? null;
+  const edges = row.units.flatMap((u) => {
+    const st = stepsOfUnit(u, steps);
+    return st ? [{ campaignId: u.campaignId, fromStep: st.fromStep, toStep: st.toStep }] : [];
+  });
+  return campaignChartTarget(row.target, lastStep, edges);
 }
 
 /** PURE. One pipe's scope: its own spend; its people (a sourcing pipe's = what the campaign's other units were served). */
@@ -128,13 +141,14 @@ export function pipeScope(row: SalesFunnelCampaignRow, u: SalesFunnelUnitRow, st
     personCampaignIds: finds ? row.units.filter((x) => x.campaignId !== u.campaignId).map((x) => x.campaignId) : [u.campaignId],
     actingCampaignIds: [u.campaignId],
     leg,
+    target: null,
     pipe: { campaignId: u.campaignId, featureSlug: u.featureSlug },
     brandLevelSpend: false,
   };
 }
 
 /**
- * PURE. A set of funnel campaigns as ONE scope (a campaign, an offer), charted on `leg`.
+ * PURE. A set of funnel campaigns as ONE scope (a campaign, an offer), charted on its `target`.
  *
  * `offerChannels` (offer grain only, SPEND-CHARTS-INCEPTION-1027): EVERY campaign the offer ran, per channel, the
  * campaigns from before the funnel-campaign era included (campaign-service rows stating the offer and no sales funnel),
@@ -142,7 +156,7 @@ export function pipeScope(row: SalesFunnelCampaignRow, u: SalesFunnelUnitRow, st
  * every offer money figure (`lib/brand-level-spend.ts`). The scope is then the byte-same campaign and channel set the
  * brand offers read (`/brands/:id/offers`) prices that offer on.
  */
-export function groupScope(rows: readonly SalesFunnelCampaignRow[], leg: ChartLeg | null, offerChannels?: readonly OfferChannel[]): ChartScope {
+export function groupScope(rows: readonly SalesFunnelCampaignRow[], target: ChartTarget | null, offerChannels?: readonly OfferChannel[]): ChartScope {
   const units = rows.flatMap((r) => r.units);
   const ids = [...new Set([...units.map((u) => u.campaignId), ...(offerChannels ?? []).flatMap((c) => c.campaignIds)])].sort();
   return {
@@ -150,24 +164,20 @@ export function groupScope(rows: readonly SalesFunnelCampaignRow[], leg: ChartLe
     featureSlugs: [...new Set([...units.map((u) => u.featureSlug), ...(offerChannels ?? []).map((c) => c.featureSlug)])].sort(),
     personCampaignIds: ids,
     actingCampaignIds: ids,
-    leg,
+    leg: null,
+    target,
     pipe: null,
     brandLevelSpend: offerChannels !== undefined,
   };
 }
 
-/** PURE. The offer's leg: the leading leg most of its funnel campaigns run (ties: the most recent campaign's). */
-export function offerLeg(rows: readonly SalesFunnelCampaignRow[], steps: PipeSteps): ChartLeg | null {
-  const counts = new Map<string, { leg: ChartLeg; n: number; latest: string }>();
-  for (const r of rows) {
-    const u = leadingUnit(r.units, steps);
-    const leg = u ? legOf(u, steps) : null;
-    if (!leg) continue;
-    const key = `${leg.channelSlug}|${leg.legKey}`;
-    const c = counts.get(key);
-    counts.set(key, { leg, n: (c?.n ?? 0) + 1, latest: c && c.latest > r.createdAt ? c.latest : r.createdAt });
-  }
-  return [...counts.values()].sort((a, b) => b.n - a.n || b.latest.localeCompare(a.latest))[0]?.leg ?? null;
+/**
+ * PURE (SPEND-CHART-TARGET-1108). An offer's / a brand's chart counts the Target its campaigns state: the Target most of
+ * them state (the live ones when any runs), ties to the most recent campaign's. Never a pipe-voted step.
+ */
+export function groupTargetOf(rows: readonly SalesFunnelCampaignRow[], steps: PipeSteps, pathOf: PathOf): ChartTarget | null {
+  const live = rows.filter((r) => r.status === "ongoing");
+  return groupChartTarget((live.length > 0 ? live : rows).map((r) => ({ target: campaignTargetOf(r, steps, pathOf), createdAt: r.createdAt })));
 }
 
 interface ChartContext {
@@ -198,8 +208,11 @@ const chartOf = (ctx: ChartContext, scope: ChartScope, expected: ExpectedReturn)
 export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignRow, pricing: Pricing, headers: DownstreamHeaders): Promise<FunnelCampaignSpendChartsBody> {
   const brandId = row.brandId;
   const identity = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
-  const [{ pipeSteps }, ctx] = await Promise.all([funnelCopiesFor([row.salesFunnelId]), chartContext(brandId, row.units.map((u) => u.campaignId), pricing, headers)]);
-  const lead = leadingUnit(row.units, pipeSteps);
+  const [{ pipeSteps, pathOf }, ctx] = await Promise.all([
+    funnelCopiesFor([...new Set([row.salesFunnelId, row.runningSalesFunnelId ?? row.salesFunnelId])]),
+    chartContext(brandId, row.units.map((u) => u.campaignId), pricing, headers),
+  ]);
+  const target = campaignTargetOf(row, pipeSteps, pathOf);
   const ordered = unitsInPathOrder(row.units, pipeSteps);
   // LEDGER-ONLY-1107-P2: every outcome / $ per outcome / conversion of the campaign's chart = the Units its units' runs
   // produced (runs-service ledger), a pipe's = its own campaign's; never the people a lead read counted.
@@ -210,19 +223,19 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
       return null;
     });
     const step = chart.outcomeStep;
-    const from = chart.leg?.fromStep ?? null;
+    const from = chart.target ? chart.target.fromStep : chart.leg?.fromStep ?? null;
     const scopeOf = ledgerScopeOf(ledger);
     return rebaseSpendChartOnLedger(
       chart,
       step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(scopeOf, step).row,
       from === null || ledger === null ? null : ledgerCountOfStep(scopeOf, from).row,
-      chart.leg?.learningOutcomesRequired ?? 10,
+      chart.target?.learningOutcomesRequired ?? chart.leg?.learningOutcomesRequired ?? 10,
       scope,
     );
   };
   const [campaign, pipes] = await Promise.all([
     expectedReturnForFunnelCampaign(identity, brandId, row.offerId, row.salesFunnelId, null, EXPECTED_COLD_WAIT_MS).then(async (e) =>
-      onLedger(await chartOf(ctx, groupScope([row], lead ? legOf(lead, pipeSteps) : null), e), row.units.map((u) => u.campaignId), "campaign"),
+      onLedger(await chartOf(ctx, groupScope([row], target), e), row.units.map((u) => u.campaignId), "campaign"),
     ),
     Promise.all(
       ordered.map(async (u): Promise<PipeChart> => {
@@ -244,6 +257,8 @@ export function funnelCampaignSpendCharts(row: SalesFunnelCampaignRow, brandId: 
       brandId,
       offerId: row.offerId,
       units: row.units.map((u) => `${u.campaignId}:${u.legKey}`).sort().join("+"),
+      // SPEND-CHART-TARGET-1108: the chart counts the Target, so a moved Target is another cell.
+      target: row.target ?? "",
       pricing,
     }),
     orgId: headers.orgId,
@@ -319,12 +334,12 @@ async function groupSpendChart(
   headers: DownstreamHeaders,
   what: "offer" | "brand",
 ): Promise<LedgerSpendChart> {
-  const [{ pipeSteps }, ctx, expected] = await Promise.all([
-    funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]),
+  const [{ pipeSteps, pathOf }, ctx, expected] = await Promise.all([
+    funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, r.runningSalesFunnelId ?? r.salesFunnelId]))]),
     chartContext(brandId, rows.flatMap((r) => r.units.map((u) => u.campaignId)), pricing, headers),
     expectedRead,
   ]);
-  const measured = await chartOf(ctx, groupScope(rows, offerLeg(rows, pipeSteps), offerChannels), expected);
+  const measured = await chartOf(ctx, groupScope(rows, groupTargetOf(rows, pipeSteps, pathOf), offerChannels), expected);
   // LEDGER-ONLY-1107: the offer chart's outcomes and conversion are the brand's ledger Units (the count Today's Target
   // row prints), never the people the offer's campaigns reached. Unreadable = every outcome figure null, said so.
   const ledger = await fetchBrandOutcomeLedger(brandId, pricing === "gross" ? "gross" : "net").catch((err: Error) => {
@@ -332,12 +347,12 @@ async function groupSpendChart(
     return null;
   });
   const step = measured.outcomeStep;
-  const from = measured.leg?.fromStep ?? null;
+  const from = measured.target ? measured.target.fromStep : measured.leg?.fromStep ?? null;
   return rebaseSpendChartOnLedger(
     measured,
     step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(ledgerScopeOf(ledger), step).row,
     from === null || ledger === null ? null : ledgerCountOfStep(ledgerScopeOf(ledger), from).row,
-    measured.leg?.learningOutcomesRequired ?? 10,
+    measured.target?.learningOutcomesRequired ?? measured.leg?.learningOutcomesRequired ?? 10,
   );
 }
 
@@ -392,6 +407,7 @@ router.get("/brands/:brandId/spend-charts", apiKeyAuth, async (req, res) => {
         orgId: headers.orgId,
         offers: offerIds.join("+"),
         units: rows.flatMap((r) => r.units.map((u) => `${u.campaignId}:${u.legKey}`)).sort().join("+"),
+        targets: rows.map((r) => `${r.id}:${r.status}:${r.target ?? ""}`).sort().join("+"),
         campaigns: `inception:${channels.map((c) => `${c.featureSlug}>${c.campaignIds.join("+")}`).join(",")}`,
         pricing,
       }),
@@ -430,6 +446,8 @@ router.get("/offers/:offerId/spend-charts", apiKeyAuth, async (req, res) => {
         orgId: headers.orgId,
         brandId,
         units: ofOffer.flatMap((r) => r.units.map((u) => `${u.campaignId}:${u.legKey}`)).sort().join("+"),
+        // SPEND-CHART-TARGET-1108: the chart counts the Target most live campaigns state.
+        targets: ofOffer.map((r) => `${r.id}:${r.status}:${r.target ?? ""}`).sort().join("+"),
         // Every campaign of the offer, legacy ones included (SPEND-CHARTS-INCEPTION-1027): a cell built on the funnel
         // units alone keys differently and is never served again.
         campaigns: `inception:${offerChannels.map((c) => `${c.featureSlug}>${c.campaignIds.join("+")}`).join(",")}`,

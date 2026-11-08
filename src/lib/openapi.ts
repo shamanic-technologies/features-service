@@ -3506,8 +3506,18 @@ const spendChartSchema = z.object({
       learningOutcomesRequired: z.number().int().describe("The Learning bar: mature outcomes needed."),
     })
     .nullable()
-    .describe("The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."),
-  outcomeStep: z.string().nullable().describe("The step counted as the outcome (the leg's TO step)."),
+    .describe("A PIPE's chart: its own leg, every outcome and conversion read on it. Null on a campaign / offer / brand chart, which reads `target` (SPEND-CHART-TARGET-1108)."),
+  target: z
+    .object({
+      step: z.string().describe("The Target outcome counted (catalogue step key)."),
+      fromStep: z.string().nullable().describe("The step % to Target counts from: the first milestone of the campaign's own units chain (Lead found on a proactive funnel, the trigger step of a reactive one). Null = nobody enters before the Target (no conversion)."),
+      source: z.enum(["campaign_target", "funnel_last_step"]).describe("campaign_target: the campaign states it (campaign-service `target`); funnel_last_step: not stated, the last step of the funnel it runs. An offer / brand chart: the Target most of its live campaigns state (ties: the most recent campaign's)."),
+      maturityDays: z.number().int(),
+      learningOutcomesRequired: z.number().int().describe("The Learning bar: Units of the Target needed."),
+    })
+    .nullable()
+    .describe("SPEND-CHART-TARGET-1108 (owner 2026-11-08): a campaign / offer / brand chart counts the Target the client asked for, never a pipe's step. Null on a pipe chart."),
+  outcomeStep: z.string().nullable().describe("The step counted as the outcome: the Target on a campaign / offer / brand chart, the leg's TO step on a pipe chart."),
   outcomeUnavailableReason: z.enum(["no_leg", "outcome_step_not_counted"]).nullable(),
   conversionUnavailableReason: z.enum(["no_leg", "no_entry_population"]).nullable().describe("no_entry_population: a leg that FINDS people (Start -> Lead found) has nobody to convert; its outcome is the leads found."),
   daily: z.array(spendChartPointSchema).describe("Since inception (never a window), ascending."),
@@ -3522,10 +3532,10 @@ const spendChartSchema = z.object({
     learning: z.boolean().nullable(),
   }).describe("The last point's figures (today's snapshot)."),
   expected: z.object({
-    costPerOutcomeUsd: z.number().nullable().describe("What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."),
+    costPerOutcomeUsd: z.number().nullable().describe("What one outcome is expected to cost: on a pipe chart the leg's price on the scope's expected return model (best mature workflow, else the fleet's, else the seeded default); on a campaign / offer / brand chart one Target from the start of the model's priced route (C(to) = C(from) / rate + leg cost, the client's team at $0): the dotted line the measured cost converges to."),
     costPerOutcomeBasis: z.string().nullable().describe("measured | stated | fleet | default."),
     costPerOutcomeUnavailableReason: z.string().nullable(),
-    conversionRatePct: z.number().nullable().describe("The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."),
+    conversionRatePct: z.number().nullable().describe("Expected conversion. Pipe chart: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate. Campaign / offer / brand chart: the product of the model route's leg rates from `target.fromStep` to the Target (its first leg on the fleet's measured conversion, else the seeded entry default)."),
     conversionBasis: z.string().nullable(),
     conversionSource: z.string().nullable(),
     conversionUnavailableReason: z.string().nullable(),
