@@ -20,6 +20,7 @@ import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
 import { readRunnableScripts } from "./script-catalogue-client.js";
 import {
   briefHashOf,
+  engineDefaultStrategy,
   engineStrategyNeed,
   engineStrategyOptions,
   engineStrategyQuestion,
@@ -172,7 +173,15 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
     const need = engineStrategyNeed(stored, briefHash, signature);
     if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies) };
-    if (need === "hold") throw new EngineStrategyHeldError(campaign.campaignId, engine.outcome);
+    if (need === "hold") {
+      // No brief yet: the Engine's DEFAULT strategy (data), never every script; an Engine stating none holds.
+      const def = engineDefaultStrategy(engine.outcome, catalogue.strategies);
+      if (!def) throw new EngineStrategyHeldError(campaign.campaignId, engine.outcome);
+      const next = { campaignId: campaign.campaignId, outcome: engine.outcome, orgId: campaign.orgId, strategyId: def.id, source: "engine_default" as const, briefHash: null, optionsSignature: null, confidence: null, model: null, carriedFrom: null };
+      await writeEngineStrategy(next);
+      console.log(`[features-service] campaign ${campaign.campaignId} states no brief: ${engine.outcome} keeps its default strategy ${def.id}`);
+      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: def };
+    }
     const opts = await optionsNow();
     const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }), opts);
     const next = {

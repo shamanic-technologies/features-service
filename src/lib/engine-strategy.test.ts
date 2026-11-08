@@ -6,6 +6,7 @@ import { buildPlayCatalogue, type Strategy, type Tactic, type WriterTacticVerdic
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import {
   briefHashOf,
+  engineDefaultStrategy,
   engineStrategyNeed,
   engineStrategyOptions,
   engineStrategyQuestion,
@@ -66,8 +67,27 @@ describe("engineStrategyOptions (MIGRATE-1105 S6)", () => {
   it("the question marks no condition and maps o0..oN to the options", () => {
     const q = engineStrategyQuestion(engineStrategyOptions("email_sent", scripts, catalogue));
     expect(Object.keys(q.criteria)).toEqual(["o0", "o1", "o2"]);
-    expect(q.criteria.o0).toMatch(/^NO CONDITION\./);
+    expect(q.criteria.o0).toMatch(/^DEFAULT\. No condition/);
     expect(q.instructions).not.toMatch(/pipe|play|leg|funnel/i);
+  });
+});
+
+describe("an Engine's DEFAULT strategy (data): a silent brief never widens it (MIGRATE-1105 S6)", () => {
+  const withDefault = { ...catalogue, strategies: new Map([...catalogue.strategies, ["our-own-emails", { ...catalogue.strategies.get("our-own-emails")!, defaultForOutcomes: ["email_sent"] }]]) };
+  it("the default strategy is the first option, marked DEFAULT; no condition is no longer offered there", () => {
+    const o = engineStrategyOptions("email_sent", scripts, withDefault);
+    expect(o.map((x) => [x.strategyId, x.isDefault === true])).toEqual([["our-own-emails", true], ["client-s-own-emails", false]]);
+    const q = engineStrategyQuestion(o);
+    expect(q.criteria.o0).toMatch(/^DEFAULT\. our-own-emails/);
+    expect(q.instructions).toMatch(/pick the option marked DEFAULT/);
+  });
+  it("an Engine stating no default keeps no condition as its default", () => {
+    expect(engineStrategyOptions("email_sent", scripts, catalogue)[0]).toMatchObject({ strategyId: null, isDefault: true });
+    expect(engineDefaultStrategy("email_sent", catalogue.strategies)).toBeNull();
+    expect(engineDefaultStrategy("email_sent", withDefault.strategies)?.id).toBe("our-own-emails");
+  });
+  it("marking a default moves the options signature (a judged verdict is asked again)", () => {
+    expect(optionsSignatureOf(engineStrategyOptions("email_sent", scripts, catalogue))).not.toEqual(optionsSignatureOf(engineStrategyOptions("email_sent", scripts, withDefault)));
   });
 });
 

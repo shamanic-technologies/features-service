@@ -19,7 +19,7 @@ import type { RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 
 /** `empty_brief` = a pre-S6 row only; never written any more. */
-export type EngineStrategySource = "carried" | "judge" | "empty_brief";
+export type EngineStrategySource = "carried" | "judge" | "empty_brief" | "engine_default";
 
 export interface StoredEngineStrategy {
   campaignId: string;
@@ -41,6 +41,17 @@ export interface EngineStrategyOption {
   name: string;
   /** What the judge reads. */
   description: string;
+  /** The option kept when nothing in the brief bears on this Engine: the Engine's default strategy, else no condition. */
+  isDefault?: boolean;
+}
+
+/**
+ * PURE: the Engine's conservative DEFAULT strategy (a strategy whose data names the outcome in `defaultForOutcomes`,
+ * MIGRATE-1105 S6): what a campaign keeps when its brief says nothing on this Engine. Null = the Engine states none
+ * (its scripts do not differ in who they reach): no condition. Two strategies claiming one Engine = the first by id.
+ */
+export function engineDefaultStrategy(outcome: string, strategies: ReadonlyMap<string, Strategy>): Strategy | null {
+  return [...strategies.values()].filter((s) => (s.defaultForOutcomes ?? []).includes(outcome)).sort((a, b) => (a.id < b.id ? -1 : 1))[0] ?? null;
 }
 
 export const NO_CONDITION_OPTION: EngineStrategyOption = {
@@ -76,16 +87,21 @@ export function engineStrategyOptions(
     if (kept.scriptTacticIds.length > 0 && kept.keptDynasties.length > 0 && kept.keptDynasties.length < new Set(own.map((x) => x.dynasty)).size) keep.add(s.id);
   }
   for (const id of carried) if (c.strategies.has(id)) keep.add(id);
+  // A brief silent on this Engine never widens it: its DEFAULT strategy (data) comes first and is what silence keeps;
+  // "no condition" is offered only on an Engine that states no default.
+  const def = engineDefaultStrategy(outcome, c.strategies);
+  if (def) keep.delete(def.id);
   const listed = [...keep]
     .map((id) => c.strategies.get(id)!)
     .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1))
     .map((s): EngineStrategyOption => ({ strategyId: s.id, name: s.name, description: `${s.name}: ${s.description}` }));
-  return [NO_CONDITION_OPTION, ...listed];
+  const first: EngineStrategyOption = def ? { strategyId: def.id, name: def.name, description: `${def.name}: ${def.description}`, isDefault: true } : { ...NO_CONDITION_OPTION, isDefault: true };
+  return [first, ...listed];
 }
 
 /** PURE: what the judge chooses among, fingerprinted: a strategy added, removed or reworded moves it. */
 export const optionsSignatureOf = (options: readonly EngineStrategyOption[]): string =>
-  sha256(JSON.stringify(options.map((o) => [o.strategyId, o.description]).sort()));
+  sha256(JSON.stringify(options.map((o) => [o.strategyId, o.description, o.isDefault === true]).sort()));
 
 /**
  * PURE: whether a stored verdict still stands. `stored` = read it; `ask` = Jev; `hold` = no verdict and no brief to judge:
@@ -110,9 +126,9 @@ export function engineStrategyQuestion(options: readonly EngineStrategyOption[])
     instructions:
       "A client wrote a BRIEF for one sales campaign, in plain language (in the state). The campaign runs the ENGINE described in the state: " +
       "the scripts that make one outcome. Each option is a STRATEGY for that Engine: a condition deciding who its scripts reach or how they work. " +
-      "Pick the strategy the brief asks for on this Engine. When nothing in the brief bears on this Engine, pick the option marked NO CONDITION. " +
+      "Pick the strategy the brief asks for on this Engine. When nothing in the brief bears on this Engine, pick the option marked DEFAULT. " +
       "Judge on the brief's words only, never on the options' names.",
-    criteria: Object.fromEntries(options.map((o, i) => [`o${i}`, `${o.strategyId === null ? "NO CONDITION. " : ""}${o.description}`])),
+    criteria: Object.fromEntries(options.map((o, i) => [`o${i}`, `${o.isDefault ? "DEFAULT. " : ""}${o.description}`])),
   };
 }
 
