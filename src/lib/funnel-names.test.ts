@@ -173,3 +173,27 @@ describe("a funnel opened by the customer's own channel is named after it (NEWSL
     expect(planFunnelRenames(rows, new Set(), [], () => null, entryOf)).toEqual([{ combinationKey: NEWSLETTER, from: "New Leads", to: "Newsletter Signups" }]);
   });
 });
+
+describe("a funnel reaching a fine outcome reads its family noun, said once (THREADS-FUNNEL-NAME-1108)", () => {
+  it("names the Threads post funnel Threads Posts, never the raw step label", () => {
+    // Prod 2026-11-08: « Threads Post Threads Post Published » (5 words) on Distribute.you's campaign 7f522f03.
+    const key = "start_to_threads_post_published@threads-post+threads_post_published_to_paid_client";
+    expect(funnelNameCandidates(key)[0]).toBe("Threads Posts");
+    expect(funnelNameCandidates("start_to_x_post_published@x-post+x_post_published_to_paid_client")[0]).toBe("X Posts");
+  });
+
+  it("never serves a name over 3 words nor a word said twice in a row", () => {
+    for (const key of [
+      "start_to_threads_post_published@threads-post+threads_post_published_to_paid_client",
+      "start_to_some_long_new_thing_reached@some-new-long-channel+some_long_new_thing_reached_to_paid_client",
+      "start_to_widget_gadget@widget-gadget+widget_gadget_to_paid_client",
+    ]) {
+      for (const name of funnelNameCandidates(key)) {
+        const words = name.split(" ");
+        expect(words.length, name).toBeGreaterThanOrEqual(2);
+        expect(words.length, name).toBeLessThanOrEqual(3);
+        words.forEach((w, i) => expect(i > 0 && w.toLowerCase().replace(/s$/, "") === words[i - 1].toLowerCase(), name).toBe(false));
+      }
+    }
+  });
+});
