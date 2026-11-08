@@ -8,6 +8,8 @@
  *        brief judge's play, else its sales funnel's play, else its pipe's default play: the script-strategy read's own
  *        rule). A campaign that already holds a verdict on the Engine is never touched. `apply: false` = dry run.
  *        A campaign with two units on one Engine naming two strategies is refused (listed, nothing written for it).
+ *        `childOutcomes {unitId: [outcome]}` also carries the Engines the unit's scripts ASK (message_written for a cold
+ *        email, message_sent for an answer...), at the strategy the script read gives them today.
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -57,6 +59,8 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 
 router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request, res: Response) => {
   const apply = req.body?.apply === true;
+  const childOutcomes: Record<string, string[]> =
+    req.body?.childOutcomes && typeof req.body.childOutcomes === "object" ? (req.body.childOutcomes as Record<string, string[]>) : {};
   try {
     const units = (await fetchFleetCampaignRows())
       .map((raw) => raw as Record<string, unknown>)
@@ -108,27 +112,36 @@ router.post("/internal/engine-strategies/carry", apiKeyOnly, async (req: Request
             carriedFrom = played?.answer.id ?? null;
           } else writerDiffers = `the writer and workflow picks read ${playedId ?? "no strategy"}, the scripts ${briefed.strategyId}`;
         }
-        const row = { ...base, outcome: engine.outcome, strategyId, carriedFrom };
         if (!briefed && played && played.excludedReason("__probe__")?.includes("not catalogued")) {
-          rows.push({ ...row, result: "unknown_play", detail: `the unit's funnel names a play its pipe does not catalogue (${played.answer.id})` });
+          rows.push({ ...base, outcome: engine.outcome, strategyId, carriedFrom, result: "unknown_play", detail: `the unit's funnel names a play its pipe does not catalogue (${played.answer.id})` });
           continue;
         }
-        const stored = await readEngineStrategy(campaignId, engine.outcome);
-        if (stored) {
-          rows.push({ ...row, result: "held", detail: `stored ${stored.source}: ${stored.strategyId ?? "no condition"}` });
-          continue;
+        // The unit's own Engine, then every Engine its scripts ASK on its behalf (`childOutcomes[unitId]`, read off the runs
+        // the unit's campaign made): a child pick reads the same strategy the script read gives today (brief, else play).
+        const scriptRead = briefed?.strategyId ?? playedId;
+        const targets = [
+          { outcome: engine.outcome, strategyId, detail: writerDiffers },
+          ...[...new Set(childOutcomes[unitId] ?? [])].filter((o) => o !== engine.outcome).map((o) => ({ outcome: o, strategyId: scriptRead, detail: "asked by the unit's scripts" })),
+        ];
+        for (const t of targets) {
+          const row = { ...base, outcome: t.outcome, strategyId: t.strategyId, carriedFrom };
+          const stored = await readEngineStrategy(campaignId, t.outcome);
+          if (stored) {
+            rows.push({ ...row, result: "held", detail: `stored ${stored.source}: ${stored.strategyId ?? "no condition"}` });
+            continue;
+          }
+          const twin = rows.find((r) => r.campaignId === campaignId && r.outcome === t.outcome && r.unitId !== unitId && r.result !== "held");
+          if (twin && twin.strategyId !== t.strategyId) {
+            rows.push({ ...row, result: "conflict", detail: `unit ${twin.unitId} reads ${twin.strategyId ?? "no condition"} on the same Engine` });
+            twin.result = "conflict";
+            continue;
+          }
+          if (twin) {
+            rows.push({ ...row, result: "same", detail: `same verdict as unit ${twin.unitId}` });
+            continue;
+          }
+          rows.push({ ...row, result: apply ? "pending" : "would_write", detail: t.detail });
         }
-        const twin = rows.find((r) => r.campaignId === campaignId && r.outcome === engine.outcome && r.unitId !== unitId);
-        if (twin && twin.strategyId !== strategyId) {
-          rows.push({ ...row, result: "conflict", detail: `unit ${twin.unitId} on the same Engine runs ${twin.strategyId ?? "no condition"}` });
-          twin.result = "conflict";
-          continue;
-        }
-        if (twin) {
-          rows.push({ ...row, result: twin.result, detail: `same Engine as unit ${twin.unitId}` });
-          continue;
-        }
-        rows.push({ ...row, result: apply ? "pending" : "would_write", detail: writerDiffers });
       } catch (error) {
         rows.push({ ...base, result: "failed", detail: (error as Error).message });
       }
