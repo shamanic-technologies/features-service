@@ -23436,12 +23436,50 @@
                   "maturityDays",
                   "learningOutcomesRequired"
                 ],
-                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+                "description": "A PIPE's chart: its own leg, every outcome and conversion read on it. Null on a campaign / offer / brand chart, which reads `target` (SPEND-CHART-TARGET-1108)."
+              },
+              "target": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "step": {
+                    "type": "string",
+                    "description": "The Target outcome counted (catalogue step key)."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The step % to Target counts from: the first milestone of the campaign's own units chain (Lead found on a proactive funnel, the trigger step of a reactive one). Null = nobody enters before the Target (no conversion)."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "campaign_target",
+                      "funnel_last_step"
+                    ],
+                    "description": "campaign_target: the campaign states it (campaign-service `target`); funnel_last_step: not stated, the last step of the funnel it runs. An offer / brand chart: the Target most of its live campaigns state (ties: the most recent campaign's)."
+                  },
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: Units of the Target needed."
+                  }
+                },
+                "required": [
+                  "step",
+                  "fromStep",
+                  "source",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "SPEND-CHART-TARGET-1108 (owner 2026-11-08): a campaign / offer / brand chart counts the Target the client asked for, never a pipe's step. Null on a pipe chart."
               },
               "outcomeStep": {
                 "type": "string",
                 "nullable": true,
-                "description": "The step counted as the outcome (the leg's TO step)."
+                "description": "The step counted as the outcome: the Target on a campaign / offer / brand chart, the leg's TO step on a pipe chart."
               },
               "outcomeUnavailableReason": {
                 "type": "string",
@@ -23669,7 +23707,7 @@
                   "costPerOutcomeUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                    "description": "What one outcome is expected to cost: on a pipe chart the leg's price on the scope's expected return model (best mature workflow, else the fleet's, else the seeded default); on a campaign / offer / brand chart one Target from the start of the model's priced route (C(to) = C(from) / rate + leg cost, the client's team at $0): the dotted line the measured cost converges to."
                   },
                   "costPerOutcomeBasis": {
                     "type": "string",
@@ -23683,7 +23721,7 @@
                   "conversionRatePct": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                    "description": "Expected conversion. Pipe chart: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate. Campaign / offer / brand chart: the product of the model route's leg rates from `target.fromStep` to the Target (its first leg on the fleet's measured conversion, else the seeded entry default)."
                   },
                   "conversionBasis": {
                     "type": "string",
@@ -23711,6 +23749,7 @@
             },
             "required": [
               "leg",
+              "target",
               "outcomeStep",
               "outcomeUnavailableReason",
               "conversionUnavailableReason",
@@ -23763,12 +23802,50 @@
                     "maturityDays",
                     "learningOutcomesRequired"
                   ],
-                  "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+                  "description": "A PIPE's chart: its own leg, every outcome and conversion read on it. Null on a campaign / offer / brand chart, which reads `target` (SPEND-CHART-TARGET-1108)."
+                },
+                "target": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "step": {
+                      "type": "string",
+                      "description": "The Target outcome counted (catalogue step key)."
+                    },
+                    "fromStep": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The step % to Target counts from: the first milestone of the campaign's own units chain (Lead found on a proactive funnel, the trigger step of a reactive one). Null = nobody enters before the Target (no conversion)."
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "campaign_target",
+                        "funnel_last_step"
+                      ],
+                      "description": "campaign_target: the campaign states it (campaign-service `target`); funnel_last_step: not stated, the last step of the funnel it runs. An offer / brand chart: the Target most of its live campaigns state (ties: the most recent campaign's)."
+                    },
+                    "maturityDays": {
+                      "type": "integer"
+                    },
+                    "learningOutcomesRequired": {
+                      "type": "integer",
+                      "description": "The Learning bar: Units of the Target needed."
+                    }
+                  },
+                  "required": [
+                    "step",
+                    "fromStep",
+                    "source",
+                    "maturityDays",
+                    "learningOutcomesRequired"
+                  ],
+                  "description": "SPEND-CHART-TARGET-1108 (owner 2026-11-08): a campaign / offer / brand chart counts the Target the client asked for, never a pipe's step. Null on a pipe chart."
                 },
                 "outcomeStep": {
                   "type": "string",
                   "nullable": true,
-                  "description": "The step counted as the outcome (the leg's TO step)."
+                  "description": "The step counted as the outcome: the Target on a campaign / offer / brand chart, the leg's TO step on a pipe chart."
                 },
                 "outcomeUnavailableReason": {
                   "type": "string",
@@ -23996,7 +24073,7 @@
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                      "description": "What one outcome is expected to cost: on a pipe chart the leg's price on the scope's expected return model (best mature workflow, else the fleet's, else the seeded default); on a campaign / offer / brand chart one Target from the start of the model's priced route (C(to) = C(from) / rate + leg cost, the client's team at $0): the dotted line the measured cost converges to."
                     },
                     "costPerOutcomeBasis": {
                       "type": "string",
@@ -24010,7 +24087,7 @@
                     "conversionRatePct": {
                       "type": "number",
                       "nullable": true,
-                      "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                      "description": "Expected conversion. Pipe chart: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate. Campaign / offer / brand chart: the product of the model route's leg rates from `target.fromStep` to the Target (its first leg on the fleet's measured conversion, else the seeded entry default)."
                     },
                     "conversionBasis": {
                       "type": "string",
@@ -24054,6 +24131,7 @@
               },
               "required": [
                 "leg",
+                "target",
                 "outcomeStep",
                 "outcomeUnavailableReason",
                 "conversionUnavailableReason",
@@ -24149,12 +24227,50 @@
                   "maturityDays",
                   "learningOutcomesRequired"
                 ],
-                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+                "description": "A PIPE's chart: its own leg, every outcome and conversion read on it. Null on a campaign / offer / brand chart, which reads `target` (SPEND-CHART-TARGET-1108)."
+              },
+              "target": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "step": {
+                    "type": "string",
+                    "description": "The Target outcome counted (catalogue step key)."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The step % to Target counts from: the first milestone of the campaign's own units chain (Lead found on a proactive funnel, the trigger step of a reactive one). Null = nobody enters before the Target (no conversion)."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "campaign_target",
+                      "funnel_last_step"
+                    ],
+                    "description": "campaign_target: the campaign states it (campaign-service `target`); funnel_last_step: not stated, the last step of the funnel it runs. An offer / brand chart: the Target most of its live campaigns state (ties: the most recent campaign's)."
+                  },
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: Units of the Target needed."
+                  }
+                },
+                "required": [
+                  "step",
+                  "fromStep",
+                  "source",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "SPEND-CHART-TARGET-1108 (owner 2026-11-08): a campaign / offer / brand chart counts the Target the client asked for, never a pipe's step. Null on a pipe chart."
               },
               "outcomeStep": {
                 "type": "string",
                 "nullable": true,
-                "description": "The step counted as the outcome (the leg's TO step)."
+                "description": "The step counted as the outcome: the Target on a campaign / offer / brand chart, the leg's TO step on a pipe chart."
               },
               "outcomeUnavailableReason": {
                 "type": "string",
@@ -24417,7 +24533,7 @@
                   "costPerOutcomeUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                    "description": "What one outcome is expected to cost: on a pipe chart the leg's price on the scope's expected return model (best mature workflow, else the fleet's, else the seeded default); on a campaign / offer / brand chart one Target from the start of the model's priced route (C(to) = C(from) / rate + leg cost, the client's team at $0): the dotted line the measured cost converges to."
                   },
                   "costPerOutcomeBasis": {
                     "type": "string",
@@ -24431,7 +24547,7 @@
                   "conversionRatePct": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                    "description": "Expected conversion. Pipe chart: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate. Campaign / offer / brand chart: the product of the model route's leg rates from `target.fromStep` to the Target (its first leg on the fleet's measured conversion, else the seeded entry default)."
                   },
                   "conversionBasis": {
                     "type": "string",
@@ -24518,6 +24634,7 @@
             },
             "required": [
               "leg",
+              "target",
               "outcomeStep",
               "outcomeUnavailableReason",
               "conversionUnavailableReason",
@@ -24612,12 +24729,50 @@
                   "maturityDays",
                   "learningOutcomesRequired"
                 ],
-                "description": "The leg every outcome and conversion here is read on: the pipe's own; for a campaign, its first pipe that does more than find people; for an offer, the leg most of its campaigns lead with. Null when none."
+                "description": "A PIPE's chart: its own leg, every outcome and conversion read on it. Null on a campaign / offer / brand chart, which reads `target` (SPEND-CHART-TARGET-1108)."
+              },
+              "target": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "step": {
+                    "type": "string",
+                    "description": "The Target outcome counted (catalogue step key)."
+                  },
+                  "fromStep": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The step % to Target counts from: the first milestone of the campaign's own units chain (Lead found on a proactive funnel, the trigger step of a reactive one). Null = nobody enters before the Target (no conversion)."
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "campaign_target",
+                      "funnel_last_step"
+                    ],
+                    "description": "campaign_target: the campaign states it (campaign-service `target`); funnel_last_step: not stated, the last step of the funnel it runs. An offer / brand chart: the Target most of its live campaigns state (ties: the most recent campaign's)."
+                  },
+                  "maturityDays": {
+                    "type": "integer"
+                  },
+                  "learningOutcomesRequired": {
+                    "type": "integer",
+                    "description": "The Learning bar: Units of the Target needed."
+                  }
+                },
+                "required": [
+                  "step",
+                  "fromStep",
+                  "source",
+                  "maturityDays",
+                  "learningOutcomesRequired"
+                ],
+                "description": "SPEND-CHART-TARGET-1108 (owner 2026-11-08): a campaign / offer / brand chart counts the Target the client asked for, never a pipe's step. Null on a pipe chart."
               },
               "outcomeStep": {
                 "type": "string",
                 "nullable": true,
-                "description": "The step counted as the outcome (the leg's TO step)."
+                "description": "The step counted as the outcome: the Target on a campaign / offer / brand chart, the leg's TO step on a pipe chart."
               },
               "outcomeUnavailableReason": {
                 "type": "string",
@@ -24880,7 +25035,7 @@
                   "costPerOutcomeUsd": {
                     "type": "number",
                     "nullable": true,
-                    "description": "What one outcome of this leg is expected to cost (the scope's expected return model: the best mature workflow's price, else the fleet's, else the seeded default): the dotted line the measured cost converges to."
+                    "description": "What one outcome is expected to cost: on a pipe chart the leg's price on the scope's expected return model (best mature workflow, else the fleet's, else the seeded default); on a campaign / offer / brand chart one Target from the start of the model's priced route (C(to) = C(from) / rate + leg cost, the client's team at $0): the dotted line the measured cost converges to."
                   },
                   "costPerOutcomeBasis": {
                     "type": "string",
@@ -24894,7 +25049,7 @@
                   "conversionRatePct": {
                     "type": "number",
                     "nullable": true,
-                    "description": "The leg's expected conversion: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate."
+                    "description": "Expected conversion. Pipe chart: an entry leg on the fleet's measured conversion (else the seeded entry default), a later leg on the brand's effective rate. Campaign / offer / brand chart: the product of the model route's leg rates from `target.fromStep` to the Target (its first leg on the fleet's measured conversion, else the seeded entry default)."
                   },
                   "conversionBasis": {
                     "type": "string",
@@ -24981,6 +25136,7 @@
             },
             "required": [
               "leg",
+              "target",
               "outcomeStep",
               "outcomeUnavailableReason",
               "conversionUnavailableReason",
