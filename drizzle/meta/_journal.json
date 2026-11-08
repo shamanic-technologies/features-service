@@ -456,6 +456,13 @@
       "when": 1794585600000,
       "tag": "0064_campaign_engine_strategies",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1794672000000,
+      "tag": "0065_strategy_engine_defaults",
+      "breakpoints": true
     }
   ]
 }

@@ -105,6 +105,8 @@ export interface Strategy {
   /** Who last edited the rule or the description, and when; null = never edited. */
   updatedBy?: string | null;
   updatedAt?: string | null;
+  /** The Engines (outcomes) this strategy is the conservative DEFAULT of (MIGRATE-1105 S6); absent = none. */
+  defaultForOutcomes?: string[];
 }
 
 export interface PlayRecord {
