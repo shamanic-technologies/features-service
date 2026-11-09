@@ -11,6 +11,9 @@ export interface SalesFunnelUnitRow {
   featureSlug: string;
   legKey: string;
   status: string;
+  /** The trigger the unit runs on (campaign-service `runsOnTriggerId`; null = proactive). Absent on an older build:
+   *  then read off the unit's own campaign (`fetchUnitRunsOnTriggerId`). */
+  runsOnTriggerId?: string | null;
 }
 
 export interface SalesFunnelCampaignRow {
@@ -56,4 +59,27 @@ export async function fetchSalesFunnelCampaigns(
   const data = (await response.json()) as { salesFunnelCampaigns?: SalesFunnelCampaignRow[] };
   if (!Array.isArray(data.salesFunnelCampaigns)) throw new Error("[features-service] campaign-service /sales-funnel-campaigns returned no salesFunnelCampaigns array");
   return data.salesFunnelCampaigns;
+}
+
+/**
+ * The trigger ONE unit campaign runs on (campaign-service `GET /campaigns/:id` `runsOnTriggerId`; null = proactive),
+ * for a units listing that does not serve it yet. Org-scoped. FAIL-LOUD: an unreadable unit never reads as proactive.
+ */
+export async function fetchUnitRunsOnTriggerId(
+  campaignId: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<string | null> {
+  const url = process.env.CAMPAIGN_SERVICE_URL;
+  const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
+  if (!url || !apiKey) throw new Error("[features-service] CAMPAIGN_SERVICE_URL or CAMPAIGN_SERVICE_API_KEY not configured");
+  const reqHeaders: Record<string, string> = { "x-api-key": apiKey, "x-org-id": headers.orgId };
+  if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
+  if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
+  const response = await fetchWithRetry(`${url}/campaigns/${encodeURIComponent(campaignId)}`, { headers: reqHeaders }, { shareForMs: 30_000 });
+  if (!response.ok) throw new Error(`[features-service] campaign-service /campaigns/${campaignId} failed (${response.status}): ${await response.text()}`);
+  const data = (await response.json()) as { campaign?: { runsOnTriggerId?: unknown } };
+  if (!data.campaign) throw new Error(`[features-service] campaign-service /campaigns/${campaignId} returned no campaign`);
+  const t = data.campaign.runsOnTriggerId;
+  if (t !== null && t !== undefined && typeof t !== "string") throw new Error(`[features-service] campaign-service /campaigns/${campaignId}: runsOnTriggerId is not a string`);
+  return t ?? null;
 }

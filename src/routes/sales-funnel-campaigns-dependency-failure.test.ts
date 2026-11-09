@@ -47,7 +47,9 @@ vi.mock("./agent-catalogue.js", () => ({
     ]),
     // The campaign's path is its funnel's (one channel per leg, owner 2026-10-11): asked by funnel id only.
     pathOf: (id: string, ...extra: unknown[]) =>
-      id === "unknown" || extra.length > 0 ? null : { items: [{ kind: "step", key: "start", label: "Start" }, { kind: "channel", slug: `of:${id}`, name: "Lead Sourcing", runByUs: true }], legs: [] },
+      id === "unknown" || extra.length > 0 ? null : { items: [{ kind: "step", key: "start", label: "Start" }, { kind: "channel", slug: `of:${id}`, name: "Lead Sourcing", runByUs: true, pipeId: "sourcing-apollo-cold-filters|start_to_lead_found" }], legs: [] },
+    unitPipeIdOf: (u: { featureSlug: string; legKey: string }) => `${u.featureSlug}|${u.legKey}`,
+    partOf: () => null,
   })),
 }));
 const funnelCampaignActivity = vi.fn();
