@@ -8,7 +8,8 @@
  * spend chart's and the brand offers row's. Gold cached per scope on this route's response shape.
  */
 import { Router } from "express";
-import { ledgerCountOfStep, ledgerUnitDays } from "../lib/ledger-counts.js";
+import { ledgerCountOfStep, ledgerOurUnitDays } from "../lib/ledger-counts.js";
+import { stepSpendAttribution } from "../lib/step-cost-attribution.js";
 import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { withLedgerStepSeries, type LedgerStepSeries } from "../lib/ledger-outcome-cost-series.js";
 import { brandLedgerOutcomes, type BrandLedgerOutcome } from "../lib/brand-ledger-outcomes.js";
@@ -30,6 +31,7 @@ import type { SalesPath } from "../lib/offer-sales-paths.js";
 import { expectedRouteFigures } from "../lib/outcome-accounting.js";
 import {
   OUTCOME_COST_STEPS,
+  STEP_COST_CHAIN,
   buildOutcomeCostSeries,
   contactedOutcomeLeads,
   expectedStepCosts,
@@ -46,6 +48,8 @@ import { offerMixOfStep, type OfferMixStep, type OfferStepInput } from "../lib/b
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 
 const router = Router();
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** How long a read waits on a cold expected model (computed once per offer, then memoized). */
 const EXPECTED_COLD_WAIT_MS = 25_000;
@@ -64,6 +68,22 @@ export interface OutcomeCostSeriesBody {
    * with its daily Units. Empty when the ledger is unreadable (`ledger.unavailableReason`).
    */
   ledgerOutcomes: BrandLedgerOutcome[];
+  /**
+   * OUTCOME-COST-CUMUL-1109: how the scope's spend reaches the steps (process costing). Each step's
+   * `spendAttribution.ownSpendUsd` sums to `spendUsd`; its `sinceInception.spendUsd` = its own + every step above it.
+   */
+  spendAttribution: {
+    rule: "process_costing_absorbed_on_traced_cost";
+    /** The chain, first step first: a step's $ Spent carries the steps before it here. */
+    chain: OutcomeCostStep[];
+    /** The scope's whole spend (= the last step's sinceInception.spendUsd = Σ steps' own spend). */
+    spendUsd: number;
+    /** The ledger's own production cost traced to a step (the absorption base). */
+    tracedCostUsd: number;
+    /** Ledger cost of outcomes on no step (posts, newsletter...), absorbed with the rest of the untraced spend. */
+    offStepCostUsd: number;
+    unavailableReason: "ledger_unreadable" | "no_cost_traced_to_a_step" | null;
+  };
 }
 
 /** BRAND-GRAIN-READS-1107: the offer body one level up (every offer of the brand); `offerIds` instead of `offerId`. */
@@ -190,7 +210,11 @@ async function computeScopeOutcomeCostSeries(
   // the people our campaigns contacted are no longer counted. An outcome the ledger lacks = every count null + reason.
   const brandLedger = await readLedgerScope(brandId, ledgerBasisOf(pricing), null, "outcome cost series");
   const ledgerOf = new Map(OUTCOME_COST_STEPS.map((step) => [step, ledgerCountOfStep(brandLedger, step)] as const));
-  const outcomeDays = new Map(OUTCOME_COST_STEPS.map((step) => [step, ledgerUnitDays(ledgerOf.get(step)!)] as const));
+  // OUTCOME-COST-CUMUL-1109: $ / outcome divides OUR Units only (another factory's Units are no outcome of our spend).
+  const outcomeDays = new Map(OUTCOME_COST_STEPS.map((step) => [step, ledgerOurUnitDays(ledgerOf.get(step)!)] as const));
+  // OUTCOME-COST-CUMUL-1109: process costing. Each step carries its own spend + the steps above it, the scope's spend
+  // absorbed pro rata the ledger cost traced to each step (`lib/step-cost-attribution.ts`).
+  const attribution = stepSpendAttribution(brandLedger.ledger?.stepTracedCost ?? null);
 
   // OUTCOME-ACCOUNTING-1107. The Engine making each step = the offer's units whose pipe lands on it (or makes it), and
   // the funnel campaigns whose Target it is (campaign-service's `target`, else the funnel's last step).
@@ -245,6 +269,7 @@ async function computeScopeOutcomeCostSeries(
     spendByDay,
     outcomeDays,
     learningBarOf: (step: OutcomeCostStep) => barByStep.get(step) ?? legMaturity(null).outcomesRequired,
+    attribution: { cumulativeShareOf: (step) => attribution.cumulativeShare.get(step)!, tracedCostUsdOf: (step) => attribution.tracedCostUsd.get(step)! },
     // A step off the expected path reads its expected cost and value on the best path through it (same as `accounting`).
     expectedOf: (step: OutcomeCostStep) => {
       const p = pathOfStep(step);
@@ -365,6 +390,14 @@ async function computeScopeOutcomeCostSeries(
     firstSpendDay,
     steps: mixOf === null ? ledgerSteps : await Promise.all(ledgerSteps.map(async (st) => ({ ...st, offerMix: await mixOf!(st.stepKey) }))),
     ledger: { basis: "ledger", scope: "brand", unavailableReason: brandLedger.unavailableReason, ledgerDaysMissing: [...(brandLedger.ledger?.daysMissing ?? [])] },
+    spendAttribution: {
+      rule: "process_costing_absorbed_on_traced_cost",
+      chain: [...STEP_COST_CHAIN],
+      spendUsd: ledgerSteps.find((s) => s.stepKey === STEP_COST_CHAIN.at(-1))?.sinceInception.spendUsd ?? 0,
+      tracedCostUsd: round2(attribution.totalTracedCostUsd),
+      offStepCostUsd: round2(attribution.offStepCostUsd),
+      unavailableReason: attribution.unavailableReason,
+    },
     ledgerOutcomes: brandLedger.ledger === null ? [] : brandLedgerOutcomes(brandLedger.ledger),
   };
 }

@@ -16,6 +16,7 @@ import { rollUpOutcomeUnitCosts } from "./outcome-unit-costs.js";
 import { fetchFleetCampaignRows } from "./fleet-leg-campaigns.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { campaignOutputsOf } from "./campaign-outputs.js";
+import { stepTracedCostOf } from "./step-cost-attribution.js";
 import type { ScopeOutcomeLedgerInput, LedgerOutcomeCost, OtherFactory } from "./scope-outcome-ledger.js";
 
 interface WireCost {
@@ -180,7 +181,9 @@ export async function fetchBrandOutcomeLedger(brandId: string, basis: LedgerBasi
   const t = parseOutcomeLedgerTotals(totals as never, basis);
   const units = rollUpOutcomeUnitCosts(t.produced, t.consumed, outputs.outputOf, outputs.pipeOutputs).units;
   const unitCosts = new Map<string, LedgerOutcomeCost>([...units].map(([k, u]) => [k, { unitCostUsd: u.unitCostUsd }]));
-  const value = { ...parsed, unitCosts, fleetProducers: producers ?? new Map(), fleetProducersKnown: producers !== null, today: new Date().toISOString().slice(0, 10) };
+  // OUTCOME-COST-CUMUL-1109: the PARALLEL rows restate a state's cost in the other family (never summed): left out here.
+  const stepTracedCost = stepTracedCostOf(parseOutcomeLedgerTotals({ ...(totals as object), parallel: [] } as never, basis).produced, t.consumed, outputs.outputOf);
+  const value = { ...parsed, unitCosts, stepTracedCost, fleetProducers: producers ?? new Map(), fleetProducersKnown: producers !== null, today: new Date().toISOString().slice(0, 10) };
   byBasis.set(basis, { totals, producers, outputs, value });
   return value;
 }

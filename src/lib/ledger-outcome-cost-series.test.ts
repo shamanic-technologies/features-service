@@ -19,6 +19,7 @@ const step: OutcomeCostStepSeries = {
   expected: { costPerOutcomeUsd: 591.52, basis: "default", combinationKey: null, unavailableReason: null },
   value: { valuePerOutcomeUsd: null, unavailableReason: "no_lifetime_revenue" },
   months: [],
+  spendAttribution: { ownSpendUsd: 0, aboveStepKey: "signup", tracedCostUsd: 0, cumulativeShare: 1 },
   accounting: outcomeAccountingOf({
     outcomeKey: "meeting_booked",
     step: "meeting_booked",

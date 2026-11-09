@@ -16,7 +16,7 @@ const WIRING: Array<[string, string[]]> = [
   ["routes/stats.ts", ["withLedgerRawStats(rawStats", "withLedgerRawStats(rawStats, STATS_COUNT_KEYS, groupLedger"]],
   ["routes/spend-charts.ts", ["fetchCampaignSetOutcomeLedger(", "rebaseSpendChartOnLedger("]],
   ["routes/sales-funnel-campaign-activity.ts", ["withLedgerActivity("]],
-  ["routes/outcome-cost-series.ts", ["withLedgerStepSeries(", "ledgerUnitDays("]],
+  ["routes/outcome-cost-series.ts", ["withLedgerStepSeries(", "ledgerOurUnitDays("]], // OUTCOME-COST-CUMUL-1109: our Units
   ["routes/offer-outcomes.ts", ["withLedgerOfferOutcomes("]],
   ["routes/pipeline-activity.ts", ["withLedgerDayChart("]],
   ["lib/audience-stats-compute.ts", ["withLedgerAudienceStats("]],

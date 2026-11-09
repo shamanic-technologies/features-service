@@ -45,6 +45,12 @@ export const OUTCOME_COST_STEPS = [
 ] as const;
 export type OutcomeCostStep = (typeof OUTCOME_COST_STEPS)[number];
 
+/**
+ * OUTCOME-COST-CUMUL-1109: the process chain, first step first (the reverse of the served order). A step's `$ Spent`
+ * carries its own spend + every step above it here, never a step below (`lib/step-cost-attribution.ts`).
+ */
+export const STEP_COST_CHAIN: readonly OutcomeCostStep[] = [...OUTCOME_COST_STEPS].reverse();
+
 /** The engine signal a person carries once they reached a step (Lead found is the serve itself). */
 export const SIGNAL_OF_OUTCOME_STEP: Readonly<Record<Exclude<OutcomeCostStep, "lead_found">, string>> = {
   paid_client: "closeWin",
@@ -266,7 +272,7 @@ export function leadStepAccounting(i: LeadStepAccountingInputs): OutcomeAccounti
 export interface OutcomeCostMonth {
   /** `YYYY-MM` (UTC). */
   month: string;
-  /** What the client spent on the offer this month. */
+  /** OUTCOME-COST-CUMUL-1109: the month's spend carried by the step (its own + every step above it). */
   spendUsd: number;
   /** Outcomes of the step first reached this month by people we contacted (undated ones count in the last month). */
   outcomes: number;
@@ -286,7 +292,9 @@ export interface OutcomeCostStepSeries {
   learningOutcomesRequired: number;
   /** Since inception: equals the last month's cumulative figures. */
   sinceInception: {
+    /** OUTCOME-COST-CUMUL-1109: the step's cost from Start = its own spend + every step above it in the chain. */
     spendUsd: number;
+    /** OUR Units of the step (the divisor of `costPerOutcomeUsd`). */
     outcomes: number;
     /** Of `outcomes`, those with no date (counted in the last month). */
     undatedOutcomes: number;
@@ -299,6 +307,20 @@ export interface OutcomeCostStepSeries {
   months: OutcomeCostMonth[];
   /** OUTCOME-ACCOUNTING-1107: the step's cost-accounting report (`lib/outcome-accounting.ts`). */
   accounting: OutcomeAccounting | null;
+  /** OUTCOME-COST-CUMUL-1109: how the scope's spend reaches this step (process costing). */
+  spendAttribution: StepSpendShare;
+}
+
+/** OUTCOME-COST-CUMUL-1109: the step's part of the scope's spend. */
+export interface StepSpendShare {
+  /** The step's OWN spend, before cumulating: Σ over every step = the scope's spend, to the cent. */
+  ownSpendUsd: number;
+  /** The step above it in the chain whose `$ Spent` this one adds to (null = the first step). */
+  aboveStepKey: OutcomeCostStep | null;
+  /** The ledger's own production cost traced to the step (the absorption base), USD. */
+  tracedCostUsd: number;
+  /** sinceInception.spendUsd ÷ the scope's spend (0..1, unrounded). */
+  cumulativeShare: number;
 }
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -332,9 +354,15 @@ export function buildOutcomeCostSeries(input: {
   valueOf: (step: OutcomeCostStep) => StepValue;
   /** The step's report, given its since-inception cost per outcome (the actual cost from Start). */
   accountingOf?: (step: OutcomeCostStep, costFromStartUsd: number | null) => OutcomeAccounting;
+  /**
+   * OUTCOME-COST-CUMUL-1109: the share of the scope's spend each step carries CUMULATIVELY (`stepSpendAttribution`) and
+   * its traced cost. Absent = the whole spend enters at the first step (every step carries all of it).
+   */
+  attribution?: { cumulativeShareOf: (step: OutcomeCostStep) => number; tracedCostUsdOf: (step: OutcomeCostStep) => number };
   today: string;
 }): OutcomeCostStepSeries[] {
-  const { spendByDay, outcomeDays, learningBarOf, expectedOf, valueOf, accountingOf, today } = input;
+  const { spendByDay, outcomeDays, learningBarOf, expectedOf, valueOf, accountingOf, attribution, today } = input;
+  const shareOf = (step: OutcomeCostStep) => attribution?.cumulativeShareOf(step) ?? 1;
   // Spend is summed EXACTLY (unrounded) and rounded ONCE on the cumulative, so the last cumulative is the scope's whole
   // spend to the cent (the offer spend chart's total) and each month's spend is the difference of two rounded
   // cumulatives (the months add up to the cumulative exactly).
@@ -347,15 +375,22 @@ export function buildOutcomeCostSeries(input: {
   const firstMonth = [...spendUsdByMonth.keys(), ...dated.map(monthOf)].sort()[0] ?? null;
   const months = firstMonth ? monthsBetween(firstMonth, monthOf(today)) : [];
   const last = months.at(-1) ?? null;
-  const cumulativeCents: number[] = [];
-  let runningUsd = 0;
+  const runningUsd: number[] = [];
+  let running = 0;
   for (const m of months) {
-    runningUsd += spendUsdByMonth.get(m) ?? 0;
-    cumulativeCents.push(Math.round(runningUsd * 100));
+    running += spendUsdByMonth.get(m) ?? 0;
+    runningUsd.push(running);
   }
+  // OUTCOME-COST-CUMUL-1109: a step's cumulative spend = the scope's running spend × its cumulative share, rounded ONCE
+  // per month (so its months add up to it, and a step below never reads less than the step above: shares are monotone).
+  const centsOf = (step: OutcomeCostStep) => runningUsd.map((usd) => Math.round(usd * shareOf(step) * 100));
+  const lastCents = (step: OutcomeCostStep | null) => (step === null ? 0 : (centsOf(step).at(-1) ?? 0));
 
   return OUTCOME_COST_STEPS.map((stepKey): OutcomeCostStepSeries => {
     const bar = learningBarOf(stepKey);
+    const cumulativeCents = centsOf(stepKey);
+    const at = STEP_COST_CHAIN.indexOf(stepKey);
+    const aboveStepKey = at > 0 ? STEP_COST_CHAIN[at - 1]! : null;
     const days = outcomeDays.get(stepKey) ?? [];
     const perMonth = new Map<string, number>();
     let undated = 0;
@@ -400,6 +435,12 @@ export function buildOutcomeCostSeries(input: {
       value,
       months: series,
       accounting: accountingOf ? accountingOf(stepKey, end?.cumulativeCostPerOutcomeUsd ?? null) : null,
+      spendAttribution: {
+        ownSpendUsd: (lastCents(stepKey) - lastCents(aboveStepKey)) / 100,
+        aboveStepKey,
+        tracedCostUsd: round2(attribution?.tracedCostUsdOf(stepKey) ?? 0),
+        cumulativeShare: shareOf(stepKey),
+      },
     };
   });
 }
