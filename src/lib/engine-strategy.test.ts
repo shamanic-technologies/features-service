@@ -10,6 +10,7 @@ import {
   engineStrategyNeed,
   engineStrategyOptions,
   engineStrategyQuestion,
+  engineStrategyState,
   optionsSignatureOf,
   strategyOfStored,
 } from "./engine-strategy.js";
@@ -69,6 +70,77 @@ describe("engineStrategyOptions (MIGRATE-1105 S6)", () => {
     expect(Object.keys(q.criteria)).toEqual(["o0", "o1", "o2"]);
     expect(q.criteria.o0).toMatch(/^DEFAULT\. No condition/);
     expect(q.instructions).not.toMatch(/pipe|play|leg|funnel/i);
+  });
+});
+
+describe("2026-11-09 Doc Dinners: « Any contact » on the answering Engine kept the current-client check-in", () => {
+  // The answering Engine: one script for leads, one check-in for current clients, one assistant for the team (born minutes
+  // ago, not judged yet). « any-contact » names only tactics none of these scripts follows (the email-window ones).
+  const ps = [script("paid_client", "dy_answer_lead"), script("paid_client", "dy_client_check_in"), script("paid_client", "dy_brand_team")];
+  const c = buildPlayCatalogue({
+    tactics: [tactic("current-clients-only", "script"), tactic("fresh-contacts", "script"), tactic("fresh-contacts-wf", "workflow"), tactic("offer-angle", "template")],
+    strategies: [
+      strategy("any-contact", [], ["fresh-contacts", "fresh-contacts-wf"]),
+      strategy("not-current-clients-only", [], ["current-clients-only"]),
+      strategy("no-offer", [], ["offer-angle"]),
+      strategy("nobody", ["current-clients-only", "fresh-contacts"], []),
+    ],
+    plays: [],
+    verdicts: [],
+    writerVerdicts: [
+      verdict("paid_client", "dy_answer_lead", "current-clients-only", false),
+      verdict("paid_client", "dy_client_check_in", "current-clients-only", true),
+      verdict("paid_client", "dy_answer_lead", "fresh-contacts", false),
+      verdict("paid_client", "dy_client_check_in", "fresh-contacts", false),
+    ],
+  });
+  it("a script not judged yet never makes a strategy look like a choice (it is not « ruled out » by a missing verdict)", () => {
+    expect(engineStrategyOptions("paid_client", ps, c).map((x) => x.strategyId)).toEqual([null, "not-current-clients-only"]);
+  });
+  it("a carried strategy keeping every script and stating no writer condition is no choice there: not offered", () => {
+    const judged = buildPlayCatalogue({
+      tactics: [...c.tactics.values()],
+      strategies: [...c.strategies.values()],
+      plays: [],
+      verdicts: [],
+      writerVerdicts: [
+        ...["dy_answer_lead", "dy_client_check_in", "dy_brand_team"].flatMap((d) => [verdict("paid_client", d, "fresh-contacts", false)]),
+        verdict("paid_client", "dy_answer_lead", "current-clients-only", false),
+        verdict("paid_client", "dy_client_check_in", "current-clients-only", true),
+        verdict("paid_client", "dy_brand_team", "current-clients-only", false),
+      ],
+    });
+    expect(engineStrategyOptions("paid_client", ps, judged, ["any-contact"]).map((x) => x.strategyId)).toEqual([null, "not-current-clients-only"]);
+  });
+  it("a carried strategy stays offered when it narrows what writes, keeps none of the scripts, or the Engine has no script", () => {
+    expect(engineStrategyOptions("paid_client", ps, c, ["no-offer"]).map((x) => x.strategyId)).toContain("no-offer");
+    expect(engineStrategyOptions("paid_client", ps, c, ["nobody"]).map((x) => x.strategyId)).toContain("nobody");
+    expect(engineStrategyOptions("meeting_booked", ps, c, ["any-contact"]).map((x) => x.strategyId)).toEqual([null, "any-contact"]);
+  });
+  it("the state carries the whole brief, every script with what it does, and what each option runs; the options' words do not move", () => {
+    const options = engineStrategyOptions("paid_client", ps, c);
+    const st = engineStrategyState("Replies are answered for anyone who is not a current client.", { outcome: "paid_client", label: "Paid client" }, { scripts: [...ps, ...scripts], options, c });
+    expect(st).toEqual({
+      brief: "Replies are answered for anyone who is not a current client.",
+      engine: {
+        outcome: "paid_client",
+        makes: "Paid client",
+        scripts: [
+          { script: "dy_answer_lead", does: "dy_answer_lead" },
+          { script: "dy_brand_team", does: "dy_brand_team" },
+          { script: "dy_client_check_in", does: "dy_client_check_in" },
+        ],
+        whatEachOptionRuns: {
+          "No condition": { runs: ["dy_answer_lead", "dy_brand_team", "dy_client_check_in"], neverRuns: [] },
+          "not-current-clients-only": { runs: ["dy_answer_lead"], neverRuns: ["dy_brand_team", "dy_client_check_in"] },
+        },
+      },
+    });
+    expect(options.map((o) => o.description)).toEqual(["No condition: every script of this Engine may run, whoever it reaches and however it works.", "not-current-clients-only: not-current-clients-only words"]);
+    expect(engineStrategyQuestion(options).instructions).toMatch(/which scripts each option runs: an option is what it runs here/);
+  });
+  it("an Engine with no runnable script: the state is the brief and the Engine only", () => {
+    expect(engineStrategyState("b", { outcome: "meeting_booked", label: "Meeting booked" }, { scripts: ps, options: [], c })).toEqual({ brief: "b", engine: { outcome: "meeting_booked", makes: "Meeting booked" } });
   });
 });
 
