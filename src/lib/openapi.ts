@@ -6333,16 +6333,6 @@ registry.registerPath({
 
 registry.registerPath({
   method: "post",
-  path: "/internal/engine-strategies/carry",
-  summary: "Carry every live campaign's strategy onto its Engines (internal, api-key, staff; MIGRATE-1105 S6 migration)",
-  description: "For every live campaign unit, store the campaign's verdict on the unit's Engine from what it runs today (the brief judge's play, else its funnel's play, else its pipe's default). A verdict already stored is never touched. `apply: false` = dry run. Two units of one campaign on one Engine naming two strategies = `conflict`, nothing written.",
-  tags: ["Internal"],
-  request: { body: { content: { "application/json": { schema: z.object({ apply: z.boolean().optional(), childOutcomes: z.record(z.string(), z.array(z.string())).optional() }) } } } },
-  responses: { 200: { description: "One row per unit", content: { "application/json": { schema: z.object({ apply: z.boolean(), counts: z.record(z.string(), z.number()), rows: z.array(z.object({ campaignId: z.string(), unitId: z.string(), orgId: z.string(), featureSlug: z.string(), legKey: z.string(), outcome: z.string().nullable(), strategyId: z.string().nullable(), carriedFrom: z.string().nullable(), result: z.string(), detail: z.string().nullable() })) }) } } }, 502: { description: "engine_strategy_carry_failed" } },
-});
-
-registry.registerPath({
-  method: "post",
   path: "/internal/engine-strategies/eval",
   summary: "Replay the brief judge on every stored per-Engine verdict, storing nothing (internal, api-key, staff)",
   description: "MIGRATE-1105 S6. For every live campaign (or `campaignIds`), each stored (campaign, Engine) verdict beside what the brief judge picks NOW with today's options, descriptions and question. Nothing is stored: the before/after of a change to what the judge sees.",
