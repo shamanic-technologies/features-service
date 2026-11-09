@@ -27,7 +27,7 @@ import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { computeFeatureRevenue, fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import type { FunnelPricedEconomics } from "../lib/offer-pricing.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
-import { funnelCopiesFor, type FunnelCopy, type FunnelPathView } from "./agent-catalogue.js";
+import { funnelCopiesFor, type CampaignPartView, type FunnelCopy, type FunnelPathView } from "./agent-catalogue.js";
 import { faceOf } from "../lib/catalogue-faces.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { parsePricing } from "../lib/pricing.js";
@@ -37,7 +37,7 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
-import { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
+import { fetchSalesFunnelCampaigns, fetchUnitRunsOnTriggerId, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { runningFunnelIdOf } from "../lib/running-funnel.js";
 import { STEP_SIGNAL, takeoverStepOf } from "../lib/value-added.js";
 import { servedCostEconomics, servedHeadline } from "../lib/retired-returns.js";
@@ -63,6 +63,53 @@ export function pricingForUnits(declared: DeclaredSalesFunnel[], all: FunnelPric
 const FRESH_CAMPAIGN_MS = 15 * 60_000;
 
 /**
+ * A PART THE CAMPAIGN RUNS OFF ITS FUNNEL LINE (owner 2026-11-09, CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): Living Vital's
+ * "Email Replies" read "... Positive reply -> Your Team Reply Closing -> Paid client" while its unit on every Lead event
+ * had our AI answer the lead. ONE rule for every campaign: every ongoing unit whose pipe is not on the path is served
+ * here, with what starts it, the channel, the outcome and its own sentence, and its sentence joins `shortDescription`.
+ */
+export interface CampaignOtherPart {
+  campaignId: string;
+  pipeId: string;
+  trigger: CampaignPartView["trigger"];
+  items: CampaignPartView["items"] | null;
+  shortDescription: string | null;
+  /** Null when described; else why not (its pipe or its trigger is not in the catalogue). */
+  unavailableReason: "pipe_not_in_catalogue" | "trigger_not_in_catalogue" | null;
+}
+
+/** PURE: the ongoing units whose pipe is not on the campaign's path (a path the catalogue lacks lists none). */
+export function unitsOffPath(
+  units: readonly SalesFunnelUnitRow[],
+  path: FunnelPathView | null,
+  unitPipeIdOf: (u: { featureSlug: string; legKey: string }) => string | null,
+): SalesFunnelUnitRow[] {
+  if (!path) return [];
+  const onPath = new Set(path.items.flatMap((i) => (i.kind === "channel" ? [i.pipeId] : [])));
+  return units.filter((u) => u.status === "ongoing" && !onPath.has(unitPipeIdOf(u) ?? u.pipeId));
+}
+
+/** PURE: one other part, from its unit, its trigger and its catalogue view (null = not described). */
+export function otherPartOf(u: SalesFunnelUnitRow, triggerId: string | null, view: CampaignPartView | null, pipeKnown: boolean): CampaignOtherPart {
+  if (!view) {
+    return { campaignId: u.campaignId, pipeId: u.pipeId, trigger: null, items: null, shortDescription: null, unavailableReason: pipeKnown ? "trigger_not_in_catalogue" : "pipe_not_in_catalogue" };
+  }
+  return { campaignId: u.campaignId, pipeId: view.pipeId, trigger: view.trigger, items: view.items, shortDescription: view.shortDescription, unavailableReason: null };
+}
+
+/** PURE: the campaign's sentence = its funnel's, then each other part's (each said once). */
+export function campaignShortDescription(
+  funnelSentence: string | null,
+  funnelReason: FunnelCopy["shortDescriptionUnavailableReason"],
+  parts: readonly CampaignOtherPart[],
+): { shortDescription: string | null; reason: FunnelCopy["shortDescriptionUnavailableReason"] } {
+  const sentences = [funnelSentence, ...parts.map((p) => p.shortDescription)].filter((x): x is string => typeof x === "string" && x !== "");
+  const unique = [...new Set(sentences)];
+  if (unique.length === 0) return { shortDescription: null, reason: funnelReason };
+  return { shortDescription: unique.join(" "), reason: null };
+}
+
+/**
  * PURE: a row's COPY (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): everything that depends only on the funnel
  * campaign and its catalogue funnel, never on money. The full row starts with exactly these fields.
  */
@@ -70,7 +117,9 @@ export function funnelCampaignCopyRow(
   r: SalesFunnelCampaignRow,
   copy: Pick<FunnelCopy, "type" | "triggerLabel" | "shortDescription" | "shortDescriptionUnavailableReason"> | null,
   path: FunnelPathView | null,
+  otherParts: readonly CampaignOtherPart[] = [],
 ) {
+  const short = copy ? campaignShortDescription(copy.shortDescription, copy.shortDescriptionUnavailableReason ?? null, otherParts) : null;
   return {
     id: r.id,
     brandId: r.brandId,
@@ -89,11 +138,14 @@ export function funnelCampaignCopyRow(
     // The Type column (owner 2026-10-11): "Daily" for a proactive funnel, its trigger for a reactive one.
     typeLabel: copy ? (copy.type === "proactive" ? "Daily" : copy.triggerLabel) : null,
     // One short sentence of what we do in this campaign (owner 2026-10-14), shown under the name in place of the path.
-    shortDescription: copy?.shortDescription ?? null,
-    shortDescriptionUnavailableReason: copy ? (copy.shortDescriptionUnavailableReason ?? null) : ("sales_funnel_not_in_catalogue" as const),
+    // Every part it runs is said (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): the funnel's sentence, then each other part's.
+    shortDescription: short?.shortDescription ?? null,
+    shortDescriptionUnavailableReason: short ? short.reason : ("sales_funnel_not_in_catalogue" as const),
     // The path the dashboard draws (owner 2026-10-11), structured: never parsed from an id. One channel per leg, the
     // RUNNING funnel's (P5.1, owner 2026-10-31): `path` is passed in for `runningSalesFunnelId`.
     path: copy ? path : null,
+    // Every part it runs OFF its path (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): e.g. our AI answering each Lead event.
+    otherParts: copy ? [...otherParts] : [],
     copyUnavailableReason: copy ? null : ("sales_funnel_not_in_catalogue" as const),
     units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
   };
@@ -111,13 +163,30 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
-    const { copies, pipeSteps, pathOf } = await funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, runningFunnelIdOf(r)]))]);
+    const { copies, pipeSteps, pathOf, partOf, unitPipeIdOf } = await funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, runningFunnelIdOf(r)]))]);
     // The path a campaign RUNS (P5.1): its running funnel's; one the catalogue does not know is logged and served null.
     const runningPathOf = (r: (typeof rows)[number]) => {
       const path = pathOf(runningFunnelIdOf(r));
       if (!path) console.error(`[features-service] sales funnel campaign ${r.id}: running funnel ${runningFunnelIdOf(r)} is not in the catalogue (path null)`);
       return path;
     };
+    // Every part each campaign runs off its path, its unit's trigger read where the listing does not serve it.
+    const otherPartsById = new Map(
+      await Promise.all(
+        rows.map(async (r) => {
+          const off = unitsOffPath(r.units, pathOf(runningFunnelIdOf(r)), unitPipeIdOf);
+          const parts = await Promise.all(
+            off.map(async (u) => {
+              const triggerId = u.runsOnTriggerId !== undefined ? u.runsOnTriggerId : await fetchUnitRunsOnTriggerId(u.campaignId, headers);
+              const part = otherPartOf(u, triggerId, partOf(u, triggerId), unitPipeIdOf(u) !== null);
+              if (part.unavailableReason) console.error(`[features-service] sales funnel campaign ${r.id}: unit ${u.campaignId} (${u.pipeId}, trigger ${triggerId}) not described: ${part.unavailableReason}`);
+              return part;
+            }),
+          );
+          return [r.id, parts] as const;
+        }),
+      ),
+    );
 
     // `?fields=copy` (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): the rows' copy alone, live, no money read, so a
     // campaign created seconds ago has its path and Type at once. A campaign that young may have no money cell
@@ -127,7 +196,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         brandId,
         offerId: offerFilter,
         fields: "copy",
-        salesFunnelCampaigns: rows.map((r) => funnelCampaignCopyRow(r, copies.get(r.salesFunnelId) ?? null, runningPathOf(r))),
+        salesFunnelCampaigns: rows.map((r) => funnelCampaignCopyRow(r, copies.get(r.salesFunnelId) ?? null, runningPathOf(r), otherPartsById.get(r.id) ?? [])),
       });
       const fresh = rows.filter((r) => Date.now() - Date.parse(r.createdAt) < FRESH_CAMPAIGN_MS);
       for (const offerId of new Set(fresh.map((r) => r.offerId))) {
@@ -219,7 +288,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       );
 
       return {
-        ...funnelCampaignCopyRow(r, copy, runningPathOf(r)),
+        ...funnelCampaignCopyRow(r, copy, runningPathOf(r), otherPartsById.get(r.id) ?? []),
         investedUsd: money ? money.costEconomics.committedCostUsd : 0,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
         expectedReturn,
