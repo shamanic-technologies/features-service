@@ -74,7 +74,7 @@ router.post("/internal/engine-strategies/eval", apiKeyOnly, async (req: Request,
         continue;
       }
       try {
-        const pick = await askJev(engineStrategyState(brief, { outcome: r.outcome, label: labelOfOutcome(r.outcome) }), options);
+        const pick = await askJev(engineStrategyState(brief, { outcome: r.outcome, label: labelOfOutcome(r.outcome) }, { scripts, options, c: catalogue }), options);
         rows.push({ ...base, picked: pick.option.strategyId, confidence: pick.confidence, note: null });
       } catch (error) {
         rows.push({ ...base, picked: null, confidence: null, note: `judge failed: ${(error as Error).message}` });

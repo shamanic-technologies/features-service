@@ -166,8 +166,12 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     const catalogue = await loadPlayCatalogue();
     // Options are read only when a judged verdict may have gone stale on them (a carried one stands on its brief alone).
     let options: EngineStrategyOption[] | null = null;
+    let scripts: Awaited<ReturnType<typeof readRunnableScripts>> = [];
     const optionsNow = async () => {
-      options ??= engineStrategyOptions(engine.outcome, await readRunnableScripts(), catalogue, stored?.strategyId ? [stored.strategyId] : []);
+      if (!options) {
+        scripts = await readRunnableScripts();
+        options = engineStrategyOptions(engine.outcome, scripts, catalogue, stored?.strategyId ? [stored.strategyId] : []);
+      }
       return options;
     };
     const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
@@ -183,7 +187,7 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
       return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: def };
     }
     const opts = await optionsNow();
-    const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }), opts);
+    const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }, { scripts, options: opts, c: catalogue }), opts);
     const next = {
       campaignId: campaign.campaignId,
       outcome: engine.outcome,
