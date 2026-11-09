@@ -166,6 +166,30 @@ export function engineStrategyQuestion(options: readonly EngineStrategyOption[])
 }
 
 /**
+ * PURE: the Jev `noul` question asked beside the choice: does the brief state anything on THIS Engine's scripts? A choice
+ * question always picks some option, so « when nothing in the brief bears on this Engine, pick DEFAULT » inside it was
+ * not kept: 2026-11-09, « Find people with the Apollo cold filters this brand set. » (978101d3) picked « Current clients »
+ * on the answering Engine at 0.54-0.64. The silent brief is asked on its own; below one half, the DEFAULT option stands
+ * (`engineStrategyPick`).
+ */
+export function engineStrategyBearsQuestion() {
+  return {
+    type: "noul" as const,
+    instructions:
+      "A client wrote a BRIEF for one sales campaign (in the state). The campaign runs the ENGINE described in the state: the scripts listed there, " +
+      "each with what it does. True when some sentence of the brief states a condition on what THESE scripts do: whom they reach, answer or write to, " +
+      "or how they work. False when the brief only speaks of other work (who is found or sourced, who gets the first email, what an email says) " +
+      "or says nothing that changes which of these scripts should run.",
+  };
+}
+
+/** PURE: the option kept from both answers: the DEFAULT when the brief does not bear on the Engine, else the choice. */
+export function engineStrategyPick<O extends EngineStrategyOption>(options: readonly O[], bears: number, choice: { option: O; confidence: number }): { option: O; confidence: number } {
+  const def = options.find((o) => o.isDefault) ?? options[0]!;
+  return bears < 0.5 ? { option: def, confidence: 1 - bears } : choice;
+}
+
+/**
  * PURE: the state Jev reads: the WHOLE brief, the Engine in words, and every fact we hold on what the options do there:
  * each runnable script of the Engine with what it does (its description), and per option (by its name) the scripts it
  * runs and never runs. In the state, not the options' words: the options' signature (what re-asks a verdict) stays the

@@ -10,6 +10,8 @@ import {
   engineStrategyNeed,
   engineStrategyOptions,
   engineStrategyQuestion,
+  engineStrategyBearsQuestion,
+  engineStrategyPick,
   engineStrategyState,
   optionsSignatureOf,
   strategyOfStored,
@@ -160,6 +162,19 @@ describe("an Engine's DEFAULT strategy (data): a silent brief never widens it (M
   });
   it("marking a default moves the options signature (a judged verdict is asked again)", () => {
     expect(optionsSignatureOf(engineStrategyOptions("email_sent", scripts, catalogue))).not.toEqual(optionsSignatureOf(engineStrategyOptions("email_sent", scripts, withDefault)));
+  });
+});
+
+describe("a brief silent on the Engine keeps its DEFAULT (2026-11-09, 978101d3 « Find people with the Apollo cold filters »)", () => {
+  const o = engineStrategyOptions("email_sent", scripts, catalogue);
+  it("below one half on « bears », the DEFAULT option stands whatever the choice; above, the choice", () => {
+    expect(engineStrategyPick(o, 0.28, { option: o[1]!, confidence: 0.64 })).toEqual({ option: o[0], confidence: 0.72 });
+    expect(engineStrategyPick(o, 0.8, { option: o[1]!, confidence: 0.83 })).toEqual({ option: o[1], confidence: 0.83 });
+  });
+  it("the bears question is a noul about THIS Engine's scripts", () => {
+    const q = engineStrategyBearsQuestion();
+    expect(q.type).toBe("noul");
+    expect(q.instructions).toMatch(/THESE scripts/);
   });
 });
 

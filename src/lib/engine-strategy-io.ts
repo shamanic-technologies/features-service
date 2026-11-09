@@ -21,6 +21,8 @@ import { readRunnableScripts } from "./script-catalogue-client.js";
 import {
   briefHashOf,
   engineDefaultStrategy,
+  engineStrategyBearsQuestion,
+  engineStrategyPick,
   engineStrategyNeed,
   engineStrategyOptions,
   engineStrategyQuestion,
@@ -134,18 +136,20 @@ export async function askJev(state: Record<string, unknown>, options: readonly E
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
-    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { strategy: engineStrategyQuestion(options) }, support: ENGINE_STRATEGY_SUPPORT }) },
+    { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state, questions: { bears: engineStrategyBearsQuestion(), strategy: engineStrategyQuestion(options) }, support: ENGINE_STRATEGY_SUPPORT }) },
     { timeoutMs: JEV_TIMEOUT_MS },
   );
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; choice?: unknown; confidence?: unknown }> };
+  const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; choice?: unknown; confidence?: unknown; noul?: unknown }> };
   const a = body.answers?.strategy;
+  const bears = body.answers?.bears;
+  if (bears?.type !== "noul" || typeof bears.noul !== "number") throw new Error("chat-service answered without a readable bears probability");
   if (a?.type !== "choice" || typeof a.choice !== "string" || typeof a.confidence !== "number") throw new Error("chat-service answered without a readable choice");
   const index = Number(a.choice.slice(1));
   const option = a.choice.startsWith("o") && Number.isInteger(index) ? options[index] : undefined;
   if (!option) throw new Error(`chat-service picked ${a.choice}, not one of the strategies offered`);
   if (typeof body.model !== "string" || body.model === "") throw new Error("chat-service answered without naming the model release");
-  return { option, confidence: a.confidence, model: body.model };
+  return { ...engineStrategyPick(options, bears.noul, { option, confidence: a.confidence }), model: body.model };
 }
 
 /**
