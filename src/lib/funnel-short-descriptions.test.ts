@@ -159,3 +159,14 @@ describe("one short customer sentence per sales funnel (owner 2026-10-14)", () =
     expect(funnelShortDescription({ reactive: true, triggerId: "conversation", legs: [{ fromStep: "conversation", toStep: "paid_client", channel: { slug: "your-team-reply-closing", name: "Your Team Reply Closing", channelType: "conversion", performedBy: "person", operatedBy: "customer" }, runByUs: false }] })).toEqual({ shortDescription: null, reason: "no_step_run_by_us" });
   });
 });
+
+describe("a trigger-headed funnel answers the people of its HEAD (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109)", () => {
+  it("a Lead event head reads 'leads the moment they act', never the first pipe's own trigger", () => {
+    const f = all.find((x) => x.legs[0]?.pipe?.channelSlug === "ai-follow-up-email" && x.legs[0]?.pipe?.mode === "reactive" && x.legs[0]?.pipe?.triggerId !== "lead_event");
+    if (!f) throw new Error("no reactive AI follow-up funnel in the seed catalogue");
+    const own = funnelShortDescriptionOf(model, f).shortDescription;
+    const headed = funnelShortDescriptionOf(model, { ...f, headTriggerId: "lead_event" }).shortDescription;
+    expect(headed).toContain("leads the moment they act");
+    expect(headed).not.toBe(own);
+  });
+});
