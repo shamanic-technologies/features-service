@@ -25575,12 +25575,13 @@
                   "type": "object",
                   "properties": {
                     "spendUsd": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "OUTCOME-COST-CUMUL-1109 ($ Spent): the step's cost from Start = its own spend (`spendAttribution.ownSpendUsd`) + every step ABOVE it in the chain, never a step below. Non-decreasing down the chain (Lead found first, Paid client last = the scope's whole spend)."
                     },
                     "outcomes": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced: the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
                     },
                     "undatedOutcomes": {
                       "type": "integer",
@@ -25590,7 +25591,7 @@
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."
+                      "description": "spendUsd / outcomes, rounded to the cent (same basis: the two always reconcile on a row); null at 0 outcomes of ours (read expected and learning instead) or when outcomes is null."
                     },
                     "learning": {
                       "type": "boolean",
@@ -25693,12 +25694,12 @@
                       },
                       "spendUsd": {
                         "type": "number",
-                        "description": "What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."
+                        "description": "OUTCOME-COST-CUMUL-1109: the month's spend this step carries (its own + every step above it in `spendAttribution.chain`), the caller's pricing. The last step's months are the scope's whole monthly spend."
                       },
                       "outcomes": {
                         "type": "integer",
                         "nullable": true,
-                        "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
+                        "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step first produced this month (the brand ledger, another factory's Units excluded). Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
                       },
                       "costPerOutcomeUsd": {
                         "type": "number",
@@ -25746,6 +25747,35 @@
                       "description": "OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."
                     }
                   ]
+                },
+                "spendAttribution": {
+                  "type": "object",
+                  "properties": {
+                    "ownSpendUsd": {
+                      "type": "number",
+                      "description": "The step's OWN spend, before cumulating: the scope's spend absorbed pro rata the ledger cost traced to the step. Σ over every step = `spendAttribution.spendUsd` (body), to the cent."
+                    },
+                    "aboveStepKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The step just above in the chain (its sinceInception.spendUsd + this ownSpendUsd = this step's). Null for the first step."
+                    },
+                    "tracedCostUsd": {
+                      "type": "number",
+                      "description": "The ledger's own production cost traced to the step (Units made by campaigns whose leg ends on it, or campaign-less Units of it): the absorption base."
+                    },
+                    "cumulativeShare": {
+                      "type": "number",
+                      "description": "sinceInception.spendUsd / the scope's spend, 0..1."
+                    }
+                  },
+                  "required": [
+                    "ownSpendUsd",
+                    "aboveStepKey",
+                    "tracedCostUsd",
+                    "cumulativeShare"
+                  ],
+                  "description": "OUTCOME-COST-CUMUL-1109: how the scope's spend reaches this step (process costing)."
                 }
               },
               "required": [
@@ -25757,7 +25787,8 @@
                 "expected",
                 "value",
                 "months",
-                "accounting"
+                "accounting",
+                "spendAttribution"
               ]
             },
             "description": "One series per outcome step, most advanced first. Every step is served, including steps reached only through the client's own tools (then outcomes from people we contacted may be 0: learning)."
@@ -25893,6 +25924,55 @@
               ]
             },
             "description": "GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."
+          },
+          "spendAttribution": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "process_costing_absorbed_on_traced_cost"
+                ]
+              },
+              "chain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The process chain, first step first (lead_found ... paid_client): a step's $ Spent carries the steps before it."
+              },
+              "spendUsd": {
+                "type": "number",
+                "description": "The scope's whole spend = the last step's sinceInception.spendUsd = Σ steps[].spendAttribution.ownSpendUsd."
+              },
+              "tracedCostUsd": {
+                "type": "number",
+                "description": "The ledger's own production cost traced to a step (the absorption base). The rest of the spend (support, undeclared, loss, brand-level work, outcomes on no step) is absorbed pro rata."
+              },
+              "offStepCostUsd": {
+                "type": "number",
+                "description": "Ledger cost of outcomes on no step (posts, newsletter...), part of the absorbed spend."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "ledger_unreadable",
+                  "no_cost_traced_to_a_step",
+                  null
+                ],
+                "description": "Set when nothing traces to a step: the whole spend then enters at the first step (every step carries it)."
+              }
+            },
+            "required": [
+              "rule",
+              "chain",
+              "spendUsd",
+              "tracedCostUsd",
+              "offStepCostUsd",
+              "unavailableReason"
+            ],
+            "description": "OUTCOME-COST-CUMUL-1109 (owner 2026-11-09): process costing. A step's $ Spent = its own spend + every step above it, never a step below; $ / outcome = that spend / OUR Units of the step."
           }
         },
         "required": [
@@ -25902,7 +25982,8 @@
           "costBasis",
           "firstSpendDay",
           "steps",
-          "ledgerOutcomes"
+          "ledgerOutcomes",
+          "spendAttribution"
         ]
       },
       "BrandOutcomeCostSeriesResponse": {
@@ -26061,6 +26142,55 @@
             },
             "description": "GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."
           },
+          "spendAttribution": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "process_costing_absorbed_on_traced_cost"
+                ]
+              },
+              "chain": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The process chain, first step first (lead_found ... paid_client): a step's $ Spent carries the steps before it."
+              },
+              "spendUsd": {
+                "type": "number",
+                "description": "The scope's whole spend = the last step's sinceInception.spendUsd = Σ steps[].spendAttribution.ownSpendUsd."
+              },
+              "tracedCostUsd": {
+                "type": "number",
+                "description": "The ledger's own production cost traced to a step (the absorption base). The rest of the spend (support, undeclared, loss, brand-level work, outcomes on no step) is absorbed pro rata."
+              },
+              "offStepCostUsd": {
+                "type": "number",
+                "description": "Ledger cost of outcomes on no step (posts, newsletter...), part of the absorbed spend."
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "ledger_unreadable",
+                  "no_cost_traced_to_a_step",
+                  null
+                ],
+                "description": "Set when nothing traces to a step: the whole spend then enters at the first step (every step carries it)."
+              }
+            },
+            "required": [
+              "rule",
+              "chain",
+              "spendUsd",
+              "tracedCostUsd",
+              "offStepCostUsd",
+              "unavailableReason"
+            ],
+            "description": "OUTCOME-COST-CUMUL-1109 (owner 2026-11-09): process costing. A step's $ Spent = its own spend + every step above it, never a step below; $ / outcome = that spend / OUR Units of the step."
+          },
           "offerIds": {
             "type": "array",
             "items": {
@@ -26094,12 +26224,13 @@
                   "type": "object",
                   "properties": {
                     "spendUsd": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "OUTCOME-COST-CUMUL-1109 ($ Spent): the step's cost from Start = its own spend (`spendAttribution.ownSpendUsd`) + every step ABOVE it in the chain, never a step below. Non-decreasing down the chain (Lead found first, Paid client last = the scope's whole spend)."
                     },
                     "outcomes": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced: the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
                     },
                     "undatedOutcomes": {
                       "type": "integer",
@@ -26109,7 +26240,7 @@
                     "costPerOutcomeUsd": {
                       "type": "number",
                       "nullable": true,
-                      "description": "spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."
+                      "description": "spendUsd / outcomes, rounded to the cent (same basis: the two always reconcile on a row); null at 0 outcomes of ours (read expected and learning instead) or when outcomes is null."
                     },
                     "learning": {
                       "type": "boolean",
@@ -26212,12 +26343,12 @@
                       },
                       "spendUsd": {
                         "type": "number",
-                        "description": "What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."
+                        "description": "OUTCOME-COST-CUMUL-1109: the month's spend this step carries (its own + every step above it in `spendAttribution.chain`), the caller's pricing. The last step's months are the scope's whole monthly spend."
                       },
                       "outcomes": {
                         "type": "integer",
                         "nullable": true,
-                        "description": "LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
+                        "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step first produced this month (the brand ledger, another factory's Units excluded). Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."
                       },
                       "costPerOutcomeUsd": {
                         "type": "number",
@@ -26265,6 +26396,35 @@
                       "description": "OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."
                     }
                   ]
+                },
+                "spendAttribution": {
+                  "type": "object",
+                  "properties": {
+                    "ownSpendUsd": {
+                      "type": "number",
+                      "description": "The step's OWN spend, before cumulating: the scope's spend absorbed pro rata the ledger cost traced to the step. Σ over every step = `spendAttribution.spendUsd` (body), to the cent."
+                    },
+                    "aboveStepKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The step just above in the chain (its sinceInception.spendUsd + this ownSpendUsd = this step's). Null for the first step."
+                    },
+                    "tracedCostUsd": {
+                      "type": "number",
+                      "description": "The ledger's own production cost traced to the step (Units made by campaigns whose leg ends on it, or campaign-less Units of it): the absorption base."
+                    },
+                    "cumulativeShare": {
+                      "type": "number",
+                      "description": "sinceInception.spendUsd / the scope's spend, 0..1."
+                    }
+                  },
+                  "required": [
+                    "ownSpendUsd",
+                    "aboveStepKey",
+                    "tracedCostUsd",
+                    "cumulativeShare"
+                  ],
+                  "description": "OUTCOME-COST-CUMUL-1109: how the scope's spend reaches this step (process costing)."
                 },
                 "offerMix": {
                   "type": "object",
@@ -26532,6 +26692,7 @@
                 "value",
                 "months",
                 "accounting",
+                "spendAttribution",
                 "offerMix"
               ]
             },
@@ -26544,6 +26705,7 @@
           "costBasis",
           "firstSpendDay",
           "ledgerOutcomes",
+          "spendAttribution",
           "offerIds",
           "steps"
         ]
@@ -47943,7 +48105,7 @@
     "/offers/{offerId}/outcome-cost-series": {
       "get": {
         "summary": "Cost of one outcome per month and since inception, every outcome step of an offer",
-        "description": "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work), the SAME spend for every step (full absorption: a step's cost carries the lower steps it needed). Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+        "description": "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work). OUTCOME-COST-CUMUL-1109 (process costing, supersedes the same spend on every step): a step's $ Spent = its own spend + every step above it (`spendAttribution`), $ / outcome = that / OUR Units of the step. Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
         "tags": [
           "Stats"
         ],

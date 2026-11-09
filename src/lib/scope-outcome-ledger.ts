@@ -18,6 +18,7 @@
  * figure ($ each, production cost, value, return) divides OUR Units only (IAS 2: our cost per outcome divides our own
  * production).
  */
+import type { StepTracedCost } from "./step-cost-attribution.js";
 
 export interface LedgerOutcomeCost {
   /** Every-path unit cost (own production + inputs at their unit cost), null when the outcome is no pipe's output in scope. */
@@ -36,6 +37,8 @@ export interface ScopeOutcomeLedgerInput {
   ownCostUsd: ReadonlyMap<string, number>;
   /** outcome key -> the roll-up's every-path unit cost in scope. */
   unitCosts: ReadonlyMap<string, LedgerOutcomeCost>;
+  /** OUTCOME-COST-CUMUL-1109: the ledger's own production cost per outcome step (`stepTracedCostOf`). Brand ledgers only. */
+  stepTracedCost?: StepTracedCost;
   /** outcome key -> consumptions in scope of occurrences no run declared producing (unknown provenance). */
   undeclaredConsumptions: ReadonlyMap<string, number>;
   /** outcome key -> the services that declare producing it anywhere in the fleet (empty = nobody does). */
