@@ -324,6 +324,16 @@ export function withLedgerRawStats(raw: Record<string, number>, countKeys: Reado
 }
 
 /** PURE. A ledger row's Units as one day per Unit (the shape a per-person outcome-day list had). */
+/**
+ * PURE. OUTCOME-COST-CUMUL-1109: one day per Unit OUR factory produced (the divisor of a money figure; another factory's
+ * Units are no outcome of our spend).
+ */
+export function ledgerOurUnitDays(c: LedgerCount): string[] {
+  const out: string[] = [];
+  for (const p of c.row?.past ?? []) for (let i = 0; i < p.ourUnits; i++) out.push(p.date);
+  return out;
+}
+
 export function ledgerUnitDays(c: LedgerCount): string[] {
   const out: string[] = [];
   for (const p of c.row?.past ?? []) for (let i = 0; i < p.units; i++) out.push(p.date);

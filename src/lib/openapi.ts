@@ -3790,8 +3790,8 @@ const outcomeCostExpectedSchema = z.object({
 });
 const outcomeCostMonthSchema = z.object({
   month: z.string().describe("YYYY-MM (UTC)."),
-  spendUsd: z.number().describe("What the client spent on the offer this month (every campaign of the offer + the brand's campaign-less work, the caller's pricing)."),
-  outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step first produced this month. Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."),
+  spendUsd: z.number().describe("OUTCOME-COST-CUMUL-1109: the month's spend this step carries (its own + every step above it in `spendAttribution.chain`), the caller's pricing. The last step's months are the scope's whole monthly spend."),
+  outcomes: z.number().int().nullable().describe("OUTCOME-COST-CUMUL-1109: OUR Units of the step first produced this month (the brand ledger, another factory's Units excluded). Null when the ledger cannot state the step (the step's `outcomesUnavailableReason`)."),
   costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes. Null at 0 outcomes (never the spend as a floor)."),
   cumulativeSpendUsd: z.number(),
   cumulativeOutcomes: z.number().int().nullable(),
@@ -3853,10 +3853,10 @@ const outcomeCostStepSchema = z.object({
         stepKey: z.enum(["paid_client", "meeting_attended", "meeting_booked", "signup", "form_submitted", "conversation", "website_visit", "lead_found"]),
         learningOutcomesRequired: z.number().int().describe("Outcomes the step must hold before its cost is judged (the maturity bar of the offer's leg landing on it, else the default bar)."),
         sinceInception: z.object({
-          spendUsd: z.number(),
-          outcomes: z.number().int().nullable().describe("LEDGER-ONLY-1107-P2: the brand ledger's Units of the step (Today's count). NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."),
+          spendUsd: z.number().describe("OUTCOME-COST-CUMUL-1109 ($ Spent): the step's cost from Start = its own spend (`spendAttribution.ownSpendUsd`) + every step ABOVE it in the chain, never a step below. Non-decreasing down the chain (Lead found first, Paid client last = the scope's whole spend)."),
+          outcomes: z.number().int().nullable().describe("OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced: the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."),
           undatedOutcomes: z.number().int().nullable().describe("Always 0 on the ledger (every Unit is dated); null with outcomes."),
-          costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes; null at 0 outcomes (read expected and learning instead) or when outcomes is null."),
+          costPerOutcomeUsd: z.number().nullable().describe("spendUsd / outcomes, rounded to the cent (same basis: the two always reconcile on a row); null at 0 outcomes of ours (read expected and learning instead) or when outcomes is null."),
           learning: z.boolean().nullable().describe("Null with outcomes."),
         }),
         outcomesUnavailableReason: z.string().nullable().describe("LEDGER-ONLY-1107-P2: why `sinceInception.outcomes` is null (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`); null when the ledger states the count."),
@@ -3870,6 +3870,14 @@ const outcomeCostStepSchema = z.object({
           .describe("P5 OUTCOMES-ENTRY (owner 2026-10-31): served beside the cost so a reader never divides."),
         months: z.array(outcomeCostMonthSchema).describe("Every month from the offer's first spend or dated outcome to the current month, no gap. Shared axis across steps."),
         accounting: outcomeAccountingRef.nullable().describe("OUTCOME-ACCOUNTING-1107: the step's cost-accounting report."),
+        spendAttribution: z
+          .object({
+            ownSpendUsd: z.number().describe("The step's OWN spend, before cumulating: the scope's spend absorbed pro rata the ledger cost traced to the step. Σ over every step = `spendAttribution.spendUsd` (body), to the cent."),
+            aboveStepKey: z.string().nullable().describe("The step just above in the chain (its sinceInception.spendUsd + this ownSpendUsd = this step's). Null for the first step."),
+            tracedCostUsd: z.number().describe("The ledger's own production cost traced to the step (Units made by campaigns whose leg ends on it, or campaign-less Units of it): the absorption base."),
+            cumulativeShare: z.number().describe("sinceInception.spendUsd / the scope's spend, 0..1."),
+          })
+          .describe("OUTCOME-COST-CUMUL-1109: how the scope's spend reaches this step (process costing)."),
       });
 const outcomeCostSeriesResponseSchema = z.object({
   offerId: z.string(),
@@ -3905,6 +3913,16 @@ const outcomeCostSeriesResponseSchema = z.object({
       }),
     )
     .describe("GSC-CONNECTOR-1108: EVERY outcome the brand's general ledger holds >= 1 Unit of, whatever its key (a connector outcome included), key order. Same brand ledger as `steps[]`. Empty when the ledger is unreadable."),
+  spendAttribution: z
+    .object({
+      rule: z.literal("process_costing_absorbed_on_traced_cost"),
+      chain: z.array(z.string()).describe("The process chain, first step first (lead_found ... paid_client): a step's $ Spent carries the steps before it."),
+      spendUsd: z.number().describe("The scope's whole spend = the last step's sinceInception.spendUsd = Σ steps[].spendAttribution.ownSpendUsd."),
+      tracedCostUsd: z.number().describe("The ledger's own production cost traced to a step (the absorption base). The rest of the spend (support, undeclared, loss, brand-level work, outcomes on no step) is absorbed pro rata."),
+      offStepCostUsd: z.number().describe("Ledger cost of outcomes on no step (posts, newsletter...), part of the absorbed spend."),
+      unavailableReason: z.enum(["ledger_unreadable", "no_cost_traced_to_a_step"]).nullable().describe("Set when nothing traces to a step: the whole spend then enters at the first step (every step carries it)."),
+    })
+    .describe("OUTCOME-COST-CUMUL-1109 (owner 2026-11-09): process costing. A step's $ Spent = its own spend + every step above it, never a step below; $ / outcome = that spend / OUR Units of the step."),
 });
 const outcomeCostSeriesResponseRef = registry.register("OfferOutcomeCostSeriesResponse", outcomeCostSeriesResponseSchema);
 const brandOutcomeCostSeriesResponseRef = registry.register(
@@ -3922,7 +3940,7 @@ registry.registerPath({
   path: "/offers/{offerId}/outcome-cost-series",
   summary: "Cost of one outcome per month and since inception, every outcome step of an offer",
   description:
-    "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work), the SAME spend for every step (full absorption: a step's cost carries the lower steps it needed). Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
+    "Owner 2026-10-27 (OUTCOME-COST-SERIES-1027): $ / outcome = what the client spent on the offer's campaigns / the outcomes reached by people WE contacted (never everyone the client's own tools report). Spend = the offer spend chart's scope (every campaign of the offer, legacy included, every channel, + the brand's campaign-less work). OUTCOME-COST-CUMUL-1109 (process costing, supersedes the same spend on every step): a step's $ Spent = its own spend + every step above it (`spendAttribution`), $ / outcome = that / OUR Units of the step. Outcomes = people the offer's campaigns served or its follow-up pipes acted on, whom we contacted, who reached the step on or after the offer's first spend day, the step not tagged as another factory's win. Lead found = people the offer's campaigns were served. Each person counts once per step, in the month they first reached it. Since inception only, no window. `pricing=net` = what the org pays. Org-scoped (`x-org-id`).",
   tags: ["Stats"],
   request: {
     headers: identityHeaders,
