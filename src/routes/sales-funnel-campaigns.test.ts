@@ -45,7 +45,35 @@ vi.mock("./agent-catalogue.js", () => ({
     ]),
     // The campaign's path is its funnel's (one channel per leg, owner 2026-10-11): asked by funnel id only.
     pathOf: (id: string, ...extra: unknown[]) =>
-      id === "unknown" || extra.length > 0 ? null : { items: [{ kind: "step", key: "start", label: "Start" }, { kind: "channel", slug: `of:${id}`, name: "Lead Sourcing", runByUs: true }], legs: [] },
+      id === "unknown" || extra.length > 0
+        ? null
+        : {
+            items: [
+              { kind: "step", key: "start", label: "Start" },
+              { kind: "channel", slug: `of:${id}`, name: "Lead Sourcing", runByUs: true, pipeId: "sourcing-apollo-cold-filters|start_to_lead_found" },
+              { kind: "step", key: "lead_found", label: "Lead found" },
+              { kind: "channel", slug: "sales-cold-email-outreach", name: "Sales Cold Email Outreach", runByUs: true, pipeId: "sales-cold-email-outreach|lead_found_to_conversation" },
+              { kind: "step", key: "conversation", label: "Positive reply" },
+              { kind: "channel", slug: "ai-meeting-booking", name: "AI Meeting Booking", runByUs: true, pipeId: "ai-meeting-booking|conversation_to_meeting_booked" },
+            ],
+            legs: [],
+          },
+    // A unit off the path (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): the catalogue knows ai-follow-up-email and lead_event only.
+    unitPipeIdOf: (u: { featureSlug: string; legKey: string }) => (u.featureSlug === "not-in-catalogue" ? null : `${u.featureSlug}|${u.legKey}`),
+    partOf: (u: { featureSlug: string; legKey: string }, triggerId: string | null) =>
+      u.featureSlug !== "ai-follow-up-email" || (triggerId !== null && triggerId !== "lead_event")
+        ? null
+        : {
+            pipeId: `${u.featureSlug}|${u.legKey}`,
+            trigger: triggerId ? { slug: "lead_event", name: "Lead event" } : null,
+            items: [
+              triggerId ? { kind: "trigger", slug: "lead_event", name: "Lead event" } : { kind: "step", key: "start", label: "Start" },
+              { kind: "channel", slug: "ai-follow-up-email", name: "AI Follow-up Email", runByUs: true, pipeId: `${u.featureSlug}|${u.legKey}` },
+              { kind: "step", key: "paid_client", label: "Paid client" },
+            ],
+            shortDescription: "Our AI emails leads the moment they act until they buy.",
+            shortDescriptionUnavailableReason: null,
+          },
   })),
 }));
 const funnelCampaignActivity = vi.fn();
@@ -110,7 +138,10 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(row.headline).toEqual({ totalPipelineUsd: 30, unpricedReason: null });
     expect(row.path.items[0]).toEqual({ kind: "step", key: "start", label: "Start" });
     // The path is the funnel's own (one channel per leg), never re-drawn from the campaign's units.
-    expect(row.path.items.slice(1).map((i: { slug: string }) => i.slug)).toEqual(["of:f1"]);
+    expect(row.path.items[1].slug).toBe("of:f1");
+    // Every unit is on the path: no other part, the funnel's sentence alone.
+    expect(row.otherParts).toEqual([]);
+    expect(row.shortDescription).toBe("We email new buyers until they reply with interest.");
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
   });
 
@@ -145,7 +176,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
   });
 
   it("units pricing on two funnel definitions: invested served, ROI null with a reason (never one funnel picked)", async () => {
-    fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [unit("c1", "a", "x_to_y")])] })));
+    fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [{ ...unit("c1", "a", "x_to_y"), runsOnTriggerId: null }])] })));
     distinctChannelFunnels.mockReturnValue([{ key: "one" }, { key: "two" }]);
     computeFeatureRevenue.mockResolvedValue({ costEconomics: { committedCostUsd: 3, roiMultiple: null, unmeasuredReason: null }, maturity: null });
 
@@ -204,6 +235,66 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
   });
 });
 
+describe("every part a campaign runs is in its description (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109)", () => {
+  const AI = { ...unit("c9", "ai-follow-up-email", "start_to_paid_client"), runsOnTriggerId: "lead_event" };
+  const COLD = [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found"), unit("c2", "sales-cold-email-outreach", "lead_found_to_conversation")];
+
+  it("a unit answering every Lead event beside a cold email path is served as its own part, its sentence joins the description (copy and full rows alike)", async () => {
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [...COLD, AI])] })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: null, unmeasuredReason: null }, maturity: null });
+    const copy = (await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH)).body.salesFunnelCampaigns[0];
+    const full = (await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH)).body.salesFunnelCampaigns[0];
+    for (const row of [copy, full]) {
+      expect(row.otherParts).toEqual([
+        {
+          campaignId: "c9",
+          pipeId: "ai-follow-up-email|start_to_paid_client",
+          trigger: { slug: "lead_event", name: "Lead event" },
+          items: [
+            { kind: "trigger", slug: "lead_event", name: "Lead event" },
+            { kind: "channel", slug: "ai-follow-up-email", name: "AI Follow-up Email", runByUs: true, pipeId: "ai-follow-up-email|start_to_paid_client" },
+            { kind: "step", key: "paid_client", label: "Paid client" },
+          ],
+          shortDescription: "Our AI emails leads the moment they act until they buy.",
+          unavailableReason: null,
+        },
+      ]);
+      expect(row.shortDescription).toBe("We email new buyers until they reply with interest. Our AI emails leads the moment they act until they buy.");
+      expect(row.shortDescriptionUnavailableReason).toBeNull();
+    }
+    // The units listing served the trigger: no per-unit read.
+    expect(fetchWithRetry.mock.calls.every((c) => !String(c[0]).includes("/campaigns/c9"))).toBe(true);
+  });
+
+  it("a listing that does not serve the unit's trigger reads it off the unit's own campaign; a stopped unit is no part", async () => {
+    const { runsOnTriggerId: _t, ...bare } = AI;
+    fetchWithRetry.mockImplementation(async (url: string) =>
+      url.endsWith("/campaigns/c9")
+        ? new Response(JSON.stringify({ campaign: { id: "c9", runsOnTriggerId: "lead_event" } }))
+        : new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [...COLD, bare, { ...unit("c10", "ai-follow-up-email", "start_to_paid_client"), status: "stopped" }])] })),
+    );
+    const row = (await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH)).body.salesFunnelCampaigns[0];
+    expect(row.otherParts.map((p: { campaignId: string; trigger: unknown }) => [p.campaignId, p.trigger])).toEqual([["c9", { slug: "lead_event", name: "Lead event" }]]);
+    expect(fetchWithRetry.mock.calls.filter((c) => String(c[0]).endsWith("/campaigns/c9"))).toHaveLength(1);
+  });
+
+  it("a unit the catalogue cannot describe is still listed, with its reason, never dropped", async () => {
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [...COLD, { ...unit("c11", "not-in-catalogue", "start_to_paid_client"), runsOnTriggerId: null }])] })));
+    const row = (await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH)).body.salesFunnelCampaigns[0];
+    expect(row.otherParts).toEqual([{ campaignId: "c11", pipeId: "not-in-catalogue|start_to_paid_client", trigger: null, items: null, shortDescription: null, unavailableReason: "pipe_not_in_catalogue" }]);
+    expect(row.shortDescription).toBe("We email new buyers until they reply with interest.");
+  });
+
+  it("an unreadable unit trigger fails the read (502), never reads as proactive", async () => {
+    const { runsOnTriggerId: _t, ...bare } = AI;
+    fetchWithRetry.mockImplementation(async (url: string) =>
+      url.endsWith("/campaigns/c9") ? new Response("down", { status: 503 }) : new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [...COLD, bare])] })),
+    );
+    expect((await request(app).get("/brands/b1/sales-funnel-campaigns?fields=copy").set(AUTH)).status).toBe(502);
+  });
+});
+
 describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPAIGN-ROWS)", () => {
   it("serves each row's copy, byte-equal to the full row's same fields, with no money read", async () => {
     const rows = [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]), FC("fc2", REACTIVE, [unit("c2", "ai-meeting-booking", "conversation_to_meeting_booked")]), FC("fc3", "unknown", [])];
@@ -226,7 +317,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPA
 
     const full = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
     const keys = Object.keys(lean.body.salesFunnelCampaigns[0]);
-    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "runningSalesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "copyUnavailableReason", "units"]);
+    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "runningSalesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "otherParts", "copyUnavailableReason", "units"]);
     full.body.salesFunnelCampaigns.forEach((row: Record<string, unknown>, i: number) => {
       expect(Object.fromEntries(keys.map((k) => [k, row[k]]))).toEqual(lean.body.salesFunnelCampaigns[i]);
     });

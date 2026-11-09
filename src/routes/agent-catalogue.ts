@@ -62,6 +62,7 @@ import {
   triggerHeadedPathId,
   triggerHeadRefusal,
   type TriggerHeadRefusal,
+  type TriggerRef,
 } from "../lib/agent-catalogue.js";
 import { faceOf, faceSvg } from "../lib/catalogue-faces.js";
 import { getPipeStats, type PipeStatsPipe, type PipeStatsScope } from "../lib/pipe-stats.js";
@@ -2590,12 +2591,49 @@ export function funnelShortDescriptionOf(model: CatalogueModel, f: CatalogueFunn
   });
 }
 
+/**
+ * ONE PART A CAMPAIGN RUNS OFF ITS FUNNEL LINE (owner 2026-11-09, CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): a unit whose
+ * pipe is not on the funnel the campaign runs (the GTM Factory migration gave every offer campaign a unit answering
+ * every Lead event with our AI), described like a one-leg path: what starts it (the trigger the UNIT runs on, else
+ * Start / its from step), the channel working it, the outcome its Engine makes, and its own short sentence.
+ */
+export interface CampaignPartView {
+  pipeId: string;
+  trigger: TriggerRef | null;
+  items: FunnelPathView["items"];
+  shortDescription: string | null;
+  shortDescriptionUnavailableReason: ShortDescriptionUnavailableReason | null;
+}
+
+/** PURE: a campaign part's view. `trigger` = what the unit runs on (null = proactive, from its from step). */
+export function campaignPartView(model: CatalogueModel, pipe: CataloguePipe, trigger: TriggerRef | null): CampaignPartView {
+  const step = (key: string | null) => (key === null ? START_STEP : { kind: "step" as const, key, label: stepLabel(model, key) });
+  const runByUs = pipe.operatedBy === "platform";
+  const pipeId = pipe.play?.basePipeId ?? pipe.id;
+  const items: FunnelPathView["items"] = [
+    trigger ? { kind: "trigger", ...trigger } : step(pipe.fromStep),
+    { kind: "channel", slug: pipe.channelSlug, name: pipe.channelName, runByUs, pipeId },
+    step(pipe.outcome),
+  ];
+  const channel = model.channels.find((c) => c.slug === pipe.channelSlug) ?? null;
+  const short = funnelShortDescription({
+    reactive: trigger !== null,
+    triggerId: trigger?.slug ?? null,
+    legs: [{ fromStep: pipe.fromStep, toStep: pipe.outcome, channel, runByUs }],
+  });
+  return { pipeId, trigger, items, shortDescription: short.shortDescription, shortDescriptionUnavailableReason: short.reason };
+}
+
 export async function funnelCopiesFor(ids: readonly string[]): Promise<{
   copies: Map<string, FunnelCopy | null>;
   /** Each pipe's steps, and the outcome its Engine makes (MIGRATE-1105 S5: finer than `toStep` when stated). */
   pipeSteps: Map<string, { fromStep: string | null; toStep: string; outcome: string }>;
   /** A funnel campaign's path: its funnel's (one channel per leg). */
   pathOf: (id: string) => FunnelPathView | null;
+  /** A unit off its campaign's funnel line, as a part (null = its pipe or its trigger is not in the catalogue). */
+  partOf: (unit: { featureSlug: string; legKey: string }, triggerId: string | null) => CampaignPartView | null;
+  /** The catalogue pipe id (served spelling, a play's base pipe) a unit works; null = not in the catalogue. */
+  unitPipeIdOf: (unit: { featureSlug: string; legKey: string }) => string | null;
 }> {
   const [all, pub, declaredSteps, names, live, retired, assignments, playCatalogue, scripts] = await Promise.all([
     loadChannelCatalogue({ publishedOnly: false }),
@@ -2654,7 +2692,22 @@ export async function funnelCopiesFor(ids: readonly string[]): Promise<{
     const f = found.get(id);
     return f ? funnelPathView(model, f) : null;
   };
-  return { copies: out, pipeSteps, pathOf };
+  const pipeOfUnit = (unit: { featureSlug: string; legKey: string }) =>
+    [...model.pipes.values()].find((p) => p.channelSlug === unit.featureSlug && p.legKey === unit.legKey) ??
+    [...model.pipes.values()].find((p) => p.channelSlug === unit.featureSlug && p.computedLegKey === unit.legKey) ??
+    null;
+  const unitPipeIdOf = (unit: { featureSlug: string; legKey: string }) => {
+    const pipe = pipeOfUnit(unit);
+    return pipe ? (pipe.play?.basePipeId ?? pipe.id) : null;
+  };
+  const partOf = (unit: { featureSlug: string; legKey: string }, triggerId: string | null): CampaignPartView | null => {
+    const pipe = pipeOfUnit(unit);
+    if (!pipe) return null;
+    if (triggerId === null) return campaignPartView(model, pipe, null);
+    const trigger = model.triggers.get(triggerId) ?? model.triggers.get(canonicalTriggerId(triggerId));
+    return trigger ? campaignPartView(model, pipe, trigger) : null;
+  };
+  return { copies: out, pipeSteps, pathOf, partOf, unitPipeIdOf };
 }
 
 export default router;
