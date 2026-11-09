@@ -21277,7 +21277,7 @@
                 "shortDescription": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" At most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                  "description": "Short customer sentences of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" The funnel's sentence (at most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs, the client's own team steps left out), then the sentence of each of `otherParts` (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109: every part it runs is said), each once; never stored. Null only with `shortDescriptionUnavailableReason`."
                 },
                 "shortDescriptionUnavailableReason": {
                   "type": "string",
@@ -21288,6 +21288,146 @@
                     null
                   ],
                   "description": "Why `shortDescription` is null: `sales_funnel_not_in_catalogue` (the funnel id is not in this service's catalogue, as `copyUnavailableReason`), `no_step_run_by_us` (the client's own team works every step of the funnel: nothing of ours to describe). Null when it is served."
+                },
+                "otherParts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "campaignId": {
+                        "type": "string",
+                        "description": "The unit campaign running this part."
+                      },
+                      "pipeId": {
+                        "type": "string",
+                        "description": "The catalogue pipe it works (a play's base pipe)."
+                      },
+                      "trigger": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "slug": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "name"
+                        ],
+                        "description": "What starts it: the trigger the unit runs on (\"Lead event\"); null = it runs on its own, from Start or its from step."
+                      },
+                      "items": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "trigger"
+                                  ]
+                                },
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slug",
+                                "name"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "key": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "key",
+                                "label"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "channel"
+                                  ]
+                                },
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "runByUs": {
+                                  "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slug",
+                                "name",
+                                "runByUs",
+                                "pipeId"
+                              ]
+                            }
+                          ]
+                        },
+                        "description": "The part in reading order, same items as `path`: its trigger (or Start / its from step), the channel working it, the outcome its Engine makes (\"⚡ Lead event -> AI Follow-up Email -> Paid client\"). Null only with `unavailableReason`."
+                      },
+                      "shortDescription": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "The part's own short sentence (\"Our AI emails leads the moment they act until they buy.\"), also joined into the row's `shortDescription`. Null when the client's team works it or with `unavailableReason`."
+                      },
+                      "unavailableReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "pipe_not_in_catalogue",
+                          "trigger_not_in_catalogue",
+                          null
+                        ],
+                        "description": "Why the part is not described (logged). Null when described."
+                      }
+                    },
+                    "required": [
+                      "campaignId",
+                      "pipeId",
+                      "trigger",
+                      "items",
+                      "shortDescription",
+                      "unavailableReason"
+                    ]
+                  },
+                  "description": "EVERY part the campaign runs OFF its `path` (owner 2026-11-09, CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): each ongoing unit whose pipe is not on the path, e.g. our AI answering every Lead event beside a cold email path closed by the client's team. Empty when every unit is on the path. Render each as its own line beside `path`; its sentence is already in `shortDescription`."
                 },
                 "copyUnavailableReason": {
                   "type": "string",
@@ -21605,6 +21745,7 @@
                 "path",
                 "shortDescription",
                 "shortDescriptionUnavailableReason",
+                "otherParts",
                 "copyUnavailableReason",
                 "units",
                 "investedUsd",
@@ -21712,7 +21853,7 @@
                 "shortDescription": {
                   "type": "string",
                   "nullable": true,
-                  "description": "ONE short customer sentence of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" At most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs (the client's own team steps left out), never stored. Null only with `shortDescriptionUnavailableReason`."
+                  "description": "Short customer sentences of what we do in this campaign (owner 2026-10-14: the Campaigns table shows it under the name in place of `path`), e.g. \"We email new buyers until they reply with interest.\" or \"Our AI books meetings with buyers who reply with interest.\" The funnel's sentence (at most 12 words, English, no dash, never a channel's display name; composed from the funnel's legs, the client's own team steps left out), then the sentence of each of `otherParts` (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109: every part it runs is said), each once; never stored. Null only with `shortDescriptionUnavailableReason`."
                 },
                 "shortDescriptionUnavailableReason": {
                   "type": "string",
@@ -21901,6 +22042,146 @@
                   ],
                   "description": "Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
                 },
+                "otherParts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "campaignId": {
+                        "type": "string",
+                        "description": "The unit campaign running this part."
+                      },
+                      "pipeId": {
+                        "type": "string",
+                        "description": "The catalogue pipe it works (a play's base pipe)."
+                      },
+                      "trigger": {
+                        "type": "object",
+                        "nullable": true,
+                        "properties": {
+                          "slug": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "slug",
+                          "name"
+                        ],
+                        "description": "What starts it: the trigger the unit runs on (\"Lead event\"); null = it runs on its own, from Start or its from step."
+                      },
+                      "items": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "trigger"
+                                  ]
+                                },
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slug",
+                                "name"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "step"
+                                  ]
+                                },
+                                "key": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "key",
+                                "label"
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "channel"
+                                  ]
+                                },
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "runByUs": {
+                                  "type": "boolean"
+                                },
+                                "pipeId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "slug",
+                                "name",
+                                "runByUs",
+                                "pipeId"
+                              ]
+                            }
+                          ]
+                        },
+                        "description": "The part in reading order, same items as `path`: its trigger (or Start / its from step), the channel working it, the outcome its Engine makes (\"⚡ Lead event -> AI Follow-up Email -> Paid client\"). Null only with `unavailableReason`."
+                      },
+                      "shortDescription": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "The part's own short sentence (\"Our AI emails leads the moment they act until they buy.\"), also joined into the row's `shortDescription`. Null when the client's team works it or with `unavailableReason`."
+                      },
+                      "unavailableReason": {
+                        "type": "string",
+                        "nullable": true,
+                        "enum": [
+                          "pipe_not_in_catalogue",
+                          "trigger_not_in_catalogue",
+                          null
+                        ],
+                        "description": "Why the part is not described (logged). Null when described."
+                      }
+                    },
+                    "required": [
+                      "campaignId",
+                      "pipeId",
+                      "trigger",
+                      "items",
+                      "shortDescription",
+                      "unavailableReason"
+                    ]
+                  },
+                  "description": "EVERY part the campaign runs OFF its `path` (owner 2026-11-09, CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): each ongoing unit whose pipe is not on the path, e.g. our AI answering every Lead event beside a cold email path closed by the client's team. Empty when every unit is on the path. Render each as its own line beside `path`; its sentence is already in `shortDescription`."
+                },
                 "units": {
                   "type": "array",
                   "items": {
@@ -21951,6 +22232,7 @@
                 "shortDescriptionUnavailableReason",
                 "path",
                 "copyUnavailableReason",
+                "otherParts",
                 "units"
               ]
             },
