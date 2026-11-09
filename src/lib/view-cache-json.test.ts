@@ -216,3 +216,60 @@ describe("hot bodies — a hit on an unchanged row re-sends what this process al
     expect(b.wire).not.toBe(a.wire);
   });
 });
+
+describe("servedCachedWrappedJson — a cell inside the route's envelope, serialized once per stored body (DASH-SPEED-1110)", () => {
+  const textRow = (value: unknown, at: Date) => ({ body: encodeSnapshotBody(value), bodyText: JSON.stringify(value), computedAt: at, factsFingerprint: null });
+  const envelope = { offerId: "o-1", brandId: "b-1", campaignId: null };
+
+  it.each([
+    ["an ordinary body", ORDINARY],
+    ["a NUL-carrying body", WITH_NUL],
+    ["a body that also states an envelope key", { brandId: "inner", total: 2 }],
+  ])("%s: answers exactly what res.json({ ...envelope, ...value }) sends, on a miss and on hits", async (_l, value) => {
+    const { servedCachedWrappedJson } = await import("./view-cache.js");
+    const miss = await servedCachedWrappedJson(args(async () => value), envelope);
+    const expected = await viaResJson({ ...envelope, ...value });
+    expect(miss.json).toBe(expected.text);
+    // A hit on the stored text row, then a hit on the held (unchanged) body.
+    const hit = await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    expect(hit.json).toBe(expected.text);
+    storedRow = { computedAt: storedRow!.computedAt, factsFingerprint: null, unchanged: true, bodyText: null, body: null };
+    const held = await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    const actual = await (async () => {
+      const app = express();
+      app.get("/x", (_req, res) => { sendSnapshotJson(res, held); });
+      return request(app).get("/x");
+    })();
+    expect(actual.text).toBe(expected.text);
+    expect(actual.headers["etag"]).toBe(expected.headers["etag"]);
+    expect(actual.headers["content-type"]).toBe(expected.headers["content-type"]);
+  });
+
+  it("serializes once per held body and envelope: later hits neither parse nor stringify", async () => {
+    const { servedCachedWrappedJson } = await import("./view-cache.js");
+    storedRow = textRow(ORDINARY, new Date());
+    const first = await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    storedRow = { computedAt: storedRow.computedAt, factsFingerprint: null, unchanged: true, bodyText: null, body: null };
+    const parse = vi.spyOn(JSON, "parse");
+    const stringify = vi.spyOn(JSON, "stringify");
+    const second = await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    expect(second).toBe(first);
+    expect(parse).not.toHaveBeenCalled();
+    expect(stringify.mock.calls.filter((c) => c[0] === undefined || typeof c[0] === "object" && c[0] !== envelope)).toHaveLength(0);
+    parse.mockRestore();
+    stringify.mockRestore();
+    // Another envelope is its own text.
+    const other = await servedCachedWrappedJson(args(async () => ({ never: true })), { offerId: "o-2", brandId: "b-1" });
+    expect(other.json).toBe(JSON.stringify({ offerId: "o-2", brandId: "b-1", ...ORDINARY }));
+  });
+
+  it("a cell that MOVED is wrapped again from the new body, never the held text", async () => {
+    const { servedCachedWrappedJson } = await import("./view-cache.js");
+    storedRow = textRow(ORDINARY, new Date());
+    await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    const next = { ...ORDINARY, total: 4 };
+    storedRow = { ...textRow(next, new Date(Date.now() + 1)), unchanged: false };
+    const out = await servedCachedWrappedJson(args(async () => ({ never: true })), envelope);
+    expect(out.json).toBe(JSON.stringify({ ...envelope, ...next }));
+  });
+});

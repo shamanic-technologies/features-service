@@ -37,6 +37,81 @@ export async function assertBrandHeld(
   brandId: string,
   headers: { orgId: string; userId?: string; runId?: string },
 ): Promise<void> {
+  if (!headers.orgId) throw new Error("brand ownership check requires the org (x-org-id); features-service will not pick one");
+  const holdMs = ownershipHoldMs();
+  if (holdMs <= 0) return checkBrandHeld(brandId, headers);
+  const key = `${headers.orgId}|${brandId}`;
+  const now = Date.now();
+  const held = heldOwnership.get(key);
+  if (held && now - held.at < OWNERSHIP_SERVE_STALE_MS) {
+    // Held: answered now; past the hold it is re-checked BEHIND the answer, once.
+    if (now - held.at >= holdMs && !held.rechecking) {
+      held.rechecking = true;
+      checkBrandHeld(brandId, headers).then(
+        () => heldOwnership.set(key, { at: Date.now(), rechecking: false }),
+        (err: unknown) => {
+          // A refusal ends the hold at once (the next read answers 404); an outage keeps it and retries next read.
+          if (err instanceof BrandOwnershipError) heldOwnership.delete(key);
+          else held.rechecking = false;
+          console.error(`[features-service] brand ownership re-check failed for ${key}: ${(err as Error).message}`);
+        },
+      );
+    }
+    return;
+  }
+  const pending = inFlightOwnership.get(key);
+  if (pending) return pending;
+  const check = checkBrandHeld(brandId, headers)
+    .then(() => {
+      heldOwnership.set(key, { at: Date.now(), rechecking: false });
+      if (heldOwnership.size > 10_000) for (const [k, v] of heldOwnership) if (Date.now() - v.at >= OWNERSHIP_SERVE_STALE_MS) heldOwnership.delete(k);
+    })
+    .finally(() => inFlightOwnership.delete(key));
+  inFlightOwnership.set(key, check);
+  return check;
+}
+
+/**
+ * A HELD "yes" (DASH-SPEED-1110). Every brand and offer read the dashboard polls (revenue every 5 s, Deals,
+ * Companies, campaign money) asked brand-service this same question on the request path before its O(1)
+ * cell lookup, so each poll waited on a sibling round trip that, on a loaded box, is the slow part of the
+ * answer. Who holds a brand moves only on a brand transfer (`dropBrandOwnershipHolds`, called by it) or a
+ * teardown, so a "yes" is held `BRAND_OWNERSHIP_HOLD_MS` (60 s) and re-checked behind the answer up to
+ * 10 min; a refusal (403/404) or an error is never held. `BRAND_OWNERSHIP_HOLD_MS=0` = ask every read.
+ */
+const OWNERSHIP_SERVE_STALE_MS = 10 * 60_000;
+const heldOwnership = new Map<string, { at: number; rechecking: boolean }>();
+const inFlightOwnership = new Map<string, Promise<void>>();
+
+function ownershipHoldMs(): number {
+  const raw = process.env.BRAND_OWNERSHIP_HOLD_MS;
+  if (raw === undefined || raw === "") return 60_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 60_000;
+}
+
+/** Forget every held "yes" of these orgs (a brand transfer moved a brand between them). */
+export function dropBrandOwnershipHolds(orgIds: readonly string[]): number {
+  let dropped = 0;
+  for (const key of heldOwnership.keys()) {
+    if (orgIds.some((org) => key.startsWith(`${org}|`))) {
+      heldOwnership.delete(key);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}
+
+/** Test seam. */
+export function __resetBrandOwnershipHolds(): void {
+  heldOwnership.clear();
+  inFlightOwnership.clear();
+}
+
+async function checkBrandHeld(
+  brandId: string,
+  headers: { orgId: string; userId?: string; runId?: string },
+): Promise<void> {
   const url = process.env.BRAND_SERVICE_URL;
   const apiKey = process.env.BRAND_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("BRAND_SERVICE_URL or BRAND_SERVICE_API_KEY not configured");
@@ -45,7 +120,10 @@ export async function assertBrandHeld(
   if (headers.userId) reqHeaders["x-user-id"] = headers.userId;
   if (headers.runId) reqHeaders["x-run-id"] = headers.runId;
   const response = await fetchWithRetry(`${url}/orgs/brands/${encodeURIComponent(brandId)}/leg-rates`, { headers: reqHeaders });
-  if (response.ok) return;
+  if (response.ok) {
+    await response.arrayBuffer(); // release the connection: an unread body holds its socket until GC
+    return;
+  }
   const text = await response.text();
   if (response.status === 403 || response.status === 404) {
     throw new BrandOwnershipError(brandId, headers.orgId, `brand-service leg-rates ownership check failed (${response.status}): ${text}`);

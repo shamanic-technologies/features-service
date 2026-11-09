@@ -1,4 +1,5 @@
 import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { withLedgerCounts, ledgerScopeOf } from "../lib/ledger-counts.js";
 import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
 import { fetchBrandOutcomeLedger, fetchWorkflowUnits, ledgerOfWorkflowSlugs } from "../lib/scope-outcome-ledger-io.js";
@@ -2958,7 +2959,8 @@ router.get("/brands/:brandId/campaign-revenue", apiKeyAuth, async (req, res) => 
   const base = { orgId, userId, runId };
 
   try {
-    const [rows] = await Promise.all([fetchBrandCampaignRows(brandId, undefined, base), assertBrandHeld(brandId, base)]);
+    // The pre-cache reads share the burst's answers (lib/lead-copy.ts withInteractiveReads), like /brands/:id/revenue.
+    const [rows] = await Promise.all([withInteractiveReads(() => fetchBrandCampaignRows(brandId, undefined, base)), assertBrandHeld(brandId, base)]);
     const rowSlugs = [...new Set(rows.map((r) => r.featureSlug).filter((s): s is string => typeof s === "string" && s.length > 0))];
     // The brand's ACQUISITION CHANNELS among them — the published channel rule (active, not retired for
     // a successor, an acquisition channel): the set the dashboard lists campaign rows for. A PR/visibility
@@ -2972,7 +2974,7 @@ router.get("/brands/:brandId/campaign-revenue", apiKeyAuth, async (req, res) => 
     const target = pendingRefreshTarget();
     if (target?.view === "revenue-grouped") slugs = slugs.filter((slug) => target.familyKey.startsWith(`${slug}|`));
 
-    const declaredFunnels = slugs.some((slug) => getFunnel(slug)) ? await fetchDeclaredFunnelsSoft(brandId, orgId, undefined) : [];
+    const declaredFunnels = slugs.some((slug) => getFunnel(slug)) ? await withInteractiveReads(() => fetchDeclaredFunnelsSoft(brandId, orgId, undefined)) : [];
 
     const parts = await mapWithConcurrency(slugs, 8, async (slug) => {
       const funnel = getFunnel(slug);
