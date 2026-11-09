@@ -8,13 +8,14 @@
  * (`loadBrandPricedPopulation`, shared with contacted-value), so an Interested card reads the same
  * number the engine prices that person at (on every outcome cause — see computeBrandDealsValue).
  */
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { Router } from "express";
 import { apiKeyAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
 import { resolveBrandChannels, brandFeatureSlugs, BrandHasNoChannelsError } from "../lib/brand-channels.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCachedWrappedJson, sendSnapshotJson, buildScopeKey, type SnapshotJson } from "../lib/view-cache.js";
 import { fetchLeadIdsByStanding } from "../lib/leads-client.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { loadBrandPricedPopulation, BrandPricesDifferentlyError, type BrandPricingPre } from "./contacted-value.js";
@@ -106,12 +107,14 @@ class BrandHasNoOfferCampaignsError extends Error {
 }
 
 /** `?columns=lifecycle` / `company_lifecycle` at the BRAND grain (the offer read's modes, every offer of the brand). */
-async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, columns: "lifecycle" | "company_lifecycle") {
-  const [map] = await Promise.all([fetchOfferChannelMap(brandId, headers), assertBrandHeld(brandId, headers)]);
+async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, columns: "lifecycle" | "company_lifecycle"): Promise<SnapshotJson> {
+  const [map] = await Promise.all([withInteractiveReads(() => fetchOfferChannelMap(brandId, headers)), assertBrandHeld(brandId, headers)]);
   const scope = brandOfferScope(map);
   if (scope.offerIds.length === 0) throw new BrandHasNoOfferCampaignsError(brandId);
+  // The served body is `{ brandId, offerIds, ...cell }`, serialized once per stored cell (DASH-SPEED-1110).
+  const envelope = { brandId, offerIds: scope.offerIds };
   if (columns === "company_lifecycle") {
-    const result = await servedCached<CompanyLifecycleResult>({
+    return servedCachedWrappedJson<CompanyLifecycleResult>({
       view: "brand-company-lifecycle",
       scopeKey: buildScopeKey(brandId, {
         orgId: headers.orgId,
@@ -121,8 +124,7 @@ async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, c
       }),
       orgId: headers.orgId,
       compute: () => computeOfferCompanyLifecycle(brandId, headers, scope.campaignIds),
-    });
-    return { offerIds: scope.offerIds, ...result };
+    }, envelope);
   }
   const offers: Array<BrandOfferPricing & { keyParts: { decl: string; econ: string } }> = await Promise.all(
     scope.offerIds.map(async (offerId) => {
@@ -131,7 +133,7 @@ async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, c
       return { offerId, campaignIds: offerCampaignIds(channels), pre, keyParts };
     }),
   );
-  const result = await servedCached<BrandDealsLifecycleResult>({
+  return servedCachedWrappedJson<BrandDealsLifecycleResult>({
     view: "brand-deals-lifecycle",
     scopeKey: buildScopeKey(brandId, {
       orgId: headers.orgId,
@@ -141,8 +143,7 @@ async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, c
     }),
     orgId: headers.orgId,
     compute: () => computeBrandDealsLifecycle(brandId, headers, offers),
-  });
-  return { offerIds: scope.offerIds, ...result };
+  }, envelope);
 }
 
 router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
@@ -154,11 +155,12 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
     return res.status(400).json({ error: "columns must be one of: standing, lifecycle, company_lifecycle" });
   }
   try {
-    if (columns !== "standing") return res.json({ brandId, ...(await brandLifecycleRead(brandId, headers, columns)) });
-    const channels = await resolveBrandChannels(brandId, headers);
-    const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId), assertBrandHeld(brandId, headers)]);
+    if (columns !== "standing") return sendSnapshotJson(res, await brandLifecycleRead(brandId, headers, columns));
+    // The pre-cache reads share the burst's answers (lib/lead-copy.ts withInteractiveReads), like /brands/:id/revenue.
+    const channels = await withInteractiveReads(() => resolveBrandChannels(brandId, headers));
+    const [declared] = await Promise.all([withInteractiveReads(() => fetchDeclaredFunnelsSoft(brandId, headers.orgId)), assertBrandHeld(brandId, headers)]);
     const priced = priceOnDeclaredFunnel(declared);
-    const result = await servedCached({
+    const body = await servedCachedWrappedJson({
       view: "brand-deals-value",
       scopeKey: buildScopeKey(brandId, {
         orgId: headers.orgId,
@@ -169,8 +171,8 @@ router.get("/brands/:brandId/deals-value", apiKeyAuth, async (rawReq, res) => {
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, { channels, declared }),
-    });
-    return res.json({ brandId, ...result });
+    }, { brandId });
+    return sendSnapshotJson(res, body);
   } catch (error) {
     if (error instanceof BrandHasNoChannelsError) {
       return res.status(404).json({ error: error.message, reason: "brand_has_no_channels", brandId });

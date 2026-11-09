@@ -33,6 +33,7 @@
  * An offer no campaign sells is 404 `offer_has_no_channels`, never the brand's numbers. `?pricing=` is
  * accepted and validated like every offer read (no figure here is a cost, so it moves nothing).
  */
+import { withInteractiveReads } from "../lib/lead-copy.js";
 import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
 import { Router } from "express";
 import { ledgerCountOfStep, ledgerUnitsOfRung, type LedgerScope } from "../lib/ledger-counts.js";
@@ -40,7 +41,7 @@ import { readLedgerScope } from "../lib/ledger-counts-io.js";
 import { apiKeyAuth } from "../middleware/auth.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
 import { assertBrandHeld } from "../lib/brand-ownership.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedWrappedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { OfferHasNoChannelsError, type OfferChannel } from "../lib/offer-channels.js";
 import { resolveRequest, resolveOfferFunnel, OfferChannelsPriceDifferentlyError } from "./offer-economics.js";
 import {
@@ -55,7 +56,7 @@ import { priceContactedLeads, type ContactedValueResult } from "../lib/contacted
 import type { DealsValueResult } from "../lib/deals-value.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { fetchUniboxLifecycleRows } from "../lib/leads-client.js";
-import { campaignSetKey, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
+import { campaignSetKey, offerCompanyLifecycleWrapped } from "../lib/company-lifecycle-io.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { buildPipelineGeneratedSeries, firstDayByOrganization, type PipelineGeneratedSeries } from "../lib/pipeline-generated.js";
 import type { EnginePerson } from "../lib/revenue-engine.js";
@@ -90,7 +91,11 @@ export type OfferContactedValueResult = ContactedValueResult & {
 export async function offerPricing(offerId: string, brandId: string, headers: DownstreamHeaders, channels: OfferChannel[]) {
   // Fails loud on several funnels BEFORE the population loader asks the brand-worded question.
   resolveOfferFunnel(offerId, channels);
-  const [declared] = await Promise.all([fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId), assertBrandHeld(brandId, headers)]);
+  // Shared with every read of the same request burst (lib/lead-copy.ts withInteractiveReads), never re-asked per poll.
+  const [declared] = await Promise.all([
+    withInteractiveReads(() => fetchDeclaredFunnelsSoft(brandId, headers.orgId, offerId)),
+    assertBrandHeld(brandId, headers),
+  ]);
   const priced = priceOnDeclaredFunnel(declared);
   return {
     pre: { channels, declared },
@@ -371,13 +376,12 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
     if (columns === "company_lifecycle") {
       // Nothing is priced, so no pricing read; the brand must still be the caller's.
       await assertBrandHeld(brandId, headers);
-      const result = await offerCompanyLifecycleCached({ offerId, brandId, headers, campaignIds, featureSlugs });
-      return res.json({ offerId, brandId, ...result });
+      return sendSnapshotJson(res, await offerCompanyLifecycleWrapped({ offerId, brandId, headers, campaignIds, featureSlugs }, { offerId, brandId }));
     }
     const { pre, keyParts } = await offerPricing(offerId, brandId, headers, channels);
     if (columns === "pipeline_generated") {
       const today = new Date().toISOString().slice(0, 10);
-      const result = await servedCached<OfferPipelineGeneratedResult>({
+      const body = await servedCachedWrappedJson<OfferPipelineGeneratedResult>({
         view: "offer-pipeline-generated",
         scopeKey: buildScopeKey(offerId, {
           orgId: headers.orgId,
@@ -390,12 +394,12 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
         }),
         orgId: headers.orgId,
         compute: () => computeOfferPipelineGenerated(brandId, headers, pre, campaignIds, offerId, today),
-      });
-      return res.json({ offerId, brandId, ...result });
+      }, { offerId, brandId });
+      return sendSnapshotJson(res, body);
     }
     if (columns === "lifecycle") {
       const scoped = rawCampaignId ? await campaignScope(offerId, brandId, rawCampaignId, campaignIds, headers) : campaignIds;
-      const result = await servedCached<DealsLifecycleResult>({
+      const body = await servedCachedWrappedJson<DealsLifecycleResult>({
         view: "offer-deals-lifecycle",
         scopeKey: buildScopeKey(offerId, {
           orgId: headers.orgId,
@@ -407,10 +411,10 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
         }),
         orgId: headers.orgId,
         compute: () => computeOfferDealsLifecycle(brandId, headers, pre, scoped, offerId),
-      });
-      return res.json({ offerId, brandId, campaignId: rawCampaignId || null, ...result });
+      }, { offerId, brandId, campaignId: rawCampaignId || null });
+      return sendSnapshotJson(res, body);
     }
-    const result = await servedCached<DealsValueResult>({
+    const body = await servedCachedWrappedJson<DealsValueResult>({
       view: "offer-deals-value",
       scopeKey: buildScopeKey(offerId, {
         orgId: headers.orgId,
@@ -422,8 +426,8 @@ router.get("/offers/:offerId/deals-value", apiKeyAuth, async (req, res) => {
       }),
       orgId: headers.orgId,
       compute: () => computeBrandDealsValue(brandId, headers, pre, campaignIds, offerId),
-    });
-    return res.json({ offerId, brandId, ...result });
+    }, { offerId, brandId });
+    return sendSnapshotJson(res, body);
   } catch (error) {
     return offerError(res, error, "deals value");
   }

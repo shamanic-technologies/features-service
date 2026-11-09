@@ -195,7 +195,7 @@ function cacheEnabled(): boolean {
   return process.env.FEATURE_VIEW_CACHE_ENABLED !== "false";
 }
 
-interface CachedViewArgs<T> {
+export interface CachedViewArgs<T> {
   /** Logical view family — "revenue" | "revenue-grouped" | "revenue-lens" | "stats" | … */
   view: string;
   /** Canonical key over ALL inputs that change the body (featureSlug + sorted query string). */
@@ -248,6 +248,36 @@ export async function servedCachedJson<T>(args: CachedViewArgs<T>): Promise<Snap
   return new SnapshotJson(body.text(), body.wire);
 }
 
+/**
+ * The cell inside the route's own ENVELOPE, as the exact text `res.json({ ...envelope, ...value })` sends,
+ * serialized ONCE per stored body and envelope (DASH-SPEED-1110).
+ *
+ * Why: the Deals and Companies reads answered every poll by parsing their stored cell (500-750 KB),
+ * spreading it under `{ offerId, brandId }` and re-stringifying it: ~20-30 ms of serving CPU per hit, so
+ * ten parallel hits of one board queued ~0.9 s on the serving loop (prod 2026-11-09). The wrapped text is
+ * built by that same spread and `JSON.stringify`, so its bytes are the same; it is remembered on the hot
+ * body it was built from (its `computed_at`), so a refreshed cell is wrapped again, never served stale.
+ */
+export async function servedCachedWrappedJson<T>(args: CachedViewArgs<T>, envelope: Record<string, unknown>): Promise<SnapshotJson> {
+  const body = await servedCachedBody(args);
+  const wrap = () => JSON.stringify({ ...envelope, ...(body.value() as Record<string, unknown>) });
+  const wire = body.wire;
+  if (!wire?.account) return new SnapshotJson(wrap());
+  const key = JSON.stringify(envelope);
+  wire.wrapped ??= new Map();
+  let wrapped = wire.wrapped.get(key);
+  if (!wrapped) {
+    wrapped = new SnapshotJson(wrap());
+    // A hot body serves a handful of envelopes (one per offer / campaign asking it); never an unbounded set.
+    if (wire.wrapped.size >= MAX_WRAPPED_PER_BODY) return wrapped;
+    wire.wrapped.set(key, wrapped);
+    wire.account(wrapped.json.length * 3);
+  }
+  return wrapped;
+}
+
+const MAX_WRAPPED_PER_BODY = 8;
+
 /** The bytes a body goes out as, and their ETag — computed once per stored body, not per read. */
 export interface WireForm {
   buffer?: Buffer;
@@ -256,6 +286,10 @@ export interface WireForm {
   hasLegacyLegKeys?: boolean;
   /** The served (re-spelled) wire form per route channel, when the stored text needs one. */
   served?: Map<string, WireForm>;
+  /** The body inside a route envelope, per envelope (`servedCachedWrappedJson`), on a HOT body only. */
+  wrapped?: Map<string, SnapshotJson>;
+  /** Counts bytes derived from a hot body against the hot-body budget (set by the hot-body memory only). */
+  account?: (bytes: number) => void;
 }
 
 /** A served body as the JSON text a response carries. */
@@ -418,14 +452,27 @@ function hotRemember(key: string, computedAtMs: number, text: string): WireForm 
   const bytes = text.length * 3;
   const max = hotMaxBytes();
   if (bytes > max) return wire;
-  hotBodies.set(key, { computedAtMs, text, wire, bytes });
+  const entry: HotBody = { computedAtMs, text, wire, bytes };
+  hotBodies.set(key, entry);
   hotBytes += bytes;
+  // Text derived from this body (a route envelope) counts against the same budget, and leaves with it.
+  wire.account = (extra: number) => {
+    if (hotBodies.get(key) !== entry) return;
+    entry.bytes += extra;
+    hotBytes += extra;
+    evictHotBodies();
+  };
+  evictHotBodies();
+  return wire;
+}
+
+function evictHotBodies(): void {
+  const max = hotMaxBytes();
   for (const [k, v] of hotBodies) {
     if (hotBytes <= max) break;
     hotBodies.delete(k);
     hotBytes -= v.bytes;
   }
-  return wire;
 }
 
 /** Test seam. */

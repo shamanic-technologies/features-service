@@ -9,7 +9,7 @@ import { fetchLeadsForRevenue, fetchUniboxLifecycleRows } from "./leads-client.j
 import { dedupPersonsByLead } from "./revenue-engine.js";
 import { LIFECYCLE_RUNGS } from "./lifecycle-ladder.js";
 import { companyLifecycles, type CompanyLifecycleResult } from "./company-lifecycle.js";
-import { servedCached, buildScopeKey } from "./view-cache.js";
+import { servedCached, servedCachedWrappedJson, buildScopeKey, type CachedViewArgs, type SnapshotJson } from "./view-cache.js";
 
 type Headers = { orgId: string; userId?: string; runId?: string };
 
@@ -34,15 +34,26 @@ export async function computeOfferCompanyLifecycle(brandId: string, headers: Hea
 }
 
 /** The Gold cell both reads share. */
-export function offerCompanyLifecycleCached(args: {
+interface OfferCompanyLifecycleArgs {
   offerId: string;
   brandId: string;
   headers: Headers;
   campaignIds: string[];
   featureSlugs: string[];
-}): Promise<CompanyLifecycleResult> {
+}
+
+export function offerCompanyLifecycleCached(args: OfferCompanyLifecycleArgs): Promise<CompanyLifecycleResult> {
+  return servedCached<CompanyLifecycleResult>(offerCompanyLifecycleCell(args));
+}
+
+/** The same cell inside the route's envelope, serialized once per stored cell (DASH-SPEED-1110). */
+export function offerCompanyLifecycleWrapped(args: OfferCompanyLifecycleArgs, envelope: Record<string, unknown>): Promise<SnapshotJson> {
+  return servedCachedWrappedJson<CompanyLifecycleResult>(offerCompanyLifecycleCell(args), envelope);
+}
+
+function offerCompanyLifecycleCell(args: OfferCompanyLifecycleArgs): CachedViewArgs<CompanyLifecycleResult> {
   const { offerId, brandId, headers, campaignIds, featureSlugs } = args;
-  return servedCached<CompanyLifecycleResult>({
+  return {
     view: "offer-company-lifecycle",
     scopeKey: buildScopeKey(offerId, {
       orgId: headers.orgId,
@@ -53,7 +64,7 @@ export function offerCompanyLifecycleCached(args: {
     }),
     orgId: headers.orgId,
     compute: () => computeOfferCompanyLifecycle(brandId, headers, campaignIds),
-  });
+  };
 }
 
 /** Every organisationKey the cell places on a rung: what the revenue read must list. */
