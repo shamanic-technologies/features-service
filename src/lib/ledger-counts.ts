@@ -329,8 +329,29 @@ export function withLedgerRawStats(raw: Record<string, number>, countKeys: Reado
  * Units are no outcome of our spend).
  */
 export function ledgerOurUnitDays(c: LedgerCount): string[] {
+  return netUnitDays(c, (p) => p.ourUnits);
+}
+
+/**
+ * PURE. OUTCOME-TOTAL-UNITS-1110: every Unit of the step since inception, ours + another factory's (a client's own team, a
+ * connector), each family netted of its withdrawals the same way as ours, so it never reads below `ledgerOurUnitDays`.
+ */
+export function ledgerTotalUnitCount(c: LedgerCount): number {
+  return netUnitDays(c, (p) => p.ourUnits).length + netUnitDays(c, (p) => p.otherFactoryUnits).length;
+}
+
+/**
+ * PURE. One day per Unit still standing. A NEGATIVE day is Units taken back (a producer withdrew the fact, runs-service
+ * `run_outcome_reversals`; prod 2026-11-10 Distribute.you: lead-service withdrew 620 signups): it removes that many of the
+ * latest Units before it, never below zero. Skipping it counted every withdrawn Unit as still made.
+ */
+function netUnitDays(c: LedgerCount, n: (p: ScopeOutcomeLedgerRow["past"][number]) => number): string[] {
   const out: string[] = [];
-  for (const p of c.row?.past ?? []) for (let i = 0; i < p.ourUnits; i++) out.push(p.date);
+  for (const p of c.row?.past ?? []) {
+    const k = n(p);
+    if (k > 0) for (let i = 0; i < k; i++) out.push(p.date);
+    else if (k < 0) out.splice(Math.max(0, out.length + k));
+  }
   return out;
 }
 

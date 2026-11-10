@@ -6,12 +6,17 @@
  * (people at a step who reached the next) is not a ledger figure: null `not_a_ledger_outcome`.
  */
 import { costVariance, type OutcomeAccounting } from "./outcome-accounting.js";
-import { NOT_A_LEDGER_OUTCOME, type LedgerCount } from "./ledger-counts.js";
+import { NOT_A_LEDGER_OUTCOME, ledgerTotalUnitCount, type LedgerCount } from "./ledger-counts.js";
 import type { OutcomeCostStepSeries } from "./outcome-cost-series.js";
 
 type Nullable<T> = { [K in keyof T]: T[K] | null };
 export type LedgerStepSeries = Omit<OutcomeCostStepSeries, "sinceInception" | "months"> & {
-  sinceInception: Nullable<OutcomeCostStepSeries["sinceInception"]>;
+  /**
+   * OUTCOME-TOTAL-UNITS-1110: `totalOutcomes` = EVERY ledger Unit of the step since inception (ours + another factory's: a
+   * client's own team, a connector), netted of withdrawals like `outcomes` (ours, `ledgerOurUnitDays`), so
+   * `totalOutcomes >= outcomes` always; null exactly when `outcomes` is null.
+   */
+  sinceInception: Nullable<OutcomeCostStepSeries["sinceInception"]> & { totalOutcomes: number | null };
   months: Array<Nullable<OutcomeCostStepSeries["months"][number]>>;
   outcomesUnavailableReason: string | null;
   producerGap: LedgerCount["producerGap"];
@@ -29,7 +34,9 @@ export function withLedgerStepSeries(
   targetSpendUsd: number | null,
 ): LedgerStepSeries {
   const lacks = brand.units === null;
-  const sinceInception = lacks ? { ...st.sinceInception, outcomes: null, undatedOutcomes: null, costPerOutcomeUsd: null, learning: null } : st.sinceInception;
+  const sinceInception = lacks
+    ? { ...st.sinceInception, outcomes: null, totalOutcomes: null, undatedOutcomes: null, costPerOutcomeUsd: null, learning: null }
+    : { ...st.sinceInception, totalOutcomes: ledgerTotalUnitCount(brand) };
   const months = lacks ? st.months.map((m) => ({ ...m, outcomes: null, costPerOutcomeUsd: null, cumulativeOutcomes: null, cumulativeCostPerOutcomeUsd: null, learning: null })) : st.months;
   return {
     ...st,

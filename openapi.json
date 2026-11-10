@@ -25875,7 +25875,12 @@
                     "outcomes": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced: the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced, net of Units a producer withdrew since (OUTCOME-TOTAL-UNITS-1110): the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                    },
+                    "totalOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "OUTCOME-TOTAL-UNITS-1110: EVERY ledger Unit of the step since inception, ours + another factory's (a client's own team, a connector), counted on the same ledger rows and days as `outcomes` (ours), each family net of withdrawn Units, so `totalOutcomes >= outcomes` on every step. Print a row as `<totalOutcomes> · <outcomes> from us`. NULL exactly when `outcomes` is null (same `outcomesUnavailableReason`)."
                     },
                     "undatedOutcomes": {
                       "type": "integer",
@@ -25896,6 +25901,7 @@
                   "required": [
                     "spendUsd",
                     "outcomes",
+                    "totalOutcomes",
                     "undatedOutcomes",
                     "costPerOutcomeUsd",
                     "learning"
@@ -26524,7 +26530,12 @@
                     "outcomes": {
                       "type": "integer",
                       "nullable": true,
-                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced: the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                      "description": "OUTCOME-COST-CUMUL-1109: OUR Units of the step (the brand ledger's Units our factory produced, net of Units a producer withdrew since (OUTCOME-TOTAL-UNITS-1110): the divisor of costPerOutcomeUsd; was every Unit, another factory's included). Another factory's Units are on `ledgerOutcomes[].otherFactoryUnits`. NULL when the ledger cannot state them: `outcomesUnavailableReason` names why (`outcome_not_declared_in_ledger` + `producerGap`: the brand consumed the outcome, no run declares producing it), never a 0 and never another source's count."
+                    },
+                    "totalOutcomes": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "OUTCOME-TOTAL-UNITS-1110: EVERY ledger Unit of the step since inception, ours + another factory's (a client's own team, a connector), counted on the same ledger rows and days as `outcomes` (ours), each family net of withdrawn Units, so `totalOutcomes >= outcomes` on every step. Print a row as `<totalOutcomes> · <outcomes> from us`. NULL exactly when `outcomes` is null (same `outcomesUnavailableReason`)."
                     },
                     "undatedOutcomes": {
                       "type": "integer",
@@ -26545,6 +26556,7 @@
                   "required": [
                     "spendUsd",
                     "outcomes",
+                    "totalOutcomes",
                     "undatedOutcomes",
                     "costPerOutcomeUsd",
                     "learning"
