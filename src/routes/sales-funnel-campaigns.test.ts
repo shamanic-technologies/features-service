@@ -317,7 +317,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns?fields=copy (INSTANT-CAMPA
 
     const full = await request(app).get("/brands/b1/sales-funnel-campaigns?offerId=of1").set(AUTH);
     const keys = Object.keys(lean.body.salesFunnelCampaigns[0]);
-    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "runningSalesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "otherParts", "copyUnavailableReason", "units"]);
+    expect(keys).toEqual(["id", "brandId", "offerId", "salesFunnelId", "runningSalesFunnelId", "name", "face", "status", "stopReason", "createdAt", "type", "triggerLabel", "typeLabel", "shortDescription", "shortDescriptionUnavailableReason", "path", "otherParts", "copyUnavailableReason", "target", "units"]);
     full.body.salesFunnelCampaigns.forEach((row: Record<string, unknown>, i: number) => {
       expect(Object.fromEntries(keys.map((k) => [k, row[k]]))).toEqual(lean.body.salesFunnelCampaigns[i]);
     });

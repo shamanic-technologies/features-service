@@ -14,6 +14,7 @@
  * Money (invested, ROI) is the funnel campaigns table read's (`routes/sales-funnel-campaigns.ts`), never re-served here.
  * Since inception only. Producers unreadable = 502; an unknown campaign = 404 `sales_funnel_campaign_not_found`.
  */
+import { pipeUnitsOf, type PipeUnitRow } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { withLedgerActivity } from "../lib/ledger-activity.js";
 import { readLedgerScope, ledgerBasisOf } from "../lib/ledger-counts-io.js";
@@ -122,16 +123,19 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
       const { copies, pipeSteps } = await funnelCopiesFor([row.salesFunnelId]);
       const copy = copies.get(row.salesFunnelId) ?? null;
       const path: PathStep[] = copy ? copy.path.items.flatMap((i) => (i.kind === "step" && i.key !== "start" ? [{ key: i.key, label: i.label }] : [])) : [];
-      const stepsOf = (u: SalesFunnelUnitRow) => pipeSteps.get(u.pipeId) ?? null;
-      const kindOf = (u: SalesFunnelUnitRow): PipeKind | null => {
+      // BACKLINK-ENGINE-1109: `pipes[]` lists the units that run a pipe; a unit an Engine runs with no pipe is counted
+      // in the funnel's ledger below with every other unit.
+      const pipeUnits = pipeUnitsOf(row.units);
+      const stepsOf = (u: PipeUnitRow) => pipeSteps.get(u.pipeId) ?? null;
+      const kindOf = (u: PipeUnitRow): PipeKind | null => {
         const s = stepsOf(u);
         if (!s) return null;
         if (s.fromStep === null || s.fromStep === "start") return "sourcing";
         return isInternalPipe(s.fromStep) ? "takeover" : "outreach";
       };
-      const takeover = row.units.filter((u) => kindOf(u) === "takeover");
-      const outreach = row.units.filter((u) => kindOf(u) === "outreach");
-      const sourcing = row.units.filter((u) => kindOf(u) === "sourcing");
+      const takeover = pipeUnits.filter((u) => kindOf(u) === "takeover");
+      const outreach = pipeUnits.filter((u) => kindOf(u) === "outreach");
+      const sourcing = pipeUnits.filter((u) => kindOf(u) === "sourcing");
 
       // Reads, in parallel: each outreach unit's people counts, the sources' finds, the takeover units' ledger, the call figures.
       const callUnits = takeover.filter((u) => stepsOf(u)?.toStep === CALL_STEP);
@@ -176,7 +180,7 @@ export function funnelCampaignActivity(row: SalesFunnelCampaignRow, brandId: str
         return e ? outcomesByEvent.get(e) ?? null : null;
       };
 
-      const pipes: PipeActivity[] = row.units.map((u) => {
+      const pipes: PipeActivity[] = pipeUnits.map((u) => {
         const s = stepsOf(u);
         const kind = kindOf(u);
         const base = { campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status, fromStep: s?.fromStep ?? null, toStep: s?.toStep ?? null, kind };

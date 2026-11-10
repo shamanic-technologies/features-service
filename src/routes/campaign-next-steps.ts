@@ -15,6 +15,7 @@
  * Accepts a unit campaign id too (a pipe of a campaign): the answer is its campaign's, with `requestedPipeId` set.
  * Each fact fails SOFT to a named null (the other still answers); campaign-service unreadable = 502; unknown = 404.
  */
+import { pipeUnitsOf } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
@@ -45,7 +46,9 @@ export interface CampaignNextStepsBody {
 
 export async function campaignNextSteps(row: SalesFunnelCampaignRow, orgId: string, requestedPipeCampaignId: string | null): Promise<CampaignNextStepsBody> {
   const unitIds = row.units.map((u) => u.campaignId);
-  const replyUnits = row.units.filter((u) => isReplyPipe(u.legKey));
+  // BACKLINK-ENGINE-1109: `pipes[]` and the reply latency read the units that run a pipe.
+  const pipeUnits = pipeUnitsOf(row.units);
+  const replyUnits = pipeUnits.filter((u) => isReplyPipe(u.legKey));
   const replyPipes = replyUnits.map((u) => ({ featureSlug: u.featureSlug, legKey: canonicalLegKey(u.legKey) }));
 
   const [queue, scheduled, latency] = await Promise.all([
@@ -88,7 +91,7 @@ export async function campaignNextSteps(row: SalesFunnelCampaignRow, orgId: stri
     scheduledFollowupsUnavailableReason: scheduled === null && unitIds.length > 0 ? "follow_up_schedule_unreadable" : null,
     nextSends: composeNextSends({ scheduled, scheduledAsked: unitIds.length > 0, queue, queueAsked: unitIds.length > 0 }),
     timeToFirstPositiveReply: chooseTimeToReply({ hasReplyPipe: replyPipes.length > 0, ...latency }),
-    pipes: row.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status, endsOnPositiveReply: isReplyPipe(u.legKey) })),
+    pipes: pipeUnits.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status, endsOnPositiveReply: isReplyPipe(u.legKey) })),
   };
 }
 
