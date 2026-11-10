@@ -13,6 +13,7 @@
  *   - the expected values: the scope's expected return model (`lib/expected-return.ts`) for the cost per outcome and
  *     the return, the leg's rate (`lib/expected-conversion.ts` sources) for the conversion.
  */
+import { addFeaturelessUnitSpend } from "./target-only-units.js";
 import { fetchLeadsForRevenue } from "./leads-client.js";
 import { dedupPersonsByLead, type EnginePerson } from "./revenue-engine.js";
 import { fetchEventTimestamps } from "./email-status-client.js";
@@ -74,6 +75,11 @@ export interface ChartScope {
    * every offer money figure (owner 2026-10-22, ROI-SPENT-SAME-BASIS-1022, `lib/brand-level-spend.ts`).
    */
   brandLevelSpend: boolean;
+  /**
+   * BACKLINK-ENGINE-1109: the scope's unit campaigns run by an Engine with no pipe (they state no feature slug, so a
+   * feature-filtered read drops their runs): their spend is read on their own ids, unfiltered, and added. Absent = none.
+   */
+  featurelessCampaignIds?: string[];
 }
 
 export interface SpendChart {
@@ -286,12 +292,16 @@ export async function computeSpendChart(args: {
   const reading: StepPair | null = target ? { fromStep: target.fromStep, toStep: target.step } : leg;
 
   const readSpend = async (): Promise<{ byDay: Map<string, number>; tasks: TaskSpendRow[] | null; tasksReason: string | null }> => {
+    const featureless = new Set(scope.featurelessCampaignIds ?? []);
+    const featureIds = featureless.size === 0 ? scope.campaignIds : scope.campaignIds.filter((id) => !featureless.has(id));
     const [ownByDay, brandLevel, tasks] = await Promise.all([
-      fetchBrandCommittedSpendByDay(brandId, scope.campaignIds, scope.featureSlugs, headers, pricing),
+      (featureIds.length === 0 ? Promise.resolve(new Map<string, number>()) : fetchBrandCommittedSpendByDay(brandId, featureIds, scope.featureSlugs, headers, pricing)).then((m) =>
+        addFeaturelessUnitSpend(m, brandId, [...featureless], headers, pricing),
+      ),
       scope.brandLevelSpend
         ? fetchBrandLevelSpend({ brandId, orgId: headers.orgId, pricing, featureScope: scope.featureSlugs, campaignScoped: true })
         : Promise.resolve(null),
-      fetchSpendByTaskDay(brandId, scope.campaignIds, scope.featureSlugs, headers, pricing).then(
+      (featureIds.length === 0 ? Promise.resolve([] as TaskSpendRow[]) : fetchSpendByTaskDay(brandId, featureIds, scope.featureSlugs, headers, pricing)).then(
         (rows) => ({ rows, reason: null as string | null }),
         (err: Error) => {
           console.error(`[features-service] spend charts: spend by action unreadable (brand ${brandId}, campaigns ${scope.campaignIds.join(",")}): ${err.message}`);

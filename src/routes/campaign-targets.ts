@@ -5,6 +5,7 @@
  * factory pass: the projection's cost per Target and the Target's value) and its daily budget (billing caps). Pure rule
  * in `lib/campaign-targets.ts`.
  */
+import { stepsOfPipeId, unitStepsOf } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
@@ -81,9 +82,10 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const labelOf = (k: string) => funnelSteps.find((s) => s.key === k)?.label ?? labels.get(k) ?? titleOf(k);
 
   // The milestones: the campaign's units from Start to its Target (its own for its life, never the plan line).
-  const stepsOfPipe = (pipeId: string) => copies.pipeSteps.get(pipeId) ?? copies.pipeSteps.get(pipeId.split("~")[0]!) ?? null;
+  // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe makes its campaign's Target from Start.
+  const stepsOfUnit = (u: (typeof row.units)[number]) => unitStepsOf(copies.pipeSteps, u, row);
   const edges = row.units.flatMap((u) => {
-    const st = stepsOfPipe(u.pipeId);
+    const st = stepsOfUnit(u);
     return st ? [{ campaignId: u.campaignId, fromStep: st.fromStep, toStep: st.toStep }] : [];
   });
   // MIGRATE-1105 S5: a unit whose pipe's Engine makes a finer outcome (Threads post published on the leg to Post
@@ -91,7 +93,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const ledgerKeysOf = (step: string, unitCampaignIds: readonly string[]): string[] => {
     // LEDGER-ONLY-1107-P2: the step's ledger keys through the ONE resolver (a click is declared as `lead_visited`).
     const keys = new Set(ledgerKeysOfStep(step));
-    for (const u of row.units) if (unitCampaignIds.includes(u.campaignId)) for (const k of ledgerKeysOfStep(stepsOfPipe(u.pipeId)?.outcome ?? step)) keys.add(k);
+    for (const u of row.units) if (unitCampaignIds.includes(u.campaignId)) for (const k of ledgerKeysOfStep(stepsOfUnit(u)?.outcome ?? step)) keys.add(k);
     return [...keys].sort();
   };
   const notDeclared = (keys: readonly string[]): string | null => {
@@ -108,7 +110,10 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const chain = milestoneChainOf(edges, targetKey);
   const spendOf = (ids: readonly string[]) => {
     const own = charts.pipes.filter((p) => ids.includes(p.campaignId));
-    return own.length === ids.length ? own.reduce((a, p) => a + p.totals.spendUsd, 0) : null;
+    if (own.length === ids.length) return own.reduce((a, p) => a + p.totals.spendUsd, 0);
+    // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe has no pipe chart; a set holding every unit of the
+    // campaign is the campaign's own spend.
+    return row.units.every((u) => ids.includes(u.campaignId)) ? charts.campaign.totals.spendUsd : null;
   };
   // Expected outcomes of each step per ONE Target, off the plan line (outcomes needed per paying client, rescaled).
   const running = plan?.running?.reachesTarget ? plan.running : null;
@@ -116,7 +121,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const figures = line?.figures ?? null;
   const neededByStep = new Map<string, number>();
   for (const l of line?.legs ?? []) {
-    const st = l.pipeId ? stepsOfPipe(l.pipeId) : null;
+    const st = l.pipeId ? stepsOfPipeId(copies.pipeSteps, l.pipeId) : null;
     const f = (figures?.legs ?? []).find((x) => x.legKey === l.legKey);
     if (st && f?.outcomesNeededPerPayingClient != null) neededByStep.set(st.toStep, f.outcomesNeededPerPayingClient);
   }
@@ -184,7 +189,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
       milestones,
       milestonesUnavailableReason: chain.length === 0 ? "no_unit_reaches_a_step" : null,
       ledgerDaysMissing: ledger?.daysMissing ?? [],
-      ledgerOutcomeKeys: targetKey ? ledgerKeysOf(targetKey, row.units.filter((u) => stepsOfPipe(u.pipeId)?.toStep === targetKey).map((u) => u.campaignId)) : [],
+      ledgerOutcomeKeys: targetKey ? ledgerKeysOf(targetKey, row.units.filter((u) => stepsOfUnit(u)?.toStep === targetKey).map((u) => u.campaignId)) : [],
     } as TargetRowWithMilestones,
   };
 }

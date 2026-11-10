@@ -21438,6 +21438,11 @@
                   ],
                   "description": "Why `type`, `triggerLabel`, `typeLabel` and `path` are null: the funnel id is not in this service's catalogue (logged). Null when they are served."
                 },
+                "target": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The outcome the campaign is launched to make (campaign-service `target`, a catalogue step key such as `backlink_earned`); null while not stated. A campaign launched on its Target alone (BACKLINK-ENGINE-1109) has no path: this is what it makes."
+                },
                 "units": {
                   "type": "array",
                   "items": {
@@ -21447,13 +21452,16 @@
                         "type": "string"
                       },
                       "pipeId": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "featureSlug": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "legKey": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "status": {
                         "type": "string"
@@ -21467,7 +21475,7 @@
                       "status"
                     ]
                   },
-                  "description": "The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."
+                  "description": "The unit campaigns the money is computed over, as campaign-service serves them. A unit an Engine runs with no pipe (a campaign launched on its Target alone, BACKLINK-ENGINE-1109) states null `pipeId`, `featureSlug` and `legKey`; its spend joins `investedUsd`."
                 },
                 "investedUsd": {
                   "type": "number",
@@ -21747,6 +21755,7 @@
                 "shortDescriptionUnavailableReason",
                 "otherParts",
                 "copyUnavailableReason",
+                "target",
                 "units",
                 "investedUsd",
                 "moneyUnavailableReason",
@@ -22191,13 +22200,16 @@
                         "type": "string"
                       },
                       "pipeId": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "featureSlug": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "legKey": {
-                        "type": "string"
+                        "type": "string",
+                        "nullable": true
                       },
                       "status": {
                         "type": "string"
@@ -22211,7 +22223,7 @@
                       "status"
                     ]
                   },
-                  "description": "The unit campaigns (one per pipe) the money is computed over, as campaign-service serves them."
+                  "description": "The unit campaigns the money is computed over, as campaign-service serves them. A unit an Engine runs with no pipe (a campaign launched on its Target alone, BACKLINK-ENGINE-1109) states null `pipeId`, `featureSlug` and `legKey`; its spend joins `investedUsd`."
                 }
               },
               "required": [

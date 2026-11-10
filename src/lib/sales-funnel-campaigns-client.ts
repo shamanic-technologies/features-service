@@ -7,9 +7,14 @@ import { fetchWithRetry } from "./fetch-retry.js";
 
 export interface SalesFunnelUnitRow {
   campaignId: string;
-  pipeId: string;
-  featureSlug: string;
-  legKey: string;
+  /** MIGRATE-1105 S8 (campaign-service #883): a campaign launched on its Target alone has ONE unit run by that
+   *  outcome's Engine, carrying no pipe, feature slug nor leg (all null). Every reader keys it on the campaign's
+   *  `target` instead. */
+  pipeId: string | null;
+  featureSlug: string | null;
+  legKey: string | null;
+  /** The unit's workflow (`engine:<outcome>` for an Engine-run unit). Absent on an older build. */
+  workflowSlug?: string | null;
   status: string;
   /** The trigger the unit runs on (campaign-service `runsOnTriggerId`; null = proactive). Absent on an older build:
    *  then read off the unit's own campaign (`fetchUnitRunsOnTriggerId`). */
@@ -58,7 +63,16 @@ export async function fetchSalesFunnelCampaigns(
   if (!response.ok) throw new Error(`[features-service] campaign-service /sales-funnel-campaigns failed (${response.status}): ${await response.text()}`);
   const data = (await response.json()) as { salesFunnelCampaigns?: SalesFunnelCampaignRow[] };
   if (!Array.isArray(data.salesFunnelCampaigns)) throw new Error("[features-service] campaign-service /sales-funnel-campaigns returned no salesFunnelCampaigns array");
-  return data.salesFunnelCampaigns;
+  return data.salesFunnelCampaigns.map((r) => ({ ...r, units: (r.units ?? []).map(normalizeUnit) }));
+}
+
+/**
+ * BACKLINK-ENGINE-1109: a unit stating no feature slug or no leg runs no pipe, whatever pipe id it carries
+ * (campaign-service builds it as `<slug>|<leg>` and serves `"null|null"` for an Engine-run unit): its `pipeId` is null.
+ */
+export function normalizeUnit(u: SalesFunnelUnitRow): SalesFunnelUnitRow {
+  if (u.featureSlug !== null && u.legKey !== null && u.pipeId !== null) return u;
+  return { ...u, pipeId: null };
 }
 
 /**

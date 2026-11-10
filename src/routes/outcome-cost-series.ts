@@ -7,6 +7,7 @@
  * channel, legacy campaigns included, + the brand's campaign-less work. So the since-inception spend here IS the offer
  * spend chart's and the brand offers row's. Gold cached per scope on this route's response shape.
  */
+import { addFeaturelessUnitSpend, featurelessUnitIdsOf, isPipeUnit, stepsOfPipeId } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { ledgerCountOfStep, ledgerOurUnitDays } from "../lib/ledger-counts.js";
 import { stepSpendAttribution } from "../lib/step-cost-attribution.js";
@@ -191,10 +192,24 @@ async function computeScopeOutcomeCostSeries(
 ): Promise<Omit<OutcomeCostSeriesBody, "offerId">> {
   const scope = groupScope(rows, null, offerChannels);
   const unitIds = rows.flatMap((r) => r.units.map((u) => u.campaignId));
+  // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe states no feature slug; its spend is read on its own id.
+  const featurelessIds = featurelessUnitIdsOf(rows.flatMap((r) => r.units));
+  const featureless = new Set(featurelessIds);
+  const featureIds = scope.campaignIds.filter((id) => !featureless.has(id));
+  // A set of unit campaigns' committed spend per UTC day: the ones stating a feature slug on their slugs, the
+  // featureless ones on their own ids, unfiltered. A set with none featureless = the original one read, byte for byte.
+  const spendByDayOfUnits = async (ids: readonly string[], slugs: readonly (string | null)[]): Promise<Map<string, number>> => {
+    const own = [...new Set(ids)].filter((id) => !featureless.has(id));
+    const off = [...new Set(ids)].filter((id) => featureless.has(id)).sort();
+    const stated = [...new Set(slugs.filter((x): x is string => x !== null))].sort();
+    const base = own.length === 0 ? new Map<string, number>() : await fetchBrandCommittedSpendByDay(brandId, own, stated, headers, pricing);
+    return addFeaturelessUnitSpend(base, brandId, off, headers, pricing);
+  };
   const [ownByDay, brandLevel, handedRows, { pipeSteps }, expected] = await Promise.all([
-    scope.campaignIds.length === 0
+    (featureIds.length === 0
       ? Promise.resolve(new Map<string, number>())
-      : fetchBrandCommittedSpendByDay(brandId, scope.campaignIds, scope.featureSlugs, headers, pricing),
+      : fetchBrandCommittedSpendByDay(brandId, featureIds, scope.featureSlugs, headers, pricing)
+    ).then((m) => addFeaturelessUnitSpend(m, brandId, featurelessIds, headers, pricing)),
     fetchBrandLevelSpend({ brandId, orgId: headers.orgId, pricing, featureScope: scope.featureSlugs, campaignScoped: true }),
     unitIds.length > 0 ? fetchFollowupActionRows(brandId, unitIds) : Promise.resolve([]),
     funnelCopiesFor([...new Set(rows.map((r) => r.salesFunnelId))]),
@@ -218,12 +233,16 @@ async function computeScopeOutcomeCostSeries(
 
   // OUTCOME-ACCOUNTING-1107. The Engine making each step = the offer's units whose pipe lands on it (or makes it), and
   // the funnel campaigns whose Target it is (campaign-service's `target`, else the funnel's last step).
-  const stepsOf = (pipeId: string) => pipeSteps.get(pipeId) ?? pipeSteps.get(pipeId.split("~")[0]!) ?? null;
-  const landing = new Map<string, Array<{ campaignId: string; featureSlug: string }>>();
-  for (const u of rows.flatMap((r) => r.units)) {
-    const st = stepsOf(u.pipeId);
-    if (!st) continue;
-    for (const k of new Set([st.toStep, st.outcome])) landing.set(k, [...(landing.get(k) ?? []), { campaignId: u.campaignId, featureSlug: u.featureSlug }]);
+  // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe lands on its campaign's Target (`featureSlug` null: its
+  // spend is read on its own id, unfiltered).
+  const stepsOf = (pipeId: string | null) => stepsOfPipeId(pipeSteps, pipeId);
+  const landing = new Map<string, Array<{ campaignId: string; featureSlug: string | null }>>();
+  for (const r of rows) {
+    for (const u of r.units) {
+      const st = stepsOf(u.pipeId);
+      const keys = st ? [st.toStep, st.outcome] : !isPipeUnit(u) && r.target ? [r.target] : [];
+      for (const k of new Set(keys)) landing.set(k, [...(landing.get(k) ?? []), { campaignId: u.campaignId, featureSlug: u.featureSlug }]);
+    }
   }
   const targetOf = (r: SalesFunnelCampaignRow): string | null => {
     if (r.target) return r.target;
@@ -231,17 +250,17 @@ async function computeScopeOutcomeCostSeries(
     const froms = new Set(edges.map((e) => e.fromStep));
     return edges.find((e) => !froms.has(e.toStep))?.toStep ?? null;
   };
-  const targetsByStep = new Map<string, Array<{ campaignId: string; unitCampaignIds: string[]; featureSlugs: string[] }>>();
+  const targetsByStep = new Map<string, Array<{ campaignId: string; unitCampaignIds: string[]; featureSlugs: Array<string | null> }>>();
   for (const r of rows) {
     const t = targetOf(r);
     if (t) targetsByStep.set(t, [...(targetsByStep.get(t) ?? []), { campaignId: r.id, unitCampaignIds: r.units.map((u) => u.campaignId), featureSlugs: r.units.map((u) => u.featureSlug) }]);
   }
   // Each spend read is whole-history committed spend of a set of unit campaigns, on the caller's pricing; unreadable =
   // null (the figure says `spend_unreadable`), never a zero.
-  const spendOf = async (ids: readonly string[], slugs: readonly string[]): Promise<number | null> => {
+  const spendOf = async (ids: readonly string[], slugs: readonly (string | null)[]): Promise<number | null> => {
     if (ids.length === 0) return 0;
     try {
-      const byDay = await fetchBrandCommittedSpendByDay(brandId, [...new Set(ids)], [...new Set(slugs)].sort(), headers, pricing);
+      const byDay = await spendByDayOfUnits(ids, slugs);
       return [...byDay.entries()].filter(([d]) => d <= today).reduce((a, [, v]) => a + v, 0);
     } catch (err) {
       console.error(`[features-service] outcome cost series: unit spend unreadable (${what}): ${(err as Error).message}`);
@@ -260,7 +279,7 @@ async function computeScopeOutcomeCostSeries(
 
   // The learning bar of a step: the maturity rule of the offer's leg landing on it, else the default rule.
   const barByStep = new Map<string, number>();
-  for (const u of rows.flatMap((r) => r.units)) {
+  for (const u of rows.flatMap((r) => r.units).filter(isPipeUnit)) {
     const s = pipeSteps.get(u.pipeId);
     if (!s || barByStep.has(s.toStep)) continue;
     barByStep.set(s.toStep, legMaturity(storedLegKeyOf(pipeLegKeyOf(u.featureSlug, u.legKey))).outcomesRequired);
@@ -323,14 +342,14 @@ async function computeScopeOutcomeCostSeries(
     const months = (ledgerSteps[0]?.months ?? []).map((m) => m.month).filter((m): m is string => m !== null);
     // One read per campaign set (the same set asked by several steps is read once).
     const spendReads = new Map<string, Promise<Map<string, number> | null>>();
-    const spendByDayOf = (ids: readonly string[], slugs: readonly string[]): Promise<Map<string, number> | null> => {
+    const spendByDayOf = (ids: readonly string[], slugs: readonly (string | null)[]): Promise<Map<string, number> | null> => {
       const uniq = [...new Set(ids)].sort();
       if (uniq.length === 0) return Promise.resolve(new Map());
       const key = uniq.join("+");
       if (!spendReads.has(key)) {
         spendReads.set(
           key,
-          fetchBrandCommittedSpendByDay(brandId, uniq, [...new Set(slugs)].sort(), headers, pricing).catch((err: Error) => {
+          spendByDayOfUnits(uniq, slugs).catch((err: Error) => {
             console.error(`[features-service] outcome cost series offer mix: spend unreadable (${what}): ${err.message}`);
             return null;
           }),
@@ -357,10 +376,10 @@ async function computeScopeOutcomeCostSeries(
           const ts = rows.filter((r) => r.offerId === offerId && targetOf(r) === step);
           const tIds = ts.flatMap((r) => r.units.map((u) => u.campaignId));
           const tSlugs = ts.flatMap((r) => r.units.map((u) => u.featureSlug));
-          const making = rows.filter((r) => r.offerId === offerId).flatMap((r) => r.units).filter((u) => {
+          const making = rows.filter((r) => r.offerId === offerId).flatMap((r) => r.units.map((u) => ({ u, r }))).filter(({ u, r }) => {
             const st = stepsOf(u.pipeId);
-            return st !== null && (st.toStep === step || st.outcome === step);
-          });
+            return st !== null ? st.toStep === step || st.outcome === step : !isPipeUnit(u) && r.target === step;
+          }).map(({ u }) => u);
           const [tSpend, tLedger, mSpend] = await Promise.all([
             ts.length === 0 ? Promise.resolve(new Map<string, number>()) : spendByDayOf(tIds, tSlugs),
             ts.length === 0 ? Promise.resolve(null) : ledgerOfSet(tIds),

@@ -22,6 +22,7 @@
  * A funnel id the catalogue no longer knows serves null copy + `copyUnavailableReason`. campaign-service
  * unreadable = 502 (no row is ever guessed).
  */
+import { addFeaturelessUnitSpend, featurelessUnitIdsOf, pipeUnitsOf, type PipeUnitRow } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { computeFeatureRevenue, fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel, pricedFingerprint, type DownstreamHeaders } from "./revenue.js";
@@ -52,7 +53,7 @@ const router = Router();
 export { fetchSalesFunnelCampaigns, type SalesFunnelUnitRow, type SalesFunnelCampaignRow } from "../lib/sales-funnel-campaigns-client.js";
 
 /** PURE: the offer's terms narrowed to the declared funnels the units' legs walk (a unit's own read rule). */
-export function pricingForUnits(declared: DeclaredSalesFunnel[], all: FunnelPricedEconomics, units: readonly SalesFunnelUnitRow[]): FunnelPricedEconomics {
+export function pricingForUnits(declared: DeclaredSalesFunnel[], all: FunnelPricedEconomics, units: readonly PipeUnitRow[]): FunnelPricedEconomics {
   const legs = units.map((u) => (isOutboundLegKeySpelling(u.legKey) ? storedLegKeyOf(u.legKey) : u.legKey));
   const own = declared.filter((f) => legs.some((leg) => funnelsContainingLeg(leg).includes(f.funnelKey)));
   if (own.length === 0) return all;
@@ -80,17 +81,17 @@ export interface CampaignOtherPart {
 
 /** PURE: the ongoing units whose pipe is not on the campaign's path (a path the catalogue lacks lists none). */
 export function unitsOffPath(
-  units: readonly SalesFunnelUnitRow[],
+  units: readonly PipeUnitRow[],
   path: FunnelPathView | null,
   unitPipeIdOf: (u: { featureSlug: string; legKey: string }) => string | null,
-): SalesFunnelUnitRow[] {
+): PipeUnitRow[] {
   if (!path) return [];
   const onPath = new Set(path.items.flatMap((i) => (i.kind === "channel" ? [i.pipeId] : [])));
   return units.filter((u) => u.status === "ongoing" && !onPath.has(unitPipeIdOf(u) ?? u.pipeId));
 }
 
 /** PURE: one other part, from its unit, its trigger and its catalogue view (null = not described). */
-export function otherPartOf(u: SalesFunnelUnitRow, triggerId: string | null, view: CampaignPartView | null, pipeKnown: boolean): CampaignOtherPart {
+export function otherPartOf(u: PipeUnitRow, triggerId: string | null, view: CampaignPartView | null, pipeKnown: boolean): CampaignOtherPart {
   if (!view) {
     return { campaignId: u.campaignId, pipeId: u.pipeId, trigger: null, items: null, shortDescription: null, unavailableReason: pipeKnown ? "trigger_not_in_catalogue" : "pipe_not_in_catalogue" };
   }
@@ -147,6 +148,9 @@ export function funnelCampaignCopyRow(
     // Every part it runs OFF its path (CAMPAIGN-PATH-SHOWS-AI-ANSWER-1109): e.g. our AI answering each Lead event.
     otherParts: copy ? [...otherParts] : [],
     copyUnavailableReason: copy ? null : ("sales_funnel_not_in_catalogue" as const),
+    // The outcome it is launched to make (campaign-service `target`; null while not stated). A campaign launched on its
+    // Target alone (BACKLINK-ENGINE-1109) has no path: this is what it makes.
+    target: r.target ?? null,
     units: r.units.map((u) => ({ campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status })),
   };
 }
@@ -174,7 +178,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const otherPartsById = new Map(
       await Promise.all(
         rows.map(async (r) => {
-          const off = unitsOffPath(r.units, pathOf(runningFunnelIdOf(r)), unitPipeIdOf);
+          const off = unitsOffPath(pipeUnitsOf(r.units), pathOf(runningFunnelIdOf(r)), unitPipeIdOf);
           const parts = await Promise.all(
             off.map(async (u) => {
               const triggerId = u.runsOnTriggerId !== undefined ? u.runsOnTriggerId : await fetchUnitRunsOnTriggerId(u.campaignId, headers);
@@ -212,18 +216,22 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const out = await mapWithConcurrency(rows, 3, async (r) => {
       const copy = copies.get(r.salesFunnelId) ?? null;
       if (!copy) console.error(`[features-service] sales funnel campaign ${r.id}: funnel ${r.salesFunnelId} is not in the catalogue (copy null)`);
-      const featureSlugs = [...new Set(r.units.map((u) => u.featureSlug))].sort();
-      const campaignIds = r.units.map((u) => u.campaignId).sort();
-      const distinct = distinctChannelFunnels(r.units);
+      // BACKLINK-ENGINE-1109: the engine pass prices the units that run a pipe; a unit an Engine runs with no pipe adds
+      // its own spend to `investedUsd` (read on its own id, unfiltered by feature).
+      const units = pipeUnitsOf(r.units);
+      const featurelessIds = featurelessUnitIdsOf(r.units);
+      const featureSlugs = [...new Set(units.map((u) => u.featureSlug))].sort();
+      const campaignIds = units.map((u) => u.campaignId).sort();
+      const distinct = distinctChannelFunnels(units);
       const funnel = distinct.length === 1 ? distinct[0] : null;
       const declared = declaredByOffer.get(r.offerId) ?? [];
-      const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), r.units) : undefined;
+      const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), units) : undefined;
       // WHERE THIS CAMPAIGN TOOK ITS PEOPLE OVER (`lib/value-added.ts`, owner 2026-10-11, one formula for every
       // campaign): the funnel's first step unless its own units produce it. Null = from nothing (it found them):
       // its return is the engine's ordinary pipeline over its spend. Else it is credited only the value it adds.
-      const unitSteps = r.units.flatMap((u) => pipeSteps.get(u.pipeId) ?? []);
+      const unitSteps = units.flatMap((u) => pipeSteps.get(u.pipeId) ?? []);
       const takeoverStep = copy ? takeoverStepOf(copy.firstStep, unitSteps) : null;
-      const takeoverUnit = takeoverStep ? r.units.find((u) => pipeSteps.get(u.pipeId)?.fromStep === takeoverStep) : undefined;
+      const takeoverUnit = takeoverStep ? units.find((u) => pipeSteps.get(u.pipeId)?.fromStep === takeoverStep) : undefined;
       const takeoverToStep = takeoverUnit ? pipeSteps.get(takeoverUnit.pipeId)!.toStep : null;
 
       const money = campaignIds.length === 0
@@ -279,6 +287,11 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
         },
       );
 
+      const featurelessSpendUsd =
+        featurelessIds.length === 0
+          ? 0
+          : [...(await addFeaturelessUnitSpend(new Map(), brandId, featurelessIds, headers, pricing)).values()].reduce((a, v) => a + v, 0);
+
       const expectedReturn = await expectedReturnForFunnelCampaign(
         headers,
         brandId,
@@ -289,7 +302,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
 
       return {
         ...funnelCampaignCopyRow(r, copy, runningPathOf(r), otherPartsById.get(r.id) ?? []),
-        investedUsd: money ? money.costEconomics.committedCostUsd : 0,
+        investedUsd: featurelessIds.length === 0 ? (money ? money.costEconomics.committedCostUsd : 0) : Math.round(((money ? money.costEconomics.committedCostUsd : 0) + featurelessSpendUsd) * 100) / 100,
         moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
         expectedReturn,
         // Its people at each step of its path since inception (`steps[].people`, `rateToNextPct`; Lead found = the

@@ -210,3 +210,75 @@ describe("pickBrandModel (BRAND-GRAIN-READS-1107)", () => {
     expect(expectedReturn.pickBrandModel([])).toBeNull();
   });
 });
+
+describe("a campaign launched on its Target alone (BACKLINK-ENGINE-1109)", () => {
+  beforeEach(() => {
+    spendCalls.length = 0;
+    vi.mocked(fetchBrandOutcomeLedger).mockResolvedValue(LEDGER as never);
+  });
+  const H = { orgId: "org1", userId: "u", runId: "r", featureSlug: undefined };
+  const CH = [
+    { featureSlug: "ai-meeting-booking", campaignIds: ["u2"] },
+    { featureSlug: "sales-cold-email-outreach", campaignIds: ["legacy1", "u1"] },
+  ];
+  // Its one unit is run by the Target's Engine: no pipe, no feature slug, no leg.
+  const targetOnly = {
+    id: "sfc2",
+    brandId: "b1",
+    offerId: "o1",
+    salesFunnelId: "engine-target",
+    salesFunnelName: "B",
+    status: "ongoing",
+    stopReason: null,
+    createdAt: "2026-11-09T00:00:00Z",
+    target: "backlink_earned",
+    units: [{ campaignId: "e1", pipeId: null, featureSlug: null, legKey: null, workflowSlug: "engine:backlink_earned", status: "ongoing" }],
+  };
+
+  it("computes (no throw); the pipe-based figures stay byte-equal, the Engine unit's spend is read on its own id", async () => {
+    const spend = vi.mocked((await import("../lib/brand-spend-by-day-client.js")).fetchBrandCommittedSpendByDay);
+    // The Engine unit's own spend read (no feature filter) answers nothing here, so every figure must stay put.
+    spend.mockImplementation(async (...args: unknown[]) => {
+      spendCalls.push(args);
+      if (Array.isArray(args[2]) && (args[2] as unknown[]).length === 0) return new Map();
+      return new Map([
+        ["2026-07-03", 100],
+        ["2026-08-10", 60],
+      ]);
+    });
+    const before = await computeBrandOutcomeCostSeries("b1", ["o1"], rows, CH, "net", H, "2026-10-27");
+    spendCalls.length = 0;
+    const after = await computeBrandOutcomeCostSeries("b1", ["o1"], [...(rows as unknown as unknown[]), targetOnly] as never, CH, "net", H, "2026-10-27");
+    expect(after.steps).toEqual(before.steps);
+    expect(after.ledgerOutcomes).toEqual(before.ledgerOutcomes);
+    // The scope read never names the Engine unit under a feature filter; its own read names it with none.
+    const featured = spendCalls.filter((c) => Array.isArray(c[2]) && (c[2] as unknown[]).length > 0);
+    expect(featured.every((c) => !(c[1] as string[]).includes("e1"))).toBe(true);
+    expect(spendCalls.some((c) => JSON.stringify(c[1]) === JSON.stringify(["e1"]) && (c[2] as unknown[]).length === 0)).toBe(true);
+    // The offer read survives it too.
+    await expect(computeOutcomeCostSeries("o1", "b1", [...(rows as unknown as unknown[]), targetOnly] as never, CH, "net", H, "2026-10-27")).resolves.toBeTruthy();
+  });
+
+  it("the Engine unit's spend joins the scope's spend", async () => {
+    const spend = vi.mocked((await import("../lib/brand-spend-by-day-client.js")).fetchBrandCommittedSpendByDay);
+    spend.mockImplementation(async (...args: unknown[]) => {
+      if (Array.isArray(args[2]) && (args[2] as unknown[]).length === 0) return new Map([["2026-11-09", 0.0527]]);
+      return new Map([
+        ["2026-07-03", 100],
+        ["2026-08-10", 60],
+      ]);
+    });
+    const body = await computeBrandOutcomeCostSeries("b1", ["o1"], [...(rows as unknown as unknown[]), targetOnly] as never, CH, "net", H, "2026-11-10");
+    const reply = body.steps.find((s) => s.stepKey === "conversation")!;
+    expect(reply.sinceInception.spendUsd).toBeCloseTo(170.05, 2);
+  });
+});
+
+describe("normalizeUnit (BACKLINK-ENGINE-1109)", () => {
+  it("a unit stating no feature slug or leg runs no pipe, whatever pipe id campaign-service built", async () => {
+    const { normalizeUnit } = await import("../lib/sales-funnel-campaigns-client.js");
+    expect(normalizeUnit({ campaignId: "e1", pipeId: "null|null", featureSlug: null, legKey: null, status: "ongoing" }).pipeId).toBeNull();
+    const pipe = { campaignId: "u1", pipeId: "cold-email|lead_found_to_conversation", featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", status: "ongoing" };
+    expect(normalizeUnit(pipe)).toBe(pipe);
+  });
+});

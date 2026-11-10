@@ -40,6 +40,7 @@ import { computeSpendChart, fetchFollowupActionRows, type ChartLeg, type ChartSc
 import type { FollowupActionRow } from "../lib/followup-actions-client.js";
 import { fetchOfferChannelMap, type OfferChannel } from "../lib/offer-channels.js";
 import { campaignChartTarget, groupChartTarget, type ChartTarget } from "../lib/spend-chart-target.js";
+import { featurelessUnitIdsOf, isPipeUnit, pipeUnitsOf, stepsOfPipeId, unitFeatureSlugsOf, type PipeUnitRow } from "../lib/target-only-units.js";
 
 const router = Router();
 
@@ -89,11 +90,11 @@ export interface OfferSpendChartsBody {
 }
 
 /** A unit's pipe steps (a play id reads its base pipe's). */
-const stepsOfUnit = (u: SalesFunnelUnitRow, steps: PipeSteps) => steps.get(u.pipeId) ?? steps.get(u.pipeId.split("~")[0]!) ?? null;
+const stepsOfUnit = (u: SalesFunnelUnitRow, steps: PipeSteps) => stepsOfPipeId(steps, u.pipeId);
 
 const legOf = (u: SalesFunnelUnitRow, steps: PipeSteps): ChartLeg | null => {
   const s = stepsOfUnit(u, steps);
-  return s ? { channelSlug: u.featureSlug, legKey: u.legKey, fromStep: s.fromStep, toStep: s.toStep } : null;
+  return s && isPipeUnit(u) ? { channelSlug: u.featureSlug, legKey: u.legKey, fromStep: s.fromStep, toStep: s.toStep } : null;
 };
 
 /**
@@ -101,19 +102,19 @@ const legOf = (u: SalesFunnelUnitRow, steps: PipeSteps): ChartLeg | null => {
  * produces: a reactive funnel's head), each next unit leaving the step the previous one produced; leftovers last.
  */
 export function unitsInPathOrder(units: readonly SalesFunnelUnitRow[], steps: PipeSteps): SalesFunnelUnitRow[] {
-  const produced = new Set(units.map((u) => steps.get(u.pipeId)?.toStep).filter(Boolean));
+  const produced = new Set(units.map((u) => (u.pipeId === null ? undefined : steps.get(u.pipeId))?.toStep).filter(Boolean));
   const head =
-    units.find((u) => steps.get(u.pipeId)?.fromStep === null) ??
+    units.find((u) => (u.pipeId === null ? undefined : steps.get(u.pipeId))?.fromStep === null) ??
     units.find((u) => {
-      const from = steps.get(u.pipeId)?.fromStep;
+      const from = (u.pipeId === null ? undefined : steps.get(u.pipeId))?.fromStep;
       return from !== undefined && from !== null && !produced.has(from);
     });
   const out: SalesFunnelUnitRow[] = [];
   let cur = head;
   while (cur && !out.includes(cur)) {
     out.push(cur);
-    const to = steps.get(cur.pipeId)?.toStep;
-    cur = units.find((u) => !out.includes(u) && steps.get(u.pipeId)?.fromStep === to);
+    const to = (cur.pipeId === null ? undefined : steps.get(cur.pipeId))?.toStep;
+    cur = units.find((u) => !out.includes(u) && (u.pipeId === null ? undefined : steps.get(u.pipeId))?.fromStep === to);
   }
   return [...out, ...units.filter((u) => !out.includes(u))];
 }
@@ -132,7 +133,7 @@ export function campaignTargetOf(row: SalesFunnelCampaignRow, steps: PipeSteps, 
 }
 
 /** PURE. One pipe's scope: its own spend; its people (a sourcing pipe's = what the campaign's other units were served). */
-export function pipeScope(row: SalesFunnelCampaignRow, u: SalesFunnelUnitRow, steps: PipeSteps): ChartScope {
+export function pipeScope(row: SalesFunnelCampaignRow, u: PipeUnitRow, steps: PipeSteps): ChartScope {
   const leg = legOf(u, steps);
   const finds = leg?.toStep === "lead_found";
   return {
@@ -161,13 +162,14 @@ export function groupScope(rows: readonly SalesFunnelCampaignRow[], target: Char
   const ids = [...new Set([...units.map((u) => u.campaignId), ...(offerChannels ?? []).flatMap((c) => c.campaignIds)])].sort();
   return {
     campaignIds: ids,
-    featureSlugs: [...new Set([...units.map((u) => u.featureSlug), ...(offerChannels ?? []).map((c) => c.featureSlug)])].sort(),
+    featureSlugs: [...new Set([...unitFeatureSlugsOf(units), ...(offerChannels ?? []).map((c) => c.featureSlug)])].sort(),
     personCampaignIds: ids,
     actingCampaignIds: ids,
     leg: null,
     target,
     pipe: null,
     brandLevelSpend: offerChannels !== undefined,
+    ...(featurelessUnitIdsOf(units).length > 0 ? { featurelessCampaignIds: featurelessUnitIdsOf(units).sort() } : {}),
   };
 }
 
@@ -213,7 +215,7 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
     chartContext(brandId, row.units.map((u) => u.campaignId), pricing, headers),
   ]);
   const target = campaignTargetOf(row, pipeSteps, pathOf);
-  const ordered = unitsInPathOrder(row.units, pipeSteps);
+  const ordered = unitsInPathOrder(pipeUnitsOf(row.units), pipeSteps).filter(isPipeUnit);
   // LEDGER-ONLY-1107-P2: every outcome / $ per outcome / conversion of the campaign's chart = the Units its units' runs
   // produced (runs-service ledger), a pipe's = its own campaign's; never the people a lead read counted.
   const basis = pricing === "gross" ? "gross" : "net";
