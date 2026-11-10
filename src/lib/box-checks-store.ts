@@ -2,7 +2,7 @@
  * Persistence of the box watchdog runs (`box_check_runs`, `lib/box-checks.ts`). A run's identity is (check, instant):
  * writing a batch UPSERTS on it (idempotent re-send), then prunes rows older than RETENTION_DAYS.
  */
-import { asc, desc, gte, lt, sql } from "drizzle-orm";
+import { asc, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { boxCheckRuns, type BoxCheckRunRow } from "../db/schema.js";
 import { RETENTION_DAYS, type BoxCheckRun, type BoxChecksInputs, type StoredCheckRun } from "./box-checks.js";
@@ -80,4 +80,10 @@ export async function readBoxChecksInputs(since: Date): Promise<BoxChecksInputs>
     windowRuns: windowRows.map((r) => toStored(r)),
     latestPerCheck: latestRows.map((r) => toStored(r)),
   };
+}
+
+/** FORGET a check: delete every stored run of exactly this check name (no other check touched). Returns the rows removed. */
+export async function deleteBoxCheck(check: string): Promise<{ deleted: number }> {
+  const rows = await db.delete(boxCheckRuns).where(eq(boxCheckRuns.check, check)).returning({ check: boxCheckRuns.check });
+  return { deleted: rows.length };
 }

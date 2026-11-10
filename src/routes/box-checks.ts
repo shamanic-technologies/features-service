@@ -3,7 +3,11 @@
  * keyed by a check name the caller sends (never a route per check). Service-key only (no org: a fleet fact); staff-gated at
  * api-service (READ only; the INGEST is never exposed through the gateway, the box posts in-container on localhost).
  * - `POST /internal/box-checks/runs`: every watchdog run posts its result. Upsert on (check, ranAt), prune > 90 days.
- * - `GET /internal/box-checks?days=N&expect=a,b`: per check, verdict + plain-words reason + last run + daily and 48 h series.
+ * - `GET /internal/box-checks?days=N&expect=a,b&prefix=p&excludePrefix=q`: per check, verdict + plain-words reason + last run +
+ *   daily and 48 h series. `prefix` keeps only the checks whose name starts with it, `excludePrefix` drops them; the summary
+ *   (status, brokenCount, reason) is computed over the kept set. No param = every check.
+ * - `DELETE /internal/box-checks/checks/:check`: FORGET a check (every stored run of that exact name), e.g. a page removed from
+ *   the dashboard whose `page-speed-<page>` check would otherwise sit red for the 90-day retention. Never through the gateway.
  * No alerting from the service: red on the hub is the alert.
  *
  * Mounted BEFORE the global `express.json()` (100 kB default) with its own 2 MB limit (500 runs x details).
@@ -18,8 +22,9 @@ import {
   RECENT_HOURS,
   buildBoxChecksView,
   windowStart,
+  type BoxChecksFilter,
 } from "../lib/box-checks.js";
-import { readBoxChecksInputs, upsertBoxCheckRuns } from "../lib/box-checks-store.js";
+import { deleteBoxCheck, readBoxChecksInputs, upsertBoxCheckRuns } from "../lib/box-checks-store.js";
 
 const router = Router();
 
@@ -69,14 +74,39 @@ router.get("/internal/box-checks", apiKeyOnly, async (req, res) => {
       return;
     }
   }
+  const filter: BoxChecksFilter = {};
+  for (const key of ["prefix", "excludePrefix"] as const) {
+    const v = req.query[key];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || !CHECK_NAME_PATTERN.test(v)) {
+      res.status(400).json({ error: `${key} must be a check name fragment (lowercase letters, digits, dashes, 1 to 63 chars)` });
+      return;
+    }
+    filter[key] = v;
+  }
   const now = new Date();
   const since = new Date(Math.min(windowStart(now, windowDays).getTime(), now.getTime() - RECENT_HOURS * 3_600_000));
   try {
     const inputs = await readBoxChecksInputs(since);
-    res.json(buildBoxChecksView(inputs, now, windowDays, expected));
+    res.json(buildBoxChecksView(inputs, now, windowDays, expected, filter));
   } catch (err) {
     console.error("[features-service] GET /internal/box-checks failed:", err);
     res.status(500).json({ error: "box_checks_unreadable" });
+  }
+});
+
+router.delete("/internal/box-checks/checks/:check", apiKeyOnly, async (req, res) => {
+  const check = req.params.check;
+  if (!CHECK_NAME_PATTERN.test(check)) {
+    res.status(400).json({ error: `invalid check name "${check}"` });
+    return;
+  }
+  try {
+    const { deleted } = await deleteBoxCheck(check);
+    res.json({ check, deleted });
+  } catch (err) {
+    console.error("[features-service] DELETE /internal/box-checks/checks/:check failed:", { check, err });
+    res.status(500).json({ error: "box_checks_delete_failed" });
   }
 });
 
