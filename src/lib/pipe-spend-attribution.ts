@@ -80,7 +80,7 @@ export function planPipeSpend(rows: readonly SalesFunnelCampaignRow[], campaignI
   }
   if (ORIGINS.has(featureSlug) && sole(featureSlug)) {
     const adoptFrom = units
-      .filter((u) => (SOURCING_ORIGINS_BY_CHANNEL[u.featureSlug] ?? []).includes(featureSlug))
+      .filter((u): u is typeof u & { featureSlug: string } => u.featureSlug !== null && (SOURCING_ORIGINS_BY_CHANNEL[u.featureSlug] ?? []).includes(featureSlug))
       .map((u) => ({ campaignId: u.campaignId, featureSlug: u.featureSlug }));
     return adoptFrom.length > 0 ? { releasedOriginSlugs: [], adoptFrom } : null;
   }

@@ -106,9 +106,10 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/peopl
     ]);
     const runByUs = new Map((pathOf(row.salesFunnelId)?.items ?? []).flatMap((i) => (i.kind === "channel" ? [[i.pipeId, i.runByUs] as const] : [])));
     const runByUsOf = (pipeId: string) => runByUs.get(pipeId) ?? runByUs.get(pipeId.split("~")[0]!) ?? true;
-    const slugs = [...new Set(row.units.map((u) => u.featureSlug))];
+    // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe states no feature slug.
+    const slugs = [...new Set(row.units.flatMap((u) => (u.featureSlug === null ? [] : [u.featureSlug])))];
     const [workflows, spends] = await Promise.all([
-      fetchPublicWorkflows(slugs.join(",")),
+      slugs.length === 0 ? Promise.resolve([] as Awaited<ReturnType<typeof fetchPublicWorkflows>>) : fetchPublicWorkflows(slugs.join(",")),
       Promise.all(charts.pipes.map((p) => fetchRunsCostCentsByWorkflowSlug(brandId, p.featureSlug, headers, pricing, p.campaignId))),
     ]);
     const dynastyOf = dynastyOfSlug(workflows);

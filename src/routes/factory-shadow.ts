@@ -14,6 +14,7 @@
  *        the judge's proof: on every live campaign, a brief written from the plays it runs today, Jev re-picks; agreement
  *        rate + every disagreement (run in the background, last result stored)
  */
+import { pipeUnitsOf } from "../lib/target-only-units.js";
 import { Router } from "express";
 import { apiKeyAuth, apiKeyOnly, type AuthenticatedRequest } from "../middleware/auth.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
@@ -137,7 +138,8 @@ const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampa
   triggerId: r.triggerId ?? null,
   followsPlan: r.followsPlan === true,
   bornSalesFunnelId: r.salesFunnelId,
-  units: (r.units ?? []).map((u) => ({ campaignId: u.campaignId, featureSlug: u.featureSlug, legKey: u.legKey })),
+  // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe has no channel nor leg to shadow.
+  units: pipeUnitsOf(r.units ?? []).map((u) => ({ campaignId: u.campaignId, featureSlug: u.featureSlug, legKey: u.legKey })),
 });
 
 /** Per-pass memos: one brand-service read per brand, one offer-steps read per offer, one model per lifetime revenue. */
