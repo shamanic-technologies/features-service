@@ -12,6 +12,10 @@
  * - `ok` otherwise;
  * - `not_yet` only for a check the reader EXPECTS (`?expect=`) that never reported: a normal "not yet", never red.
  * A check never seen and not expected is simply absent.
+ *
+ * A reader can narrow the view to a FAMILY of checks by name prefix (`prefix`) or drop one (`excludePrefix`); the verdict
+ * summary (status, brokenCount, reason) is then computed over that set only. Grouping is by name prefix only, never a
+ * per-family rule (e.g. the per-page `page-speed-<page>` checks vs every other watchdog).
  */
 import { z } from "zod";
 
@@ -283,24 +287,45 @@ function notYet(check: string): BoxCheckView {
   };
 }
 
+/** Name-prefix narrowing of the view. Both set = AND (starts with `prefix` and not with `excludePrefix`). */
+export interface BoxChecksFilter {
+  prefix?: string;
+  excludePrefix?: string;
+}
+
+export function checkMatchesFilter(check: string, filter: BoxChecksFilter): boolean {
+  if (filter.prefix !== undefined && !check.startsWith(filter.prefix)) return false;
+  if (filter.excludePrefix !== undefined && check.startsWith(filter.excludePrefix)) return false;
+  return true;
+}
+
 const VERDICT_ORDER: Record<BoxCheckView["verdict"], number> = { broken: 0, ok: 1, not_yet: 2 };
 
 /**
- * Every check seen (plus every `expected` name never seen, as `not_yet`), broken first, then by name.
+ * Every check seen (plus every `expected` name never seen, as `not_yet`), broken first, then by name. With a `filter`, only
+ * the checks (and expected names) matching it are served AND counted in the summary.
  */
-export function buildBoxChecksView(inputs: BoxChecksInputs, now: Date, windowDays: number, expected: string[] = []): BoxChecksView {
+export function buildBoxChecksView(
+  inputs: BoxChecksInputs,
+  now: Date,
+  windowDays: number,
+  expected: string[] = [],
+  filter: BoxChecksFilter = {},
+): BoxChecksView {
+  const keep = (check: string) => checkMatchesFilter(check, filter);
   const runsByCheck = new Map<string, StoredCheckRun[]>();
   for (const r of inputs.windowRuns) {
+    if (!keep(r.check)) continue;
     const list = runsByCheck.get(r.check);
     if (list) list.push(r);
     else runsByCheck.set(r.check, [r]);
   }
-  const checks: BoxCheckView[] = inputs.latestPerCheck.map((latest) =>
+  const checks: BoxCheckView[] = inputs.latestPerCheck.filter((latest) => keep(latest.check)).map((latest) =>
     buildOne(latest.check, latest, runsByCheck.get(latest.check) ?? [], now, windowDays),
   );
   const seen = new Set(checks.map((c) => c.check));
   for (const name of new Set(expected)) {
-    if (!seen.has(name)) checks.push(notYet(name));
+    if (!seen.has(name) && keep(name)) checks.push(notYet(name));
   }
   checks.sort((a, b) => VERDICT_ORDER[a.verdict] - VERDICT_ORDER[b.verdict] || a.check.localeCompare(b.check));
 
