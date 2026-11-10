@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accountingReturn, expectedRouteFigures, outcomeAccountingOf, yieldToNext } from "./outcome-accounting.js";
 import { withLedgerStepSeries } from "./ledger-outcome-cost-series.js";
-import type { LedgerCount } from "./ledger-counts.js";
+import { ledgerOurUnitDays, ledgerTotalUnitCount, type LedgerCount } from "./ledger-counts.js";
 import type { OutcomeCostStepSeries } from "./outcome-cost-series.js";
 
 const route = expectedRouteFigures(
@@ -65,5 +65,52 @@ describe("withLedgerStepSeries: why the actual cost per Unit is empty (OUTCOME-A
     const a = withLedgerStepSeries(step, count(2), count(2), 10, null, null).accounting!;
     expect(a.costPerUnit.actualUsd).toBe(5);
     expect(a.costPerUnit.actualUnavailableReason).toBeNull();
+  });
+});
+
+describe("withLedgerStepSeries: totalOutcomes (OUTCOME-TOTAL-UNITS-1110)", () => {
+  const withPast = (past: Array<{ date: string; units: number; ourUnits: number }>): LedgerCount => {
+    const units = past.reduce((a, p) => a + p.units, 0);
+    const ours = past.reduce((a, p) => a + p.ourUnits, 0);
+    return { ...count(units, ours), row: { past: past.map((p) => ({ ...p, cumulativeUnits: 0, cumulativeOurUnits: 0, otherFactoryUnits: p.units - p.ourUnits })) } as unknown as LedgerCount["row"] };
+  };
+
+  it("counts every Unit of the step, ours + another factory's, never below ours", () => {
+    const c = withPast([
+      { date: "2026-11-01", units: 3, ourUnits: 1 },
+      { date: "2026-11-02", units: 2, ourUnits: 2 },
+    ]);
+    const s = withLedgerStepSeries({ ...step, sinceInception: { ...step.sinceInception, outcomes: 3 } }, c, null, null, null, null);
+    expect(s.sinceInception.totalOutcomes).toBe(5);
+    expect(s.sinceInception.outcomes).toBe(3);
+    expect(s.sinceInception.totalOutcomes!).toBeGreaterThanOrEqual(s.sinceInception.outcomes!);
+  });
+
+  it("0 when the ledger holds no Unit of the step (as ours is 0)", () => {
+    const s = withLedgerStepSeries({ ...step, sinceInception: { ...step.sinceInception, outcomes: 0 } }, withPast([]), null, null, null, null);
+    expect(s.sinceInception.totalOutcomes).toBe(0);
+  });
+
+  it("null exactly when ours is null (the ledger lacks the outcome)", () => {
+    const s = withLedgerStepSeries(step, count(null), null, null, null, null);
+    expect(s.sinceInception.outcomes).toBeNull();
+    expect(s.sinceInception.totalOutcomes).toBeNull();
+  });
+});
+
+describe("ledgerOurUnitDays / ledgerTotalUnitCount: withdrawn Units (OUTCOME-TOTAL-UNITS-1110)", () => {
+  const row = (past: Array<[string, number, number]>): LedgerCount =>
+    ({ ...count(0, 0), row: { past: past.map(([date, ourUnits, otherFactoryUnits]) => ({ date, units: ourUnits + otherFactoryUnits, ourUnits, otherFactoryUnits, cumulativeUnits: 0, cumulativeOurUnits: 0 })) } }) as unknown as LedgerCount;
+
+  it("a negative day takes back the latest Units before it (prod 2026-11-10: lead-service withdrew signups)", () => {
+    const c = row([["2026-11-01", 5, 0], ["2026-11-02", 3, 2], ["2026-11-09", -4, 0]]);
+    expect(ledgerOurUnitDays(c)).toEqual(["2026-11-01", "2026-11-01", "2026-11-01", "2026-11-01"]);
+    expect(ledgerTotalUnitCount(c)).toBe(6);
+  });
+
+  it("more withdrawn than made never reads below zero, and the total stays >= ours", () => {
+    const c = row([["2026-11-01", 480, 0], ["2026-11-09", -222, 0], ["2026-11-10", -398, 1]]);
+    expect(ledgerOurUnitDays(c)).toEqual([]);
+    expect(ledgerTotalUnitCount(c)).toBe(1);
   });
 });

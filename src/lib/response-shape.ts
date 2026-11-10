@@ -69,8 +69,9 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   "/brands/{brandId}/sales-funnel-campaigns": "ledger-other-factory-1107",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
-  "/offers/{offerId}/outcome-cost-series": "outcome-cost-cumul-1109",
-  "/brands/{brandId}/outcome-cost-series": "outcome-cost-cumul-1109",
+  // OUTCOME-TOTAL-UNITS-1110: our Units net of withdrawn ones (a negative ledger day), + totalOutcomes.
+  "/offers/{offerId}/outcome-cost-series": "outcome-total-units-1110",
+  "/brands/{brandId}/outcome-cost-series": "outcome-total-units-1110",
   "/offers/{offerId}/outcomes": "ledger-other-factory-1107",
   "/offers/{offerId}/revenue": "ledger-other-factory-1107",
   "/brands/{brandId}/offers": "ledger-other-factory-1107",
