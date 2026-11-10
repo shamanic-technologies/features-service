@@ -273,3 +273,12 @@ describe("a campaign launched on its Target alone (BACKLINK-ENGINE-1109)", () =>
     expect(reply.sinceInception.spendUsd).toBeCloseTo(170.05, 2);
   });
 });
+
+describe("normalizeUnit (BACKLINK-ENGINE-1109)", () => {
+  it("a unit stating no feature slug or leg runs no pipe, whatever pipe id campaign-service built", async () => {
+    const { normalizeUnit } = await import("../lib/sales-funnel-campaigns-client.js");
+    expect(normalizeUnit({ campaignId: "e1", pipeId: "null|null", featureSlug: null, legKey: null, status: "ongoing" }).pipeId).toBeNull();
+    const pipe = { campaignId: "u1", pipeId: "cold-email|lead_found_to_conversation", featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", status: "ongoing" };
+    expect(normalizeUnit(pipe)).toBe(pipe);
+  });
+});

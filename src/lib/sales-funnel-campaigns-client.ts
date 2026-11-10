@@ -63,7 +63,16 @@ export async function fetchSalesFunnelCampaigns(
   if (!response.ok) throw new Error(`[features-service] campaign-service /sales-funnel-campaigns failed (${response.status}): ${await response.text()}`);
   const data = (await response.json()) as { salesFunnelCampaigns?: SalesFunnelCampaignRow[] };
   if (!Array.isArray(data.salesFunnelCampaigns)) throw new Error("[features-service] campaign-service /sales-funnel-campaigns returned no salesFunnelCampaigns array");
-  return data.salesFunnelCampaigns;
+  return data.salesFunnelCampaigns.map((r) => ({ ...r, units: (r.units ?? []).map(normalizeUnit) }));
+}
+
+/**
+ * BACKLINK-ENGINE-1109: a unit stating no feature slug or no leg runs no pipe, whatever pipe id it carries
+ * (campaign-service builds it as `<slug>|<leg>` and serves `"null|null"` for an Engine-run unit): its `pipeId` is null.
+ */
+export function normalizeUnit(u: SalesFunnelUnitRow): SalesFunnelUnitRow {
+  if (u.featureSlug !== null && u.legKey !== null && u.pipeId !== null) return u;
+  return { ...u, pipeId: null };
 }
 
 /**
