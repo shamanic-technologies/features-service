@@ -5,7 +5,7 @@ import { featureResponseSchema } from "./schemas.js";
 import { CHANNEL_TYPES } from "./channel-types.js";
 import { SecurityAdvisoryReportSchema } from "./security-advisories.js";
 import { BoxHealthBatchSchema } from "./box-health.js";
-import { BoxCheckBatchSchema, MAX_WINDOW_DAYS as BOX_CHECKS_MAX_DAYS, STALE_CADENCE_MULTIPLIER } from "./box-checks.js";
+import { BoxCheckBatchSchema, CHECK_NAME_PATTERN, MAX_WINDOW_DAYS as BOX_CHECKS_MAX_DAYS, STALE_CADENCE_MULTIPLIER } from "./box-checks.js";
 import { SALES_FUNNEL_KEYS } from "./sales-funnels.js";
 
 const registry = new OpenAPIRegistry();
@@ -9527,19 +9527,62 @@ registry.registerPath({
     "Feeds the staff Monitoring hub, one chart per check. A check is broken when its latest run said ok:false or when it stopped " +
     `reporting (no run for more than ${STALE_CADENCE_MULTIPLIER} x its declared cadence). \`expect\` lists check names the reader ` +
     "knows about: one never seen is served as not_yet (never red); a never-seen name not in `expect` is absent. " +
-    `\`days\` (default 30, max ${BOX_CHECKS_MAX_DAYS}) bounds the daily series. api-key only; staff-gated at api-service.`,
+    `\`days\` (default 30, max ${BOX_CHECKS_MAX_DAYS}) bounds the daily series. \`prefix\` / \`excludePrefix\` narrow the view to ` +
+    "one family of checks by NAME PREFIX (e.g. `prefix=page-speed-` = the per-page speed checks only, `excludePrefix=page-speed-` = " +
+    "every other watchdog, the robot's own `page-speed` health included); `status`, `brokenCount`, `reason` and `checks` are then " +
+    "computed over the kept set only, and `expect` names outside it are dropped. Both given = AND. No param = every check, " +
+    "unchanged. api-key only; staff-gated at api-service.",
   tags: ["Internal"],
   request: {
     query: z.object({
       days: z.string().optional().describe(`Window in days, 1 to ${BOX_CHECKS_MAX_DAYS} (default 30).`),
       expect: z.string().optional().describe("Comma-separated check names the reader expects (e.g. `deploy-pipeline,service-health`)."),
+      prefix: z
+        .string()
+        .optional()
+        .describe("Keep only the checks whose name starts with this (a check-name fragment: `^[a-z0-9][a-z0-9-]{0,62}$`, e.g. `page-speed-`)."),
+      excludePrefix: z
+        .string()
+        .optional()
+        .describe("Drop the checks whose name starts with this (same pattern as prefix, e.g. `page-speed-`)."),
     }),
   },
   responses: {
-    200: { description: "Every check's verdict and series.", content: { "application/json": { schema: boxChecksView } } },
-    400: { description: "Invalid days or expect", content: { "application/json": { schema: errorResponse } } },
+    200: { description: "Every (kept) check's verdict and series.", content: { "application/json": { schema: boxChecksView } } },
+    400: { description: "Invalid days, expect, prefix or excludePrefix", content: { "application/json": { schema: errorResponse } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/internal/box-checks/checks/{check}",
+  summary: "Forget a box check: delete every stored run of that exact check name (internal, api-key)",
+  description:
+    "For a check that no longer exists (e.g. a dashboard page removed, whose `page-speed-<page>` check would otherwise read " +
+    "broken, 'no report for N days', until the 90-day retention prunes it). Deletes ALL runs of exactly this name, no other " +
+    "check touched (`page-speed-x` never deletes `page-speed-x-y`). Idempotent: an unknown name returns deleted: 0. A later run " +
+    "under the same name simply starts the check again. api-key only (x-api-key); never exposed through the gateway.",
+  tags: ["Internal"],
+  request: {
+    params: z.object({ check: z.string().regex(CHECK_NAME_PATTERN).describe("The exact check name to forget (e.g. `page-speed-offers-id-targeting`).") }),
+  },
+  responses: {
+    200: {
+      description: "Forgotten.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            check: z.string(),
+            deleted: z.number().int().describe("Stored runs removed (0 when the name was unknown)."),
+          }),
+        },
+      },
+    },
+    400: { description: "Invalid check name", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    500: { description: "Store unwritable", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

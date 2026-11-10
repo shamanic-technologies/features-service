@@ -78953,7 +78953,7 @@
     "/internal/box-checks": {
       "get": {
         "summary": "Box watchdog checks: per check verdict (broken / ok / not yet), plain reason, last run, daily + 48 h series (internal, api-key)",
-        "description": "Feeds the staff Monitoring hub, one chart per check. A check is broken when its latest run said ok:false or when it stopped reporting (no run for more than 3 x its declared cadence). `expect` lists check names the reader knows about: one never seen is served as not_yet (never red); a never-seen name not in `expect` is absent. `days` (default 30, max 90) bounds the daily series. api-key only; staff-gated at api-service.",
+        "description": "Feeds the staff Monitoring hub, one chart per check. A check is broken when its latest run said ok:false or when it stopped reporting (no run for more than 3 x its declared cadence). `expect` lists check names the reader knows about: one never seen is served as not_yet (never red); a never-seen name not in `expect` is absent. `days` (default 30, max 90) bounds the daily series. `prefix` / `excludePrefix` narrow the view to one family of checks by NAME PREFIX (e.g. `prefix=page-speed-` = the per-page speed checks only, `excludePrefix=page-speed-` = every other watchdog, the robot's own `page-speed` health included); `status`, `brokenCount`, `reason` and `checks` are then computed over the kept set only, and `expect` names outside it are dropped. Both given = AND. No param = every check, unchanged. api-key only; staff-gated at api-service.",
         "tags": [
           "Internal"
         ],
@@ -78977,11 +78977,31 @@
             "description": "Comma-separated check names the reader expects (e.g. `deploy-pipeline,service-health`).",
             "name": "expect",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Keep only the checks whose name starts with this (a check-name fragment: `^[a-z0-9][a-z0-9-]{0,62}$`, e.g. `page-speed-`)."
+            },
+            "required": false,
+            "description": "Keep only the checks whose name starts with this (a check-name fragment: `^[a-z0-9][a-z0-9-]{0,62}$`, e.g. `page-speed-`).",
+            "name": "prefix",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Drop the checks whose name starts with this (same pattern as prefix, e.g. `page-speed-`)."
+            },
+            "required": false,
+            "description": "Drop the checks whose name starts with this (same pattern as prefix, e.g. `page-speed-`).",
+            "name": "excludePrefix",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Every check's verdict and series.",
+            "description": "Every (kept) check's verdict and series.",
             "content": {
               "application/json": {
                 "schema": {
@@ -78991,7 +79011,7 @@
             }
           },
           "400": {
-            "description": "Invalid days or expect",
+            "description": "Invalid days, expect, prefix or excludePrefix",
             "content": {
               "application/json": {
                 "schema": {
@@ -79028,6 +79048,107 @@
           },
           "500": {
             "description": "Store unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/box-checks/checks/{check}": {
+      "delete": {
+        "summary": "Forget a box check: delete every stored run of that exact check name (internal, api-key)",
+        "description": "For a check that no longer exists (e.g. a dashboard page removed, whose `page-speed-<page>` check would otherwise read broken, 'no report for N days', until the 90-day retention prunes it). Deletes ALL runs of exactly this name, no other check touched (`page-speed-x` never deletes `page-speed-x-y`). Idempotent: an unknown name returns deleted: 0. A later run under the same name simply starts the check again. api-key only (x-api-key); never exposed through the gateway.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+              "description": "The exact check name to forget (e.g. `page-speed-offers-id-targeting`)."
+            },
+            "required": true,
+            "description": "The exact check name to forget (e.g. `page-speed-offers-id-targeting`).",
+            "name": "check",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forgotten.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "check": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "integer",
+                      "description": "Stored runs removed (0 when the name was unknown)."
+                    }
+                  },
+                  "required": [
+                    "check",
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid check name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Store unwritable",
             "content": {
               "application/json": {
                 "schema": {
