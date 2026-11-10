@@ -63,22 +63,24 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // LEDGER-ONLY-1107-P2: every count / $ per outcome / conversion re-based on the cost-accounting ledger (supersedes
   // several-campaign-people-1106 on the routes it named). LEDGER-OTHER-FACTORY-1107: counts add another factory's Units,
   // money divides ours only.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-other-factory-1107",
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-other-factory-1107",
-  "/offers/{offerId}/spend-charts": "ledger-other-factory-1107",
-  "/brands/{brandId}/sales-funnel-campaigns": "ledger-other-factory-1107",
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-negative-days-1110",
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
+  "/offers/{offerId}/spend-charts": "ledger-negative-days-1110",
+  "/brands/{brandId}/spend-charts": "ledger-negative-days-1110",
+  "/brands/{brandId}/sales-funnel-campaigns": "ledger-negative-days-1110",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
   // OUTCOME-TOTAL-UNITS-1110: our Units net of withdrawn ones (a negative ledger day), + totalOutcomes.
-  "/offers/{offerId}/outcome-cost-series": "outcome-total-units-1110",
-  "/brands/{brandId}/outcome-cost-series": "outcome-total-units-1110",
-  "/offers/{offerId}/outcomes": "ledger-other-factory-1107",
-  "/offers/{offerId}/revenue": "ledger-other-factory-1107",
-  "/brands/{brandId}/offers": "ledger-other-factory-1107",
-  "/brands/{brandId}/revenue": "ledger-other-factory-1107",
-  "/brands/{brandId}/campaign-targets": "ledger-other-factory-1107",
-  "/features/{featureSlug}/revenue": "ledger-other-factory-1107",
-  "/features/{featureSlug}/stats": "ledger-other-factory-1107",
+  // LEDGER-NEGATIVE-DAYS-1110: EVERY ledger read nets withdrawn Units by one rule (`standingUnitsByDay`): every route below.
+  "/offers/{offerId}/outcome-cost-series": "ledger-negative-days-1110",
+  "/brands/{brandId}/outcome-cost-series": "ledger-negative-days-1110",
+  "/offers/{offerId}/outcomes": "ledger-negative-days-1110",
+  "/offers/{offerId}/revenue": "ledger-negative-days-1110",
+  "/brands/{brandId}/offers": "ledger-negative-days-1110",
+  "/brands/{brandId}/revenue": "ledger-negative-days-1110",
+  "/brands/{brandId}/campaign-targets": "ledger-negative-days-1110",
+  "/features/{featureSlug}/revenue": "ledger-negative-days-1110",
+  "/features/{featureSlug}/stats": "ledger-negative-days-1110",
 };
 
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */

@@ -17,7 +17,7 @@ import { fetchFleetCampaignRows } from "./fleet-leg-campaigns.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { campaignOutputsOf } from "./campaign-outputs.js";
 import { stepTracedCostOf } from "./step-cost-attribution.js";
-import type { ScopeOutcomeLedgerInput, LedgerOutcomeCost, OtherFactory } from "./scope-outcome-ledger.js";
+import { standingUnits, type ScopeOutcomeLedgerInput, type LedgerOutcomeCost, type OtherFactory } from "./scope-outcome-ledger.js";
 
 interface WireCost {
   grossCents?: string;
@@ -254,6 +254,8 @@ export async function fetchAudienceUnits(brandId: string, campaignIds: readonly 
         const m = out.get(a) ?? out.set(a, new Map()).get(a)!;
         m.set(k, (m.get(k) ?? 0) + (g.occurrences ?? 0));
       }
+      // LEDGER-NEGATIVE-DAYS-1110: a read with no day: withdrawn Units net to never below zero (THE rule, one bucket).
+      for (const m of out.values()) for (const [k, n] of m) m.set(k, standingUnits(n));
       return out;
     });
   const parts = await Promise.all(

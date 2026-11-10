@@ -7,6 +7,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { readRunsLedger } from "./runs-ledger-read.js";
+import { standingUnitsByDay } from "./scope-outcome-ledger.js";
 import { matureCutParams, type LedgerBasis } from "./outcome-cost-totals-client.js";
 import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
@@ -47,6 +48,28 @@ export interface LedgerBookRead {
 const dayDims = (d: Record<string, string | null> | undefined): { runStartDay?: string | null } =>
   d && "runStartDay" in d ? { runStartDay: d.runStartDay ?? null } : {};
 
+/**
+ * LEDGER-NEGATIVE-DAYS-1110: each produced group (outcome × campaign × workflow × audience) netted of its withdrawn Units by
+ * THE rule (`standingUnitsByDay` over its run-start days; one bucket when the read has no day), in place.
+ */
+function standProduced(rows: Array<{ outcomeKey: string; campaignId: string | null; workflowSlug: string | null; audienceId: string | null; occurrences: number; runStartDay?: string | null }>): void {
+  if (!rows.some((r) => r.occurrences < 0)) return;
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const k = JSON.stringify([r.outcomeKey, r.campaignId, r.workflowSlug, r.audienceId]);
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
+  }
+  for (const g of groups.values()) {
+    if (!g.some((r) => r.occurrences < 0)) continue;
+    const standing = standingUnitsByDay(g.map((r) => [r.runStartDay ?? "", r.occurrences] as const));
+    for (const r of g) {
+      const d = r.runStartDay ?? "";
+      r.occurrences = standing.get(d) ?? 0;
+      standing.delete(d);
+    }
+  }
+}
+
 /** PURE. The three wire bodies as one book + the fleet reconciliation. */
 export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBody: Wire, basis: BookBasis): LedgerBookRead {
   const produced = (producedBody.produced ?? []).map((g) => {
@@ -54,6 +77,7 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
     if (!key) throw new Error("[features-service] ledger book: a produced group names no outcomeKey");
     return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis), ...dayDims(g.dimensions) };
   });
+  standProduced(produced);
   const consumed = [];
   for (const g of consumedBody.consumed ?? []) {
     const consumer = g.dimensions?.consumingOutcomeKey;
