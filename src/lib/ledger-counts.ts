@@ -17,7 +17,7 @@
  */
 import { CODED_STEP_LEAD_STATES, leadStateOf } from "./lead-states.js";
 import { funnelLeg } from "./funnel-legs.js";
-import { scopeOutcomeLedgerRowOf, type OtherFactoryUnits, type LedgerProducerGap, type ScopeOutcomeLedgerInput, type ScopeOutcomeLedgerRow } from "./scope-outcome-ledger.js";
+import { scopeOutcomeLedgerRowOf, standingUnitsByDay, type OtherFactoryUnits, type LedgerProducerGap, type ScopeOutcomeLedgerInput, type ScopeOutcomeLedgerRow } from "./scope-outcome-ledger.js";
 
 export const NOT_A_LEDGER_OUTCOME = "not_a_ledger_outcome";
 
@@ -323,41 +323,29 @@ export function withLedgerRawStats(raw: Record<string, number>, countKeys: Reado
   return { raw: out, ledgerCounts: block };
 }
 
-/** PURE. A ledger row's Units as one day per Unit (the shape a per-person outcome-day list had). */
 /**
  * PURE. OUTCOME-COST-CUMUL-1109: one day per Unit OUR factory produced (the divisor of a money figure; another factory's
- * Units are no outcome of our spend).
+ * Units are no outcome of our spend), withdrawn Units taken back (`standingUnitsByDay`).
  */
 export function ledgerOurUnitDays(c: LedgerCount): string[] {
-  return netUnitDays(c, (p) => p.ourUnits);
+  return unitDays(c, (p) => p.ourUnits);
 }
 
 /**
  * PURE. OUTCOME-TOTAL-UNITS-1110: every Unit of the step since inception, ours + another factory's (a client's own team, a
- * connector), each family netted of its withdrawals the same way as ours, so it never reads below `ledgerOurUnitDays`.
+ * connector), each family netted of its withdrawals by the same rule, so it never reads below `ledgerOurUnitDays`.
  */
 export function ledgerTotalUnitCount(c: LedgerCount): number {
-  return netUnitDays(c, (p) => p.ourUnits).length + netUnitDays(c, (p) => p.otherFactoryUnits).length;
+  return unitDays(c, (p) => p.ourUnits).length + unitDays(c, (p) => p.otherFactoryUnits).length;
 }
 
 /**
- * PURE. One day per Unit still standing. A NEGATIVE day is Units taken back (a producer withdrew the fact, runs-service
- * `run_outcome_reversals`; prod 2026-11-10 Distribute.you: lead-service withdrew 620 signups): it removes that many of the
- * latest Units before it, never below zero. Skipping it counted every withdrawn Unit as still made.
+ * PURE. One day per Unit still standing, by THE rule (LEDGER-NEGATIVE-DAYS-1110, `standingUnitsByDay`). A row from
+ * `scopeOutcomeLedgerRowOf` is already netted (idempotent here); a hand-built row with a negative day is netted the same way.
  */
-function netUnitDays(c: LedgerCount, n: (p: ScopeOutcomeLedgerRow["past"][number]) => number): string[] {
+function unitDays(c: LedgerCount, n: (p: ScopeOutcomeLedgerRow["past"][number]) => number): string[] {
   const out: string[] = [];
-  for (const p of c.row?.past ?? []) {
-    const k = n(p);
-    if (k > 0) for (let i = 0; i < k; i++) out.push(p.date);
-    else if (k < 0) out.splice(Math.max(0, out.length + k));
-  }
-  return out;
-}
-
-export function ledgerUnitDays(c: LedgerCount): string[] {
-  const out: string[] = [];
-  for (const p of c.row?.past ?? []) for (let i = 0; i < p.units; i++) out.push(p.date);
+  for (const [d, k] of standingUnitsByDay((c.row?.past ?? []).map((p) => [p.date, n(p)] as const))) for (let i = 0; i < k; i++) out.push(d);
   return out;
 }
 

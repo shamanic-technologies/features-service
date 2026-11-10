@@ -4,6 +4,7 @@
  * included. Held 60 s per campaign. FAIL-LOUD: the caller decides to degrade.
  */
 import { campaignLedgerByDayPath, readRunsLedger } from "./runs-ledger-read.js";
+import { standingUnitsByDay } from "./scope-outcome-ledger.js";
 
 export interface CampaignLedgerUnits {
   /** outcome key -> UTC day -> produced occurrences. */
@@ -29,6 +30,8 @@ export function parseCampaignLedgerUnits(body: Wire): CampaignLedgerUnits {
     const days = byOutcome.get(key) ?? byOutcome.set(key, new Map()).get(key)!;
     days.set(day, (days.get(day) ?? 0) + (g.occurrences ?? 0));
   }
+  // LEDGER-NEGATIVE-DAYS-1110: withdrawn Units taken back by THE rule (a negative day was summed into a milestone count).
+  for (const [k, days] of byOutcome) byOutcome.set(k, standingUnitsByDay(days));
   return { byOutcome, daysMissing: [...(body.daysMissing ?? [])].sort() };
 }
 

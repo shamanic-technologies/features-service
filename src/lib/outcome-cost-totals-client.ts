@@ -8,6 +8,7 @@
  * no outcome by design, marked by its owner), so coverage = declared ÷ (spend − support). FAIL-LOUD: a 422 (too many groups) or any non-OK throws.
  */
 import { readRunsLedger } from "./runs-ledger-read.js";
+import { standingUnits } from "./scope-outcome-ledger.js";
 import type { ConsumedRow, ProducedRow, SourcedConsumption, WorkflowProducedRow } from "./outcome-unit-costs.js";
 
 export type LedgerBasis = "gross" | "net" | "vendor";
@@ -59,7 +60,8 @@ export function parseOutcomeLedgerTotals(body: WireTotals, basis: LedgerBasis): 
   const produced: ProducedRow[] = (body.produced ?? []).map((g) => {
     const key = g.dimensions?.outcomeKey;
     if (!key) throw new Error("[features-service] outcome ledger totals: a produced group names no outcomeKey");
-    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, orgId: g.dimensions?.orgId ?? null, produced: g.occurrences ?? 0, ownCostUsd: usdOf(g.cost, basis) };
+    // LEDGER-NEGATIVE-DAYS-1110: a group with no day nets its withdrawn Units to never below zero (THE rule, one bucket).
+    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, orgId: g.dimensions?.orgId ?? null, produced: standingUnits(g.occurrences ?? 0), ownCostUsd: usdOf(g.cost, basis) };
   });
   const consumed: ConsumedRow[] = [];
   for (const g of body.consumed ?? []) {

@@ -94,6 +94,35 @@ export interface ScopeOutcomeLedgerRow {
   ledgerDaysMissing: string[];
 }
 
+/**
+ * PURE. LEDGER-NEGATIVE-DAYS-1110: THE one rule for a Unit a producer WITHDREW (runs-service `run_outcome_reversals`: a
+ * NEGATIVE day; prod 2026-11-10 Distribute.you: lead-service withdrew 620 signups over 484 made). Days in order, a negative
+ * day takes back that many of the LATEST Units still standing before it, never below zero. Returns the Units still
+ * standing per day (days with none omitted), so their sum is the count every surface prints. Skipping a negative day
+ * counted every withdrawn Unit as still made (read 484); summing it printed a negative count (-136). Every reader of our
+ * ledger Units goes through it (or `standingUnits` for a read with no day): never a per-surface rule.
+ */
+export function standingUnitsByDay(byDay: Iterable<readonly [string, number]>): Map<string, number> {
+  const merged = new Map<string, number>();
+  for (const [d, n] of byDay) merged.set(d, (merged.get(d) ?? 0) + n);
+  const stack: Array<[string, number]> = [];
+  for (const d of [...merged.keys()].sort()) {
+    let k = merged.get(d)!;
+    if (k > 0) stack.push([d, k]);
+    while (k < 0 && stack.length > 0) {
+      const top = stack[stack.length - 1]!;
+      const take = Math.min(top[1], -k);
+      top[1] -= take;
+      k += take;
+      if (top[1] === 0) stack.pop();
+    }
+  }
+  return new Map(stack);
+}
+
+/** PURE. LEDGER-NEGATIVE-DAYS-1110: `standingUnitsByDay` for a read grouped by no day (one bucket): never below zero. */
+export const standingUnits = (n: number): number => Math.max(0, n);
+
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 const addDays = (day: string, n: number): string => {
   const d = new Date(`${day}T00:00:00.000Z`);
@@ -104,19 +133,25 @@ const addDays = (day: string, n: number): string => {
 /** PURE. One row for a set of outcome keys counted together (a Unit has ONE outcome: summing keys never double counts). */
 export function scopeOutcomeLedgerRowOf(keysIn: readonly string[], i: ScopeOutcomeLedgerInput): ScopeOutcomeLedgerRow {
   const keys = [...new Set(keysIn)].sort();
+  // LEDGER-NEGATIVE-DAYS-1110: each outcome key (and each other factory) netted of its withdrawn Units by the ONE rule,
+  // before any sum, so every count, day, curve and $ each below reads the Units still standing.
+  const oursOf = (k: string) => standingUnitsByDay(i.producedByDay.get(k) ?? []);
   const byDay = new Map<string, number>();
-  for (const k of keys) for (const [d, n] of i.producedByDay.get(k) ?? []) byDay.set(d, (byDay.get(d) ?? 0) + n);
+  for (const k of keys) for (const [d, n] of oursOf(k)) byDay.set(d, (byDay.get(d) ?? 0) + n);
   const ours = [...byDay.values()].reduce((a, n) => a + n, 0);
   const theirsByDay = new Map<string, number>();
   const theirs: OtherFactoryUnits = { total: 0, anotherFactory: 0, noProof: 0 };
-  for (const k of keys)
-    for (const [d, byFactory] of i.elsewhereByDay?.get(k) ?? [])
-      for (const [f, n] of byFactory) {
+  for (const k of keys) {
+    const perFactory = new Map<OtherFactory, Array<[string, number]>>();
+    for (const [d, byFactory] of i.elsewhereByDay?.get(k) ?? []) for (const [f, n] of byFactory) (perFactory.get(f) ?? perFactory.set(f, []).get(f)!).push([d, n]);
+    for (const [f, days] of perFactory)
+      for (const [d, n] of standingUnitsByDay(days)) {
         theirsByDay.set(d, (theirsByDay.get(d) ?? 0) + n);
         theirs.total += n;
         if (f === "another_factory") theirs.anotherFactory += n;
         else theirs.noProof += n;
       }
+  }
   const units = ours + theirs.total;
   const undeclared = keys.reduce((a, k) => a + (i.undeclaredConsumptions.get(k) ?? 0), 0);
   const producers = [...new Set(keys.flatMap((k) => i.fleetProducers.get(k) ?? []))].sort();
@@ -147,7 +182,7 @@ export function scopeOutcomeLedgerRowOf(keysIn: readonly string[], i: ScopeOutco
   let everyPath = true;
   let priced = true;
   for (const k of keys) {
-    const n = [...(i.producedByDay.get(k)?.values() ?? [])].reduce((a, x) => a + x, 0);
+    const n = [...oursOf(k).values()].reduce((a, x) => a + x, 0);
     if (n === 0) continue;
     const ep = i.unitCosts.get(k)?.unitCostUsd ?? null;
     if (ep !== null) cost += ep * n;
