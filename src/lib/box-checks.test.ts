@@ -140,3 +140,47 @@ describe("box checks ingest schema", () => {
     expect(BoxCheckBatchSchema.safeParse({ runs: [] }).success).toBe(false);
   });
 });
+
+describe("box checks view filtered by name prefix", () => {
+  // Two families on one registry: the box watchdogs (incl. the robot's own `page-speed` health) and per-page checks.
+  const fleet = [
+    run("deploy-pipeline", minsAgo(2), { cadenceMinutes: 15 }),
+    run("page-speed", minsAgo(60), { cadenceMinutes: 1440, reason: "Timed 12 pages." }),
+    run("page-speed-today", minsAgo(60), { cadenceMinutes: 1440, ok: false, reason: "Today took 9.1 s." }),
+    run("page-speed-offers-id-targeting", minsAgo(60), { cadenceMinutes: 1440, ok: false, reason: "Targeting took 7.4 s." }),
+    run("page-speed-leads", minsAgo(60), { cadenceMinutes: 1440 }),
+    run("service-health", minsAgo(1), { ok: false, reason: "lead-service down." }),
+  ];
+
+  it("prefix keeps only that family and counts only its broken checks", () => {
+    const v = buildBoxChecksView(inputsOf(fleet), NOW, 30, [], { prefix: "page-speed-" });
+    expect(v.checks.map((c) => c.check)).toEqual(["page-speed-offers-id-targeting", "page-speed-today", "page-speed-leads"]);
+    expect(v.status).toBe("red");
+    expect(v.brokenCount).toBe(2);
+    expect(v.reason).not.toContain("lead-service");
+    expect(v.reason).toContain("Today took 9.1 s.");
+  });
+
+  it("excludePrefix drops that family: a slow page never turns the watchdogs red", () => {
+    const v = buildBoxChecksView(inputsOf(fleet), NOW, 30, [], { excludePrefix: "page-speed-" });
+    expect(v.checks.map((c) => c.check)).toEqual(["service-health", "deploy-pipeline", "page-speed"]);
+    expect(v.brokenCount).toBe(1);
+    expect(v.reason).not.toContain("took");
+    const green = buildBoxChecksView(inputsOf(fleet.filter((r) => r.check !== "service-health")), NOW, 30, [], { excludePrefix: "page-speed-" });
+    expect(green).toMatchObject({ status: "green", brokenCount: 0, reason: "Every check is OK." });
+  });
+
+  it("applies the filter to expected names too, and an empty filtered set reads as no check yet", () => {
+    const v = buildBoxChecksView(inputsOf(fleet), NOW, 30, ["jev-chain", "page-speed-campaigns"], { prefix: "page-speed-" });
+    expect(v.checks.find((c) => c.check === "jev-chain")).toBeUndefined();
+    expect(v.checks.find((c) => c.check === "page-speed-campaigns")).toMatchObject({ verdict: "not_yet" });
+    const none = buildBoxChecksView(inputsOf(fleet), NOW, 30, [], { prefix: "nothing-" });
+    expect(none).toMatchObject({ status: "green", brokenCount: 0, checks: [], reason: "No check has reported yet." });
+  });
+
+  it("no filter serves exactly the unfiltered view (byte-identical)", () => {
+    const before = JSON.stringify(buildBoxChecksView(inputsOf(fleet), NOW, 30, ["jev-chain"]));
+    expect(JSON.stringify(buildBoxChecksView(inputsOf(fleet), NOW, 30, ["jev-chain"], {}))).toBe(before);
+    expect(JSON.parse(before).checks).toHaveLength(7);
+  });
+});
