@@ -94,3 +94,25 @@ describe("GET /internal/script-strategy", () => {
     expect(r.body.reason).toBe("script_strategy_unreadable");
   });
 });
+
+describe("POST /internal/campaign-engine-answers (NEXT-STEPS-TRUE-REASON-1111)", () => {
+  const post = (body: unknown) => {
+    const a = express();
+    a.use(express.json());
+    a.use(router);
+    return request(a).post("/internal/campaign-engine-answers").set("x-api-key", "k").send(body as object);
+  };
+  it("records another service's hold (any reason) and its clearing, like a refusal of script-strategy", async () => {
+    __resetEngineAnswersForTest();
+    expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: "budget_spent" })).status).toBe(202);
+    expect(engineAnswersNow()).toMatchObject([{ campaignId: "c9", outcome: "email_sent", heldReason: "budget_spent" }]);
+    expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: null })).status).toBe(202);
+    expect(engineAnswersNow()).toMatchObject([{ campaignId: "c9", outcome: "email_sent", heldReason: null }]);
+  });
+  it("400 on a missing campaign, Engine or reason", async () => {
+    expect((await post({ outcome: "email_sent", heldReason: "x" })).status).toBe(400);
+    expect((await post({ campaignId: "c9", heldReason: "x" })).status).toBe(400);
+    expect((await post({ campaignId: "c9", outcome: "email_sent" })).status).toBe(400);
+    expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: "  " })).status).toBe(400);
+  });
+});

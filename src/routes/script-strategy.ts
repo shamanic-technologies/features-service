@@ -53,4 +53,21 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
   }
 });
 
+/**
+ * NEXT-STEPS-TRUE-REASON-1111: a service that holds a campaign Engine's run for a reason of its OWN (a budget spent, an
+ * Engine state it cannot read...) states it here, so the campaign's next-steps read and Monitoring name it like a
+ * refusal of this service. `heldReason: null` = the Engine ran (clears it). Same store, same window (1 h), any reason.
+ */
+router.post("/internal/campaign-engine-answers", apiKeyOnly, (req: Request, res: Response) => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const campaignId = typeof b.campaignId === "string" ? b.campaignId.trim() : "";
+  const outcome = typeof b.outcome === "string" ? b.outcome.trim() : "";
+  const heldReason = b.heldReason === null ? null : typeof b.heldReason === "string" && b.heldReason.trim() ? b.heldReason.trim() : undefined;
+  if (!campaignId || !outcome || heldReason === undefined) {
+    return res.status(400).json({ error: "campaignId, outcome and heldReason (a reason, or null when the Engine ran) are required", reason: "engine_answer_unrecognised" });
+  }
+  noteEngineAnswer(campaignId, outcome, heldReason);
+  res.status(202).json({ campaignId, outcome, heldReason });
+});
+
 export default router;

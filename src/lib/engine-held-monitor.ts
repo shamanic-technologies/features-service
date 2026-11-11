@@ -10,6 +10,7 @@
  */
 import type { BoxCheckRun } from "./box-checks.js";
 import { upsertBoxCheckRuns } from "./box-checks-store.js";
+import { persistEngineAnswer } from "./engine-answers-store.js";
 
 export const ENGINE_HELD_CHECK = "campaign-engine-held";
 export const ENGINE_HELD_CADENCE_MINUTES = 10;
@@ -29,6 +30,8 @@ const latest = new Map<string, EngineAnswer>();
 
 export function noteEngineAnswer(campaignId: string, outcome: string, heldReason: string | null, at = Date.now()): void {
   latest.set(`${campaignId}|${outcome}`, { campaignId, outcome, heldReason, at });
+  // NEXT-STEPS-TRUE-REASON-1111: stored too, so the campaign's next-steps read names the Engine that cannot run.
+  void persistEngineAnswer(campaignId, outcome, heldReason, at);
   if (latest.size > 20_000) {
     for (const [k, v] of latest) if (at - v.at > ENGINE_HELD_WINDOW_MS) latest.delete(k);
   }

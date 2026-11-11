@@ -207,11 +207,31 @@ export function parseScheduledFollowups(raw: unknown): ScheduledFollowups {
   };
 }
 
-export type NextSendsUnavailableReason = "follow_up_schedule_unreadable" | "sender_unreadable";
+export type NextSendsUnavailableReason = "follow_up_schedule_unreadable" | "sender_unreadable" | "engine_answers_unreadable" | "waiting_leads_unreadable";
+
+/**
+ * An Engine of the campaign that cannot run now (NEXT-STEPS-TRUE-REASON-1111): the latest answer the Engine runner got
+ * for one of the campaign's pipes, within the last hour, was a refusal. Every Engine, every reason, as answered.
+ */
+export interface HeldEngine {
+  /** The Engine: the outcome its runs make (`message_written`...). */
+  outcome: string;
+  /** The pipe (unit campaign) the runner asked for. */
+  pipeCampaignId: string;
+  /** The refusal served to the runner (`campaign_states_no_brief`, `no_runnable_script_kept`, `script_strategy_unreadable`...). */
+  reason: string;
+  /** Since when it has been refused without a good answer in between (ISO). */
+  heldSince: string;
+  /** The latest refusal (ISO). */
+  lastAnsweredAt: string;
+}
 
 /** What waits to go out and when, every channel together: the one figure our assistant states as "queued". */
 export interface NextSends {
-  /** Leads with something of ours waiting to go out: follow-ups scheduled on any channel + the email sender's queue. */
+  /**
+   * Leads with something of ours waiting to go out: follow-ups scheduled on any channel + the email sender's queue + the
+   * leads waiting at an Engine that cannot run (`leadsWaitingOnHeldEngine`).
+   */
   leadsQueued: number | null;
   /** Of them, follow-ups whose time already came: they go out on the follow-up pipe's next pass. */
   dueNow: number | null;
@@ -219,26 +239,58 @@ export interface NextSends {
   nextSendAt: string | null;
   /** Why `leadsQueued` is null (a part could not be read: never a partial sum); null when served. */
   unavailableReason: NextSendsUnavailableReason | null;
+  /**
+   * THE reason nothing (more) goes out: the Engine of this campaign held longest, null when every Engine that was asked
+   * in the last hour could run. Read it before any other explanation (budget, cap, timing).
+   */
+  heldBy: HeldEngine | null;
+  /**
+   * Leads the campaign holds (served to it) that got nothing of ours yet and are not in the sender's queue: they wait at
+   * the held Engine. Null when no Engine is held, or when the leads could not be read (`unavailableReason`).
+   */
+  leadsWaitingOnHeldEngine: number | null;
+}
+
+/** PURE: the held Engine to name (held longest; ties on outcome then pipe), or null. */
+export function pickHeldBy(held: readonly HeldEngine[]): HeldEngine | null {
+  if (held.length === 0) return null;
+  return [...held].sort((a, b) => a.heldSince.localeCompare(b.heldSince) || a.outcome.localeCompare(b.outcome) || a.pipeCampaignId.localeCompare(b.pipeCampaignId))[0]!;
+}
+
+/** PURE: leads served with nothing of ours sent yet, minus those already queued in the sender (never below 0). */
+export function leadsWaitingAtEngine(notYetContacted: number, queue: EmailSendQueue | null): number {
+  return Math.max(0, notYetContacted - (queue?.leadsAwaitingFirstEmail ?? 0));
 }
 
 /**
- * PURE: compose the two owners' facts. The email sender's queue counts leads awaiting a first email + leads with a
+ * PURE: compose the owners' facts. The email sender's queue counts leads awaiting a first email + leads with a
  * follow-up queued there; lead-service's schedule counts the people a writer scheduled (a follow-up writer does not
  * queue in the sender). `nextSendAt` = the earliest of the schedule's `nextAt` and the sender's `firstEmailsFrom` when
- * the sender holds something. Either part unreadable = null with its reason, never a figure missing a channel.
+ * the sender holds something. Either part unreadable = null with its reason, never a figure missing a channel. A held
+ * Engine (NEXT-STEPS-TRUE-REASON-1111) is named in `heldBy` and its waiting leads join `leadsQueued`.
  */
 export function composeNextSends(input: {
   scheduled: ScheduledFollowups | null;
   scheduledAsked: boolean;
   queue: EmailSendQueue | null;
   queueAsked: boolean;
+  /** null = the Engine answers could not be read. */
+  held?: readonly HeldEngine[] | null;
+  /** Leads waiting at the held Engine; null = unreadable (only read when an Engine is held). */
+  waitingOnHeld?: number | null;
 }): NextSends {
-  if (input.scheduledAsked && input.scheduled === null) return { leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "follow_up_schedule_unreadable" };
-  if (input.queueAsked && input.queue === null) return { leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "sender_unreadable" };
+  const held = input.held === undefined ? [] : input.held;
+  const heldBy = held === null ? null : pickHeldBy(held);
+  const waiting = heldBy ? (input.waitingOnHeld ?? null) : null;
+  const none = (reason: NextSendsUnavailableReason): NextSends => ({ leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: reason, heldBy, leadsWaitingOnHeldEngine: waiting });
+  if (input.scheduledAsked && input.scheduled === null) return none("follow_up_schedule_unreadable");
+  if (input.queueAsked && input.queue === null) return none("sender_unreadable");
+  if (held === null) return none("engine_answers_unreadable");
+  if (heldBy && waiting === null) return none("waiting_leads_unreadable");
   const s = input.scheduled;
   const q = input.queue;
   const queued = q ? q.leadsAwaitingFirstEmail + q.leadsWithFollowUpQueued : 0;
   const times = [s?.nextAt ?? null, q && q.queuedEmails > 0 ? q.firstEmailsFrom : null].filter((t): t is string => t !== null);
   const nextSendAt = times.length === 0 ? null : times.reduce((a, b) => (new Date(a).getTime() <= new Date(b).getTime() ? a : b));
-  return { leadsQueued: (s?.leads ?? 0) + queued, dueNow: s?.due ?? 0, nextSendAt, unavailableReason: null };
+  return { leadsQueued: (s?.leads ?? 0) + queued + (waiting ?? 0), dueNow: s?.due ?? 0, nextSendAt, unavailableReason: null, heldBy, leadsWaitingOnHeldEngine: waiting };
 }
