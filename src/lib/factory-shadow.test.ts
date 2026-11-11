@@ -12,6 +12,7 @@ import {
   chainsToTarget,
   evalBriefOf,
   judgingNeed,
+  learningLineOf,
   monitoringVerdict,
   orgDayCountsOf,
   pipeCandidatesOf,
@@ -163,18 +164,21 @@ describe("who may start a reactive line, and an unvalued Target", () => {
     expect(triggerCanHead(model, "lead_event", null)).toBe(true);
   });
 
-  it("every line through a pipe with no price yet names that pipe (a catalogue gap, not a search failure)", () => {
+  it("every line through a pipe with no price yet names that pipe, and the running line stays the plan (MON-PLAN-FAILED-1111)", () => {
     const model = buildCatalogueModel(inputs());
     // A pipe that ran with no outcome, no seeded default, no benchmark (Form Booking, Lead Proposal in prod 2026-10-28).
     for (const pipe of model.pipes.values()) if (pipe.fromStep === "conversation" && pipe.operatedBy === "platform") pipe.expectedCost = null;
     const p = planCampaign(model, { salesFunnelId: REACTIVE_RUNNING, target: "meeting_booked", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
-    expect(p.shadow).toBeNull();
-    // Two lines from a positive reply to a meeting: AI Meeting Booking directly, or AI Instant Call then a booking.
-    expect(p.shadowUnavailableReason?.startsWith("pipe_unpriced:")).toBe(true);
-    expect(p.shadowUnavailableReason).toContain("ai-meeting-booking|conversation_to_meeting_booked");
+    // Two lines from a positive reply to a meeting: AI Meeting Booking directly, or AI Instant Call then a booking. Neither
+    // priced: a learning state, never a dead end: the line it runs today is the plan.
+    expect(p.shadowPickedOn).toBe("learning");
+    expect(p.shadow!.legs[0].pipeId).toBe("ai-meeting-booking|conversation_to_meeting_booked");
+    expect(p.planDiffers).toBe(false);
+    expect(p.shadowUnavailableReason).toBeNull();
     expect(p.unpricedPipes.map((u) => u.pipeId)).toContain("ai-meeting-booking|conversation_to_meeting_booked");
-    expect(p.shadowUnavailableDetail).toContain("AI Meeting Booking (Positive reply to Meeting booked)");
-    expect(p.shadowUnavailableDetail).toContain("no price yet");
+    const state = shadowStateOf({ status: "ok", failure: null, plan: p });
+    expect(state.state).toBe("not_yet");
+    expect(state.stateDetail).toContain("AI Meeting Booking");
   });
 
   it("a Target with no value (after Paid client) still gets the cheapest line per Target, ROI null", () => {
@@ -359,6 +363,29 @@ describe("the only runnable line is the plan even before its pipe has a price (F
     expect(p.shadowPickedOn).toBe("only_line");
     expect(p.shadowUnavailableReason).toBeNull();
     expect(p.unpricedPipes.map((u) => u.pipeId)).toContain("ai-meeting-booking|conversation_to_meeting_booked");
+  });
+
+  it("several lines, none priced, each waiting on pipes that never ran: the running line is the plan, on `learning` (MON-PLAN-FAILED-1111)", () => {
+    const model = buildCatalogueModel(inputs());
+    for (const pipe of [...model.pipes.values(), ...model.plays.values()]) if (pipe.operatedBy === "platform") pipe.expectedCost = null;
+    const p = planCampaign(model, { salesFunnelId: PROACTIVE_RUNNING, target: "paid_client", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet");
+    expect(p.candidatesPriced).toBeGreaterThan(1);
+    expect(p.shadowPickedOn).toBe("learning");
+    expect(p.shadowUnavailableReason).toBeNull();
+    expect(p.shadow!.lineId).toBe((p.running as { lineId: string }).lineId);
+    expect(p.planDiffers).toBe(false);
+    expect(p.unpricedPipes.length).toBeGreaterThan(0);
+    expect(shadowStateOf({ status: "ok", failure: null, followsPlan: true, plan: p }).state).toBe("not_yet");
+    expect(shadowStateOf({ status: "ok", failure: null, followsPlan: true, plan: p }).stateReason).toBe("learning_line_unpriced");
+  });
+
+  it("no running line among them: the line with the fewest unpriced pipes; a line unpriced for another reason picks none", () => {
+    const fig = (reason: string | null, unpriced: number) => ({ costPerTargetUsd: null, roi: null, basis: null, unavailableReason: reason, targetValueUsd: 1, legs: Array.from({ length: unpriced }, (_, i) => ({ legKey: `l${i}`, pipeId: `p${i}`, costSource: null })) as never });
+    const line = (id: string, unpriced: number, reason: string | null = "pipe_unpriced:x") => ({ funnelId: id, lineId: id, line: id, legs: [], figures: fig(reason, unpriced) });
+    expect(learningLineOf([line("b", 2), line("a", 1), line("c", 1)], null)!.lineId).toBe("a");
+    expect(learningLineOf([line("b", 2), line("a", 1)], "b")!.lineId).toBe("b");
+    expect(learningLineOf([line("b", 2), line("a", 1, "leg_unrated:x")], null)).toBeNull();
+    expect(learningLineOf([line("a", 1)], null)).toBeNull();
   });
 
   it("the pipe judge never asks about a pipe that cannot run (no workflow of ours)", () => {
