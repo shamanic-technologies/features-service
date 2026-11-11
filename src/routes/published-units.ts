@@ -9,6 +9,7 @@ import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
 import { isPublishedOutcomeKey, PUBLISHED_OUTCOME_KEYS } from "../lib/published-units.js";
 import { PublishedUnitsProducerError, readPublishedUnits } from "../lib/published-units-io.js";
+import { sendSnapshotJson } from "../lib/view-cache.js";
 
 const router = Router();
 
@@ -24,8 +25,7 @@ router.get("/brands/:brandId/published-units/:outcomeKey", apiKeyAuth, async (re
     if (raw !== undefined && raw !== "gross" && raw !== "net") return void res.status(400).json({ error: "pricing must be one of: gross, net", reason: "pricing_unrecognised" });
     const pricing = raw === "gross" ? "gross" : "net";
     await assertBrandHeld(brandId, { orgId: auth.orgId, userId: auth.userId, runId: auth.runId });
-    const body = await readPublishedUnits(auth.orgId, brandId, outcomeKey, pricing);
-    res.json({ brandId, pricing, ...body });
+    sendSnapshotJson(res, await readPublishedUnits(auth.orgId, brandId, outcomeKey, pricing));
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] published units error:", err);

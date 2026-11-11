@@ -91,8 +91,16 @@ vi.mock("../lib/view-cache.js", () => ({
     servedCachedArgs.push(a);
     return a.compute();
   },
-  buildScopeKey: () => "k",
+  // MON-PAGE-SPEED-1111: the whole table is one cell. `storedTable` set = a stored body served as it is (no compute).
+  servedCachedJson: async (a: { view: string; scopeKey: string; responseShape?: string; compute: () => unknown }) => {
+    servedCachedJsonArgs.push(a);
+    return { json: storedTable ?? JSON.stringify(await a.compute()) };
+  },
+  sendSnapshotJson: (res: { type: (t: string) => { send: (b: string) => unknown } }, body: { json: string }) => res.type("application/json").send(body.json),
+  buildScopeKey: (prefix: string, parts: Record<string, unknown>) => `${prefix}|${JSON.stringify(parts)}`,
 }));
+const servedCachedJsonArgs: Array<{ view: string; scopeKey: string; responseShape?: string }> = [];
+let storedTable: string | null = null;
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
 process.env.CAMPAIGN_SERVICE_URL = "http://campaign:3000";
@@ -173,6 +181,41 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     const money = servedCachedArgs.find((a) => a.view === "sales-funnel-campaign-money");
     expect(money?.responseShape).toBe(routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"));
     expect(money?.responseShape).not.toBe(responseShapeFingerprint());
+  });
+
+  it("the whole table is ONE cell keyed on its rows; a stored table is served without reading any nested cell (MON-PAGE-SPEED-1111)", async () => {
+    servedCachedArgs.length = 0;
+    servedCachedJsonArgs.length = 0;
+    const rows = [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")])];
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: rows })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: null, unmeasuredReason: null }, maturity: null });
+    const first = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+    expect(servedCachedJsonArgs).toHaveLength(1);
+    const { routeResponseShapeFingerprint } = await import("../lib/response-shape.js");
+    const { rowsFingerprint } = await import("./sales-funnel-campaigns.js");
+    expect(servedCachedJsonArgs[0]).toMatchObject({ view: "sales-funnel-campaigns", responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns") });
+    expect(servedCachedJsonArgs[0].scopeKey).toContain(`"rows":"${rowsFingerprint(rows as never)}"`);
+    expect(servedCachedJsonArgs[0].scopeKey).toContain('"pricing":"net"');
+
+    servedCachedArgs.length = 0;
+    computeFeatureRevenue.mockClear();
+    storedTable = JSON.stringify(first.body);
+    try {
+      const second = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+      expect(second.body).toEqual(first.body);
+      expect(servedCachedArgs).toHaveLength(0); // no nested cell read on the serving path
+      expect(computeFeatureRevenue).not.toHaveBeenCalled();
+    } finally {
+      storedTable = null;
+    }
+  });
+
+  it("rowsFingerprint moves with any row field (a stopped campaign is another cell)", async () => {
+    const { rowsFingerprint } = await import("./sales-funnel-campaigns.js");
+    const a = [FC("fc1", "f1", [])];
+    expect(rowsFingerprint(a as never)).toBe(rowsFingerprint(JSON.parse(JSON.stringify(a))));
+    expect(rowsFingerprint(a as never)).not.toBe(rowsFingerprint([{ ...a[0], status: "stopped" }] as never));
   });
 
   it("units pricing on two funnel definitions: invested served, ROI null with a reason (never one funnel picked)", async () => {
