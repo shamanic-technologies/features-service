@@ -458,14 +458,24 @@ describe("servedCached on a fingerprint rotation", () => {
     expect(JSON.stringify(body)).toBe(JSON.stringify({ name: "a\u0000b" }));
   });
 
-  it("an OLD previous cell is never served: it was priced on terms that may be gone, so the read computes live", async () => {
-    // SHOCKWAVE-ROI-NET-1016: a two-day-old cell priced on leg rates brand-service had deleted read $360
-    // per positive reply, the next read $112.50. A previous cell older than the facts gate is a miss.
+  it("an OLD previous cell is served too, and the new cell computed behind it (MON-PAGE-SPEED-1111)", async () => {
+    // Was a blocking live compute past 5 min (SHOCKWAVE-ROI-NET-1016): the first read after a quiet period whose
+    // fingerprint had moved then took 41.6 s on a brand's /revenue. A previous cell follows the stale-hit rule now.
     familyRow = { body: { pipeline: 7 }, computedAt: new Date(Date.now() - 2 * 24 * 3600_000) };
-    const compute = vi.fn().mockResolvedValue({ pipeline: 42 });
+    let resolveCompute!: (value: { pipeline: number }) => void;
+    const compute = vi.fn(() => new Promise<{ pipeline: number }>((resolve) => { resolveCompute = resolve; }));
     const body = await servedCached({ view: "brand-revenue", scopeKey: newKey, orgId: "o", compute });
-    expect(body).toEqual({ pipeline: 42 });
+    expect(body).toEqual({ pipeline: 7 });
     expect(compute).toHaveBeenCalledTimes(1);
+    resolveCompute({ pipeline: 42 });
+    await flush();
+    await flush();
+    expect(storedRow?.body).toEqual({ pipeline: 42 });
+  });
+
+  it("the per-offer terms and the campaign rows are fingerprint parts too", () => {
+    const key = buildScopeKey("b1", { orgId: "o", offersEcon: "x", rows: "y", pricing: "net" });
+    expect(familyKeyOf(key)).toBe(buildScopeKey("b1", { orgId: "o", pricing: "net" }));
   });
 
   it("with no previous cell, computes on the request path exactly as a miss always did", async () => {
