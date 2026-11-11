@@ -14,6 +14,8 @@
  * Any read failing throws (fail loud, never a silent zero).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import { servedCachedWrappedJson, buildScopeKey, type SnapshotJson } from "./view-cache.js";
+import { routeResponseShapeFingerprint } from "./response-shape.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -536,69 +538,26 @@ async function valuationOf(orgId: string, brandId: string, outcomeKey: Published
 }
 
 /**
- * Held per (org, brand, outcome, pricing): a newsletter release is tens of thousands of Units, read off the ledger page by
- * page. Fresh for 2 minutes; up to 6 hours old it is served at once and re-read behind the answer; older, the caller
- * waits for the read. A key asked in the last day is re-read every 10 minutes. One read in flight per key.
+ * ONE GOLD CELL per (org, brand, outcome, pricing) (MON-PAGE-SPEED-1111): a newsletter release is tens of thousands of
+ * Units, read off the ledger page by page. It used to be held in the SERVING process's memory and re-read there every
+ * 10 minutes: every deploy or restart emptied it, so the first read after one waited the whole ledger (6.6 s on our
+ * Threads page, prod 2026-11-11) and every re-read ran on the serving event loop. The Gold layer persists it across
+ * deploys, computes it in the refresher and serves it at once whatever its age, re-read behind the answer at most every
+ * {@link FRESH_MS} and only when the brand's facts moved (`lib/view-cache.ts`).
  */
 const FRESH_MS = 2 * 60_000;
-const STALE_MS = 6 * 60 * 60_000;
-/** A key asked in the last day is re-read every 10 minutes, so a page never waits on a newsletter's whole ledger. */
-const WARM_FOR_MS = 24 * 60 * 60_000;
-const WARM_EVERY_MS = 10 * 60_000;
-const asked = new Map<string, { at: number; args: [string, string, PublishedOutcomeKey, "gross" | "net"] }>();
-let warmer: NodeJS.Timeout | null = null;
-function keepWarm(key: string, args: [string, string, PublishedOutcomeKey, "gross" | "net"]): void {
-  asked.set(key, { at: Date.now(), args });
-  if (warmer) return;
-  warmer = setInterval(() => {
-    for (const [k, a] of asked) {
-      if (Date.now() - a.at > WARM_FOR_MS) {
-        asked.delete(k);
-        continue;
-      }
-      if (flights.has(k)) continue;
-      void readPublishedUnitsNow(k, ...a.args).catch((err: Error) => console.error(`[features-service] published units ${k}: warm re-read failed: ${err.message}`));
-    }
-  }, WARM_EVERY_MS);
-  warmer.unref?.();
-}
-const held = new Map<string, { at: number; body: PublishedUnitsBody & { computedAt: string } }>();
-const flights = new Map<string, Promise<PublishedUnitsBody & { computedAt: string }>>();
 
-function readPublishedUnitsNow(key: string, orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net") {
-  let f = flights.get(key);
-  if (!f) {
-    f = computePublishedUnits(orgId, brandId, outcomeKey, pricing)
-      .then((body) => {
-        const out = { ...body, computedAt: new Date().toISOString() };
-        held.set(key, { at: Date.now(), body: out });
-        return out;
-      })
-      .finally(() => flights.delete(key));
-    flights.set(key, f);
-  }
-  return f;
+/** The route's whole answer `{ brandId, pricing, ...units }` as the exact text `res.json` sends (wrapped once per stored body). */
+export async function readPublishedUnits(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net"): Promise<SnapshotJson> {
+  return servedCachedWrappedJson({
+    view: "published-units",
+    scopeKey: buildScopeKey(brandId, { orgId, outcomeKey, pricing }),
+    orgId,
+    ttlMs: FRESH_MS,
+    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/published-units/{outcomeKey}"),
+    compute: async () => ({ ...(await computePublishedUnits(orgId, brandId, outcomeKey, pricing)), computedAt: new Date().toISOString() }),
+  }, { brandId, pricing });
 }
 
-export async function readPublishedUnits(orgId: string, brandId: string, outcomeKey: PublishedOutcomeKey, pricing: "gross" | "net") {
-  const key = `${orgId}|${brandId}|${outcomeKey}|${pricing}`;
-  keepWarm(key, [orgId, brandId, outcomeKey, pricing]);
-  const start = () => readPublishedUnitsNow(key, orgId, brandId, outcomeKey, pricing);
-  const h = held.get(key);
-  const age = h ? Date.now() - h.at : Infinity;
-  if (h && age < FRESH_MS) return h.body;
-  if (h && age < STALE_MS) {
-    start().catch((err: Error) => console.error(`[features-service] published units ${key}: background re-read failed: ${err.message}`));
-    return h.body;
-  }
-  return start();
-}
-
-/** Test seam. */
-export function __resetPublishedUnits(): void {
-  held.clear();
-  flights.clear();
-  asked.clear();
-  if (warmer) clearInterval(warmer);
-  warmer = null;
-}
+/** Test seam (nothing is held in this process any more). */
+export function __resetPublishedUnits(): void {}
