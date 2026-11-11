@@ -10462,17 +10462,21 @@ registry.registerPath({
                       outcomeName: z.string(),
                       todayRegret: z.number().nullable(),
                       engineRegret: z.number().nullable(),
-                      status: z.enum(["switched", "shadow", "rolled_back", "no_engine_pick"]).describe("ENGINE-FULL-MIGRATION-1102: the Engine drives every result of every live funnel campaign. `switched` = it drives this result on at least one unit; `rolled_back` = a guard put a unit back on the service path until its re-trial (red); `no_engine_pick` = a live campaign works this result but the Engine has no workflow to pick for it (red, see `unpickedCampaigns`); `shadow` = no live campaign works it."),
+                      status: z.enum(["switched", "shadow", "rolled_back", "no_engine_pick", "scripts"]).describe("ENGINE-FULL-MIGRATION-1102: the Engine drives every result of every live funnel campaign. `switched` = it drives this result on at least one unit; `rolled_back` = a guard put a unit back on the service path until its re-trial (red); `no_engine_pick` = a live campaign works this result but the Engine has nothing to pick for it (red, see `unpickedCampaigns`); `scripts` (MON-ENGINE-PICK-1111) = its Engine runs it on stored scripts, workflow-service's Rating picks among those the campaign's strategy keeps on every run (see `scriptRunCampaigns`); `shadow` = no live campaign works it."),
                       units: z.number().int(),
                       driving: z.number().int(),
                       rolledBack: z.number().int(),
                       unpicked: z.number().int().describe("Units of live campaigns working this result with no Engine pick."),
+                      scriptRun: z.number().int().describe("Units of live campaigns whose Engine runs this result on scripts the Rating picks (MON-ENGINE-PICK-1111)."),
                       switchedSince: z.string().nullable(),
                       heldDays: z.number().int().nullable().describe("Days since the first switch with no roll-back."),
                       drives: z.array(z.object({ unitCampaignId: z.string(), brandId: z.string(), state: z.enum(["driving", "rolled_back"]), workflowDynastySlug: z.string(), serviceDynastySlug: z.string().nullable(), switchedAt: z.string(), rolledBackAt: z.string().nullable(), guard: z.record(z.string(), z.unknown()).nullable().describe("The guard: decisions, outcomes, spend and cost per outcome since the switch beside the service path's, `verdict`, `rollBacks` taken so far and, on a rolled-back unit, `retryAt` (its re-trial: 14 days after the first roll-back, doubled per repeat, 56 at most, or at once when the Engine's pick on its pipe moves to another workflow).") })),
                       unpickedCampaigns: z
-                        .array(z.object({ funnelCampaignId: z.string(), orgId: z.string(), brandId: z.string(), pipeId: z.string(), unitCampaignId: z.string().nullable(), reason: z.enum(["no_unit_campaign", "no_engine_place", "no_candidate", "no_candidate_priced", "no_candidate_on_pipe"]) }))
-                        .describe("The live campaigns working this result with no Engine pick, and why."),
+                        .array(z.object({ funnelCampaignId: z.string(), orgId: z.string(), brandId: z.string(), pipeId: z.string(), unitCampaignId: z.string().nullable(), reason: z.enum(["no_unit_campaign", "no_engine_place", "no_candidate", "no_candidate_priced", "no_candidate_on_pipe", "no_script_kept"]) }))
+                        .describe("The live campaigns working this result with no Engine pick, and why (`no_script_kept`: scripts work the pipe but the campaign's strategy keeps none of them)."),
+                      scriptRunCampaigns: z
+                        .array(z.object({ funnelCampaignId: z.string(), orgId: z.string(), brandId: z.string(), pipeId: z.string(), unitCampaignId: z.string(), keptDynasties: z.array(z.string()) }))
+                        .describe("MON-ENGINE-PICK-1111: the live campaigns whose Engine runs this result on scripts, with the script dynasties the Rating picks among."),
                     }),
                   )
                   .optional()

@@ -379,6 +379,19 @@ describe("ENGINE-FULL-MIGRATION-1102: Monitoring's Engine results", () => {
   });
 });
 
+describe("MON-ENGINE-PICK-1111: a result its Engine runs on scripts reads Scripts, never No Engine pick", () => {
+  it("counts the script-run units under their family, keeps a real gap red beside them", () => {
+    const now = new Date("2026-11-11T12:00:00Z");
+    const rows = engineResultsOf([], [], now, [{ funnelCampaignId: "f2", orgId: "o", brandId: "b", outcome: "lead_found", outcomeName: "Lead found", family: "lead_found|start|-", pipeId: "p", unitCampaignId: "u2", reason: "no_script_kept" }], [
+      { funnelCampaignId: "f1", orgId: "o", brandId: "b", outcome: "email_sent", outcomeName: "Email sent", family: "conversation|start|-", pipeId: "sales-cold-email-outreach|lead_found_to_conversation", unitCampaignId: "u1", keptDynasties: ["dy_cold_email"] },
+      { funnelCampaignId: "f3", orgId: "o", brandId: "b", outcome: "lead_found", outcomeName: "Lead found", family: "lead_found|start|-", pipeId: "lead-sourcing|start_to_lead_found", unitCampaignId: "u3", keptDynasties: ["dy_lead_serve"] },
+    ]);
+    const by = new Map(rows.map((r) => [r.family, r]));
+    expect(by.get("conversation|start|-")).toMatchObject({ status: "scripts", scriptRun: 1, unpicked: 0, scriptRunCampaigns: [{ funnelCampaignId: "f1", keptDynasties: ["dy_cold_email"] }] });
+    expect(by.get("lead_found|start|-")).toMatchObject({ status: "no_engine_pick", unpicked: 1, scriptRun: 1 });
+  });
+});
+
 describe("ENGINE-FULL-MIGRATION-1102: a drive counts in ONE family, never every family of its outcome", () => {
   it("splits two Positive reply families by the pipe's family stored on each drive / unpicked leg", () => {
     const now = new Date("2026-11-02T12:00:00Z");

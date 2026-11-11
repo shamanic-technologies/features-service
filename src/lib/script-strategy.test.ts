@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import { buildPlayCatalogue, type Strategy, type Tactic, type WriterTacticVerdictRow } from "./plays.js";
-import { scriptsKeptByStrategy } from "./script-strategy.js";
+import { scriptsKeptByStrategy, scriptsOnPipeOf } from "./script-strategy.js";
 import { parseRunnableScript, scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptSubjectOf } from "./tactic-judgments.js";
 
@@ -153,5 +153,27 @@ describe("script catalogue rows", () => {
     expect(parts.map((p) => p.part)).toEqual(["1 of 3", "2 of 3", "3 of 3"]);
     expect(parts.map((p) => p.code).join("")).toBe("b".repeat(70));
     expect(parts.every((p) => (p.tactics as object) === s.tactics)).toBe(true);
+  });
+});
+
+describe("scriptsOnPipeOf (MON-ENGINE-PICK-1111)", () => {
+  const withStrategy = buildPlayCatalogue({ tactics: [tactic("catch-all", "script")], strategies: [strategy("valid-catch-all", ["catch-all"], [])], plays: [], verdicts: [], writerVerdicts: [verdict("dy_valid", "catch-all", false), verdict("dy_catch_all", "catch-all", true)] });
+  const channelled = (dynasty: string, channel: string): RunnableScript => ({ ...script(dynasty), tactics: { channel } });
+  const pipe = { channelSlug: "lead-sourcing", outcome: "lead_found", outcomeStated: false };
+  const all = [channelled("dy_valid", "lead-sourcing"), channelled("dy_catch_all", "lead-sourcing"), channelled("dy_other", "sourcing-crm-contacts")];
+  it("a campaign with no stored verdict: every script working the pipe is kept", () => {
+    expect(scriptsOnPipeOf(all, [], withStrategy)("c1")(pipe)).toEqual({ working: ["dy_valid", "dy_catch_all"], kept: ["dy_catch_all", "dy_valid"] });
+  });
+  it("the stored strategy on the pipe's Engine narrows them; another campaign's verdict does not", () => {
+    const stored = [{ campaignId: "c1", outcome: "lead_found", strategyId: "valid-catch-all" }];
+    expect(scriptsOnPipeOf(all, stored, withStrategy)("c1")(pipe).kept).toEqual(["dy_catch_all"]);
+    expect(scriptsOnPipeOf(all, stored, withStrategy)("c2")(pipe).kept).toEqual(["dy_catch_all", "dy_valid"]);
+  });
+  it("no script works the pipe: nothing (the workflow path decides)", () => {
+    expect(scriptsOnPipeOf(all, [], withStrategy)("c1")({ channelSlug: "x-post", outcome: "x_post_published", outcomeStated: false })).toEqual({ working: [], kept: [] });
+  });
+  it("a cold email pipe naming its Engine (email_sent) is worked by a channel-less script", () => {
+    const cold = { ...script("dy_cold_email"), outcome: "email_sent" };
+    expect(scriptsOnPipeOf([cold], [], withStrategy)("c1")({ channelSlug: "sales-cold-email-outreach", outcome: "email_sent", outcomeStated: true }).kept).toEqual(["dy_cold_email"]);
   });
 });

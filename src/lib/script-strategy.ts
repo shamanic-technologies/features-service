@@ -11,7 +11,8 @@
  * widen). No order is served: workflow-service's Rating picks among the kept dynasties.
  */
 import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
-import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
+import { scriptDynastyKey, scriptWorksPipe, type RunnableScript } from "./script-catalogue-client.js";
+import type { StoredEngineStrategy } from "./engine-strategy.js";
 
 export interface ScriptKept {
   dynasty: string;
@@ -47,4 +48,31 @@ export function scriptsKeptByStrategy(scripts: readonly RunnableScript[], strate
       return { ...base, kept: v.allowed, reason: v.reason };
     });
   return { scriptTacticIds, keptDynasties: rows.filter((r) => r.kept).map((r) => r.dynasty), scripts: rows };
+}
+
+/** The scripts working one pipe for one campaign: every runnable one, and those its strategy keeps. */
+export interface ScriptsOnPipe {
+  working: readonly string[];
+  kept: readonly string[];
+}
+
+/**
+ * PURE (MON-ENGINE-PICK-1111): per campaign, the scripts working a pipe (`scriptWorksPipe`) and those the campaign's
+ * STORED strategy on the pipe's Engine keeps (`scriptsKeptByStrategy`, the rule workflow-service's Rating applies per
+ * run). No stored verdict yet = no condition (the runner judges it on its first run). Never asks Jev.
+ */
+export function scriptsOnPipeOf(
+  scripts: readonly RunnableScript[],
+  strategies: readonly Pick<StoredEngineStrategy, "campaignId" | "outcome" | "strategyId">[],
+  catalogue: Pick<PlayCatalogue, "strategies" | "tactics" | "tacticsByWriter">,
+): (campaignId: string) => (pipe: { channelSlug: string; outcome: string; outcomeStated: boolean }) => ScriptsOnPipe {
+  return (campaignId) => (pipe) => {
+    const working = scripts.filter((s) => scriptWorksPipe(s, pipe));
+    if (working.length === 0) return { working: [], kept: [] };
+    const stored = strategies.find((x) => x.campaignId === campaignId && x.outcome === pipe.outcome);
+    // Same reading as `strategyOfStored` (engine-strategy.ts, which imports this module): a kept id the catalogue lost throws.
+    const strategy = stored?.strategyId ? catalogue.strategies.get(stored.strategyId) : null;
+    if (strategy === undefined) throw new Error(`campaign ${campaignId} keeps strategy ${stored!.strategyId} on ${pipe.outcome}, which the catalogue does not hold`);
+    return { working: working.map((s) => s.dynasty), kept: scriptsKeptByStrategy(working, strategy, catalogue).keptDynasties };
+  };
 }
