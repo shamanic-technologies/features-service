@@ -99,6 +99,7 @@ const {
   decodeSnapshotBody,
 } = await import("./view-cache.js");
 const { withResponseShape, responseShapeFingerprint } = await import("./response-shape.js");
+const { latestFamilyCellJson } = await import("./view-cache.js");
 const PLATFORM = PLATFORM_SCOPE_ORG_ID;
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -420,9 +421,43 @@ describe("familyKeyOf", () => {
     expect(familyKeyOf(key)).toBe(buildScopeKey("b1", { orgId: "o", pricing: "net", cause: "priced:outreach" }));
   });
 
+  it("drops the brand's channel set too, so its newest cell is found before the campaign list is read", () => {
+    const asked = { orgId: "o", pricing: "net", leads: "outcomes", channelSpend: "own-v1" };
+    const full = withResponseShape(buildScopeKey("b1", { ...asked, channels: "a+b", decl: "x", offersEcon: "e1" }));
+    expect(familyKeyOf(full)).toBe(familyKeyOf(withResponseShape(buildScopeKey("b1", asked))));
+  });
+
   it("is the key itself when there is no fingerprint to drop", () => {
     const key = buildScopeKey("b1", { orgId: "o", pricing: "net" });
     expect(familyKeyOf(key)).toBe(key);
+  });
+});
+
+describe("latestFamilyCellJson (serve first, check behind)", () => {
+  const familyKey = buildScopeKey("b1", { orgId: "o", pricing: "net" });
+  const inRequest = <T>(headers: Record<string, string>, fn: () => Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      const req = { method: "GET", originalUrl: "/brands/b1/revenue?pricing=net", headers } as never;
+      captureRequestReplay(req, {} as never, () => fn().then(resolve, reject));
+    });
+
+  it("answers a customer read with the family's newest stored text", async () => {
+    familyRow = { bodyText: '{"pipeline":7}', body: null, computedAt: new Date(), unchanged: false };
+    const got = await inRequest({ "x-org-id": "o" }, () => latestFamilyCellJson({ view: "brand-revenue", familyKey, orgId: "o" }));
+    expect(got?.json).toBe('{"pipeline":7}');
+  });
+
+  it("is null when no cell of the family is stored (the full path answers)", async () => {
+    familyRow = undefined;
+    const got = await inRequest({ "x-org-id": "o" }, () => latestFamilyCellJson({ view: "brand-revenue", familyKey, orgId: "o" }));
+    expect(got).toBeNull();
+  });
+
+  it("is null for the keeper's precompute and outside a request, which must run the real path", async () => {
+    familyRow = { bodyText: '{"pipeline":7}', body: null, computedAt: new Date(), unchanged: false };
+    const keeper = await inRequest({ "x-view-precompute": "1" }, () => latestFamilyCellJson({ view: "brand-revenue", familyKey, orgId: "o" }));
+    expect(keeper).toBeNull();
+    expect(await latestFamilyCellJson({ view: "brand-revenue", familyKey, orgId: "o" })).toBeNull();
   });
 });
 

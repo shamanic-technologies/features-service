@@ -19190,7 +19190,8 @@
                 "expectedRevenueUsd",
                 "mostAdvancedDate"
               ]
-            }
+            },
+            "description": "Every company the brand's outreach reached. ABSENT when ?organizations=count was asked (then `organizationCount` carries how many); present otherwise, as always."
           },
           "leads": {
             "anyOf": [
@@ -20597,6 +20598,10 @@
           "brandId": {
             "type": "string"
           },
+          "organizationCount": {
+            "type": "integer",
+            "description": "How many companies `organizations` holds. Present ONLY when ?organizations=count was asked, which drops the array itself (97% of the body on our own brand: 8,423 companies, 5.0 of 5.2 MB, prod 2026-11-11)."
+          },
           "channels": {
             "type": "array",
             "items": {
@@ -20780,7 +20785,6 @@
           "sequences",
           "headline",
           "costEconomics",
-          "organizations",
           "leads",
           "attributedOutcomes",
           "events",
@@ -47019,6 +47023,19 @@
             "required": false,
             "description": "WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`.",
             "name": "cause",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "count"
+              ],
+              "description": "Omit (the DEFAULT) → `organizations[]` is served as always. 'count' → the array is dropped and `organizationCount` says how many companies it held: for a page that shows the money and a company count but no company list (the dashboard shell, Today, Copilot), a ~5 MB body becomes ~0.2 MB. The figures are the same stored answer either way. An unrecognised value is a 400, never a silent pick."
+            },
+            "required": false,
+            "description": "Omit (the DEFAULT) → `organizations[]` is served as always. 'count' → the array is dropped and `organizationCount` says how many companies it held: for a page that shows the money and a company count but no company list (the dashboard shell, Today, Copilot), a ~5 MB body becomes ~0.2 MB. The figures are the same stored answer either way. An unrecognised value is a 400, never a silent pick.",
+            "name": "organizations",
             "in": "query"
           },
           {

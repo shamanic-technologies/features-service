@@ -2910,6 +2910,15 @@ const brandRevenueResponseSchema = featureRevenueResponseSchema
   .omit({ featureSlug: true })
   .extend({
     brandId: z.string(),
+    organizations: z
+      .array(revenueOrganizationSchema)
+      .describe("Every company the brand's outreach reached. ABSENT when ?organizations=count was asked (then `organizationCount` carries how many); present otherwise, as always.")
+      .optional(),
+    organizationCount: z
+      .number()
+      .int()
+      .describe("How many companies `organizations` holds. Present ONLY when ?organizations=count was asked, which drops the array itself (97% of the body on our own brand: 8,423 companies, 5.0 of 5.2 MB, prod 2026-11-11).")
+      .optional(),
     window: revenueWindowRef.describe("Present ONLY when ?windowDays= was asked. See RevenueWindow.").optional(),
     channels: z
       .array(brandRevenueChannelGroupSchema)
@@ -2938,6 +2947,7 @@ registry.registerPath({
       windowDays: windowDaysParam,
       pricing: z.enum(["gross", "net"]).describe("Pricing basis for every MONEY metric. Omit or 'gross' → real undiscounted numbers (DEFAULT). 'net' → the org's discounted figures from runs-service's FROZEN net cost amounts; fail-loud (502) when they are unavailable, never a silent fallback to gross.").optional(),
       cause: z.string().describe("WHOSE WINS THIS READ PRICES — a comma-separated subset of outreach | other | unstated (any order, any case). Every outcome is COUNTED whatever this says (leads[], funnelSteps, conversion rates); this decides which outcomes carry VALUE into the pipeline revenue, the return and the cost of acquisition computed on OUR outreach. 'outreach' — ours: the customer said so, or lead-service's default rule answered it (the outcome followed our first delivered email to that person). 'other' — not ours: the customer said so, or it happened before our first email reached them. 'unstated' — undecided: undated, not matched to a lead, or on a lead we never delivered to. Omitted → 'outreach' alone, the same answer the dashboard's lead panel shows as \"Ours\". The legacy instantly qualifications are judged by the same date rule. An unrecognised word (or a list naming no state) is a 400 with reason 'cause_unrecognised', never a silent pick. The echo rides every response as `outcomeCauses.priced`.").optional(),
+      organizations: z.enum(["count"]).describe("Omit (the DEFAULT) → `organizations[]` is served as always. 'count' → the array is dropped and `organizationCount` says how many companies it held: for a page that shows the money and a company count but no company list (the dashboard shell, Today, Copilot), a ~5 MB body becomes ~0.2 MB. The figures are the same stored answer either way. An unrecognised value is a 400, never a silent pick.").optional(),
       leads: z.enum(["outcomes", "full"]).describe("HOW MUCH OF A PERSON `leads[]` carries. Omit or 'outcomes' (the DEFAULT) serves the NARROW row (leadId + the seven outcome flags + the four realized-outcome timestamps) on the rows that REACHED something; 'full' serves every contacted lead fully hydrated — what this service served before, and what exactly one consumer (a server-side digest that NAMES each person and what they did) needs. The default moved because a body answering about MONEY was 99.6% people (10,860,781 bytes of a 10,903,573-byte prod body) and the consumer's 2MB persisted-cache cap meant every money card cold-skeletoned on every page load. Whether an outcome is attributed at all is answered separately by `attributedOutcomes`, so narrowing costs no consumer an answer. An unrecognised value is a 400, never a silent pick.").optional(),
     }),
   },
