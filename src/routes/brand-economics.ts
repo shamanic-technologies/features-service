@@ -100,7 +100,7 @@ import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
 import { computeAudienceStats, type ComputeResult } from "../lib/audience-stats-compute.js";
 import { computeBrandPipelineActivity } from "./pipeline-activity.js";
 import { BrandOwnershipError, assertBrandHeld as assertBrandHeldByOrg } from "../lib/brand-ownership.js";
-import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey, latestFamilyCellJson, derivedSnapshotJson, SnapshotJson } from "../lib/view-cache.js";
 import { servedRevenueBody } from "../lib/retired-returns.js";
 import { expectedReturnForBrand, expectedReturnForScope, withAudienceExpectedReturns } from "../lib/expected-return.js";
 import { withInteractiveReads } from "../lib/lead-copy.js";
@@ -282,6 +282,112 @@ function handleError(res: import("express").Response, error: unknown, what: stri
 // grouping — do NOT "fix" it by re-basing either side. The PEOPLE half does not sum, for the reason
 // stated at the row itself.
 router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
+  // SERVE FIRST, CHECK BEHIND (MON-PAGE-SPEED-1111): the brand's newest stored body answers at once, and the
+  // full path below (ownership, offer terms, declared funnels, the campaign list, ~6.7 s cold on our own
+  // brand, prod 2026-11-11) runs behind the response, refreshing the cell when one of those inputs moved.
+  const organizations = parseOrganizationsDetail((req.query as Record<string, unknown>).organizations);
+  if (organizations === null) return res.status(400).json(ORGANIZATIONS_DETAIL_ERROR);
+  const first = await revenueFamilyFirst(req as never);
+  if (!first) return handleBrandRevenue(req, res);
+  sendSnapshotJson(res, organizations === "count" ? withOrganizationCount(first) : first);
+  void handleBrandRevenue(req, discardedResponse(req, "brand revenue")).catch((error: unknown) => {
+    console.error("[features-service] Brand revenue check behind a stored answer failed:", error);
+  });
+});
+
+/** The scope-key parts of a brand revenue cell that are a question the caller asked (never a fingerprint). */
+function brandRevenueAskedParts(a: { orgId: string | undefined; pricing: Pricing; leads: unknown; cause: unknown; windowDays: unknown }) {
+  return {
+    orgId: a.orgId,
+    pricing: a.pricing,
+    // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow for the
+    // read every browser makes.
+    leads: a.leads,
+    // A read counting a different set of causes is a different answer, so it is a different cell.
+    // Absent for the default set → today's keys are unmoved.
+    cause: a.cause,
+    // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
+    windowDays: a.windowDays,
+    // Channel rows read their OWN spend since 2026-10-11 (`planChannelSpend`): a new cell, never the folded one.
+    channelSpend: "own-v1",
+  };
+}
+
+/** The newest stored body of this request's cell family, or null when the request must take the full path. */
+async function revenueFamilyFirst(req: AuthenticatedRequest & { params: { brandId: string }; query: Record<string, unknown> }) {
+  const query = req.query as Record<string, unknown>;
+  if (!req.orgId || namesRetiredFunnel(query)) return null;
+  const pricing = parsePricing(query.pricing);
+  const leads = parseLeadDetail(query.leads);
+  const causes = parseOutcomeCauses(query.cause);
+  const windowDays = parseWindowDays(query.windowDays);
+  // Any refusal is the full path's to answer, with its own 400.
+  if (pricing === null || leads === null || causes === null || windowDays === null) return null;
+  return latestFamilyCellJson({
+    view: "brand-revenue",
+    familyKey: buildScopeKey(
+      req.params.brandId,
+      brandRevenueAskedParts({ orgId: req.orgId, pricing, leads, cause: causeScopeKeyPart(causes), windowDays }),
+    ),
+    orgId: req.orgId,
+    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/revenue"),
+  });
+}
+
+/**
+ * A response nobody reads: the full path run behind a stored answer. A refusal it reaches (the brand left
+ * this org, a channel set that prices two ways) is logged loud; the next read takes it (no stored cell then).
+ */
+function discardedResponse(req: import("express").Request, what: string): import("express").Response {
+  let status = 200;
+  const sink = {
+    req,
+    app: req.app,
+    headersSent: false,
+    get: () => undefined,
+    set: () => sink,
+    status(code: number) {
+      status = code;
+      return sink;
+    },
+    json(body: unknown) {
+      if (status >= 400) console.error(`[features-service] ${what} check behind a stored answer refused ${status}:`, JSON.stringify(body).slice(0, 300));
+      return sink;
+    },
+    send: () => sink,
+  };
+  return sink as unknown as import("express").Response;
+}
+
+/** `?organizations=`: omitted → the array as always; `count` → dropped, `organizationCount` beside the money. */
+function parseOrganizationsDetail(raw: unknown): "all" | "count" | null {
+  if (raw === undefined) return "all";
+  return raw === "count" ? "count" : null;
+}
+
+const ORGANIZATIONS_DETAIL_ERROR = { error: "organizations must be: count (or omitted)", reason: "organizations_unrecognised" };
+
+/**
+ * The stored body with `organizations[]` replaced by its length (`?organizations=count`). The cell stays ONE
+ * cell (no second compute): the slim text is derived from it once per stored body and remembered beside it,
+ * like a route envelope (view-cache `derivedSnapshotJson`).
+ */
+export function withOrganizationCount(body: SnapshotJson): SnapshotJson {
+  return derivedSnapshotJson(body, "organizations=count", (text) => {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    if (!Array.isArray(value.organizations)) {
+      console.error("[features-service] brand revenue body without organizations[]: organizationCount not derivable", Object.keys(value));
+      return text;
+    }
+    const { organizations, ...rest } = value;
+    return JSON.stringify({ ...rest, organizationCount: organizations.length });
+  });
+}
+
+async function handleBrandRevenue(req: import("express").Request, res: import("express").Response) {
+  const organizations = parseOrganizationsDetail((req.query as Record<string, unknown>).organizations);
+  if (organizations === null) return res.status(400).json(ORGANIZATIONS_DETAIL_ERROR);
+  const send = (body: SnapshotJson) => sendSnapshotJson(res, organizations === "count" ? withOrganizationCount(body) : body);
   try {
     // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
     if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
@@ -333,12 +439,12 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
 
     if (!resolved) {
       await assertBrandHeld(speculative.held);
-      return res.json(servedRevenueBody({
+      return send(new SnapshotJson(JSON.stringify(servedRevenueBody({
         brandId: req.params.brandId,
         costBasis: "charged" as const,
         channels: [],
         ...applyLeadDetail(noChannelRevenueBody(causes), leadDetail),
-      }));
+      }))));
     }
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
 
@@ -363,23 +469,14 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       // Keyed on the brand AND on the CHANNEL SET: a newly funded channel changes every figure while no
       // other key part moves, so without it the brand would keep replaying its pre-funding answer.
       scopeKey: buildScopeKey(brandId, {
-        orgId: headers.orgId,
+        ...brandRevenueAskedParts({ orgId: headers.orgId, pricing, leads: leadDetail, cause: causeKey, windowDays }),
+        // FINGERPRINTS of inputs read on every request (view-cache `FINGERPRINT_KEY_PARTS`): a move lands on a
+        // new cell, and `revenueFamilyFirst` serves the newest of them before reading these inputs.
         channels: featureSlugs.join("+"),
         decl,
-        pricing,
         econ,
         // Absent unless the brand's campaigns sell several offers → every other brand's key is unmoved.
         offersEcon,
-        // Two different answers ⇒ two cells, which also keeps the stored snapshot narrow for the
-        // read every browser makes.
-        leads: leadDetail,
-        // A read counting a different set of causes is a different answer, so it is a different cell.
-        // Absent for the default set → today's keys are unmoved.
-        cause: causeKey,
-        // A windowed read carries a block the plain one does not. Absent → today's keys are unmoved.
-        windowDays,
-        // Channel rows read their OWN spend since 2026-10-11 (`planChannelSpend`): a new cell, never the folded one.
-        channelSpend: "own-v1",
       }),
       orgId: headers.orgId,
       compute: async () => {
@@ -469,11 +566,11 @@ router.get("/brands/:brandId/revenue", apiKeyAuth, async (req, res) => {
       },
     });
 
-    sendSnapshotJson(res, payload);
+    send(payload);
   } catch (error) {
     return handleError(res, error, "revenue");
   }
-});
+}
 
 // ── GET /brands/:brandId/offers ──────────────────────────────────────────────
 //
