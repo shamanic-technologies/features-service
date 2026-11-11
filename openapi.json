@@ -54250,10 +54250,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The campaign UNIT the run belongs to."
+              "description": "The campaign UNIT the run belongs to. Absent = no campaign yet (PREVIEW-EMAIL-503-1111, content-generation's preview email of a brand-new brand): the strategy is `strategyId` when stated, else none (every runnable script of the Engine)."
             },
-            "required": true,
-            "description": "The campaign UNIT the run belongs to.",
+            "required": false,
+            "description": "The campaign UNIT the run belongs to. Absent = no campaign yet (PREVIEW-EMAIL-503-1111, content-generation's preview email of a brand-new brand): the strategy is `strategyId` when stated, else none (every runnable script of the Engine).",
             "name": "campaignId",
             "in": "query"
           },
@@ -54266,6 +54266,16 @@
             "description": "The Engine: the outcome the run makes (workflow-service's script `outcome`).",
             "name": "outcome",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Without `campaignId` only: the strategy to read the scripts under (catalogue id, e.g. `named-emails-only`). Absent = no condition. Unknown = 404 `strategy_not_found`. Ignored with `campaignId` (the campaign keeps its own)."
+            },
+            "required": false,
+            "description": "Without `campaignId` only: the strategy to read the scripts under (catalogue id, e.g. `named-emails-only`). Absent = no condition. Unknown = 404 `strategy_not_found`. Ignored with `campaignId` (the campaign keeps its own).",
+            "name": "strategyId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -54277,7 +54287,9 @@
                   "type": "object",
                   "properties": {
                     "campaignId": {
-                      "type": "string"
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Null on a read with no campaign (PREVIEW-EMAIL-503-1111)."
                     },
                     "outcome": {
                       "type": "string"
@@ -54296,9 +54308,11 @@
                       "enum": [
                         "campaign_engine_carried",
                         "campaign_engine_judge",
-                        "campaign_engine_empty_brief"
+                        "campaign_engine_empty_brief",
+                        "stated_by_caller",
+                        "no_campaign"
                       ],
-                      "description": "The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111)."
+                      "description": "The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111). With no campaign: `stated_by_caller` (the `strategyId` asked) or `no_campaign` (none asked: no condition, every runnable script kept)."
                     },
                     "scriptTacticIds": {
                       "type": "array",
@@ -54363,10 +54377,10 @@
             }
           },
           "400": {
-            "description": "campaign_and_outcome_required"
+            "description": "campaign_and_outcome_required: no outcome"
           },
           "404": {
-            "description": "campaign_not_found"
+            "description": "campaign_not_found | strategy_not_found (no campaign, unknown `strategyId`)"
           },
           "422": {
             "description": "campaign_states_no_campaign: the row belongs to no campaign a person runs; nothing runs"

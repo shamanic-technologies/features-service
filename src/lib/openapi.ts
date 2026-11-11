@@ -6360,18 +6360,24 @@ registry.registerPath({
   description:
     "MIGRATE-1105 S0-STRATEGY. The campaign UNIT's own sales funnel names the strategy on the pipe it performs (the writer pick's rule; none = the pipe's default play, a pipe with no default strategy = no strategy). The strategy is read on its SCRIPT tactics only (tactics with `appliesTo: script`, judged by Jev on each runnable script version: its description, its tactics data and its code; an upgraded version keeps the previous version's verdict until judged). A script dynasty is kept when every REQUIRED script tactic is judged yes on it and every EXCLUDED one judged no; a script not judged on a named tactic is NOT kept. No strategy, or one naming no script tactic, keeps every runnable script of the Engine. A play the pipe does not catalogue keeps none. No order is served: the runner's Rating picks among `keptDynasties`. A caller that cannot read this (5xx) runs nothing and retries (never any script).",
   tags: ["Internal"],
-  request: { query: z.object({ campaignId: z.string().describe("The campaign UNIT the run belongs to."), outcome: z.string().describe("The Engine: the outcome the run makes (workflow-service's script `outcome`).") }) },
+  request: {
+    query: z.object({
+      campaignId: z.string().optional().describe("The campaign UNIT the run belongs to. Absent = no campaign yet (PREVIEW-EMAIL-503-1111, content-generation's preview email of a brand-new brand): the strategy is `strategyId` when stated, else none (every runnable script of the Engine)."),
+      outcome: z.string().describe("The Engine: the outcome the run makes (workflow-service's script `outcome`)."),
+      strategyId: z.string().optional().describe("Without `campaignId` only: the strategy to read the scripts under (catalogue id, e.g. `named-emails-only`). Absent = no condition. Unknown = 404 `strategy_not_found`. Ignored with `campaignId` (the campaign keeps its own)."),
+    }),
+  },
   responses: {
     200: {
       description: "The scripts the strategy keeps",
       content: {
         "application/json": {
           schema: z.object({
-            campaignId: z.string(),
+            campaignId: z.string().nullable().describe("Null on a read with no campaign (PREVIEW-EMAIL-503-1111)."),
             outcome: z.string(),
             strategyId: z.string().nullable().describe("Null = no strategy: every script kept."),
             strategyName: z.string().nullable(),
-            strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief"]).describe("The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111)."),
+            strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief", "stated_by_caller", "no_campaign"]).describe("The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111). With no campaign: `stated_by_caller` (the `strategyId` asked) or `no_campaign` (none asked: no condition, every runnable script kept)."),
             scriptTacticIds: z.array(z.string()).describe("The script tactics the strategy names (requires + excludes); empty = it narrows no script."),
             keptDynasties: z.array(z.string()).describe("The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."),
             scripts: z.array(
@@ -6387,8 +6393,8 @@ registry.registerPath({
         },
       },
     },
-    400: { description: "campaign_and_outcome_required" },
-    404: { description: "campaign_not_found" },
+    400: { description: "campaign_and_outcome_required: no outcome" },
+    404: { description: "campaign_not_found | strategy_not_found (no campaign, unknown `strategyId`)" },
     422: { description: "campaign_states_no_campaign: the row belongs to no campaign a person runs; nothing runs" },
     502: { description: "script_strategy_unreadable: run nothing and retry" },
   },

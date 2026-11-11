@@ -7,6 +7,13 @@
  * per campaign x Engine, judged from its brief). The Engine's runnable scripts come from workflow-service's catalogue
  * (held 60 s), the verdicts from the tactic sweep. Unreadable = 502: the runner runs nothing and retries. No brief = no
  * condition (`strategyId: null`, every runnable script; NO-BRIEF-UNBLOCK-1111, was 503 `campaign_states_no_brief`).
+ *
+ *   GET /internal/script-strategy?outcome=[&strategyId=]   (api key; no campaign yet, PREVIEW-EMAIL-503-1111)
+ *
+ * The same rule for a read made BEFORE any campaign exists (content-generation's preview email of a brand-new brand): the
+ * strategy is the one the caller names (`strategyId`, read from the catalogue, unknown = 404 `strategy_not_found`), none =
+ * no condition = every runnable script of the Engine. Never a default strategy, never a workflow, pipe or play ranking: a
+ * brand with zero history gets the Engine's runnable scripts, and workflow-service's Rating picks among them.
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -22,7 +29,8 @@ const router = Router();
 router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Response) => {
   const campaignId = typeof req.query.campaignId === "string" ? req.query.campaignId.trim() : "";
   const outcome = typeof req.query.outcome === "string" ? req.query.outcome.trim() : "";
-  if (!campaignId || !outcome) return res.status(400).json({ error: "campaignId and outcome are required", reason: "campaign_and_outcome_required" });
+  if (!outcome) return res.status(400).json({ error: "outcome is required", reason: "campaign_and_outcome_required" });
+  if (!campaignId) return scriptsWithoutCampaign(req, res, outcome);
   try {
     const unit = await fetchCampaignPipe(campaignId);
     if (!unit.found) return res.status(404).json({ error: `campaign-service lists no campaign ${campaignId}`, reason: "campaign_not_found" });
@@ -52,6 +60,28 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
     res.status(502).json({ error: `the scripts this campaign's strategy keeps could not be read: ${(error as Error).message}`, reason: "script_strategy_unreadable" });
   }
 });
+
+/** PREVIEW-EMAIL-503-1111: no campaign yet. The strategy the caller names, else no condition (every runnable script). */
+async function scriptsWithoutCampaign(req: Request, res: Response, outcome: string) {
+  const strategyId = typeof req.query.strategyId === "string" && req.query.strategyId.trim() ? req.query.strategyId.trim() : null;
+  try {
+    const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+    const strategy = strategyId ? (catalogue.strategies.get(strategyId) ?? null) : null;
+    if (strategyId && !strategy) return res.status(404).json({ error: `no strategy ${strategyId} in the catalogue`, reason: "strategy_not_found" });
+    const kept = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), strategy, catalogue);
+    res.json({
+      campaignId: null,
+      outcome,
+      strategyId: strategy?.id ?? null,
+      strategyName: strategy?.name ?? null,
+      strategySource: strategy ? "stated_by_caller" : "no_campaign",
+      ...kept,
+    });
+  } catch (error) {
+    console.error(`[features-service] script strategy (no campaign) ${outcome} x ${strategyId ?? "no strategy"} unreadable:`, error);
+    res.status(502).json({ error: `the scripts this strategy keeps could not be read: ${(error as Error).message}`, reason: "script_strategy_unreadable" });
+  }
+}
 
 /**
  * NEXT-STEPS-TRUE-REASON-1111: a service that holds a campaign Engine's run for a reason of its OWN (a budget spent, an
