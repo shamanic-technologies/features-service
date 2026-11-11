@@ -37,6 +37,7 @@ import { driveStepOf, drivenDynastyOf, guardOf } from "./engine-drive.js";
 import type { EngineDriveRow } from "./engine-drive-store.js";
 import { readResearchBuild } from "../routes/research.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
+import type { ScriptsOnPipe } from "./script-strategy.js";
 
 const DAY_MS = 86_400_000;
 /** How far back the daily book is read: a decision this old weighs (1/2)^(150/45) ≈ 10% (`HALF_LIFE_DAYS`). */
@@ -333,8 +334,34 @@ export interface UnpickedResult {
   /** `no_unit_campaign` (campaign-service runs no unit on that pipe), `no_engine_place` (the Engine computed no place for
    *  that result), `no_candidate` / `no_candidate_priced` (the place has no workflow to draw), `no_candidate_on_pipe` (its
    *  draws pick only other pipes' workflows). */
-  reason: "no_unit_campaign" | "no_engine_place" | "no_candidate" | "no_candidate_priced" | "no_candidate_on_pipe";
+  reason: "no_unit_campaign" | "no_engine_place" | "no_candidate" | "no_candidate_priced" | "no_candidate_on_pipe" | "no_script_kept";
 }
+
+/**
+ * MON-ENGINE-PICK-1111: a result of a live campaign its Engine runs on SCRIPTS (MIGRATE-1105: the pipe's workflows are
+ * retired, runnable scripts work it). workflow-service's Rating picks among the scripts the campaign's strategy keeps on
+ * every run: that IS the Engine pick, no workflow drive is stored for it.
+ */
+export interface ScriptRunResult {
+  funnelCampaignId: string;
+  orgId: string;
+  brandId: string;
+  /** The Engine (the pipe's outcome, `CataloguePipe.outcome`: `email_sent` on cold email, never the leg's step). */
+  outcome: string;
+  outcomeName: string;
+  family: string;
+  pipeId: string;
+  unitCampaignId: string;
+  /** The script dynasties the Rating picks among (the campaign's strategy kept them), sorted. */
+  keptDynasties: string[];
+}
+
+/** An Engine's name: its step's label, else the outcome spelled out (`email_sent` -> "Email sent"). */
+const engineLabelOf = (model: CatalogueModel, outcome: string): string => {
+  const label = stepLabel(model, outcome);
+  return label !== outcome ? label : outcome.charAt(0).toUpperCase() + outcome.slice(1).replace(/_/g, " ");
+};
+
 
 /**
  * One funnel campaign's drives: EVERY leg of the line it runs that a platform pipe works (a client-team leg runs no
@@ -349,12 +376,14 @@ export async function drivesOfCampaign(
   engine: EngineShadow,
   existing: ReadonlyMap<string, EngineDriveRow>,
   now: Date,
-): Promise<{ drives: Array<Omit<EngineDriveRow, "updatedAt">>; unpicked: UnpickedResult[] }> {
+  scriptsOnPipe: (pipe: CataloguePipe) => ScriptsOnPipe = () => ({ working: [], kept: [] }),
+): Promise<{ drives: Array<Omit<EngineDriveRow, "updatedAt">>; unpicked: UnpickedResult[]; scriptRun: ScriptRunResult[] }> {
   const running = funnelById(model, c.salesFunnelId);
   if (!running) throw new Error(`running funnel ${c.salesFunnelId} is not in the catalogue`);
   const today = dayOf(now);
   const drives: Array<Omit<EngineDriveRow, "updatedAt">> = [];
   const unpicked: UnpickedResult[] = [];
+  const scriptRun: ScriptRunResult[] = [];
   for (const leg of running.legs) {
     if (!leg.pipe || leg.pipe.operatedBy !== "platform") continue;
     const outcome = legStepsOf(model, leg.legKey).toStep;
@@ -370,6 +399,17 @@ export async function drivesOfCampaign(
     const place = engine.places.find((p) => p.outcome === outcome);
     const kept = existing.get(unit.campaignId) ?? null;
     const driven = place ? drivenDynastyOf(place, base.id) : null;
+    // No workflow of the Engine's on this pipe, but runnable scripts work it (MIGRATE-1105 retired its workflows): the
+    // Rating picks among the scripts the strategy keeps, every run. A stored workflow drive there pins a retired workflow
+    // and is dropped (not re-written). The strategy keeping none of them is a gap, loud.
+    if (!driven) {
+      const s = scriptsOnPipe(base);
+      if (s.working.length > 0) {
+        if (s.kept.length === 0) miss("no_script_kept");
+        else scriptRun.push({ funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome: base.outcome, outcomeName: engineLabelOf(model, base.outcome), family: engineFamilyKeyOf(base), pipeId: base.id, unitCampaignId: unit.campaignId, keptDynasties: [...s.kept].sort() });
+        continue;
+      }
+    }
     // No pick now and none stored: the unit would run the service order, said loud. A stored drive keeps the Engine's
     // last pick (still an Engine drive) until its pipe has a pick again.
     if (!driven && !kept) {
@@ -390,5 +430,5 @@ export async function drivesOfCampaign(
     if (next.guard) next.guard = { ...next.guard, family: engineFamilyKeyOf(base) };
     drives.push({ unitCampaignId: unit.campaignId, funnelCampaignId: c.id, orgId: c.orgId, brandId: c.brandId, outcome, pipeId: base.id, serviceDynastySlug: serviceDynasty, ...next });
   }
-  return { drives, unpicked };
+  return { drives, unpicked, scriptRun };
 }
