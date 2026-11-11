@@ -115,4 +115,20 @@ describe("POST /internal/campaign-engine-answers (NEXT-STEPS-TRUE-REASON-1111)",
     expect((await post({ campaignId: "c9", outcome: "email_sent" })).status).toBe(400);
     expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: "  " })).status).toBe(400);
   });
+
+  it("a brand with zero history (no campaign yet) gets the Engine's runnable scripts, never a 503 (PREVIEW-EMAIL-503-1111)", async () => {
+    __resetEngineAnswersForTest();
+    const none = await get("?outcome=lead_found");
+    expect(none.status).toBe(200);
+    expect(none.body).toMatchObject({ campaignId: null, outcome: "lead_found", strategyId: null, strategySource: "no_campaign", keptDynasties: ["dy_catch", "dy_valid"] });
+    expect(unitOf).not.toHaveBeenCalled();
+    expect(engineOf).not.toHaveBeenCalled();
+    expect(engineAnswersNow()).toEqual([]);
+    const stated = await get("?outcome=lead_found&strategyId=valid-only");
+    expect(stated.body).toMatchObject({ campaignId: null, strategyId: "valid-only", strategySource: "stated_by_caller", keptDynasties: ["dy_valid"] });
+    const unknown = await get("?outcome=lead_found&strategyId=nope");
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.reason).toBe("strategy_not_found");
+    expect((await get("?campaignId=c1")).status).toBe(400);
+  });
 });
