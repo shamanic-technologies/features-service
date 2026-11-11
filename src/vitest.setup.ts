@@ -263,6 +263,9 @@ vi.mock("./lib/catalogue-marks-store.js", async () => {
 vi.mock("./lib/ledger-book.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/ledger-book.js")>()),
   ledgerRegime: vi.fn(async () => null),
+  // MON-SCRIPT-PRICES-1111: the daily book a pipe's scripts are measured on (`pipeScriptFigures`) holds no row, so a route
+  // suite prices its pipes on the workflows its fixture states (never a live runs-service read).
+  loadDailyLedgerBook: vi.fn(async () => ({ book: { produced: [], noOutput: [], consumed: [] }, daysMissing: 0, missingDays: [] })),
 }));
 
 /**

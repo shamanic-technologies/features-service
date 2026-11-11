@@ -224,3 +224,68 @@ export function ledgerAudienceEvidence(
     return { audienceId, byDynasty };
   });
 }
+
+/**
+ * The SCRIPTS of a pipe, pooled (MON-SCRIPT-PRICES-1111). Since MIGRATE-1105 a campaign runs its Engine's stored scripts
+ * with NO workflow (workflow-service names the run `script:<outcome>/<dynasty>` and sends no `x-workflow-slug`), so every
+ * row of a pipe's campaigns carries `workflowSlug: null` and `pipeWorkflowCosts` (per workflow) priced nothing: every
+ * pipe read borrowed or expected. runs-service states no script per row yet, so the pipe's script runs are ONE pool, the
+ * pipe's own production on what runs now, the same rule as a workflow's:
+ *   cost     = every no-workflow row inside the pipe's campaigns (any outcome) + their runs that produced nothing
+ *              + the pipe's outcomes judged OUTSIDE its campaigns (a reply judged on a per-org run) at that stage's own
+ *              unit cost (`offCampaignUnitCost`)
+ *   outcomes = the pipe's outcome made inside its campaigns by a no-workflow run, + the ones made outside whose consumed
+ *              input a no-workflow run of the pipe made (counted once: the largest count over the inputs)
+ *   inputs   = what those runs consumed from outside the pipe's campaigns (the largest count over the input kinds)
+ * An outcome a no-workflow run made inside the campaigns whose input a WORKFLOW made is that workflow's (the reply judge
+ * ran under the campaign with no workflow since 2026-10-23, `pipeWorkflowCosts` credits it to the workflow at the stage
+ * unit cost): it leaves the pool at that same cost, never counted twice. `cutDay` = the mature cohort (runs started on or
+ * before it; an outcome counts when the input it consumed was made by such a run): the daily book only (`runStartDay`).
+ * Null when the pool holds nothing.
+ */
+export const SCRIPT_POOL = "scripts";
+
+export function pipeScriptCost(s: string, campaignIds: ReadonlySet<string>, book: LedgerPipeBook, cutDay?: string): PipeWorkflowCost | null {
+  const ran = (day: string | null | undefined) => cutDay === undefined || (day != null && day <= cutDay);
+  const inSet = (c: string | null) => c !== null && campaignIds.has(c);
+  let costUsd = 0;
+  let made = 0;
+  let any = false;
+  for (const r of book.produced) {
+    if (r.workflowSlug !== null || !inSet(r.campaignId) || !ran(r.runStartDay)) continue;
+    any = true;
+    costUsd += r.costUsd;
+    if (r.outcomeKey === s && cutDay === undefined) made += r.occurrences;
+  }
+  for (const r of book.noOutput) {
+    if (r.workflowSlug !== null || !inSet(r.campaignId) || !ran(r.runStartDay)) continue;
+    any = true;
+    costUsd += r.costUsd;
+  }
+  // per consumed kind: inputs from outside, outcomes credited from outside, a workflow's outcomes to hand back, and
+  // (mature cohort) the pool's own outcomes by the day their input was made
+  const inputs = new Map<string, number>();
+  const offSet = new Map<string, number>();
+  const toWorkflows = new Map<string, number>();
+  const madeByInput = new Map<string, number>();
+  const add = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) ?? 0) + n);
+  for (const c of book.consumed) {
+    const poolRun = c.workflowSlug === null && inSet(c.campaignId);
+    if (poolRun && ran(c.runStartDay) && !inSet(c.sourceCampaignId)) add(inputs, c.consumedKey, c.count);
+    if (c.consumerKey !== s || c.workflowSlug !== null) continue;
+    if (poolRun && c.sourceWorkflowSlug !== null && inSet(c.sourceCampaignId)) {
+      if (ran(c.runStartDay)) add(toWorkflows, c.consumedKey, c.count);
+    } else if (poolRun) {
+      if (cutDay !== undefined && ran(c.sourceRunStartDay)) add(madeByInput, c.consumedKey, c.count);
+    } else if (c.sourceWorkflowSlug === null && inSet(c.sourceCampaignId) && ran(cutDay === undefined ? c.runStartDay : c.sourceRunStartDay)) {
+      add(offSet, c.consumedKey, c.count);
+    }
+  }
+  const most = (m: Map<string, number>) => (m.size > 0 ? Math.max(...m.values()) : 0);
+  const unit = offCampaignUnitCost(s, book);
+  const handedBack = most(toWorkflows);
+  const credited = most(offSet);
+  if (!any && credited === 0) return null;
+  const outcomes = (cutDay === undefined ? Math.max(made - handedBack, 0) : most(madeByInput)) + credited;
+  return { workflowSlug: SCRIPT_POOL, costUsd: Math.max(costUsd - handedBack * unit, 0) + credited * unit, outcomes, inputs: most(inputs) };
+}

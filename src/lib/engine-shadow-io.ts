@@ -7,7 +7,7 @@
  */
 import { funnelById, legStepsOf, pipeRunnable, stepLabel, valueAddedTo, type CatalogueModel, type CataloguePipe } from "./agent-catalogue.js";
 import { basePipeIdOf, frameOf, type ShadowCampaign } from "./factory-shadow.js";
-import { loadDailyLedgerBook, pipeOutcomeKey, type LedgerBookRead } from "./ledger-book.js";
+import { DAILY_BOOK_DAYS, dailyBookSinceDay, loadDailyLedgerBook, pipeOutcomeKey, type LedgerBookRead } from "./ledger-book.js";
 import { offCampaignUnitCost } from "./ledger-pipe-costs.js";
 import { legMaturity } from "./maturity.js";
 import { pipeLegKeyOf } from "./funnel-legs.js";
@@ -40,8 +40,8 @@ import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 import type { ScriptsOnPipe } from "./script-strategy.js";
 
 const DAY_MS = 86_400_000;
-/** How far back the daily book is read: a decision this old weighs (1/2)^(150/45) ≈ 10% (`HALF_LIFE_DAYS`). */
-export const BOOK_DAYS = 150;
+/** How far back the daily book is read (`DAILY_BOOK_DAYS`, the one key every reader of it shares). */
+export const BOOK_DAYS = DAILY_BOOK_DAYS;
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 
 /** One pipe's decision days: per workflow dynasty, fleet-wide and per brand. */
@@ -71,7 +71,7 @@ export function engineMemos() {
           return null;
         }),
       ),
-    book: () => (book ??= loadDailyLedgerBook("gross", new Date(Date.now() - BOOK_DAYS * DAY_MS).toISOString().slice(0, 10))),
+    book: () => (book ??= loadDailyLedgerBook("gross", dailyBookSinceDay())),
     /** The pipe's decision days per workflow dynasty (fleet and per brand), off the daily book. */
     days: (p: CataloguePipe) =>
       memo(pipeDays, p.id, async (): Promise<PipeDays> => {
