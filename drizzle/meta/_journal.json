@@ -463,6 +463,13 @@
       "when": 1794672000000,
       "tag": "0065_strategy_engine_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794758400000,
+      "tag": "0066_no_brief_no_condition",
+      "breakpoints": true
     }
   ]
 }

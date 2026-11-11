@@ -18,8 +18,13 @@ import { strategyOnSubject, writerSubjectKey, type PlayCatalogue, type Strategy 
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 
-/** `empty_brief` = a pre-S6 row only; never written any more. */
-export type EngineStrategySource = "carried" | "judge" | "empty_brief" | "engine_default";
+/**
+ * `empty_brief` = the campaign states no brief: no condition on the Engine, every runnable script allowed, the Rating
+ * picks (owner 2026-11-11, NO-BRIEF-UNBLOCK-1111: « Une stratégie est un booléen de tactics. Des tactics sont des filtres
+ * sur des scripts »; no brief = no strategy = no filter). Supersedes the per-Engine default strategy (`engine_default`,
+ * #2390), deleted with its column: a brief-less campaign on an Engine with no default ran nothing.
+ */
+export type EngineStrategySource = "carried" | "judge" | "empty_brief";
 
 export interface StoredEngineStrategy {
   campaignId: string;
@@ -41,17 +46,8 @@ export interface EngineStrategyOption {
   name: string;
   /** What the judge reads. */
   description: string;
-  /** The option kept when nothing in the brief bears on this Engine: the Engine's default strategy, else no condition. */
+  /** The option kept when nothing in the brief bears on this Engine: always no condition (NO-BRIEF-UNBLOCK-1111). */
   isDefault?: boolean;
-}
-
-/**
- * PURE: the Engine's conservative DEFAULT strategy (a strategy whose data names the outcome in `defaultForOutcomes`,
- * MIGRATE-1105 S6): what a campaign keeps when its brief says nothing on this Engine. Null = the Engine states none
- * (its scripts do not differ in who they reach): no condition. Two strategies claiming one Engine = the first by id.
- */
-export function engineDefaultStrategy(outcome: string, strategies: ReadonlyMap<string, Strategy>): Strategy | null {
-  return [...strategies.values()].filter((s) => (s.defaultForOutcomes ?? []).includes(outcome)).sort((a, b) => (a.id < b.id ? -1 : 1))[0] ?? null;
 }
 
 export const NO_CONDITION_OPTION: EngineStrategyOption = {
@@ -102,16 +98,12 @@ export function engineStrategyOptions(
     const writes = [...s.requiresTacticIds, ...s.excludesTacticIds].some((t) => ["template", "llm"].includes(c.tactics.get(t)?.appliesTo ?? ""));
     if (!keepsAll || writes) keep.add(id);
   }
-  // A brief silent on this Engine never widens it: its DEFAULT strategy (data) comes first and is what silence keeps;
-  // "no condition" is offered only on an Engine that states no default.
-  const def = engineDefaultStrategy(outcome, c.strategies);
-  if (def) keep.delete(def.id);
+  // A brief silent on this Engine keeps no condition: every runnable script, the Rating picks (NO-BRIEF-UNBLOCK-1111).
   const listed = [...keep]
     .map((id) => c.strategies.get(id)!)
     .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1))
     .map((s): EngineStrategyOption => ({ strategyId: s.id, name: s.name, description: `${s.name}: ${s.description}` }));
-  const first: EngineStrategyOption = def ? { strategyId: def.id, name: def.name, description: `${def.name}: ${def.description}`, isDefault: true } : { ...NO_CONDITION_OPTION, isDefault: true };
-  return [first, ...listed];
+  return [{ ...NO_CONDITION_OPTION, isDefault: true }, ...listed];
 }
 
 /** PURE: whether a script holds a verdict on every script tactic the strategy names. */
@@ -135,18 +127,18 @@ export const optionsSignatureOf = (options: readonly EngineStrategyOption[]): st
   sha256(JSON.stringify(options.map((o) => [o.strategyId, o.description, o.isDefault === true]).sort()));
 
 /**
- * PURE: whether a stored verdict still stands. `stored` = read it; `ask` = Jev; `hold` = no verdict and no brief to judge:
- * the Engine runs nothing until the campaign states its brief (a blank brief never widens to every script: the Engine's
- * scripts serve different people). A carried verdict stands while its brief is unchanged, whatever the options; a judged
- * one also needs the same options. A brief emptied after a verdict keeps that verdict.
+ * PURE: whether a stored verdict still stands. `stored` = read it; `ask` = Jev; `no_condition` = no verdict and no brief:
+ * the campaign keeps no condition on the Engine (every runnable script, the Rating picks; NO-BRIEF-UNBLOCK-1111, was a
+ * hold that ran nothing). A carried verdict stands while its brief is unchanged, whatever the options; a judged one also
+ * needs the same options. A brief emptied after a verdict keeps that verdict.
  */
 export function engineStrategyNeed(
   stored: Pick<StoredEngineStrategy, "briefHash" | "optionsSignature" | "source"> | null,
   briefHash: string | null,
   optionsSignature: string | null,
-): "stored" | "ask" | "hold" {
+): "stored" | "ask" | "no_condition" {
   if (stored && stored.briefHash === briefHash && (stored.source !== "judge" || stored.optionsSignature === optionsSignature)) return "stored";
-  if (briefHash === null) return stored ? "stored" : "hold";
+  if (briefHash === null) return stored ? "stored" : "no_condition";
   return "ask";
 }
 

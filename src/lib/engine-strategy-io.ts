@@ -20,7 +20,6 @@ import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
 import { readRunnableScripts } from "./script-catalogue-client.js";
 import {
   briefHashOf,
-  engineDefaultStrategy,
   engineStrategyBearsQuestion,
   engineStrategyPick,
   engineStrategyNeed,
@@ -106,14 +105,6 @@ export type CampaignEngineStrategy =
   | { kind: "legacy" }
   | { kind: "kept"; row: StoredEngineStrategy; strategy: Strategy | null };
 
-/** The campaign holds no verdict on the Engine and states no brief to judge one from: run nothing, retry later. */
-export class EngineStrategyHeldError extends Error {
-  constructor(readonly campaignId: string, readonly outcome: string) {
-    super(`campaign ${campaignId} states no brief and keeps no strategy on ${outcome} yet: nothing runs until its brief is written`);
-    this.name = "EngineStrategyHeldError";
-  }
-}
-
 const held = new Map<string, { at: number; value: Promise<CampaignEngineStrategy> }>();
 const keyOf = (campaignId: string, outcome: string) => `${campaignId}|${outcome}`;
 export function forgetEngineStrategy(campaignId: string, outcome: string): void {
@@ -154,7 +145,7 @@ export async function askJev(state: Record<string, unknown>, options: readonly E
 
 /**
  * The strategy one campaign keeps on one Engine. `campaign` = the campaign a person runs (its id, org, brand). Throws when
- * the brief, the catalogue or Jev cannot be read: the caller fails closed (runs nothing, retries), never "any script".
+ * the brief, the catalogue or Jev cannot be read: the caller fails closed (runs nothing, retries). No brief = no condition.
  */
 export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: string; brandId: string }, engine: { outcome: string; label?: string }): Promise<CampaignEngineStrategy> {
   const key = keyOf(campaign.campaignId, engine.outcome);
@@ -181,14 +172,12 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
     const need = engineStrategyNeed(stored, briefHash, signature);
     if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies) };
-    if (need === "hold") {
-      // No brief yet: the Engine's DEFAULT strategy (data), never every script; an Engine stating none holds.
-      const def = engineDefaultStrategy(engine.outcome, catalogue.strategies);
-      if (!def) throw new EngineStrategyHeldError(campaign.campaignId, engine.outcome);
-      const next = { campaignId: campaign.campaignId, outcome: engine.outcome, orgId: campaign.orgId, strategyId: def.id, source: "engine_default" as const, briefHash: null, optionsSignature: null, confidence: null, model: null, carriedFrom: null };
+    if (need === "no_condition") {
+      // No brief: no strategy, no filter. Every runnable script of the Engine, the Rating picks (NO-BRIEF-UNBLOCK-1111).
+      const next = { campaignId: campaign.campaignId, outcome: engine.outcome, orgId: campaign.orgId, strategyId: null, source: "empty_brief" as const, briefHash: null, optionsSignature: null, confidence: null, model: null, carriedFrom: null };
       await writeEngineStrategy(next);
-      console.log(`[features-service] campaign ${campaign.campaignId} states no brief: ${engine.outcome} keeps its default strategy ${def.id}`);
-      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: def };
+      console.log(`[features-service] campaign ${campaign.campaignId} states no brief: no condition on ${engine.outcome}`);
+      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null };
     }
     const opts = await optionsNow();
     const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }, { scripts, options: opts, c: catalogue }), opts);
