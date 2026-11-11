@@ -666,6 +666,17 @@ function measuredEntryRate(pipes: Iterable<CataloguePipe>, legKey: string): numb
   return best;
 }
 
+/**
+ * PURE: what a pipe's OWN outcomes cost the fleet, the prior a sibling with none borrows: its mature measured price, else
+ * its history over every workflow it ran (MON-PLAN-FAILED-1111). Since the scripts took over (MIGRATE-1105) every workflow
+ * is retired, so no pipe reads mature and a mature-only prior priced nothing: Founder Hello, Cold WhatsApp and Google Maps
+ * read `pipe_unpriced` beside Sales Cold Email's 188 dollars per positive reply and Lead Sourcing's 0.11 per lead found.
+ */
+function ownFleetPriceOf(q: CataloguePipe): number | null {
+  if (q.measurement?.basis === "mature" && usable(q.measurement.costPerOutcomeUsd)) return q.measurement.costPerOutcomeUsd;
+  return usable(q.measurement?.historyCostPerOutcomeUsd) ? q.measurement!.historyCostPerOutcomeUsd! : null;
+}
+
 /** PURE: the cost per outcome an EXPECTED figure takes for a platform pipe (see the header); null on the customer's
  *  team and when nothing prices it. */
 export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CataloguePipe>): ExpectedPipeCost | null {
@@ -682,23 +693,23 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
   // The pipe's own history over every workflow it ran, runnable or not (LEAD-SOURCING-EXPECTED-COST-1108): a pipe now run by
   // a script whose workflows are all retired made its outcomes at that price, a fact of its own before any other channel's.
   if (usable(p.measurement?.historyCostPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement!.historyCostPerOutcomeUsd!, source: "pipe_history", basis: "fleet" };
-  // Another channel's mature price on the same leg (same from and to step), the highest: an assumption that never flatters.
+  // Another channel's own price on the same leg (same from and to step), the highest: an assumption that never flatters.
   let sibling: number | null = null;
   for (const q of all) {
     if (q.id === p.id || q.operatedBy !== "platform" || q.fromStep !== p.fromStep || q.toStep !== p.toStep) continue;
-    const c = q.measurement?.basis === "mature" ? q.measurement.costPerOutcomeUsd : null;
+    const c = ownFleetPriceOf(q);
     if (usable(c) && (sibling === null || c > sibling)) sibling = c;
   }
   if (sibling !== null) return { costPerOutcomeUsd: sibling, source: "same_leg_fleet", basis: "fleet" };
   // A pipe that produced nothing yet (FACTORY-P1, owner fleet rule: a cost is never blank; an unproven candidate starts from
-  // the fleet's belief): the fleet's mature price of the SAME outcome from any step, the highest, never below what the pipe
+  // the fleet's belief): the fleet's own price (`ownFleetPriceOf`) of the SAME outcome from any step, the highest, never below what the pipe
   // already spent producing none (the cascade floor, max(own spend, parent)); with no such price, its own spend alone (one
   // outcome costs at least that). A pipe that never spent and has no prior stays unpriced.
   const spent = usable(p.measurement?.spentUsd) ? p.measurement!.spentUsd! : 0;
   let prior: number | null = null;
   for (const q of all) {
     if (q.id === p.id || q.operatedBy !== "platform" || q.toStep !== p.toStep) continue;
-    const c = q.measurement?.basis === "mature" ? q.measurement.costPerOutcomeUsd : null;
+    const c = ownFleetPriceOf(q);
     if (usable(c) && (prior === null || c > prior)) prior = c;
   }
   if (prior !== null) return { costPerOutcomeUsd: Math.max(prior, spent), source: "same_step_fleet", basis: "fleet" };

@@ -571,3 +571,24 @@ describe("expected cost of a pipe whose workflows are all retired but which ran 
   });
 });
 
+describe("a pipe that never ran borrows a sibling's own HISTORY when no pipe is mature (MON-PLAN-FAILED-1111)", () => {
+  // Since the scripts took over every workflow is retired: no pipe reads mature, so a mature-only prior priced nothing
+  // (prod 2026-11-11: Founder Hello, Cold WhatsApp, Google Maps unpriced beside Sales Cold Email's $188.54 per positive reply).
+  const pipe = (id: string, from: string | null, to: string, m: Partial<PipeMeasurement> | null) =>
+    ({ id, channelSlug: id.split("|")[0], computedLegKey: `${from ?? "start"}_to_${to}`, fromStep: from, toStep: to, operatedBy: "platform", measurement: m ? { basis: null, costPerOutcomeUsd: null, conversionRatePct: null, workflowDynastySlug: null, spentUsd: 0, ...m } : null }) as unknown as Parameters<typeof expectedPipeCost>[0];
+  const coldEmail = pipe("zz-cold-email|lead_found_to_conversation", "lead_found", "conversation", { historyCostPerOutcomeUsd: 188.54 });
+  const neverRan = (id: string, from: string | null) => pipe(id, from, "conversation", { spentUsd: 0 });
+
+  it("same leg: another channel's history; same outcome from another step: the highest history", () => {
+    expect(expectedPipeCost(neverRan("zz-whatsapp|lead_found_to_conversation", "lead_found"), [coldEmail])).toEqual({ costPerOutcomeUsd: 188.54, source: "same_leg_fleet", basis: "fleet" });
+    expect(expectedPipeCost(neverRan("zz-hello|start_to_conversation", null), [coldEmail])).toEqual({ costPerOutcomeUsd: 188.54, source: "same_step_fleet", basis: "fleet" });
+  });
+
+  it("a mature sibling still counts; the highest of the two wins; nothing to borrow stays unpriced", () => {
+    const matureCheap = pipe("zz-other|lead_found_to_conversation", "lead_found", "conversation", { basis: "mature", costPerOutcomeUsd: 40 });
+    expect(expectedPipeCost(neverRan("zz-whatsapp|lead_found_to_conversation", "lead_found"), [coldEmail, matureCheap])).toMatchObject({ costPerOutcomeUsd: 188.54 });
+    expect(expectedPipeCost(neverRan("zz-whatsapp|lead_found_to_conversation", "lead_found"), [matureCheap])).toMatchObject({ costPerOutcomeUsd: 40 });
+    expect(expectedPipeCost(neverRan("zz-hello|start_to_conversation", null), [pipe("zz-x|lead_found_to_conversation", "lead_found", "conversation", {})])).toBeNull();
+  });
+});
+

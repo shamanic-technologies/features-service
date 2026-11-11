@@ -67,6 +67,8 @@ export interface ShadowCampaign {
   bornSalesFunnelId?: string;
   /** Its unit campaigns (one per pipe), each driven by the Engine (ENGINE-FULL-MIGRATION-1102). Absent = not read. */
   units?: Array<{ campaignId: string; featureSlug: string; legKey: string }>;
+  /** Launched on its Target alone (BACKLINK-ENGINE-1109): its Target's Engine runs every unit, no pipe; nothing to plan. */
+  engineRun?: boolean;
 }
 
 /**
@@ -236,8 +238,9 @@ export interface ShadowPlan {
   rankedOn: "roi" | "cost_per_target";
   /** How the shadow line was chosen: `ranked` (the best priced line), `only_line` (ONE runnable line reaches the Target and
    *  a pipe on it has no price yet: nothing to rank, it is the plan, its figures null until the pipe spends; its pipes in
-   *  `unpricedPipes`), null with no shadow line. */
-  shadowPickedOn?: "ranked" | "only_line" | null;
+   *  `unpricedPipes`), `learning` (several lines, none priced, each waiting only on pipes with no price yet: the running
+   *  line, else the fewest unpriced pipes, `learningLineOf`), null with no shadow line. */
+  shadowPickedOn?: "ranked" | "only_line" | "learning" | null;
   /** Did the shadow line differ from the running one (to the Target)? null when either side is missing. */
   planDiffers: boolean | null;
   /** Straight lines priced to pick from (after the brief's picks and the offer's steps). */
@@ -448,6 +451,17 @@ function coveringPipes(lines: readonly PlanLine[], blocked: ShadowPlan["unpriced
   return out;
 }
 
+/** PURE: the line a plan takes when no line is priced and each waits only on pipes with no price yet (`learning`): the
+ *  running line when it is one of them, else the fewest unpriced pipes, then the fewest legs, then id. Null when a line is
+ *  unpriced for another reason (a leg rate, a Target value): nothing then says it is only learning. */
+export function learningLineOf(lines: readonly PlanLine[], runningLineId: string | null): PlanLine | null {
+  if (lines.length < 2 || !lines.every((l) => l.figures.unavailableReason?.startsWith("pipe_unpriced:"))) return null;
+  const running = runningLineId === null ? undefined : lines.find((l) => l.lineId === runningLineId);
+  if (running) return running;
+  const unpriced = (l: PlanLine) => new Set(l.figures.legs.filter((g) => g.pipeId && g.costSource === null).map((g) => g.pipeId)).size;
+  return [...lines].sort((a, b) => unpriced(a) - unpriced(b) || a.legs.length - b.legs.length || (a.funnelId < b.funnelId ? -1 : a.funnelId > b.funnelId ? 1 : 0))[0]!;
+}
+
 /** PURE: where a campaign starts and what it targets, read off campaign-service's statement, else its running funnel. */
 export function frameOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId">) {
   const running = funnelById(model, campaign.salesFunnelId);
@@ -540,7 +554,13 @@ export function planCampaign(
   // 2026-10-29). A line the client's own team works end to end is no plan of ours (`coveringPipes`).
   const ours = lines.filter((l) => l.figures.unavailableReason !== "customer_time_only");
   const onlyLine = !ranked && ours.length === 1 && unpricedPipesOf(model, ours).length > 0 ? ours[0] : null;
-  const shadow = ranked ?? onlyLine;
+  // SEVERAL runnable lines of ours and none priced, each held back only by pipes that never made an outcome (a learning
+  // state, never a dead end, owner 2026-10-11 « quitte à poser une hypothèse », MON-PLAN-FAILED-1111: Lead Follow-up and
+  // Founder Hello Replies read no plan, the latter following it and so not running): the plan stays on what runs today
+  // when it reaches the Target (no evidence to move), else the line with the fewest unpriced pipes; figures null until
+  // its pipes spend.
+  const learning = !ranked && !onlyLine ? learningLineOf(ours, runningLine.reachesTarget ? runningLine.lineId : null) : null;
+  const shadow = ranked ?? onlyLine ?? learning;
   const blocked = ranked ? [] : unpricedPipesOf(model, lines);
   // Every line goes through at least one pipe with no price yet: a catalogue gap. Named by the fewest pipes covering every
   // line (greedy, most shared first): one pipe when every line shares it.
@@ -572,7 +592,7 @@ export function planCampaign(
     shadowUnavailableDetail,
     unpricedPipes: blocked,
     rankedOn,
-    shadowPickedOn: ranked ? "ranked" : onlyLine ? "only_line" : null,
+    shadowPickedOn: ranked ? "ranked" : onlyLine ? "only_line" : learning ? "learning" : null,
     planDiffers: shadow && runningLine.reachesTarget ? shadow.lineId !== runningLine.lineId : null,
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
@@ -667,7 +687,7 @@ export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
 }
 
 /** The pipe judge's rule version: bumped when the question changes, so every stored verdict is asked again. */
-export const PIPE_JUDGE_RULE = "channel-named-v2";
+export const PIPE_JUDGE_RULE = "channel-job-v3";
 
 /** PURE: a fingerprint of what Jev judged a pipe on: its words or the question's rule move it (a re-judge). */
 export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(`${PIPE_JUDGE_RULE}|${pipeWords(model, p)}`);
@@ -695,12 +715,16 @@ export function pipeQuestion(channelName: string, words: string) {
     type: "noul" as const,
     instructions:
       `A client wrote a BRIEF for one sales campaign (in the state). Does the brief rule out the channel "${channelName}"? About this channel: ${words} ` +
-      `Answer yes only when the brief lists the channels to use and "${channelName}" is not in that list, or when the brief says not to use it. ` +
+      "A campaign moves people through steps (found, written to until they reply, a meeting booked, a client), and each channel moves them from one step to another: that move is the channel's job. " +
+      `Answer yes when the brief lists the channels to use (a list such as "Use only these channels: ...") and "${channelName}" is not in it; ` +
+      `or when the brief asks for another channel to do the same job as "${channelName}" (for example it asks for emails to get replies and "${channelName}" gets replies another way) and never asks for "${channelName}"; ` +
+      `or when the brief says not to use "${channelName}". ` +
       `Answer no when the brief names "${channelName}" (even with a strategy after it: a strategy narrows who the channel reaches or how it works, it never rules the channel out), ` +
-      "or says nothing about which channels to use. Judge on the brief's words only.",
+      `or when the brief asks for no channel to do the job of "${channelName}". Words about who to reach (an audience, a region, addresses never written to), what to say or offer, or the language ask for no channel. ` +
+      "A channel asked for one job never rules out a channel doing another job: emails that get replies say nothing about the channels that find the people. Judge on the brief's words only.",
     criteria: {
-      true: `The brief lists other channels and not "${channelName}", or says not to use it.`,
-      false: `The brief names "${channelName}", or does not restrict channels.`,
+      true: `The brief lists other channels and not "${channelName}", asks for another channel to do its job, or says not to use it.`,
+      false: `The brief names "${channelName}", or asks for no channel to do its job.`,
     },
   };
 }
@@ -827,6 +851,7 @@ export function shadowStateOf(row: StoredShadowRow): { state: ShadowState; state
   const plan = row.plan;
   if (row.status === "judge_failed") return { state: "problem", stateReason: "judge_failed", stateDetail: `The brief judge failed: ${row.failure ?? "no detail"}.` };
   if (row.status === "ok" && plan?.shadowPickedOn === "only_line" && plan.unpricedPipes.length > 0) return { state: "not_yet", stateReason: "only_line_unpriced", stateDetail: waiting(plan.unpricedPipes) };
+  if (row.status === "ok" && plan?.shadowPickedOn === "learning" && plan.unpricedPipes.length > 0) return { state: "not_yet", stateReason: "learning_line_unpriced", stateDetail: `${waiting(plan.unpricedPipes)} The plan runs its line until they do.` };
   if (row.status === "ok") return { state: "ok", stateReason: null, stateDetail: null };
   const reason = plan?.shadowUnavailableReason ?? null;
   if (!plan || plan.shadow !== null || reason === null || !NOT_YET_REASONS.some((r) => reason.startsWith(r))) {

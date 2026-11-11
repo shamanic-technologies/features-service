@@ -259,22 +259,22 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(res.body.verdict.red).toBe(false);
   });
 
-  it("a campaign whose line waits on a first price is NOT YET (not red); the same campaign following its plan is a problem", async () => {
-    for (const p of mem.model.pipes.values()) if (p.operatedBy === "platform") p.expectedCost = null;
+  it("a campaign whose lines all wait on a first price keeps its running line as a learning plan: NOT YET, never red, even following it (MON-PLAN-FAILED-1111)", async () => {
+    for (const p of [...mem.model.pipes.values(), ...mem.model.plays.values()]) if (p.operatedBy === "platform") p.expectedCost = null;
     try {
       mem.campaigns = [campaign(null)];
       await runFactoryShadowPass();
       let res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
-      expect(res.body.campaigns[0]).toMatchObject({ status: "plan_failed", state: "not_yet" });
-      expect(res.body.campaigns[0].stateDetail).toMatch(/^Waiting for a first price: .* never run\.$/);
+      expect(res.body.campaigns[0]).toMatchObject({ status: "ok", state: "not_yet", stateReason: "learning_line_unpriced", planDiffers: false });
+      expect(res.body.campaigns[0].stateDetail).toMatch(/^Waiting for a first price: .* never run\. The plan runs its line until they do\.$/);
       expect(res.body.verdict.red).toBe(false);
       expect(res.body.notYet).toHaveLength(1);
       expect(res.body.series.at(-1)).toMatchObject({ planFailed: 0, notYet: 1 });
       mem.campaigns = [{ ...campaign(null), followsPlan: true }];
       await runFactoryShadowPass();
       res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
-      expect(res.body.campaigns[0]).toMatchObject({ state: "problem", followsPlan: true });
-      expect(res.body.verdict).toEqual({ red: true, reasons: ["plan_failed"] });
+      expect(res.body.campaigns[0]).toMatchObject({ state: "not_yet", followsPlan: true });
+      expect(res.body.verdict.red).toBe(false);
     } finally {
       mem.model = buildCatalogueModel({
         channels,
@@ -285,6 +285,20 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
         plays: new Map([[COLD, { default: play("everyone", "Everyone", "Email every lead found.", 40), others: [play("valid-only", "Valid only", "Email only addresses verified valid.", 30)] }]]),
       });
     }
+  });
+});
+
+describe("a campaign launched on its Target alone (MON-PLAN-FAILED-1111, Backlink earned)", () => {
+  it("is ok with no plan and no Engine places: its Engine runs it, nothing is broken", async () => {
+    mem.campaigns = [{ ...campaign("Count every new live link."), id: "sfc-engine", salesFunnelId: "backlink_earned", target: "backlink_earned", units: [{ campaignId: "u-1", pipeId: null, featureSlug: null, legKey: null }] }];
+    await runFactoryShadowPass();
+    const body = mem.plans.get("sfc-engine").body;
+    expect(body).toMatchObject({ status: "ok", failure: null, engineRun: true, plan: null });
+    expect(body.engine).toMatchObject({ status: "ok", places: [] });
+    expect(mem.jevCalls).toBe(0);
+    const res = await request(app).get("/internal/factory-shadow/monitoring").set({ "x-api-key": "test-key" });
+    expect(res.body.campaigns.find((c: any) => c.campaignId === "sfc-engine")).toMatchObject({ state: "ok" });
+    expect(res.body.problems.map((c: any) => c.campaignId)).not.toContain("sfc-engine");
   });
 });
 

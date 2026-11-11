@@ -38483,9 +38483,10 @@
                 "enum": [
                   "ranked",
                   "only_line",
+                  "learning",
                   null
                 ],
-                "description": "`ranked` = the best priced line; `only_line` = the ONE runnable line of ours reaching the Target, a pipe on it unpriced (in `unpricedPipes`): nothing to rank, it is the plan, figures null until that pipe spends. Null with no shadow line; absent on a plan stored before 2026-10-29."
+                "description": "`ranked` = the best priced line; `only_line` = the ONE runnable line of ours reaching the Target, a pipe on it unpriced (in `unpricedPipes`): nothing to rank, it is the plan, figures null until that pipe spends; `learning` = several lines, none priced, each waiting only on pipes with no price yet: the running line when it is one of them, else the one with the fewest unpriced pipes. Null with no shadow line; absent on a plan stored before 2026-10-29."
               },
               "unpricedPipes": {
                 "type": "array",
@@ -82872,7 +82873,7 @@
                           "stateReason": {
                             "type": "string",
                             "nullable": true,
-                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `learning_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
                           },
                           "stateDetail": {
                             "type": "string",
@@ -83374,7 +83375,7 @@
                           "stateReason": {
                             "type": "string",
                             "nullable": true,
-                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `learning_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
                           },
                           "stateDetail": {
                             "type": "string",
@@ -83877,7 +83878,7 @@
                           "stateReason": {
                             "type": "string",
                             "nullable": true,
-                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
+                            "description": "A code: `judge_failed`, `follows_plan_without_plan:<reason>`, `pipe_unpriced:<pipe ids>`, `only_line_unpriced`, `learning_line_unpriced`, `no_priced_line_to_target`, `no_runnable_line_to_target`, or the read failure."
                           },
                           "stateDetail": {
                             "type": "string",
