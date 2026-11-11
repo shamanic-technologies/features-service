@@ -6322,7 +6322,7 @@ registry.registerPath({
             outcome: z.string(),
             strategyId: z.string().nullable().describe("Null = no strategy: every script kept."),
             strategyName: z.string().nullable(),
-            strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief"]).describe("The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, or judged from its brief."),
+            strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief"]).describe("The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111)."),
             scriptTacticIds: z.array(z.string()).describe("The script tactics the strategy names (requires + excludes); empty = it narrows no script."),
             keptDynasties: z.array(z.string()).describe("The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."),
             scripts: z.array(
@@ -6342,7 +6342,6 @@ registry.registerPath({
     404: { description: "campaign_not_found" },
     422: { description: "campaign_states_no_campaign: the row belongs to no campaign a person runs; nothing runs" },
     502: { description: "script_strategy_unreadable: run nothing and retry" },
-    503: { description: "campaign_states_no_brief: no verdict on this Engine and no brief to judge one from; run nothing and retry" },
   },
 });
 

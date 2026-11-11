@@ -2,6 +2,7 @@
 import "./instrument.js";
 import * as Sentry from "@sentry/node";
 import express from "express";
+import { startEngineHeldMonitor } from "./lib/engine-held-monitor.js";
 import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
@@ -242,6 +243,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startFactoryShadowLoop();
         // Every newsletter release's run total (published Units, OUTCOME-FINEST-1106), built ahead of any Outcome page.
         startBulkRunSweep();
+        // A campaign whose Engine cannot run is red on Monitoring (NO-BRIEF-UNBLOCK-1111, lib/engine-held-monitor.ts).
+        startEngineHeldMonitor();
         // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
         // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
         void listLegAssignments()

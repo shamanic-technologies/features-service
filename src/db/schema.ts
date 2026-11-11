@@ -650,8 +650,6 @@ export const strategies = pgTable("strategies", {
   /** Who last edited requires / excludes / description, and when (migration 0032); null = never edited. */
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at", { withTimezone: true }),
-  /** MIGRATE-1105 S6 (migration 0065): the Engines (outcomes) this strategy is the conservative DEFAULT of. */
-  defaultForOutcomes: text("default_for_outcomes").array().notNull().default([]),
 });
 
 export const plays = pgTable(
