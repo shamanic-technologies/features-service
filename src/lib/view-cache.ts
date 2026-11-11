@@ -278,6 +278,26 @@ export async function servedCachedWrappedJson<T>(args: CachedViewArgs<T>, envelo
 
 const MAX_WRAPPED_PER_BODY = 8;
 
+/**
+ * A text DERIVED from a served body (a narrower form a query asks for, e.g. brand revenue
+ * `?organizations=count`), built once per stored body and remembered beside it on a hot body, exactly
+ * like `servedCachedWrappedJson`'s envelopes: a refreshed cell is derived again, never served stale.
+ */
+export function derivedSnapshotJson(body: SnapshotJson, key: string, derive: (text: string) => string): SnapshotJson {
+  const wire = body.wire;
+  if (!wire.account) return new SnapshotJson(derive(body.json));
+  const memoKey = `derived:${key}`;
+  wire.wrapped ??= new Map();
+  let derived = wire.wrapped.get(memoKey);
+  if (!derived) {
+    derived = new SnapshotJson(derive(body.json));
+    if (wire.wrapped.size >= MAX_WRAPPED_PER_BODY) return derived;
+    wire.wrapped.set(memoKey, derived);
+    wire.account(derived.json.length * 3);
+  }
+  return derived;
+}
+
 /** The bytes a body goes out as, and their ETag — computed once per stored body, not per read. */
 export interface WireForm {
   buffer?: Buffer;
@@ -645,6 +665,61 @@ async function serveCell(
 }
 
 /**
+ * SERVE FIRST, CHECK BEHIND (MON-PAGE-SPEED-1111, owner 2026-11-09 « make every page instant »).
+ *
+ * The newest stored cell of a FAMILY (a scope key built WITHOUT its fingerprint parts, see
+ * `familyKeyOf`) for this org, as the exact JSON text to send, or null. A route whose cache key needs
+ * slow input reads (brand `/revenue`: ownership, offer terms, declared funnels and a ~535 KB campaign
+ * list, 6.7 s cold on our own brand, prod 2026-11-11) answers with this cell at once and runs its normal
+ * path behind the response, which refreshes the exact cell when an input moved: the same "stored answer
+ * now, the new one a refresh later" rule the stale and rotation branches of `serveCell` already follow.
+ *
+ * Cells are keyed on the org, and a cell exists only once a request of that org passed the route's own
+ * checks, so another org never reads it. Null outside a customer read on the server role (the refresher
+ * and the keeper must run the real path) and when the cache is off.
+ */
+export async function latestFamilyCellJson(args: { view: string; familyKey: string; orgId: string; responseShape?: string }): Promise<SnapshotJson | null> {
+  if (!cacheEnabled() || viewCacheRole() !== "server") return null;
+  const replay = currentRequestReplay();
+  if (!replay || replay.precompute) return null;
+  const family = familyKeyOf(withResponseShape(args.familyKey, args.responseShape));
+  const hotKey = `family\0${args.view}\0${args.orgId}\0${family}`;
+  const hot = hotEnabled() ? hotGet(hotKey) : undefined;
+  // As in `serveCell`: when this process already holds the newest row's text, only its date crosses the wire.
+  const unchanged = hot
+    ? sql<boolean>`${featureViewSnapshots.computedAt} = ${new Date(hot.computedAtMs).toISOString()}::timestamptz`
+    : sql<boolean>`false`;
+  let row: { computedAt: Date; unchanged: boolean; bodyText: string | null; body: unknown } | undefined;
+  try {
+    [row] = await db
+      .select({
+        computedAt: featureViewSnapshots.computedAt,
+        unchanged,
+        bodyText: sql<string | null>`case when ${unchanged} then null else ${featureViewSnapshots.bodyText} end`,
+        body: sql<unknown>`case when ${unchanged} or ${featureViewSnapshots.bodyText} is not null then null else ${featureViewSnapshots.body} end`,
+      })
+      .from(featureViewSnapshots)
+      .where(
+        and(
+          eq(featureViewSnapshots.view, args.view),
+          eq(featureViewSnapshots.familyKey, family),
+          eq(featureViewSnapshots.orgId, args.orgId),
+        ),
+      )
+      .orderBy(desc(featureViewSnapshots.computedAt))
+      .limit(1);
+  } catch (err) {
+    console.error(`[features-service] view-cache family-first read failed (taking the full path) view=${args.view}: ${(err as Error).message}`);
+    return null;
+  }
+  if (!row) return null;
+  if (row.unchanged === true && hot) return new SnapshotJson(hot.text, hot.wire);
+  const text = bodyOfRow(row).text();
+  const wire = hotEnabled() ? hotRemember(hotKey, new Date(row.computedAt).getTime(), text) : {};
+  return new SnapshotJson(text, wire);
+}
+
+/**
  * Key parts that are FINGERPRINTS of an input read on every request (the brand's economics, the funnels
  * it is priced on), not a question the caller asked. They move whenever a measured conversion rate
  * moves — measured in prod 2026-09-26, brand `75d7e3e8…` held four `brand-offers` cells differing only
@@ -658,7 +733,9 @@ async function serveCell(
 // `offersEcon`: a several-offer brand's per-offer terms (and the campaigns selling each offer), which moved
 // 4 times in one day on our own brand (MON-PAGE-SPEED-1111). `rows`: the campaign rows a whole-table cell
 // was computed from (`routes/sales-funnel-campaigns.ts`).
-const FINGERPRINT_KEY_PARTS = ["econ", "decl", "offersEcon", "rows"] as const;
+// `channels`: the brand's channel set, derived from its campaign list (never a question the caller asks),
+// so a brand read can find its newest cell BEFORE reading that list (`latestFamilyCellJson`).
+const FINGERPRINT_KEY_PARTS = ["econ", "decl", "offersEcon", "rows", "channels"] as const;
 
 export function familyKeyOf(scopeKey: string): string {
   const bar = scopeKey.indexOf("|");
