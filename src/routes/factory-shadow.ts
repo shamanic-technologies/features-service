@@ -73,7 +73,7 @@ import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { splitPlayId } from "../lib/plays.js";
 import { pipeIdOf } from "../lib/agent-catalogue.js";
 import { servedLegKeyOf } from "../lib/funnel-legs.js";
-import { ENGINE_MODEL, engineDayCountsOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
+import { ENGINE_MODEL, engineDayCountsOf, engineShadowOf, failedEngineShadow, type EngineReplay, type EngineShadow } from "../lib/engine-shadow.js";
 
 const router = Router();
 
@@ -140,7 +140,11 @@ const shadowCampaignOf = (r: SalesFunnelCampaignRow, orgId: string): ShadowCampa
   bornSalesFunnelId: r.salesFunnelId,
   // BACKLINK-ENGINE-1109: a unit an Engine runs with no pipe has no channel nor leg to shadow.
   units: pipeUnitsOf(r.units ?? []).map((u) => ({ campaignId: u.campaignId, featureSlug: u.featureSlug, legKey: u.legKey })),
+  engineRun: isEngineRunRow(r),
 });
+
+/** A campaign launched on its Target alone (BACKLINK-ENGINE-1109): every unit is run by the Target's Engine, none by a pipe. */
+const isEngineRunRow = (r: SalesFunnelCampaignRow): boolean => (r.units ?? []).length > 0 && pipeUnitsOf(r.units ?? []).length === 0;
 
 /** Per-pass memos: one brand-service read per brand, one offer-steps read per offer, one model per lifetime revenue. */
 function passMemos() {
@@ -367,6 +371,8 @@ export interface ShadowBody {
   /** Every pipe we run on a leg the plan may walk, kept or ruled out by the brief (the pipe judge). */
   pipeVerdicts: PipeVerdictRow[];
   plan: ShadowPlan | null;
+  /** The campaign is run by its Target's Engine alone (no pipe unit): no plan to compute, status `ok`. Absent = false. */
+  engineRun?: boolean;
   /** ENGINE-PER-OUTCOME-SHADOW (owner 2026-10-31): per candidate place of the line it runs, today's pick beside the Engine's
    *  Thompson pick on value per dollar (`lib/engine-shadow.ts`). Absent on a body stored before. */
   engine?: EngineShadow | null;
@@ -376,6 +382,9 @@ export interface ShadowBody {
 /** Judge every pipe the campaign needs (stored verdicts reused), then plan. Never throws: a failure is the row's status. */
 async function shadowOfCampaign(c: ShadowCampaign, memos: ReturnType<typeof passMemos>, stored: ReadonlyMap<string, BriefJudgment>, storedPipes: ReadonlyMap<string, PipeVerdict>, now: Date): Promise<ShadowBody> {
   const head = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, offerId: c.offerId, salesFunnelId: c.salesFunnelId, salesFunnelName: c.salesFunnelName, brief: c.brief, briefUpdatedAt: c.briefUpdatedAt, followsPlan: c.followsPlan === true, computedAt: now.toISOString() };
+  // A campaign its Target's Engine runs alone has no funnel of pipes to plan (MON-PLAN-FAILED-1111: Backlink earned read
+  // `running_funnel_unknown`, red, while nothing was broken): nothing to judge nor plan, its Engine is the plan.
+  if (c.engineRun) return { ...head, status: "ok", failure: null, engineRun: true, picks: [], pickDiffers: false, pipeVerdicts: [], plan: null };
   let model: CatalogueModel;
   let ltrBasis: ExpectedBasis;
   let steps: OfferSteps;
@@ -515,6 +524,8 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
 
 /** One campaign's Engine shadow; a failure is stored on it (red on Monitoring), never fails the pass. */
 async function engineOfBody(c: ShadowCampaign, b: ShadowBody, memos: ReturnType<typeof passMemos>, engines: EngineMemos, now: Date): Promise<EngineShadow> {
+  // Its Engine already runs it: no place of a pipe line to shadow.
+  if (c.engineRun) return engineShadowOf([], now.toISOString(), "ledger");
   try {
     const { model } = await memos.pricing(c);
     const picks = new Map(b.picks.filter((p) => p.pickedPipeId !== null).map((p) => [p.basePipeId, p.pickedPipeId!]));
@@ -537,6 +548,11 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
   const results = await mapWithConcurrency([...campaigns.keys()], CAMPAIGN_CONCURRENCY, async (i) => {
     const c = campaigns[i]!;
     const engine = bodies[i]?.engine;
+    // Its Engine runs it with no pipe unit: no drive of ours to write, and none removed.
+    if (c.engineRun) {
+      failed.add(c.id);
+      return { drives: [], unpicked: [] };
+    }
     // An Engine that failed this pass says nothing about the drives: they stand as stored (never a silent hand-back).
     if (!engine || engine.status !== "ok") {
       failed.add(c.id);
