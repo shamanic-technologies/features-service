@@ -64,7 +64,10 @@ import {
 } from "../lib/factory-shadow.js";
 import { readDays, readJudgments, readOfferPlans, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
-import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type UnpickedResult } from "../lib/engine-shadow-io.js";
+import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type ScriptRunResult, type UnpickedResult } from "../lib/engine-shadow-io.js";
+import { readRunnableScripts } from "../lib/script-catalogue-client.js";
+import { scriptsOnPipeOf } from "../lib/script-strategy.js";
+import { listEngineStrategies } from "../lib/engine-strategy-io.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
 import { withEnginePickMarks, withFactoryEngineMarks, withResearchPlaceMarks } from "../lib/catalogue-mark-serving.js";
@@ -83,6 +86,8 @@ const CAMPAIGN_CONCURRENCY = 2;
 const PASS_CELL = "factory-shadow:last-pass";
 /** The results of live campaigns the Engine could not pick for on the last pass (ENGINE-FULL-MIGRATION-1102). */
 const UNPICKED_CELL = "engine-drive:unpicked";
+/** The results of live campaigns their Engine runs on scripts the Rating picks (MON-ENGINE-PICK-1111). */
+const SCRIPT_RUN_CELL = "engine-drive:script-run";
 /** Per Research place, its last 30 days of picks that ran (`placeDailyOf`), written by every pass. */
 const PLACE_DAILY_CELL = "research:engine-place-daily";
 /** A live funnel campaign the last pass did not see is picked up within this (its units run the Engine from then on). */
@@ -544,6 +549,10 @@ async function engineOfBody(c: ShadowCampaign, b: ShadowBody, memos: ReturnType<
  */
 async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies: readonly ShadowBody[], memos: ReturnType<typeof passMemos>, engines: EngineMemos, now: Date): Promise<void> {
   const stored = new Map((await readDrives()).map((d) => [d.unitCampaignId, d]));
+  // MON-ENGINE-PICK-1111: the runnable scripts and the stored strategies, once per pass. A failed read throws: the stored
+  // drives and the Monitoring cells stand (never "no Engine pick" because a read failed).
+  const [scripts, strategies, playCatalogue] = await Promise.all([readRunnableScripts(), listEngineStrategies(null), loadPlayCatalogue()]);
+  const scriptsOf = scriptsOnPipeOf(scripts, strategies, playCatalogue);
   const failed = new Set<string>();
   const results = await mapWithConcurrency([...campaigns.keys()], CAMPAIGN_CONCURRENCY, async (i) => {
     const c = campaigns[i]!;
@@ -551,23 +560,24 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
     // Its Engine runs it with no pipe unit: no drive of ours to write, and none removed.
     if (c.engineRun) {
       failed.add(c.id);
-      return { drives: [], unpicked: [] };
+      return { drives: [], unpicked: [], scriptRun: [] };
     }
     // An Engine that failed this pass says nothing about the drives: they stand as stored (never a silent hand-back).
     if (!engine || engine.status !== "ok") {
       failed.add(c.id);
-      return { drives: [], unpicked: [] };
+      return { drives: [], unpicked: [], scriptRun: [] };
     }
     try {
-      return await drivesOfCampaign(engines, (await memos.pricing(c)).model, c, engine, stored, now);
+      return await drivesOfCampaign(engines, (await memos.pricing(c)).model, c, engine, stored, now, scriptsOf(c.id));
     } catch (error) {
       failed.add(c.id);
       console.error(`[features-service] engine drives failed for campaign ${c.id}, its stored drives are kept:`, error);
-      return { drives: [], unpicked: [] };
+      return { drives: [], unpicked: [], scriptRun: [] };
     }
   });
   const rows = results.flatMap((r) => r.drives);
   const unpicked = results.flatMap((r) => r.unpicked);
+  const scriptRun = results.flatMap((r) => r.scriptRun);
   for (const d of rows) {
     const was = stored.get(d.unitCampaignId);
     if (d.state === "rolled_back" && was?.state !== "rolled_back") console.warn(`[features-service] engine drive ROLLED BACK on unit ${d.unitCampaignId} (${d.outcome}): ${JSON.stringify(d.guard)}`);
@@ -577,6 +587,7 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
   const keep = [...rows.map((d) => d.unitCampaignId), ...[...stored.values()].filter((d) => failed.has(d.funnelCampaignId)).map((d) => d.unitCampaignId)];
   await keepOnlyDrives(keep);
   await storeFleetCell(UNPICKED_CELL, JSON.stringify(unpicked), now.getTime());
+  await storeFleetCell(SCRIPT_RUN_CELL, JSON.stringify(scriptRun), now.getTime());
   if (unpicked.length > 0) console.warn(`[features-service] engine drives: ${unpicked.length} result(s) of live campaigns with no Engine pick: ${unpicked.map((u) => `${u.funnelCampaignId}:${u.outcome}:${u.reason}`).join(", ")}`);
 }
 
@@ -614,6 +625,7 @@ export function engineResultsOf(
   drives: readonly EngineDriveRow[],
   now: Date,
   unpicked: readonly UnpickedResult[] = [],
+  scriptRun: readonly ScriptRunResult[] = [],
 ) {
   const rows = families.map((f) => ({ family: f.family ?? f.outcome, outcome: f.outcome, outcomeName: f.outcomeName, todayRegret: f.todayRegret, engineRegret: f.engineRegret }));
   // A drive / unpicked leg belongs to ONE family (its pipe's outcome, step consumed, trigger), never to every family of
@@ -625,6 +637,7 @@ export function engineResultsOf(
   for (const d of [
     ...drives.map((x) => ({ family: familyOfDrive(x), outcome: x.outcome, outcomeName: x.guard?.outcomeName ?? x.outcome })),
     ...unpicked.map((u) => ({ family: familyOfUnpicked(u), outcome: u.outcome, outcomeName: u.outcomeName })),
+    ...scriptRun.map((u) => ({ family: u.family, outcome: u.outcome, outcomeName: u.outcomeName })),
   ])
     if (!seen.has(d.family)) {
       seen.add(d.family);
@@ -633,11 +646,12 @@ export function engineResultsOf(
   return rows.map((r) => {
     const mine = drives.filter((d) => familyOfDrive(d) === r.family);
     const missing = unpicked.filter((u) => familyOfUnpicked(u) === r.family);
+    const rated = scriptRun.filter((u) => u.family === r.family);
     const rolledBack = mine.filter((d) => d.state === "rolled_back").length;
     const driving = mine.filter((d) => d.state === "driving");
     const since = driving.map((d) => d.switchedAt).sort()[0] ?? null;
     const heldDays = since && rolledBack === 0 ? Math.floor((now.getTime() - Date.parse(since)) / 86_400_000) : null;
-    const status = rolledBack > 0 ? ("rolled_back" as const) : driving.length > 0 ? ("switched" as const) : missing.length > 0 ? ("no_engine_pick" as const) : ("shadow" as const);
+    const status = rolledBack > 0 ? ("rolled_back" as const) : driving.length > 0 ? ("switched" as const) : missing.length > 0 ? ("no_engine_pick" as const) : rated.length > 0 ? ("scripts" as const) : ("shadow" as const);
     return {
       ...r,
       status,
@@ -645,10 +659,12 @@ export function engineResultsOf(
       driving: driving.length,
       rolledBack,
       unpicked: missing.length,
+      scriptRun: rated.length,
       switchedSince: since,
       heldDays,
       drives: mine.map((d) => ({ unitCampaignId: d.unitCampaignId, brandId: d.brandId, state: d.state, workflowDynastySlug: d.workflowDynastySlug, serviceDynastySlug: d.serviceDynastySlug, switchedAt: d.switchedAt, rolledBackAt: d.rolledBackAt, guard: d.guard })),
       unpickedCampaigns: missing.map((u) => ({ funnelCampaignId: u.funnelCampaignId, orgId: u.orgId, brandId: u.brandId, pipeId: u.pipeId, unitCampaignId: u.unitCampaignId, reason: u.reason })),
+      scriptRunCampaigns: rated.map((u) => ({ funnelCampaignId: u.funnelCampaignId, orgId: u.orgId, brandId: u.brandId, pipeId: u.pipeId, unitCampaignId: u.unitCampaignId, keptDynasties: u.keptDynasties })),
     };
   });
 }
@@ -992,7 +1008,9 @@ router.get("/internal/factory-shadow/monitoring", apiKeyOnly, async (req, res) =
     });
     const unpickedCell = await loadFleetCell(UNPICKED_CELL);
     const unpicked = unpickedCell ? (JSON.parse(unpickedCell.text) as UnpickedResult[]) : [];
-    const results = engineResultsOf(replay?.families ?? [], drives ?? [], now, unpicked);
+    const scriptRunCell = await loadFleetCell(SCRIPT_RUN_CELL);
+    const scriptRun = scriptRunCell ? (JSON.parse(scriptRunCell.text) as ScriptRunResult[]) : [];
+    const results = engineResultsOf(replay?.families ?? [], drives ?? [], now, unpicked, scriptRun);
     const engineReasons = [
       ...(drives === null ? ["drives_unreadable"] : []),
       ...(engineProblems.length > 0 ? ["engine_failed"] : []),
