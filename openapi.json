@@ -54138,7 +54138,7 @@
                         "campaign_engine_judge",
                         "campaign_engine_empty_brief"
                       ],
-                      "description": "The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, or judged from its brief."
+                      "description": "The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111)."
                     },
                     "scriptTacticIds": {
                       "type": "array",
@@ -54213,9 +54213,6 @@
           },
           "502": {
             "description": "script_strategy_unreadable: run nothing and retry"
-          },
-          "503": {
-            "description": "campaign_states_no_brief: no verdict on this Engine and no brief to judge one from; run nothing and retry"
           }
         }
       }

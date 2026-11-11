@@ -5,8 +5,8 @@
  *
  * MIGRATE-1105 S6 (owner 2026-11-07): the strategy the campaign keeps on this Engine (`lib/engine-strategy-io.ts`, stored
  * per campaign x Engine, judged from its brief). The Engine's runnable scripts come from workflow-service's catalogue
- * (held 60 s), the verdicts from the tactic sweep. Unreadable = 502, no brief and no verdict yet = 503
- * `campaign_states_no_brief`: the runner runs nothing and retries (fail closed, never "any script").
+ * (held 60 s), the verdicts from the tactic sweep. Unreadable = 502: the runner runs nothing and retries. No brief = no
+ * condition (`strategyId: null`, every runnable script; NO-BRIEF-UNBLOCK-1111, was 503 `campaign_states_no_brief`).
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
@@ -14,7 +14,8 @@ import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { fetchCampaignPipe } from "../lib/fleet-leg-campaigns.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
-import { EngineStrategyHeldError, engineStrategyOfCampaign } from "../lib/engine-strategy-io.js";
+import { engineStrategyOfCampaign } from "../lib/engine-strategy-io.js";
+import { noteEngineAnswer } from "../lib/engine-held-monitor.js";
 
 const router = Router();
 
@@ -28,22 +29,26 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
     // MIGRATE-1105 S6: the strategy the campaign keeps on THIS Engine, stored on the campaign (judged from its brief). No
     // pipe, leg, play, sales funnel id or default play: a row naming no campaign runs nothing.
     if (!unit.salesFunnelCampaignId || !unit.orgId || !unit.brandId) {
+      noteEngineAnswer(campaignId, outcome, "campaign_states_no_campaign");
       return res.status(422).json({ error: `campaign ${campaignId} belongs to no campaign a person runs: no strategy, nothing runs`, reason: "campaign_states_no_campaign" });
     }
     const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
     if (stored.kind !== "kept") throw new Error(`no verdict for campaign ${unit.salesFunnelCampaignId} on ${outcome}`);
     const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
+    const kept = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue);
+    // An Engine whose strategy keeps no runnable script cannot run either: red on Monitoring (NO-BRIEF-UNBLOCK-1111).
+    noteEngineAnswer(campaignId, outcome, kept.keptDynasties.length === 0 ? "no_runnable_script_kept" : null);
     res.json({
       campaignId,
       outcome,
       strategyId: stored.strategy?.id ?? null,
       strategyName: stored.strategy?.name ?? null,
       strategySource: `campaign_engine_${stored.row.source}`,
-      ...scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue),
+      ...kept,
     });
   } catch (error) {
-    if (error instanceof EngineStrategyHeldError) return res.status(503).json({ error: error.message, reason: "campaign_states_no_brief" });
     console.error(`[features-service] script strategy ${campaignId} x ${outcome} unreadable:`, error);
+    noteEngineAnswer(campaignId, outcome, "script_strategy_unreadable");
     res.status(502).json({ error: `the scripts this campaign's strategy keeps could not be read: ${(error as Error).message}`, reason: "script_strategy_unreadable" });
   }
 });

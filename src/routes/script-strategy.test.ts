@@ -18,7 +18,7 @@ const engineOf = vi.fn();
 vi.mock("../lib/engine-strategy-io.js", async (orig) => ({ ...(await orig<typeof import("../lib/engine-strategy-io.js")>()), engineStrategyOfCampaign: (...a: unknown[]) => engineOf(...a) }));
 
 import router from "./script-strategy.js";
-import { EngineStrategyHeldError } from "../lib/engine-strategy-io.js";
+import { __resetEngineAnswersForTest, engineAnswersNow } from "../lib/engine-held-monitor.js";
 import { buildPlayCatalogue, type Strategy } from "../lib/plays.js";
 
 const at = "2026-11-06T00:00:00.000Z";
@@ -71,14 +71,15 @@ describe("GET /internal/script-strategy", () => {
     expect((await get("?campaignId=c1&outcome=lead_found")).body).toMatchObject({ strategyId: null, keptDynasties: ["dy_catch", "dy_valid"] });
   });
 
-  it("a row naming no campaign runs nothing (422); no brief and no verdict yet = 503, retried", async () => {
+  it("a row naming no campaign runs nothing (422), noted held for Monitoring; one good answer clears it", async () => {
+    __resetEngineAnswersForTest();
     unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelId: null, salesFunnelCampaignId: null });
     expect((await get("?campaignId=c1&outcome=lead_found")).body.reason).toBe("campaign_states_no_campaign");
+    expect(engineAnswersNow()).toMatchObject([{ campaignId: "c1", outcome: "lead_found", heldReason: "campaign_states_no_campaign" }]);
     unitOf.mockResolvedValue({ found: true, featureSlug: "lead-sourcing", legKey: "start_to_lead_found", salesFunnelCampaignId: "f1", orgId: "o1", brandId: "b1" });
-    engineOf.mockRejectedValue(new EngineStrategyHeldError("f1", "lead_found"));
-    const r = await get("?campaignId=c1&outcome=lead_found");
-    expect(r.status).toBe(503);
-    expect(r.body.reason).toBe("campaign_states_no_brief");
+    engineOf.mockResolvedValue({ kind: "kept", row: { source: "empty_brief", strategyId: null }, strategy: null });
+    expect((await get("?campaignId=c1&outcome=lead_found")).status).toBe(200);
+    expect(engineAnswersNow()).toMatchObject([{ campaignId: "c1", outcome: "lead_found", heldReason: null }]);
   });
 
   it("refuses without both parameters, 404s an unknown campaign, 502s an unreadable catalogue (fail closed)", async () => {

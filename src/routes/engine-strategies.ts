@@ -66,7 +66,7 @@ router.post("/internal/engine-strategies/eval", apiKeyOnly, async (req: Request,
       const options = engineStrategyOptions(r.outcome, scripts, catalogue, r.strategyId ? [r.strategyId] : []);
       const base = { campaignId: r.campaignId, orgId: r.orgId, outcome: r.outcome, stored: r.strategyId, storedSource: r.source };
       if (!brief?.trim()) {
-        rows.push({ ...base, picked: options[0]?.strategyId ?? null, confidence: null, note: "no brief: the Engine's default" });
+        rows.push({ ...base, picked: options[0]?.strategyId ?? null, confidence: null, note: "no brief: no condition (every runnable script)" });
         continue;
       }
       if (options.length <= 1) {
