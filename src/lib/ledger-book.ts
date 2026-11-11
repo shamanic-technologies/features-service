@@ -12,7 +12,7 @@ import { matureCutParams, type LedgerBasis } from "./outcome-cost-totals-client.
 import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { legMaturity } from "./maturity.js";
-import { pipeLegKeyOf } from "./funnel-legs.js";
+import { pipeLegKeyOf, servedLegKeyOf } from "./funnel-legs.js";
 
 interface WireCost {
   grossCents?: string;
@@ -227,6 +227,17 @@ export async function loadDailyLedgerBook(basis: BookBasis, sinceDay: string): P
   }
 }
 
+/** How far back the shared daily book is read: a decision this old weighs (1/2)^(150/45) ≈ 10% (Engine `HALF_LIFE_DAYS`). */
+export const DAILY_BOOK_DAYS = 150;
+
+/** PURE. The since-day of THE shared daily book (every reader asks the same key, so one read serves them all). */
+export function dailyBookSinceDay(now: number = Date.now()): string {
+  return new Date(now - DAILY_BOOK_DAYS * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The first UTC day a campaign ran an Engine script (MIGRATE-1105 S0, runs-service `script:%` tasks, prod 2026-10-29). */
+export const SCRIPTS_FIRST_DAY = "2026-10-29";
+
 const lastGoodDaily = new Map<BookBasis, { at: number; value: LedgerBookRead }>();
 const DAILY_LAST_GOOD_MS = 24 * 3_600_000;
 
@@ -329,6 +340,16 @@ export async function pipeOutcomeKey(featureSlug: string, legKey: string): Promi
   const to = catalogue.channels.find((c) => c.slug === featureSlug)?.stepTransitions.find((t) => pipeLegKeyOf(featureSlug, t.legKey) === pipeLeg)?.to.key;
   if (!to) throw new Error(`[features-service] no catalogue pipe ${featureSlug}|${legKey}`);
   return to;
+}
+
+/** The step a pipe starts from, as the catalogue serves it (a pipe respelled from Lead found starts there, `buildPipes`):
+ *  null for a pipe from Start (it consumes no step of the funnel). */
+export async function pipeFromKey(featureSlug: string, legKey: string): Promise<string | null> {
+  const catalogue = await loadChannelCatalogue({ publishedOnly: false });
+  const pipeLeg = pipeLegKeyOf(featureSlug, legKey);
+  const t = catalogue.channels.find((c) => c.slug === featureSlug)?.stepTransitions.find((x) => pipeLegKeyOf(featureSlug, x.legKey) === pipeLeg);
+  if (!t) throw new Error(`[features-service] no catalogue pipe ${featureSlug}|${legKey}`);
+  return servedLegKeyOf(featureSlug, t.legKey) !== t.legKey ? "lead_found" : (t.from?.key ?? null);
 }
 
 /** The per-slug stat a leg's outcome is read from (the click on a visit leg, else the outcome slot every other leg reads). */

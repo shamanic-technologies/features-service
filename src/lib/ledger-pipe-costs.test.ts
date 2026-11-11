@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ledgerAudienceEvidence, offCampaignUnitCost, pipeWorkflowCosts, type LedgerPipeBook } from "./ledger-pipe-costs.js";
+import { SCRIPT_POOL, ledgerAudienceEvidence, offCampaignUnitCost, pipeScriptCost, pipeWorkflowCosts, type LedgerPipeBook } from "./ledger-pipe-costs.js";
 
 // a reply pipe (campaigns c1, c2) and a sourcing pipe (s1) that found its leads
 const book: LedgerPipeBook = {
@@ -74,5 +74,58 @@ describe("a reply judged UNDER the campaign it answers, by a run of no workflow 
     expect(offCampaignUnitCost("conversation", inCampaign)).toBeCloseTo(0.1, 10);
     expect(pipeWorkflowCosts("conversation", new Set(["c1"]), inCampaign).get("ballad-v4")).toMatchObject({ outcomes: 3 });
     expect(pipeWorkflowCosts("conversation", new Set(["c1"]), inCampaign).get("ballad-v4")!.costUsd).toBeCloseTo(10.3, 10);
+  });
+});
+
+describe("a pipe's scripts, pooled (MON-SCRIPT-PRICES-1111)", () => {
+  // c1 = the pipe's campaign. Before: a workflow (keel) sent, and its replies were judged under c1 with no workflow.
+  // Since the scripts: every run in c1 carries no workflow.
+  const scripts: LedgerPipeBook = {
+    produced: [
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: "keel-v2", occurrences: 100, costUsd: 10, runStartDay: "2026-10-20" },
+      // the reply judge under c1, no workflow: 2 answer keel (workflow era), 3 answer the scripts
+      { outcomeKey: "conversation", campaignId: "c1", workflowSlug: null, occurrences: 5, costUsd: 0.5, runStartDay: "2026-11-08" },
+      // the scripts: leads checked, emails written and sent
+      { outcomeKey: "email_checked", campaignId: "c1", workflowSlug: null, occurrences: 300, costUsd: 3, runStartDay: "2026-11-06" },
+      { outcomeKey: "message_written", campaignId: "c1", workflowSlug: null, occurrences: 300, costUsd: 6, runStartDay: "2026-11-06" },
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, occurrences: 300, costUsd: 3, runStartDay: "2026-11-06" },
+      // a reply judged off any campaign: $0.10 each over every no-workflow judge
+      { outcomeKey: "conversation", campaignId: null, workflowSlug: null, occurrences: 5, costUsd: 0.5, runStartDay: "2026-11-09" },
+      // another pipe's campaign (the sourcing): never in this pool
+      { outcomeKey: "lead_found", campaignId: "s1", workflowSlug: null, occurrences: 300, costUsd: 30, runStartDay: "2026-11-05" },
+    ],
+    noOutput: [{ campaignId: "c1", workflowSlug: null, costUsd: 1, runStartDay: "2026-11-07" }],
+    consumed: [
+      { consumerKey: "message_written", consumedKey: "lead_found", campaignId: "c1", workflowSlug: null, sourceCampaignId: "s1", sourceWorkflowSlug: null, count: 300, runStartDay: "2026-11-06", sourceRunStartDay: "2026-11-05" },
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: "c1", workflowSlug: null, sourceCampaignId: "c1", sourceWorkflowSlug: "keel-v2", count: 2, runStartDay: "2026-11-08", sourceRunStartDay: "2026-10-20" },
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: "c1", workflowSlug: null, sourceCampaignId: "c1", sourceWorkflowSlug: null, count: 3, runStartDay: "2026-11-08", sourceRunStartDay: "2026-11-06" },
+      // judged off campaign: one answers our scripts' send, four another pipe's
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, workflowSlug: null, sourceCampaignId: "c1", sourceWorkflowSlug: null, count: 1, runStartDay: "2026-11-09", sourceRunStartDay: "2026-11-06" },
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, workflowSlug: null, sourceCampaignId: "x9", sourceWorkflowSlug: null, count: 4, runStartDay: "2026-11-09", sourceRunStartDay: "2026-11-06" },
+    ],
+  };
+
+  it("the pool = every no-workflow row in the pipe's campaigns + its loss + its replies judged outside; a workflow's reply goes back to it", () => {
+    const unit = offCampaignUnitCost("conversation", scripts);
+    expect(unit).toBeCloseTo(0.1, 10);
+    const pool = pipeScriptCost("conversation", new Set(["c1"]), scripts)!;
+    // $0.5 judged + $3 checked + $6 written + $3 sent + $1 loss − keel's 2 replies at $0.10 + 1 reply judged outside at $0.10
+    expect(pool.costUsd).toBeCloseTo(0.5 + 3 + 6 + 3 + 1 - 0.2 + 0.1, 10);
+    expect(pool).toMatchObject({ workflowSlug: SCRIPT_POOL, outcomes: 5 - 2 + 1, inputs: 300 });
+    // keel keeps its 2 replies (the workflow rule, unchanged): together they count every reply once
+    expect(pipeWorkflowCosts("conversation", new Set(["c1"]), scripts).get("keel-v2")!.outcomes).toBe(2);
+  });
+
+  it("the mature cohort: runs started on or before the cut, an outcome by the day its input was made", () => {
+    const mature = pipeScriptCost("conversation", new Set(["c1"]), scripts, "2026-11-06")!;
+    // runs started by 11-06: checked + written + sent; the 3 + 1 replies answer sends of 11-06
+    expect(mature.costUsd).toBeCloseTo(3 + 6 + 3 + 0.1, 10);
+    expect(mature).toMatchObject({ outcomes: 4, inputs: 300 });
+    expect(pipeScriptCost("conversation", new Set(["c1"]), scripts, "2026-11-01")).toBeNull();
+  });
+
+  it("a pipe whose campaigns ran no script has no pool; another pipe's campaign is never in it", () => {
+    expect(pipeScriptCost("conversation", new Set(["c2"]), scripts)).toBeNull();
+    expect(pipeScriptCost("lead_found", new Set(["s1"]), scripts)).toMatchObject({ costUsd: 30, outcomes: 300, inputs: 0 });
   });
 });
