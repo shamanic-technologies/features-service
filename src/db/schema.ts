@@ -1090,3 +1090,20 @@ export const campaignEngineStrategies = pgTable(
   (table) => [primaryKey({ name: "campaign_engine_strategies_pk", columns: [table.campaignId, table.outcome] })],
 );
 export type CampaignEngineStrategyRow = typeof campaignEngineStrategies.$inferSelect;
+
+/**
+ * NEXT-STEPS-TRUE-REASON-1111: the latest answer the Engine runner got per (pipe campaign, Engine) from
+ * `/internal/script-strategy`, so the campaign's next-steps read can name the Engine that cannot run (any process, any
+ * restart). `held_reason` null = it could run; `first_held_at` = start of the current refusal streak.
+ */
+export const campaignEngineAnswers = pgTable(
+  "campaign_engine_answers",
+  {
+    campaignId: text("campaign_id").notNull(),
+    outcome: text("outcome").notNull(),
+    heldReason: text("held_reason"),
+    firstHeldAt: timestamp("first_held_at", { withTimezone: true }),
+    answeredAt: timestamp("answered_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [primaryKey({ name: "campaign_engine_answers_pk", columns: [table.campaignId, table.outcome] })],
+);

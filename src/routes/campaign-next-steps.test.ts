@@ -21,6 +21,10 @@ vi.mock("../lib/campaign-next-steps-io.js", () => ({
   fetchEmailSendQueue: (...a: unknown[]) => fetchEmailSendQueue(...a),
   fetchReplyLatencyByCampaignGroups: (...a: unknown[]) => fetchReplyLatencyByCampaignGroups(...a),
 }));
+const readHeldEngines = vi.fn();
+vi.mock("../lib/engine-answers-store.js", () => ({ readHeldEngines: (...a: unknown[]) => readHeldEngines(...a) }));
+const fetchLeadsForRevenue = vi.fn();
+vi.mock("../lib/leads-client.js", () => ({ fetchLeadsForRevenue: (...a: unknown[]) => fetchLeadsForRevenue(...a) }));
 const readPipeFleetReplyLatency = vi.fn();
 vi.mock("./public.js", () => ({ readPipeFleetReplyLatency: (...a: unknown[]) => readPipeFleetReplyLatency(...a) }));
 vi.mock("../middleware/auth.js", () => ({
@@ -84,6 +88,8 @@ beforeEach(() => {
   fetchScheduledFollowups.mockResolvedValue(SCHEDULED);
   fetchReplyLatencyByCampaignGroups.mockResolvedValue({ campaign: { sampleSize: 1, medianMs: 2 * DAY, averageMs: 2 * DAY } });
   readPipeFleetReplyLatency.mockResolvedValue({ sampleSize: 59, medianMs: 5.3 * DAY, averageMs: 19.5 * DAY });
+  readHeldEngines.mockResolvedValue([]);
+  fetchLeadsForRevenue.mockResolvedValue([]);
 });
 
 describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
@@ -103,7 +109,9 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
     const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
     expect(fetchScheduledFollowups).toHaveBeenCalledWith("org-1", ["u-src", "u-mail", "u-close"]);
     expect(res.body.scheduledFollowups).toMatchObject({ leads: 50, due: 2, nextAt: "2026-10-19T01:00:00.000Z" });
-    expect(res.body.nextSends).toEqual({ leadsQueued: 62, dueNow: 2, nextSendAt: "2026-10-19T01:00:00.000Z", unavailableReason: null });
+    expect(res.body.nextSends).toEqual({ leadsQueued: 62, dueNow: 2, nextSendAt: "2026-10-19T01:00:00.000Z", unavailableReason: null, heldBy: null, leadsWaitingOnHeldEngine: null });
+    expect(res.body.heldEngines).toEqual([]);
+    expect(fetchLeadsForRevenue).not.toHaveBeenCalled();
   });
 
   it("the Cold Follow-up Replies case: nothing in the sender, 47 scheduled = 47 queued, never 0", async () => {
@@ -119,8 +127,53 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
     expect(res.status).toBe(200);
     expect(res.body.scheduledFollowups).toBeNull();
     expect(res.body.scheduledFollowupsUnavailableReason).toBe("follow_up_schedule_unreadable");
-    expect(res.body.nextSends).toEqual({ leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "follow_up_schedule_unreadable" });
+    expect(res.body.nextSends).toEqual({ leadsQueued: null, dueNow: null, nextSendAt: null, unavailableReason: "follow_up_schedule_unreadable", heldBy: null, leadsWaitingOnHeldEngine: null });
     expect(res.body.emailSendQueue.leadsAwaitingFirstEmail).toBe(12);
+  });
+
+  it("NEXT-STEPS-TRUE-REASON-1111: leads served, the writer held -> names the reason and counts the waiting leads as queued", async () => {
+    // Prod 2026-11-11, campaign 3cfc2aaa: 123 leads served, 0 written, « Message written » refused for no brief; the
+    // read said 0 queued and no reason, so the assistant invented "today's cap is used".
+    fetchEmailSendQueue.mockResolvedValue({ ...QUEUE, leadsAwaitingFirstEmail: 0, queuedEmails: 0, firstEmailsFrom: null });
+    fetchScheduledFollowups.mockResolvedValue({ ...SCHEDULED, leads: 0, due: 0, upcoming: 0, nextAt: null, byDay: [] });
+    const writer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" };
+    readHeldEngines.mockResolvedValue([writer]);
+    const served = (n: number, contacted: boolean) => Array.from({ length: n }, (_, i) => ({ leadId: `${contacted ? "c" : "w"}${i}`, signals: { contacted } }));
+    fetchLeadsForRevenue.mockResolvedValue(served(123, false));
+    const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(res.status).toBe(200);
+    expect(readHeldEngines).toHaveBeenCalledWith(["u-src", "u-mail", "u-close"]);
+    expect(fetchLeadsForRevenue).toHaveBeenCalledWith("brand-1", ["u-src", "u-mail", "u-close"], { orgId: "org-1", userId: "user-1", runId: "run-1" });
+    expect(res.body.nextSends).toEqual({ leadsQueued: 123, dueNow: 0, nextSendAt: null, unavailableReason: null, heldBy: writer, leadsWaitingOnHeldEngine: 123 });
+    expect(res.body.heldEngines).toEqual([writer]);
+  });
+
+  it("a held Engine: leads already contacted or queued in the sender are not counted twice; the longest-held Engine is named", async () => {
+    const older = { outcome: "email_sent", pipeCampaignId: "u-mail", reason: "no_runnable_script_kept", heldSince: "2026-11-10T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" };
+    const newer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "script_strategy_unreadable", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:41:00.000Z" };
+    readHeldEngines.mockResolvedValue([newer, older]);
+    fetchLeadsForRevenue.mockResolvedValue([
+      ...Array.from({ length: 20 }, (_, i) => ({ leadId: `w${i}`, signals: { contacted: false } })),
+      ...Array.from({ length: 5 }, (_, i) => ({ leadId: `c${i}`, signals: { contacted: true } })),
+    ]);
+    const res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    // 20 not contacted - 12 already queued in the sender = 8 waiting at the Engine; 50 scheduled + 12 queued + 8 = 70.
+    expect(res.body.nextSends).toMatchObject({ leadsQueued: 70, leadsWaitingOnHeldEngine: 8, heldBy: older, unavailableReason: null });
+  });
+
+  it("unreadable Engine answers or waiting leads: named nulls, never a 0 with no reason", async () => {
+    readHeldEngines.mockRejectedValue(new Error("db down"));
+    let res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(res.status).toBe(200);
+    expect(res.body.heldEngines).toBeNull();
+    expect(res.body.heldEnginesUnavailableReason).toBe("engine_answers_unreadable");
+    expect(res.body.nextSends).toMatchObject({ leadsQueued: null, unavailableReason: "engine_answers_unreadable" });
+
+    readHeldEngines.mockResolvedValue([{ outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" }]);
+    fetchLeadsForRevenue.mockRejectedValue(new Error("lead-service down"));
+    res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
+    expect(res.body.nextSends).toMatchObject({ leadsQueued: null, unavailableReason: "waiting_leads_unreadable", leadsWaitingOnHeldEngine: null });
+    expect(res.body.nextSends.heldBy.reason).toBe("campaign_states_no_brief");
   });
 
   it("a pipe id answers for its campaign", async () => {
