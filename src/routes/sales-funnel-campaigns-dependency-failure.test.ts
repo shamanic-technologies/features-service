@@ -73,6 +73,9 @@ vi.mock("../lib/view-cache.js", () => ({
     cells.set(key, v);
     return v;
   },
+  // The table cell (MON-PAGE-SPEED-1111) computes on every read here: this suite is about its NESTED cells.
+  servedCachedJson: async (a: { compute: () => Promise<unknown> }) => ({ json: JSON.stringify(await a.compute()) }),
+  sendSnapshotJson: (res: { type: (t: string) => { send: (b: string) => unknown } }, body: { json: string }) => res.type("application/json").send(body.json),
   buildScopeKey: (prefix: string) => prefix,
 }));
 // The real expected-return memo (the suite-wide setup stubs it), over a model whose fleet-cost wait fails.

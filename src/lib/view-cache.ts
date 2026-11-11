@@ -600,14 +600,17 @@ async function serveCell(
     return servedBody();
   }
 
-  // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics or the
-  // declaration the body is priced on), the previous cell of the SAME org + view + every other key part
-  // is served NOW and the new cell is computed behind the response. See `familyKeyOf`.
-  // Only a RECENT previous cell (computed within `factsGateMaxMs()`): it was priced on economics at most
-  // that old, the drift of a brand someone is reading. An older one was priced on terms that may be long
-  // gone, and serving it made two reads a minute apart disagree (SHOCKWAVE-ROI-NET-1016: a cell priced on
-  // leg rates brand-service deleted the day before read $360 per positive reply, the next read $112.50).
-  // That read computes live instead, like any miss.
+  // Miss on the EXACT key. When the only thing that moved is a FINGERPRINT part (the economics, the
+  // declaration, the per-offer terms or the campaign rows the body is computed from), the newest previous
+  // cell of the SAME org + view + every other key part is served NOW and the new cell is computed behind
+  // the response. See `familyKeyOf`.
+  // WHATEVER ITS AGE (MON-PAGE-SPEED-1111, owner 2026-11-09 « make every page instant »): it used to be
+  // served only when computed within `factsGateMaxMs()` (SHOCKWAVE-ROI-NET-1016: a 2-day-old cell priced
+  // on leg rates brand-service had deleted read $360 per positive reply, the next read $112.50), so the
+  // first read after a quiet period whose fingerprint had moved computed on the request path: 41.6 s on
+  // our own brand's `/revenue` (prod 2026-11-11, `offersEcon` moved) and 7-120 s on its Campaigns table.
+  // A previous cell is exactly what a stale exact-key hit already serves (any retained age, refreshed
+  // behind), so the two reads now follow ONE rule: the stored answer now, the new one a refresh later.
   const familyKey = family;
   if (familyKey !== scopeKey) {
     let prior: { bodyText: string | null; body: unknown; computedAt: Date } | undefined;
@@ -627,7 +630,7 @@ async function serveCell(
     } catch (err) {
       console.error(`[features-service] view-cache family read failed (computing live) view=${view}: ${(err as Error).message}`);
     }
-    if (prior && Date.now() - new Date(prior.computedAt).getTime() <= factsGateMaxMs()) {
+    if (prior) {
       countRefresh(view, "rotation");
       void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
@@ -652,7 +655,10 @@ async function serveCell(
  * computed at once — it is served one refresh later instead of blocking the read that noticed it,
  * the same eventual-consistency the stale-while-revalidate branch already documents.
  */
-const FINGERPRINT_KEY_PARTS = ["econ", "decl"] as const;
+// `offersEcon`: a several-offer brand's per-offer terms (and the campaigns selling each offer), which moved
+// 4 times in one day on our own brand (MON-PAGE-SPEED-1111). `rows`: the campaign rows a whole-table cell
+// was computed from (`routes/sales-funnel-campaigns.ts`).
+const FINGERPRINT_KEY_PARTS = ["econ", "decl", "offersEcon", "rows"] as const;
 
 export function familyKeyOf(scopeKey: string): string {
   const bar = scopeKey.indexOf("|");

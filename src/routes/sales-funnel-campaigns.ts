@@ -31,11 +31,12 @@ import { distinctChannelFunnels } from "./offer-economics.js";
 import { funnelCopiesFor, type CampaignPartView, type FunnelCopy, type FunnelPathView } from "./agent-catalogue.js";
 import { faceOf } from "../lib/catalogue-faces.js";
 import { assertBrandHeld, BrandOwnershipError } from "../lib/brand-ownership.js";
-import { parsePricing } from "../lib/pricing.js";
+import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { DEFAULT_PRICED_CAUSES } from "../lib/outcome-cause.js";
 import { funnelsContainingLeg, isOutboundLegKeySpelling, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
-import { servedCached, buildScopeKey } from "../lib/view-cache.js";
+import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
+import { createHash } from "node:crypto";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, fetchUnitRunsOnTriggerId, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
@@ -167,35 +168,11 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     const headers: DownstreamHeaders = { orgId: auth.orgId, userId: auth.userId, runId: auth.runId, featureSlug: undefined };
 
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, offerFilter, headers), assertBrandHeld(brandId, headers)]);
-    const { copies, pipeSteps, pathOf, partOf, unitPipeIdOf } = await funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, runningFunnelIdOf(r)]))]);
-    // The path a campaign RUNS (P5.1): its running funnel's; one the catalogue does not know is logged and served null.
-    const runningPathOf = (r: (typeof rows)[number]) => {
-      const path = pathOf(runningFunnelIdOf(r));
-      if (!path) console.error(`[features-service] sales funnel campaign ${r.id}: running funnel ${runningFunnelIdOf(r)} is not in the catalogue (path null)`);
-      return path;
-    };
-    // Every part each campaign runs off its path, its unit's trigger read where the listing does not serve it.
-    const otherPartsById = new Map(
-      await Promise.all(
-        rows.map(async (r) => {
-          const off = unitsOffPath(pipeUnitsOf(r.units), pathOf(runningFunnelIdOf(r)), unitPipeIdOf);
-          const parts = await Promise.all(
-            off.map(async (u) => {
-              const triggerId = u.runsOnTriggerId !== undefined ? u.runsOnTriggerId : await fetchUnitRunsOnTriggerId(u.campaignId, headers);
-              const part = otherPartOf(u, triggerId, partOf(u, triggerId), unitPipeIdOf(u) !== null);
-              if (part.unavailableReason) console.error(`[features-service] sales funnel campaign ${r.id}: unit ${u.campaignId} (${u.pipeId}, trigger ${triggerId}) not described: ${part.unavailableReason}`);
-              return part;
-            }),
-          );
-          return [r.id, parts] as const;
-        }),
-      ),
-    );
 
     // `?fields=copy` (owner 2026-10-13, INSTANT-CAMPAIGN-ROWS): the rows' copy alone, live, no money read, so a
-    // campaign created seconds ago has its path and Type at once. A campaign that young may have no money cell
-    // yet: its full read is computed behind this answer, so the money read that follows is a hit.
+    // campaign created seconds ago has its path and Type at once.
     if (fields === "copy") {
+      const { copies, runningPathOf, otherPartsById } = await liveCopyOf(rows, headers);
       res.json({
         brandId,
         offerId: offerFilter,
@@ -209,118 +186,21 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
       return;
     }
 
-    // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
-    const offerIds = [...new Set(rows.map((r) => r.offerId))];
-    const declaredByOffer = new Map(await Promise.all(offerIds.map(async (o) => [o, await fetchDeclaredFunnelsSoft(brandId, headers.orgId, o)] as const)));
-
-    const out = await mapWithConcurrency(rows, 3, async (r) => {
-      const copy = copies.get(r.salesFunnelId) ?? null;
-      if (!copy) console.error(`[features-service] sales funnel campaign ${r.id}: funnel ${r.salesFunnelId} is not in the catalogue (copy null)`);
-      // BACKLINK-ENGINE-1109: the engine pass prices the units that run a pipe; a unit an Engine runs with no pipe adds
-      // its own spend to `investedUsd` (read on its own id, unfiltered by feature).
-      const units = pipeUnitsOf(r.units);
-      const featurelessIds = featurelessUnitIdsOf(r.units);
-      const featureSlugs = [...new Set(units.map((u) => u.featureSlug))].sort();
-      const campaignIds = units.map((u) => u.campaignId).sort();
-      const distinct = distinctChannelFunnels(units);
-      const funnel = distinct.length === 1 ? distinct[0] : null;
-      const declared = declaredByOffer.get(r.offerId) ?? [];
-      const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), units) : undefined;
-      // WHERE THIS CAMPAIGN TOOK ITS PEOPLE OVER (`lib/value-added.ts`, owner 2026-10-11, one formula for every
-      // campaign): the funnel's first step unless its own units produce it. Null = from nothing (it found them):
-      // its return is the engine's ordinary pipeline over its spend. Else it is credited only the value it adds.
-      const unitSteps = units.flatMap((u) => pipeSteps.get(u.pipeId) ?? []);
-      const takeoverStep = copy ? takeoverStepOf(copy.firstStep, unitSteps) : null;
-      const takeoverUnit = takeoverStep ? units.find((u) => pipeSteps.get(u.pipeId)?.fromStep === takeoverStep) : undefined;
-      const takeoverToStep = takeoverUnit ? pipeSteps.get(takeoverUnit.pipeId)!.toStep : null;
-
-      const money = campaignIds.length === 0
-        ? null
-        : await servedCached({
-            view: "sales-funnel-campaign-money",
-            scopeKey: buildScopeKey(r.id, {
-              orgId: headers.orgId,
-              brandId,
-              offerId: r.offerId,
-              units: campaignIds.join("+"),
-              takeover: takeoverStep ?? undefined,
-              channels: featureSlugs.join("+"),
-              pricing,
-              econ: priced ? pricedFingerprint(priced) : undefined,
-              decl: funnel ? declared.map((f) => f.funnelKey).sort().join("+") || "none" : undefined,
-            }),
-            orgId: headers.orgId,
-            // Keyed on THIS route's response shape, not the whole build's (SFC-MONEY-SLOW-1016): a deploy changing
-            // another route no longer makes every money cell cold, so the last good value stays servable (stale,
-            // refreshed behind) even while a dependency fails. Measured 2026-10-16: 20-27 key generations per
-            // campaign in one day, each first read a full compute (502 while lead-service failed).
-            responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
-            compute: async () => {
-              // A step the engine values nothing at (Lead found) subtracts $0: the engine's own figures ARE the formula.
-              if (takeoverStep && STEP_SIGNAL[takeoverStep] && takeoverUnit && takeoverToStep && funnel) {
-                const t = await computeTakeoverReturn({
-                  brandId,
-                  unitCampaignIds: campaignIds,
-                  featureSlugs,
-                  takeoverStep,
-                  takeoverLeg: { legKey: takeoverUnit.legKey, toStep: takeoverToStep },
-                  priced,
-                  pricing,
-                  headers,
-                });
-                return { headline: t.headline, costEconomics: t.costEconomics, maturity: t.maturity, valueAdded: t.valueAdded };
-              }
-              const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
-              return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, valueAdded: null };
-            },
-          });
-
-      // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the funnel's own sales path priced
-      // on hypotheses, each named (`lib/expected-return.ts`).
-      // WHAT IT PRODUCED, step by step in people since inception (Lead found included): the campaign page's own funnel
-      // (`funnelCampaignActivity`, one Gold cell for both reads). FAIL-SOFT: unreadable = null + reason, logged, the
-      // row's money still served.
-      const activity: { funnel: FunnelCampaignActivityBody["funnel"]; funnelUnavailableReason: string | null } = await funnelCampaignActivity(r, brandId, headers, pricing).catch(
-        (err: Error) => {
-          console.error(`[features-service] sales funnel campaign ${r.id}: funnel steps unreadable (funnel null): ${err.message}`);
-          return { funnel: null, funnelUnavailableReason: "funnel_steps_unreadable" };
-        },
-      );
-
-      const featurelessSpendUsd =
-        featurelessIds.length === 0
-          ? 0
-          : [...(await addFeaturelessUnitSpend(new Map(), brandId, featurelessIds, headers, pricing)).values()].reduce((a, v) => a + v, 0);
-
-      const expectedReturn = await expectedReturnForFunnelCampaign(
-        headers,
-        brandId,
-        r.offerId,
-        r.salesFunnelId,
-        distinct.length <= 1 ? (money?.costEconomics.maturity ?? null) : null,
-      );
-
-      return {
-        ...funnelCampaignCopyRow(r, copy, runningPathOf(r), otherPartsById.get(r.id) ?? []),
-        investedUsd: featurelessIds.length === 0 ? (money ? money.costEconomics.committedCostUsd : 0) : Math.round(((money ? money.costEconomics.committedCostUsd : 0) + featurelessSpendUsd) * 100) / 100,
-        moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
-        expectedReturn,
-        // Its people at each step of its path since inception (`steps[].people`, `rateToNextPct`; Lead found = the
-        // leads it found), the campaign page's funnel byte-for-byte.
-        funnel: activity.funnel,
-        funnelUnavailableReason: activity.funnelUnavailableReason,
-        // WHY its pipeline is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting booking funnel)
-        // and its cost economics, the blocks a campaign row serves, without the pipeline-based return
-        // (ROI-CONSISTENCY-1103: the value it added stays in process, feeding only its expected return's measured rung).
-        headline: money?.headline ? servedHeadline(money.headline) : null,
-        costEconomics: money?.costEconomics ? servedCostEconomics(money.costEconomics) : null,
-        maturity: money?.maturity ?? null,
-        // Where this campaign took its people over (null = it found them).
-        takeoverStep,
-      };
+    // THE WHOLE TABLE IS ONE GOLD CELL (MON-PAGE-SPEED-1111), the `campaign-targets` rule: each row reads its own money and
+    // activity cells, and a read that is no view of its own made the server replay THIS whole brand read to the refresher
+    // once per stale nested cell (prod 2026-11-11, our brand's 57 rows: 105 replays per page read, each re-reading the
+    // campaign rows, 3 x 535 KB campaign lists and 4 offer terms; 154 MB in 14 s; cold reads 7 s to > 120 s). Now one read
+    // = one stored body, refreshed behind by ONE replay. Keyed on the campaign rows it was computed from (`rows`, a
+    // fingerprint part): a created, stopped or re-planned campaign serves the previous table once and computes the new
+    // one behind; the dashboard paints new rows from the live `?fields=copy` read meanwhile.
+    const body = await servedCachedJson({
+      view: "sales-funnel-campaigns",
+      scopeKey: buildScopeKey(brandId, { orgId: headers.orgId, offerId: offerFilter ?? undefined, pricing, rows: rowsFingerprint(rows) }),
+      orgId: headers.orgId,
+      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
+      compute: () => computeFunnelCampaignTable(brandId, offerFilter, pricing, rows, headers),
     });
-
-    res.json({ brandId, offerId: offerFilter, pricing, costBasis: "charged", salesFunnelCampaigns: out });
+    sendSnapshotJson(res, body);
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
     console.error("[features-service] sales funnel campaigns error:", err);
@@ -343,5 +223,163 @@ router.post("/internal/brands/:brandId/sales-funnel-campaigns/precompute", apiKe
   res.status(202).json({ brandId: auth.params.brandId, offerId, accepted: true });
   void warmFunnelCampaignReads({ brandId: auth.params.brandId, offerId, identity: { orgId: auth.orgId, userId: auth.userId, runId: auth.runId } });
 });
+
+/** PURE: the campaign rows a table cell is computed from, as a short key part (any field moved = another cell). */
+export function rowsFingerprint(rows: readonly SalesFunnelCampaignRow[]): string {
+  return createHash("sha1").update(JSON.stringify(rows)).digest("hex").slice(0, 16);
+}
+
+/** Every row's copy inputs: the catalogue funnels, each campaign's running path and its parts off that path. */
+async function liveCopyOf(rows: readonly SalesFunnelCampaignRow[], headers: DownstreamHeaders) {
+  const { copies, pipeSteps, pathOf, partOf, unitPipeIdOf } = await funnelCopiesFor([...new Set(rows.flatMap((r) => [r.salesFunnelId, runningFunnelIdOf(r)]))]);
+  // The path a campaign RUNS (P5.1): its running funnel's; one the catalogue does not know is logged and served null.
+  const runningPathOf = (r: (typeof rows)[number]) => {
+    const path = pathOf(runningFunnelIdOf(r));
+    if (!path) console.error(`[features-service] sales funnel campaign ${r.id}: running funnel ${runningFunnelIdOf(r)} is not in the catalogue (path null)`);
+    return path;
+  };
+  // Every part each campaign runs off its path, its unit's trigger read where the listing does not serve it.
+  const otherPartsById = new Map(
+    await Promise.all(
+      rows.map(async (r) => {
+        const off = unitsOffPath(pipeUnitsOf(r.units), pathOf(runningFunnelIdOf(r)), unitPipeIdOf);
+        const parts = await Promise.all(
+          off.map(async (u) => {
+            const triggerId = u.runsOnTriggerId !== undefined ? u.runsOnTriggerId : await fetchUnitRunsOnTriggerId(u.campaignId, headers);
+            const part = otherPartOf(u, triggerId, partOf(u, triggerId), unitPipeIdOf(u) !== null);
+            if (part.unavailableReason) console.error(`[features-service] sales funnel campaign ${r.id}: unit ${u.campaignId} (${u.pipeId}, trigger ${triggerId}) not described: ${part.unavailableReason}`);
+            return part;
+          }),
+        );
+        return [r.id, parts] as const;
+      }),
+    ),
+  );
+
+  return { copies, pipeSteps, runningPathOf, otherPartsById };
+}
+
+/** The full table body (every row's copy, money, funnel and expected return), computed once per cell. */
+async function computeFunnelCampaignTable(
+  brandId: string,
+  offerFilter: string | null,
+  pricing: Pricing,
+  rows: readonly SalesFunnelCampaignRow[],
+  headers: DownstreamHeaders,
+) {
+  const { copies, pipeSteps, runningPathOf, otherPartsById } = await liveCopyOf(rows, headers);
+  // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
+  const offerIds = [...new Set(rows.map((r) => r.offerId))];
+  const declaredByOffer = new Map(await Promise.all(offerIds.map(async (o) => [o, await fetchDeclaredFunnelsSoft(brandId, headers.orgId, o)] as const)));
+
+  const out = await mapWithConcurrency(rows, 3, async (r) => {
+    const copy = copies.get(r.salesFunnelId) ?? null;
+    if (!copy) console.error(`[features-service] sales funnel campaign ${r.id}: funnel ${r.salesFunnelId} is not in the catalogue (copy null)`);
+    // BACKLINK-ENGINE-1109: the engine pass prices the units that run a pipe; a unit an Engine runs with no pipe adds
+    // its own spend to `investedUsd` (read on its own id, unfiltered by feature).
+    const units = pipeUnitsOf(r.units);
+    const featurelessIds = featurelessUnitIdsOf(r.units);
+    const featureSlugs = [...new Set(units.map((u) => u.featureSlug))].sort();
+    const campaignIds = units.map((u) => u.campaignId).sort();
+    const distinct = distinctChannelFunnels(units);
+    const funnel = distinct.length === 1 ? distinct[0] : null;
+    const declared = declaredByOffer.get(r.offerId) ?? [];
+    const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), units) : undefined;
+    // WHERE THIS CAMPAIGN TOOK ITS PEOPLE OVER (`lib/value-added.ts`, owner 2026-10-11, one formula for every
+    // campaign): the funnel's first step unless its own units produce it. Null = from nothing (it found them):
+    // its return is the engine's ordinary pipeline over its spend. Else it is credited only the value it adds.
+    const unitSteps = units.flatMap((u) => pipeSteps.get(u.pipeId) ?? []);
+    const takeoverStep = copy ? takeoverStepOf(copy.firstStep, unitSteps) : null;
+    const takeoverUnit = takeoverStep ? units.find((u) => pipeSteps.get(u.pipeId)?.fromStep === takeoverStep) : undefined;
+    const takeoverToStep = takeoverUnit ? pipeSteps.get(takeoverUnit.pipeId)!.toStep : null;
+
+    const money = campaignIds.length === 0
+      ? null
+      : await servedCached({
+          view: "sales-funnel-campaign-money",
+          scopeKey: buildScopeKey(r.id, {
+            orgId: headers.orgId,
+            brandId,
+            offerId: r.offerId,
+            units: campaignIds.join("+"),
+            takeover: takeoverStep ?? undefined,
+            channels: featureSlugs.join("+"),
+            pricing,
+            econ: priced ? pricedFingerprint(priced) : undefined,
+            decl: funnel ? declared.map((f) => f.funnelKey).sort().join("+") || "none" : undefined,
+          }),
+          orgId: headers.orgId,
+          // Keyed on THIS route's response shape, not the whole build's (SFC-MONEY-SLOW-1016): a deploy changing
+          // another route no longer makes every money cell cold, so the last good value stays servable (stale,
+          // refreshed behind) even while a dependency fails. Measured 2026-10-16: 20-27 key generations per
+          // campaign in one day, each first read a full compute (502 while lead-service failed).
+          responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
+          compute: async () => {
+            // A step the engine values nothing at (Lead found) subtracts $0: the engine's own figures ARE the formula.
+            if (takeoverStep && STEP_SIGNAL[takeoverStep] && takeoverUnit && takeoverToStep && funnel) {
+              const t = await computeTakeoverReturn({
+                brandId,
+                unitCampaignIds: campaignIds,
+                featureSlugs,
+                takeoverStep,
+                takeoverLeg: { legKey: takeoverUnit.legKey, toStep: takeoverToStep },
+                priced,
+                pricing,
+                headers,
+              });
+              return { headline: t.headline, costEconomics: t.costEconomics, maturity: t.maturity, valueAdded: t.valueAdded };
+            }
+            const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
+            return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, valueAdded: null };
+          },
+        });
+
+    // NEVER EMPTY (owner 2026-10-11): the measured return when mature, else the funnel's own sales path priced
+    // on hypotheses, each named (`lib/expected-return.ts`).
+    // WHAT IT PRODUCED, step by step in people since inception (Lead found included): the campaign page's own funnel
+    // (`funnelCampaignActivity`, one Gold cell for both reads). FAIL-SOFT: unreadable = null + reason, logged, the
+    // row's money still served.
+    const activity: { funnel: FunnelCampaignActivityBody["funnel"]; funnelUnavailableReason: string | null } = await funnelCampaignActivity(r, brandId, headers, pricing).catch(
+      (err: Error) => {
+        console.error(`[features-service] sales funnel campaign ${r.id}: funnel steps unreadable (funnel null): ${err.message}`);
+        return { funnel: null, funnelUnavailableReason: "funnel_steps_unreadable" };
+      },
+    );
+
+    const featurelessSpendUsd =
+      featurelessIds.length === 0
+        ? 0
+        : [...(await addFeaturelessUnitSpend(new Map(), brandId, featurelessIds, headers, pricing)).values()].reduce((a, v) => a + v, 0);
+
+    const expectedReturn = await expectedReturnForFunnelCampaign(
+      headers,
+      brandId,
+      r.offerId,
+      r.salesFunnelId,
+      distinct.length <= 1 ? (money?.costEconomics.maturity ?? null) : null,
+    );
+
+    return {
+      ...funnelCampaignCopyRow(r, copy, runningPathOf(r), otherPartsById.get(r.id) ?? []),
+      investedUsd: featurelessIds.length === 0 ? (money ? money.costEconomics.committedCostUsd : 0) : Math.round(((money ? money.costEconomics.committedCostUsd : 0) + featurelessSpendUsd) * 100) / 100,
+      moneyUnavailableReason: distinct.length > 1 ? "units_price_differently" : null,
+      expectedReturn,
+      // Its people at each step of its path since inception (`steps[].people`, `rateToNextPct`; Lead found = the
+      // leads it found), the campaign page's funnel byte-for-byte.
+      funnel: activity.funnel,
+      funnelUnavailableReason: activity.funnelUnavailableReason,
+      // WHY its pipeline is unpriced (`unpricedReason`, e.g. `no_funnel_wired` on an AI meeting booking funnel)
+      // and its cost economics, the blocks a campaign row serves, without the pipeline-based return
+      // (ROI-CONSISTENCY-1103: the value it added stays in process, feeding only its expected return's measured rung).
+      headline: money?.headline ? servedHeadline(money.headline) : null,
+      costEconomics: money?.costEconomics ? servedCostEconomics(money.costEconomics) : null,
+      maturity: money?.maturity ?? null,
+      // Where this campaign took its people over (null = it found them).
+      takeoverStep,
+    };
+  });
+
+  return { brandId, offerId: offerFilter, pricing, costBasis: "charged" as const, salesFunnelCampaigns: out };
+}
 
 export default router;
