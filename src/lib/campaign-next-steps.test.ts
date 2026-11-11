@@ -80,6 +80,8 @@ describe("composeNextSends (NEXT-STEPS-ALL-CHANNELS-1019)", () => {
       dueNow: 1,
       nextSendAt: "2026-10-19T07:00:00Z",
       unavailableReason: null,
+      heldBy: null,
+      leadsWaitingOnHeldEngine: null,
     });
   });
   it("nothing anywhere = 0 and no next send", () => {

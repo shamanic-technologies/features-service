@@ -10,6 +10,8 @@ import express from "express";
 import request from "supertest";
 
 const stored: Record<string, unknown>[] = [];
+// The Engine answers store (NEXT-STEPS-TRUE-REASON-1111) writes through the same fake db: kept out of `stored`.
+vi.mock("../lib/engine-answers-store.js", () => ({ persistEngineAnswer: async () => undefined }));
 vi.mock("../db/index.js", () => ({
   sql: {},
   db: {

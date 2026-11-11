@@ -3387,6 +3387,14 @@ const timeToReplyFigureSchema = z
   })
   .nullable();
 
+const heldEngineSchema = z.object({
+  outcome: z.string().describe("The Engine: the outcome its runs make (message_written, email_sent...)."),
+  pipeCampaignId: z.string().describe("The pipe (unit campaign) of this campaign the Engine runner asked for."),
+  reason: z.string().describe("The refusal it got, as served (campaign_states_no_brief, no_runnable_script_kept, script_strategy_unreadable, campaign_states_no_campaign...)."),
+  heldSince: z.string().describe("Since when (ISO) it has been refused with no good answer in between."),
+  lastAnsweredAt: z.string().describe("The latest refusal (ISO)."),
+});
+
 const campaignNextStepsResponseRef = registry.register(
   "CampaignNextStepsResponse",
   z.object({
@@ -3433,9 +3441,24 @@ const campaignNextStepsResponseRef = registry.register(
         leadsQueued: z.number().int().nullable().describe("THE figure to state as queued: leads with something of ours waiting to go out, every channel (scheduledFollowups.leads + emailSendQueue leadsAwaitingFirstEmail + leadsWithFollowUpQueued). Null when a part is unreadable (never a sum missing a channel)."),
         dueNow: z.number().int().nullable().describe("Of them, follow-ups whose time already came: they go out on the next pass."),
         nextSendAt: z.string().nullable().describe("The earliest planned send still ahead (ISO), any channel, in each lead's own working hours: the earliest, never a promise. Null when none is ahead."),
-        unavailableReason: z.enum(["follow_up_schedule_unreadable", "sender_unreadable"]).nullable(),
+        unavailableReason: z.enum(["follow_up_schedule_unreadable", "sender_unreadable", "engine_answers_unreadable", "waiting_leads_unreadable"]).nullable(),
+        heldBy: heldEngineSchema
+          .nullable()
+          .describe(
+            "THE reason nothing (more) goes out, when there is one: the Engine of this campaign that cannot run, held longest (the Engine runner's latest answer in the last hour was a refusal). State it before any other explanation (never guess a budget, cap or timing). Null when every Engine asked in the last hour could run.",
+          ),
+        leadsWaitingOnHeldEngine: z
+          .number()
+          .int()
+          .nullable()
+          .describe("Leads served to this campaign with nothing of ours sent yet and nothing queued in the sender: they wait at the held Engine, and are counted in leadsQueued. Null when no Engine is held, or unreadable (unavailableReason waiting_leads_unreadable)."),
       })
-      .describe("What waits to go out and when, every channel composed: read this to say how many leads are queued and when the next sends happen."),
+      .describe("What waits to go out and when, every channel composed: read this to say how many leads are queued, when the next sends happen, and (heldBy) why nothing goes out."),
+    heldEngines: z
+      .array(heldEngineSchema)
+      .nullable()
+      .describe("Every Engine of this campaign that cannot run now (any Engine, any reason, as answered to the Engine runner within the last hour). Empty = none held. Null with heldEnginesUnavailableReason."),
+    heldEnginesUnavailableReason: z.enum(["engine_answers_unreadable"]).nullable(),
     timeToFirstPositiveReply: z
       .object({
         medianDays: z.number().nullable().describe("The delay to state: median days from the first message we sent a lead (email, WhatsApp, follow-up answer...) to its first positive reply, on `basis`. Null while learning."),
@@ -6301,6 +6324,32 @@ registry.registerPath({
     422: { description: "campaign_states_no_pipe: a campaign-only pick on a campaign stating no featureSlug or legKey" },
     502: { description: "writer_pick_unreadable" },
     503: { description: "writer_ranking_not_computed_yet: the pipe's ranking is being built; a caller writes nothing and retries later (no default writer)" },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/internal/campaign-engine-answers",
+  summary: "State that a campaign Engine's run was held (or ran) for a reason of the caller's own (internal, api-key)",
+  description:
+    "NEXT-STEPS-TRUE-REASON-1111. A service holding a campaign Engine's run for its OWN reason (a budget spent, an Engine state it cannot read...) states it here: the campaign's next-steps read (`nextSends.heldBy`, `heldEngines[]`) and Monitoring (`campaign-engine-held`) then name it, exactly like a refusal of `/internal/script-strategy` (whose answers are recorded on their own). The latest answer per (campaign unit, Engine) within the last hour counts; `heldReason: null` = the Engine ran, which clears it.",
+  tags: ["Internal"],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            campaignId: z.string().describe("The campaign UNIT the run belongs to."),
+            outcome: z.string().describe("The Engine: the outcome the run makes."),
+            heldReason: z.string().nullable().describe("Why the run was held, a short code (e.g. `budget_spent`); null = it ran."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    202: { description: "Recorded", content: { "application/json": { schema: z.object({ campaignId: z.string(), outcome: z.string(), heldReason: z.string().nullable() }) } } },
+    400: { description: "engine_answer_unrecognised" },
   },
 });
 

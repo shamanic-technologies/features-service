@@ -23469,17 +23469,105 @@
                 "enum": [
                   "follow_up_schedule_unreadable",
                   "sender_unreadable",
+                  "engine_answers_unreadable",
+                  "waiting_leads_unreadable",
                   null
                 ]
+              },
+              "heldBy": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "description": "The Engine: the outcome its runs make (message_written, email_sent...)."
+                  },
+                  "pipeCampaignId": {
+                    "type": "string",
+                    "description": "The pipe (unit campaign) of this campaign the Engine runner asked for."
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "The refusal it got, as served (campaign_states_no_brief, no_runnable_script_kept, script_strategy_unreadable, campaign_states_no_campaign...)."
+                  },
+                  "heldSince": {
+                    "type": "string",
+                    "description": "Since when (ISO) it has been refused with no good answer in between."
+                  },
+                  "lastAnsweredAt": {
+                    "type": "string",
+                    "description": "The latest refusal (ISO)."
+                  }
+                },
+                "required": [
+                  "outcome",
+                  "pipeCampaignId",
+                  "reason",
+                  "heldSince",
+                  "lastAnsweredAt"
+                ],
+                "description": "THE reason nothing (more) goes out, when there is one: the Engine of this campaign that cannot run, held longest (the Engine runner's latest answer in the last hour was a refusal). State it before any other explanation (never guess a budget, cap or timing). Null when every Engine asked in the last hour could run."
+              },
+              "leadsWaitingOnHeldEngine": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Leads served to this campaign with nothing of ours sent yet and nothing queued in the sender: they wait at the held Engine, and are counted in leadsQueued. Null when no Engine is held, or unreadable (unavailableReason waiting_leads_unreadable)."
               }
             },
             "required": [
               "leadsQueued",
               "dueNow",
               "nextSendAt",
-              "unavailableReason"
+              "unavailableReason",
+              "heldBy",
+              "leadsWaitingOnHeldEngine"
             ],
-            "description": "What waits to go out and when, every channel composed: read this to say how many leads are queued and when the next sends happen."
+            "description": "What waits to go out and when, every channel composed: read this to say how many leads are queued, when the next sends happen, and (heldBy) why nothing goes out."
+          },
+          "heldEngines": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "outcome": {
+                  "type": "string",
+                  "description": "The Engine: the outcome its runs make (message_written, email_sent...)."
+                },
+                "pipeCampaignId": {
+                  "type": "string",
+                  "description": "The pipe (unit campaign) of this campaign the Engine runner asked for."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "The refusal it got, as served (campaign_states_no_brief, no_runnable_script_kept, script_strategy_unreadable, campaign_states_no_campaign...)."
+                },
+                "heldSince": {
+                  "type": "string",
+                  "description": "Since when (ISO) it has been refused with no good answer in between."
+                },
+                "lastAnsweredAt": {
+                  "type": "string",
+                  "description": "The latest refusal (ISO)."
+                }
+              },
+              "required": [
+                "outcome",
+                "pipeCampaignId",
+                "reason",
+                "heldSince",
+                "lastAnsweredAt"
+              ]
+            },
+            "description": "Every Engine of this campaign that cannot run now (any Engine, any reason, as answered to the Engine runner within the last hour). Empty = none held. Null with heldEnginesUnavailableReason."
+          },
+          "heldEnginesUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "engine_answers_unreadable",
+              null
+            ]
           },
           "timeToFirstPositiveReply": {
             "type": "object",
@@ -23661,6 +23749,8 @@
           "scheduledFollowups",
           "scheduledFollowupsUnavailableReason",
           "nextSends",
+          "heldEngines",
+          "heldEnginesUnavailableReason",
           "timeToFirstPositiveReply",
           "pipes"
         ]
@@ -54075,6 +54165,76 @@
           },
           "503": {
             "description": "writer_ranking_not_computed_yet: the pipe's ranking is being built; a caller writes nothing and retries later (no default writer)"
+          }
+        }
+      }
+    },
+    "/internal/campaign-engine-answers": {
+      "post": {
+        "summary": "State that a campaign Engine's run was held (or ran) for a reason of the caller's own (internal, api-key)",
+        "description": "NEXT-STEPS-TRUE-REASON-1111. A service holding a campaign Engine's run for its OWN reason (a budget spent, an Engine state it cannot read...) states it here: the campaign's next-steps read (`nextSends.heldBy`, `heldEngines[]`) and Monitoring (`campaign-engine-held`) then name it, exactly like a refusal of `/internal/script-strategy` (whose answers are recorded on their own). The latest answer per (campaign unit, Engine) within the last hour counts; `heldReason: null` = the Engine ran, which clears it.",
+        "tags": [
+          "Internal"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "campaignId": {
+                    "type": "string",
+                    "description": "The campaign UNIT the run belongs to."
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "description": "The Engine: the outcome the run makes."
+                  },
+                  "heldReason": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Why the run was held, a short code (e.g. `budget_spent`); null = it ran."
+                  }
+                },
+                "required": [
+                  "campaignId",
+                  "outcome",
+                  "heldReason"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "campaignId": {
+                      "type": "string"
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "heldReason": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "campaignId",
+                    "outcome",
+                    "heldReason"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "engine_answer_unrecognised"
           }
         }
       }
