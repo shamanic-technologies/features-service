@@ -679,15 +679,24 @@ export function briefNamedChannels(model: CatalogueModel, verdicts: ReadonlyArra
   return out;
 }
 
-/** PURE: the pipe as Jev reads it (channel, its one-line caption, the step it starts from and the one it reaches). */
+/**
+ * PURE: the pipe as Jev reads it: channel, its one-line caption, the step it starts from and the one it reaches, then every
+ * play it can run (the default, then each runnable one: who it reaches or how it works, MON-BRIEF-JUDGE-1111). Without the
+ * plays Jev read Lead Sourcing as « We pick the sources that bring you the most clients » and ruled it out of a brief
+ * asking for « people this brand already emailed », the very people its « Contacted pure prospects » play serves.
+ */
 export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
   const caption = model.channels.find((c) => c.slug === p.channelSlug)?.shortDescription ?? "";
   const from = p.fromStep === null ? "Start" : stepLabel(model, p.fromStep);
-  return withoutDashes(`${p.channelName}${caption ? ` (${caption})` : ""}: moves people from ${from} to ${stepLabel(model, p.toStep)}.`);
+  const head = `${p.channelName}${caption ? ` (${caption})` : ""}: moves people from ${from} to ${stepLabel(model, p.toStep)}.`;
+  const plays = playsOfPipe(model, p)
+    .filter((q, i) => q.play !== null && (i === 0 || pipeRunnable(q)))
+    .map((q) => `${q.play!.strategyName}: ${q.play!.strategyDescription.replace(/\.?\s*$/, "")}`);
+  return withoutDashes(plays.length === 0 ? head : `${head} Its plays (each narrows who it reaches or how it works): ${plays.join("; ")}.`);
 }
 
 /** The pipe judge's rule version: bumped when the question changes, so every stored verdict is asked again. */
-export const PIPE_JUDGE_RULE = "channel-job-v3";
+export const PIPE_JUDGE_RULE = "channel-job-v4";
 
 /** PURE: a fingerprint of what Jev judged a pipe on: its words or the question's rule move it (a re-judge). */
 export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(`${PIPE_JUDGE_RULE}|${pipeWords(model, p)}`);
@@ -709,22 +718,28 @@ export interface PipeVerdict {
 export const pipeVerdictCurrent = (v: Pick<PipeVerdict, "briefHash" | "pipeSignature"> | null | undefined, briefHash: string, signature: string): boolean =>
   !!v && v.briefHash === briefHash && v.pipeSignature === signature;
 
-/** PURE: the Jev `noul` question for one pipe: yes = the brief rules it out. */
+/**
+ * PURE: the Jev `noul` question for one pipe: yes = the brief rules it out. v4 (MON-BRIEF-JUDGE-1111): a play of the
+ * channel that does what the brief asks (who it reaches, how it works) is the brief asking for it, and another channel's
+ * job rules it out only when none of its plays fits; the keep reasons come first. Replay on the 790 verdicts of 31 live
+ * briefs: every « Use only these channels » brief unchanged (349 verdicts), Lead Sourcing kept on Past Email Replies.
+ */
 export function pipeQuestion(channelName: string, words: string) {
   return {
     type: "noul" as const,
     instructions:
       `A client wrote a BRIEF for one sales campaign (in the state). Does the brief rule out the channel "${channelName}"? About this channel: ${words} ` +
-      "A campaign moves people through steps (found, written to until they reply, a meeting booked, a client), and each channel moves them from one step to another: that move is the channel's job. " +
-      `Answer yes when the brief lists the channels to use (a list such as "Use only these channels: ...") and "${channelName}" is not in it; ` +
-      `or when the brief asks for another channel to do the same job as "${channelName}" (for example it asks for emails to get replies and "${channelName}" gets replies another way) and never asks for "${channelName}"; ` +
+      "A campaign moves people through steps (found, written to until they reply, a meeting booked, a client), and each channel moves them from one step to another: that move is the channel's job. A play of a channel narrows who it reaches or how it works, never its job. " +
+      `Answer no when the brief names "${channelName}" (even with a strategy after it: a strategy never rules the channel out); ` +
+      `when one of the plays of "${channelName}" does what the brief asks (it reaches the people the brief describes, or works the way the brief says): the brief then asks for "${channelName}"; ` +
+      `or when the brief asks for no channel to do the job of "${channelName}". Words about who to reach (an audience, a region, addresses never written to, people already emailed), what to say or offer, or the language ask for no channel. ` +
+      `Answer yes only when the brief lists the channels to use (a list such as "Use only these channels: ...") and "${channelName}" is not in it; ` +
+      `or when the brief asks for another channel to do the same job as "${channelName}" (the same move between the same two steps: for example it asks for emails to get replies and "${channelName}" gets replies another way), none of the plays of "${channelName}" does what the brief asks, and it never asks for "${channelName}"; ` +
       `or when the brief says not to use "${channelName}". ` +
-      `Answer no when the brief names "${channelName}" (even with a strategy after it: a strategy narrows who the channel reaches or how it works, it never rules the channel out), ` +
-      `or when the brief asks for no channel to do the job of "${channelName}". Words about who to reach (an audience, a region, addresses never written to), what to say or offer, or the language ask for no channel. ` +
       "A channel asked for one job never rules out a channel doing another job: emails that get replies say nothing about the channels that find the people. Judge on the brief's words only.",
     criteria: {
       true: `The brief lists other channels and not "${channelName}", asks for another channel to do its job, or says not to use it.`,
-      false: `The brief names "${channelName}", or asks for no channel to do its job.`,
+      false: `The brief names "${channelName}", one of its plays does what the brief asks, or the brief asks for no channel to do its job.`,
     },
   };
 }

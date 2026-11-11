@@ -16,6 +16,10 @@ import {
   monitoringVerdict,
   orgDayCountsOf,
   pipeCandidatesOf,
+  pipeQuestion,
+  pipeSignatureOf,
+  pipeWords,
+  PIPE_JUDGE_RULE,
   pipesToJudge,
   planChangeOf,
   shadowStateOf,
@@ -440,5 +444,33 @@ describe("the offer has the steps its campaign was born on and runs (owner 2026-
     expect((before.shadow?.legs ?? []).map((l) => l.channelSlug)).not.toContain("ai-meeting-booking");
     const after = planCampaign(model, frame, new Map(), offerStepsOfCampaign(model, offer, [REACTIVE_RUNNING]), "fleet", new Set(), named);
     expect(after.shadow!.legs.map((l) => l.channelSlug)).toContain("ai-meeting-booking");
+  });
+});
+
+describe("the pipe judge reads every play a channel can run (MON-BRIEF-JUDGE-1111, Past Email Replies)", () => {
+  const LS = "lead-sourcing|start_to_lead_found";
+  const contacted = play("contacted-pure-prospects", "Contacted pure prospects", "Only people this brand already emailed who are pure prospects.", null);
+  const model = buildCatalogueModel(inputs({ plays: new Map([[LS, { default: play("valid-only", "Valid only", "Sends only to confirmed addresses.", mature(0.5, 100)), others: [contacted, { ...contacted, strategyId: "dead", strategyName: "Dead", allowedActiveWorkflowCount: 0, allowedActiveDynasties: [] }] }]]) }));
+
+  it("the pipe's words carry its default play and every runnable play, never one nothing can run", () => {
+    const words = pipeWords(model, model.pipes.get(LS)!);
+    expect(words).toContain("moves people from Start to");
+    expect(words).toContain("Its plays (each narrows who it reaches or how it works): Valid only: Sends only to confirmed addresses; Contacted pure prospects: Only people this brand already emailed who are pure prospects.");
+    expect(words).not.toContain("Dead");
+  });
+
+  it("a pipe with no play reads as before; a reworded play re-asks the verdict", () => {
+    expect(pipeWords(model, model.pipes.get(COLD)!)).not.toContain("Its plays");
+    const reworded = buildCatalogueModel(inputs({ plays: new Map([[LS, { default: play("valid-only", "Valid only", "Sends only to verified addresses.", mature(0.5, 100)), others: [contacted] }]]) }));
+    expect(pipeSignatureOf(reworded, reworded.pipes.get(LS)!)).not.toBe(pipeSignatureOf(model, model.pipes.get(LS)!));
+  });
+
+  it("v4: a play doing what the brief asks keeps the channel; another channel's job rules it out only when no play fits", () => {
+    expect(PIPE_JUDGE_RULE).toBe("channel-job-v4");
+    const q = pipeQuestion("Lead Sourcing", "words");
+    expect(q.instructions).toContain('when one of the plays of "Lead Sourcing" does what the brief asks');
+    expect(q.instructions).toContain('none of the plays of "Lead Sourcing" does what the brief asks');
+    expect(q.instructions.indexOf("Answer no when")).toBeLessThan(q.instructions.indexOf("Answer yes only when"));
+    expect(q.criteria.false).toContain("one of its plays does what the brief asks");
   });
 });
