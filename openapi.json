@@ -55381,6 +55381,16 @@
             "description": "Its strategy on templates narrows the candidates.",
             "name": "campaignId",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`."
+            },
+            "required": false,
+            "description": "No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`.",
+            "name": "strategyId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -55451,6 +55461,9 @@
           "400": {
             "description": "outcome_and_place_required"
           },
+          "404": {
+            "description": "strategy_not_found"
+          },
           "422": {
             "description": "no_template_for_engine: no active template dynasty the Engine may write with (under its campaign's strategy). Write nothing and retry later."
           },
@@ -55496,6 +55509,16 @@
             "required": false,
             "description": "The campaign the run works for: its strategy on LLMs narrows the candidates.",
             "name": "campaignId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`."
+            },
+            "required": false,
+            "description": "No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`.",
+            "name": "strategyId",
             "in": "query"
           }
         ],
@@ -55571,6 +55594,9 @@
           },
           "400": {
             "description": "outcome_and_place_required"
+          },
+          "404": {
+            "description": "strategy_not_found"
           },
           "422": {
             "description": "no_llm_in_engine_universe: no LLM of the Engine's universe is served with its vendor in credit. Write nothing and retry later."

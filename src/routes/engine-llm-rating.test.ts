@@ -26,6 +26,10 @@ vi.mock("../lib/llm-dynasties.js", () => ({
   ],
 }));
 vi.mock("../lib/vendor-credit-client.js", () => ({ readOutOfCreditProvidersSoft: async () => new Set<string>() }));
+vi.mock("../lib/plays-store.js", async () => {
+  const { buildPlayCatalogue } = await import("../lib/plays.js");
+  return { loadPlayCatalogue: async () => buildPlayCatalogue({ tactics: [], strategies: [], plays: [], verdicts: [] }) };
+});
 vi.mock("../lib/fleet-leg-campaigns.js", () => ({ fetchCampaignPipe: async () => ({ found: false }) }));
 const templatePicks: Array<Record<string, unknown>> = [];
 vi.mock("../lib/engine-template-rating-io.js", () => {
@@ -71,6 +75,11 @@ describe("GET /internal/llm-pick", () => {
       expect(res.body.llm.model).toBe(res.body.llm.llmDynastySlug);
     }
     expect(recorded[0]).toMatchObject({ outcome: "x_post_published", place: "writer", runId: "run-0", campaignId: "c1" });
+  });
+  it("404 on a strategy that does not exist (preview, no campaign)", async () => {
+    const res = await request(app).get("/internal/llm-pick?outcome=x_post_published&place=writer&strategyId=nope").set("x-api-key", "k");
+    expect(res.status).toBe(404);
+    expect(res.body.reason).toBe("strategy_not_found");
   });
   it("400 without outcome and place", async () => {
     expect((await request(app).get("/internal/llm-pick?outcome=x").set("x-api-key", "k")).status).toBe(400);
