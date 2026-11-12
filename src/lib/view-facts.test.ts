@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { brandIdOfRequest, fingerprintOf } from "./view-facts.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { __resetFactsFingerprints, brandIdOfRequest, factsFingerprint, fingerprintOf } from "./view-facts.js";
 
 describe("fingerprintOf", () => {
   it("ignores the answers' timestamps and their key order", () => {
@@ -28,5 +28,29 @@ describe("brandIdOfRequest", () => {
   });
   it("names no brand when none is a uuid", () => {
     expect(brandIdOfRequest(`/features/s/stats?brandId=nope`, {})).toBeNull();
+  });
+});
+
+describe("factsFingerprint lead reads (MON-DB-HOT-1112)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetFactsFingerprints();
+  });
+
+  it("tells lead-service a fingerprint is not a read that keeps its model warm", async () => {
+    process.env.RUNS_SERVICE_URL = "http://runs";
+    process.env.RUNS_SERVICE_API_KEY = "rk";
+    process.env.LEAD_SERVICE_URL = "http://lead";
+    process.env.LEAD_SERVICE_API_KEY = "lk";
+    const seen: Array<{ url: string; headers: Headers }> = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const u = url instanceof Request ? url.url : String(url);
+      seen.push({ url: u, headers: new Headers(init?.headers ?? (url instanceof Request ? url.headers : undefined)) });
+      return new Response(JSON.stringify({ total: 1 }), { status: 200 });
+    });
+    expect(await factsFingerprint({ orgId: "o", brandId: "b" })).not.toBeNull();
+    const leadReads = seen.filter((r) => r.url.startsWith("http://lead/"));
+    expect(leadReads).toHaveLength(2);
+    for (const r of leadReads) expect(r.headers.get("x-lead-read-keep-warm")).toBe("false");
   });
 });
