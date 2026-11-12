@@ -21,6 +21,7 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import { db } from "../db/index.js";
 import { buildCustomerHealthBoard, type CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { loadFleetCell, storeFleetCell, type StoredCell } from "../lib/fleet-cell-store.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { listDeclaredChannels } from "../lib/channel-declarations-store.js";
 import { refresherBaseUrl } from "../lib/view-refresher.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
@@ -153,6 +154,22 @@ export async function readCustomerHealthText(): Promise<string | null> {
   }
   void warmCustomerHealth();
   return held?.text ?? null;
+}
+
+/**
+ * Boot step (MON-BOOT-SPIKE-1112, `lib/boot-warms.ts`): the persisted copy installed, skipped while fresh, else ONE rebuild
+ * awaited here so it never overlaps another boot warm. Before, it fired on its own four minutes after listen, on top of
+ * whatever the boot was still rebuilding.
+ */
+export async function warmCustomerHealthOnBoot(): Promise<"built" | "skipped"> {
+  if (!held && !loadedPersisted) {
+    loadedPersisted = true;
+    const stored = await deps.loadCell(cellKey());
+    if (stored && !held) held = { text: stored.text, computedAt: stored.computedAt };
+  }
+  if (storedCopyIsFresh(held?.computedAt, FRESH_MS)) return "skipped";
+  await warmCustomerHealth();
+  return "built";
 }
 
 // ── Refresher side: one build at a time, its outcome kept for the server's status polls ──────────────────

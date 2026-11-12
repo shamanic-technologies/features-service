@@ -78,6 +78,11 @@ async function readFingerprint(identity: FactsIdentity): Promise<string | null> 
     "x-api-key": leadKey,
     "x-org-id": identity.orgId,
     "x-brand-id": identity.brandId,
+    // A fingerprint is not somebody looking at the brand's leads (MON-DB-HOT-1112): without this,
+    // asking every active brand's counts once a minute kept every brand read model on lead-service's
+    // 3-minute whole-population refresh, the shared Postgres's largest load. The counts answered are
+    // the same; what the fingerprint then cannot see is covered by the gate's ceiling (module doc).
+    "x-lead-read-keep-warm": "false",
   };
   if (identity.userId) leadHeaders["x-user-id"] = identity.userId;
   if (identity.runId) leadHeaders["x-run-id"] = identity.runId;
