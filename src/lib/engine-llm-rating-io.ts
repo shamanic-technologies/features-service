@@ -137,14 +137,26 @@ export function parseEvidenceBuild(text: string): EvidenceBuild {
 }
 
 /**
- * The copy's evidence rows: a platform call made for a caller's run states no script, so a call with no Engine takes its
- * DECISION's (another call of the same decision that names one); support work is never evidence.
+ * The copy's evidence rows. A call's Engine = its own (script / workflow), else its decision's (a platform call made for a
+ * caller's run states no script), else the Engine of the pick its run or its parent run asked for with the same LLM (a
+ * service with no script, e.g. brand-service's offer-field drafts). A call a pick placed counts for that pick's Engine and
+ * its decision is the asking run, even on a support-marked run (the pick states it is an Engine decision); any other
+ * support work is never evidence.
  */
 const FILED_CALLS = sql`
-  SELECT c.decision_run_id, COALESCE(c.outcome, k.outcome) AS outcome, c.llm_dynasty_slug, c.started_at, c.spent_usd
+  SELECT COALESCE(p.run_id, c.decision_run_id) AS decision_run_id, COALESCE(c.outcome, k.outcome, p.outcome) AS outcome,
+         c.llm_dynasty_slug, c.started_at, c.spent_usd
   FROM llm_call_copy c
   LEFT JOIN (SELECT decision_run_id, max(outcome) AS outcome FROM llm_call_copy WHERE outcome IS NOT NULL GROUP BY 1) k ON k.decision_run_id = c.decision_run_id
-  WHERE c.support_function IS NULL AND c.llm_dynasty_slug IS NOT NULL AND COALESCE(c.outcome, k.outcome) IS NOT NULL
+  LEFT JOIN LATERAL (
+    SELECT x.run_id, x.outcome FROM engine_llm_picks x
+    WHERE x.llm_dynasty_slug = c.llm_dynasty_slug AND x.run_id IN (c.parent_run_id, c.decision_run_id)
+      AND (COALESCE(c.outcome, k.outcome) IS NULL OR x.outcome = COALESCE(c.outcome, k.outcome))
+    ORDER BY x.picked_at DESC LIMIT 1
+  ) p ON true
+  WHERE c.llm_dynasty_slug IS NOT NULL
+    AND (c.support_function IS NULL OR p.run_id IS NOT NULL)
+    AND COALESCE(c.outcome, k.outcome, p.outcome) IS NOT NULL
 `;
 
 export async function computeEvidence(): Promise<EvidenceBuild> {

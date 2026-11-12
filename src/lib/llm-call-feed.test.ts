@@ -30,7 +30,7 @@ describe("copy filing", () => {
   });
 
   it("files a script call under its script's Engine, a workflow-era call under its workflow's pipe outcome", () => {
-    const base = { rootRunId: "root", decisionRunId: "dec", supportFunction: null, startedAt: "2026-11-08T10:00:00Z" };
+    const base = { rootRunId: "root", decisionRunId: "dec", parentRunId: "dec", supportFunction: null, startedAt: "2026-11-08T10:00:00Z" };
     const script = copyRowOf(
       { ...base, runId: "c1", scriptSlug: "x_post_published/dy_x_post/v3", workflowSlug: null, costs: [{ costName: "anthropic-fable-5.1-tokens-input", status: "actual", totalCostInUsdCents: "0.5" }, { costName: "anthropic-fable-5.1-tokens-output", status: "actual", totalCostInUsdCents: "6.5" }] },
       dynastyOf,

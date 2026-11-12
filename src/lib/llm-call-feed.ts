@@ -90,6 +90,7 @@ interface ServedCostLine {
 }
 interface ServedCall {
   runId: string;
+  parentRunId: string | null;
   startedAt: string;
   workflowSlug: string | null;
   scriptSlug: string | null;
@@ -118,6 +119,7 @@ export function copyRowOf(
   return {
     callRunId: c.runId,
     decisionRunId: c.decisionRunId ?? c.rootRunId ?? c.runId,
+    parentRunId: c.parentRunId ?? null,
     startedAt: new Date(c.startedAt),
     scriptSlug: c.scriptSlug,
     workflowSlug: c.workflowSlug,
@@ -169,6 +171,7 @@ async function copyCalls(): Promise<{ copied: number; caughtUp: boolean }> {
           target: llmCallCopy.callRunId,
           set: {
             decisionRunId: sql`excluded.decision_run_id`,
+            parentRunId: sql`excluded.parent_run_id`,
             scriptSlug: sql`excluded.script_slug`,
             workflowSlug: sql`excluded.workflow_slug`,
             outcome: sql`excluded.outcome`,
@@ -213,6 +216,23 @@ async function followUnitChanges(): Promise<number> {
   return marked;
 }
 
+/**
+ * A run that asked the Rating for a pick IS a decision of the pick's Engine (a service with no script asks with its own
+ * run): its Units are read like any decision's, and re-read for `PICK_UNITS_REREAD_MS` after the pick (its Unit is
+ * declared after the call; the ledger's changes feed names the top decision of its tree, which may be another run).
+ */
+const PICK_UNITS_REREAD_MS = 6 * 60 * 60_000;
+const PICK_UNITS_REREAD_EVERY_MS = 10 * 60_000;
+async function markRecentPickRuns(): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO llm_decision_units (decision_run_id, units, read_at)
+    SELECT DISTINCT p.run_id, NULL::jsonb, NULL::timestamptz FROM engine_llm_picks p
+    WHERE p.run_id IS NOT NULL AND p.picked_at > now() - (${PICK_UNITS_REREAD_MS} * interval '1 millisecond')
+    ON CONFLICT (decision_run_id) DO UPDATE SET read_at = NULL
+    WHERE llm_decision_units.read_at IS NOT NULL AND llm_decision_units.read_at < now() - (${PICK_UNITS_REREAD_EVERY_MS} * interval '1 millisecond')
+  `);
+}
+
 /** Read the Units of the decisions waiting for a read. */
 async function readPendingUnits(): Promise<number> {
   let read = 0;
@@ -251,6 +271,7 @@ export async function llmCallFeedTick(): Promise<void> {
   try {
     const calls = await copyCalls();
     const marked = await followUnitChanges();
+    await markRecentPickRuns();
     const read = await readPendingUnits();
     console.log(`[features-service] LLM call copy: ${calls.copied} calls copied${calls.caughtUp ? " (caught up)" : " (history continues)"}, ${marked} decisions re-marked, ${read} decisions' Units read`);
   } catch (error) {

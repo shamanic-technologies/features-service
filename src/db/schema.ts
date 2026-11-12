@@ -1144,6 +1144,8 @@ export const llmCallCopy = pgTable(
   {
     callRunId: text("call_run_id").primaryKey(),
     decisionRunId: text("decision_run_id").notNull(),
+    /** The run that made the call (a service asking the Rating with its own run is placed through it). Migration 0070. */
+    parentRunId: text("parent_run_id"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     scriptSlug: text("script_slug"),
     workflowSlug: text("workflow_slug"),
