@@ -126,6 +126,7 @@ import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayI
 import { pgErrorOf } from "../lib/pg-error.js";
 import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
 import { excludedPipeCandidates, scriptsKeptByStrategy } from "../lib/script-strategy.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -318,6 +319,17 @@ export function warmCatalogueMeasurements(): Promise<void> {
       measurementWarm = null;
     });
   return measurementWarm;
+}
+
+/**
+ * The boot step (MON-PAGE-SPEED-2-1112, `lib/boot-warms.ts`): install the copy the previous process stored, and rebuild
+ * only when it is past its fresh window. Before, every boot rebuilt every pipe's fleet figures, the stored copy minutes old.
+ */
+export async function warmCatalogueMeasurementsOnBoot(): Promise<"built" | "skipped"> {
+  await installPersistedFigures();
+  if (measurementStore && storedCopyIsFresh(measurementStore.at, MEASUREMENTS_FRESH_MS)) return "skipped";
+  await warmCatalogueMeasurements();
+  return "built";
 }
 
 /**
