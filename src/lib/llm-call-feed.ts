@@ -10,7 +10,7 @@
  * dynasty (`llm_call_copy`); the evidence build aggregates the copy in SQL (`lib/engine-llm-rating-io.ts`). Followed
  * every 2 minutes after listen, single-flight; a failed tick logs and the next resumes from the stored cursors.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { llmCallCopy, llmDecisionUnits } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
@@ -206,8 +206,9 @@ async function followUnitChanges(): Promise<number> {
     if (!Array.isArray(body.decisionRunIds) || typeof body.nextCursor !== "string") throw new Error("runs-service decision-units changes: no decisionRunIds / nextCursor");
     for (let i = 0; i < body.decisionRunIds.length; i += 1000) {
       const ids = body.decisionRunIds.slice(i, i + 1000);
-      const res = await db.execute(sql`UPDATE llm_decision_units SET read_at = NULL WHERE decision_run_id = ANY(${ids}::text[])`);
-      marked += (res as unknown as { count?: number }).count ?? 0;
+      // drizzle spreads a JS array into one parameter per item: never `ANY(${ids}::text[])` (malformed array literal).
+      const res = await db.update(llmDecisionUnits).set({ readAt: null }).where(inArray(llmDecisionUnits.decisionRunId, ids)).returning({ id: llmDecisionUnits.decisionRunId });
+      marked += res.length;
     }
     cursor = body.nextCursor;
     await storeFleetCell(UNITS_CURSOR_KEY, cursor, Date.now());

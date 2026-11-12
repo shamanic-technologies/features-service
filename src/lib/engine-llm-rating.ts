@@ -366,7 +366,7 @@ export interface EngineLlmBody {
   places: Array<{ place: string; picks: number }>;
   /** Allowed LLMs, ranked (favourite first), then the allowed ones that cannot be picked now. */
   llms: LlmRow[];
-  /** LLMs this Engine used that are outside its universe today, with their history (rank null). */
+  /** Every LLM outside the Engine's universe today (excluded, not served) and every one it used before, with their history (rank null). */
   outsideUniverse: LlmRow[];
   totals: { calls: number; decisions: number; outcomes: number; spentUsdToDate: number };
 }
@@ -442,8 +442,8 @@ export function engineLlmBody(input: {
     .sort((a, b) => (b.shareOfDraws ?? 0) - (a.shareOfDraws ?? 0) || b.spentUsdToDate - a.spentUsdToDate || (a.llmDynastySlug < b.llmDynastySlug ? -1 : 1))
     .map((r, i) => ({ ...r, rank: i + 1 }));
   const allowedNotPickable = universe.allowed.filter((s) => pickable(s) !== null).map(rowOf);
-  const outsideUniverse = evidence
-    .map((e) => e.llmDynastySlug)
+  // Every line outside the universe (excluded, not served) and every LLM it used before, with their history.
+  const outsideUniverse = [...new Set([...evidence.map((e) => e.llmDynastySlug), ...lines.map((l) => l.slug)])]
     .filter((s) => !universe.allowed.includes(s))
     .map(rowOf)
     .sort((a, b) => b.spentUsdToDate - a.spentUsdToDate || (a.llmDynastySlug < b.llmDynastySlug ? -1 : 1));
@@ -476,12 +476,14 @@ export function pickLlm(input: {
   outOfCreditProviders: ReadonlySet<string>;
   today: string;
   seed: string;
+  /** The campaign's strategy on this subject: a reason = ruled out (tactics), null = kept. Absent = no strategy. */
+  ruledOut?: (slug: string) => string | null;
 }): { llmDynastySlug: string; candidates: string[]; shares: Map<string, number> } | { llmDynastySlug: null; reason: "no_llm_in_engine_universe"; candidates: string[] } {
   const universe = universeOf(input.outcome, input.rules, input.lines);
   const lineOf = new Map(input.lines.map((l) => [l.slug, l]));
   const candidates = universe.allowed.filter((s) => {
     const l = lineOf.get(s);
-    return !!l?.servedToday && !(l.provider && input.outOfCreditProviders.has(l.provider.toLowerCase()));
+    return !!l?.servedToday && !(l.provider && input.outOfCreditProviders.has(l.provider.toLowerCase())) && !input.ruledOut?.(s);
   });
   if (candidates.length === 0) return { llmDynastySlug: null, reason: "no_llm_in_engine_universe", candidates };
   const t = thompsonLlm(llmBeliefs(candidates, input.evidence, input.place, input.today), input.seed, 1);
