@@ -34,6 +34,10 @@ describe("outcome vocabulary (owner 2026-10-15)", () => {
   it("names the outcome Lead found, plural Leads found, the key unchanged (LEAD-FOUND-LABEL-1108)", () => {
     expect(CHANNEL_STEPS.lead_found.label).toBe("Lead found");
     expect(pluralLabelOf(CHANNEL_STEPS.lead_found.label)).toBe("Leads found");
+    // A noun already plural stays (OFFER-FIELDS-NO-OPUS-1112 read "Offer fieldses drafted"); "ss" still takes "es".
+    expect(pluralLabelOf("Offer fields drafted")).toBe("Offer fields drafted");
+    expect(pluralLabelOf("Address verified")).toBe("Addresses verified");
+    expect(pluralLabelOf("Bias")).toBe("Biases");
   });
 
   it("serves a plural for every coded outcome", () => {
