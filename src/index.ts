@@ -39,13 +39,13 @@ import { scheduleBootWarms, type BootWarmStep } from "./lib/boot-warms.js";
 import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
-import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
+import legWriterRankingRoutes, { legWriterRankingBootPipes, warmLegWriterRankingOnBoot } from "./routes/leg-writer-ranking.js";
 import scriptStrategyRoutes from "./routes/script-strategy.js";
 import engineStrategyRoutes from "./routes/engine-strategies.js";
 import engineLlmRatingRoutes from "./routes/engine-llm-rating.js";
 import { startEngineLlmEvidenceLoop, warmEngineLlmEvidence } from "./lib/engine-llm-rating-io.js";
 import { startLlmCallFeed } from "./lib/llm-call-feed.js";
-import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
+import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
 import boxChecksRoutes from "./routes/box-checks.js";
@@ -195,9 +195,20 @@ async function bootWarmSteps(): Promise<BootWarmStep[]> {
     const [featureSlug, legKey] = key.split("\u0000");
     steps.push({ name: `leg workflow ranking ${featureSlug}|${legKey}`, run: () => warmLegWorkflowRankingOnBoot(featureSlug, pipeLegKeyOf(featureSlug, legKey)) });
   }
+  // The best template and LLM of every pipe holding a workflow (routes/leg-writer-ranking.ts, BEST-TPL-LLM-1022), after the
+  // workflow rankings whose fleet cells it shares (MON-BOOT-SPIKE-1112: it used to fire on its own at +3 min, every pipe rebuilt).
+  const writerPipes = await legWriterRankingBootPipes().catch((err) => {
+    console.error("[features-service] leg writer ranking boot warm: assignments unreadable, no ranking warmed this boot:", err);
+    return [];
+  });
+  for (const p of writerPipes) {
+    steps.push({ name: `leg writer ranking ${p.featureSlug}|${p.legKey}`, run: () => warmLegWriterRankingOnBoot(p.featureSlug, p.legKey) });
+  }
   // The homepage showcase reads the snapshot rows, so it runs after them (it is held in memory: built once per boot).
   steps.push({ name: "fleet brand snapshots", run: () => warmFleetBrandSnapshotsOnBoot() });
   steps.push({ name: "showcase", run: () => warmShowcaseFunnelsOnBoot() });
+  // The staff customer-health board (routes/customer-health.ts), last: its build is the heaviest (it runs in the refresher).
+  steps.push({ name: "customer health board", run: () => warmCustomerHealthOnBoot() });
   return steps;
 }
 
@@ -279,12 +290,6 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startEngineLlmEvidenceLoop();
         // ... from our copy of every LLM call the fleet made, followed every 2 minutes (lib/llm-call-feed.ts).
         startLlmCallFeed();
-        // The best template and LLM of every pipe holding a workflow (routes/leg-writer-ranking.ts, BEST-TPL-LLM-1022),
-        // one pipe at a time, three minutes in (after the fleet cells it shares with Research are warm).
-        setTimeout(() => void warmEveryLegWriterRanking().catch((err) => console.error("[features-service] leg writer ranking boot warm failed:", err)), 180_000).unref();
-        // The staff customer-health board (routes/customer-health.ts): the persisted copy loaded and, when stale, rebuilt in the
-        // refresher four minutes in (after the boot warms it would otherwise pile its heap on top of).
-        setTimeout(() => void readCustomerHealthText().catch((err) => console.error("[features-service] customer-health boot warm failed:", err)), 240_000).unref();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.

@@ -23,6 +23,7 @@
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
 import { isMatureCount, legCutoffIso, legMaturity } from "../lib/maturity.js";
 import { pipeLegKeyOf, servedLegKeyOf } from "../lib/funnel-legs.js";
@@ -454,11 +455,34 @@ export async function readLegWriterRanking(featureSlug: string, rawLegKey: strin
   }
 }
 
-/** Boot: warm every pipe holding a workflow assignment (one pipe at a time, behind `listen`). */
-export async function warmEveryLegWriterRanking(): Promise<void> {
+/**
+ * Boot step of ONE pipe (MON-BOOT-SPIKE-1112, `lib/boot-warms.ts`): install the copy the previous process STORED, skip
+ * while it is fresh, else rebuild it here (the boot sequence runs one step at a time). Before, every pipe was rebuilt
+ * three minutes after listen from an empty memory, whatever the stored copy's age: prod 2026-11-12, dashboard reads
+ * 1.4-4.4 s for ~40 s at +3 min after each restart.
+ */
+export async function warmLegWriterRankingOnBoot(featureSlug: string, rawLegKey: string): Promise<"built" | "skipped"> {
+  const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
+  const key = `${featureSlug}|${legKey}`;
+  if (!store.has(key)) {
+    const stored = await loadFleetCell(cellKey(key));
+    if (stored && !store.has(key)) {
+      try {
+        store.set(key, { value: JSON.parse(stored.text) as LegWriterRankingPayload, computedAt: stored.computedAt });
+      } catch (error) {
+        console.error(`[features-service] leg writer ranking ${key}: persisted copy unreadable, rebuilding:`, error);
+      }
+    }
+  }
+  if (storedCopyIsFresh(store.get(key)?.computedAt, FRESH_MS)) return "skipped";
+  await warmLegWriterRanking(featureSlug, legKey);
+  return "built";
+}
+
+/** The pipes the boot sequence warms: every pipe holding a workflow assignment, once each. */
+export async function legWriterRankingBootPipes(): Promise<Array<{ featureSlug: string; legKey: string }>> {
   const rows = await listLegAssignments();
-  const pipes = [...new Map(rows.map((r) => [`${r.featureSlug}|${pipeLegKeyOf(r.featureSlug, r.legKey)}`, r])).values()];
-  for (const r of pipes) await warmLegWriterRanking(r.featureSlug, r.legKey);
+  return [...new Map(rows.map((r) => [`${r.featureSlug}|${pipeLegKeyOf(r.featureSlug, r.legKey)}`, { featureSlug: r.featureSlug, legKey: r.legKey }])).values()];
 }
 
 /** Test seam. */
