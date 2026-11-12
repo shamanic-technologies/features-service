@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SCRIPT_POOL, ledgerAudienceEvidence, offCampaignUnitCost, pipeScriptCost, pipeWorkflowCosts, type LedgerPipeBook } from "./ledger-pipe-costs.js";
+import { SCRIPT_POOL, ledgerAudienceEvidence, offCampaignUnitCost, pipeScriptCost, pipeScriptCosts, pipeWorkflowCosts, scriptDynastyOfSlug, type LedgerPipeBook } from "./ledger-pipe-costs.js";
 
 // a reply pipe (campaigns c1, c2) and a sourcing pipe (s1) that found its leads
 const book: LedgerPipeBook = {
@@ -127,5 +127,77 @@ describe("a pipe's scripts, pooled (MON-SCRIPT-PRICES-1111)", () => {
   it("a pipe whose campaigns ran no script has no pool; another pipe's campaign is never in it", () => {
     expect(pipeScriptCost("conversation", new Set(["c2"]), scripts)).toBeNull();
     expect(pipeScriptCost("lead_found", new Set(["s1"]), scripts)).toMatchObject({ costUsd: 30, outcomes: 300, inputs: 0 });
+  });
+});
+
+describe("each script of a pipe, measured apart (MON-SCRIPT-PRICES-2-1111)", () => {
+  // c1 = the pipe's campaign. Two cold email scripts send (A v1+v2, B v1); the inbound decision script (I) judges
+  // replies under the campaign; one reply is judged off any campaign; one run of the history names no script.
+  const A1 = "email_sent/dy_a/v1";
+  const A2 = "email_sent/dy_a/v2";
+  const B1 = "email_sent/dy_b/v1";
+  const I1 = "email_reply_received/dy_inbound/v1";
+  const book: LedgerPipeBook = {
+    produced: [
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: A1, occurrences: 100, costUsd: 10, runStartDay: "2026-11-05" },
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: A2, occurrences: 100, costUsd: 8, runStartDay: "2026-11-08" },
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: B1, occurrences: 50, costUsd: 15, runStartDay: "2026-11-06" },
+      // the inbound script judged 4 replies under c1: 3 answer A, 1 answers B
+      { outcomeKey: "conversation", campaignId: "c1", workflowSlug: null, scriptSlug: I1, occurrences: 4, costUsd: 0.4, runStartDay: "2026-11-09" },
+      { outcomeKey: "conversation", campaignId: null, workflowSlug: null, scriptSlug: null, occurrences: 1, costUsd: 0.1, runStartDay: "2026-11-09" },
+      // history before runs named scripts
+      { outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: null, occurrences: 10, costUsd: 2, runStartDay: "2026-11-01" },
+    ],
+    noOutput: [{ campaignId: "c1", workflowSlug: null, scriptSlug: B1, costUsd: 5, runStartDay: "2026-11-06" }],
+    consumed: [
+      { consumerKey: "message_sent", consumedKey: "lead_found", campaignId: "c1", workflowSlug: null, scriptSlug: A1, sourceCampaignId: "s1", sourceWorkflowSlug: null, sourceScriptSlug: null, count: 100, runStartDay: "2026-11-05", sourceRunStartDay: "2026-11-04" },
+      { consumerKey: "message_sent", consumedKey: "lead_found", campaignId: "c1", workflowSlug: null, scriptSlug: B1, sourceCampaignId: "s1", sourceWorkflowSlug: null, sourceScriptSlug: null, count: 50, runStartDay: "2026-11-06", sourceRunStartDay: "2026-11-04" },
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: I1, sourceCampaignId: "c1", sourceWorkflowSlug: null, sourceScriptSlug: A1, count: 3, runStartDay: "2026-11-09", sourceRunStartDay: "2026-11-05" },
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: "c1", workflowSlug: null, scriptSlug: I1, sourceCampaignId: "c1", sourceWorkflowSlug: null, sourceScriptSlug: B1, count: 1, runStartDay: "2026-11-09", sourceRunStartDay: "2026-11-06" },
+      // judged off campaign, answering A v2's send
+      { consumerKey: "conversation", consumedKey: "message_sent", campaignId: null, workflowSlug: null, scriptSlug: null, sourceCampaignId: "c1", sourceWorkflowSlug: null, sourceScriptSlug: A2, count: 1, runStartDay: "2026-11-09", sourceRunStartDay: "2026-11-08" },
+    ],
+  };
+  const ids = new Set(["c1"]);
+
+  it("a reply belongs to the script whose send it answers; versions pool in their dynasty", () => {
+    const unit = offCampaignUnitCost("conversation", book);
+    expect(unit).toBeCloseTo(0.1, 10);
+    const m = pipeScriptCosts("conversation", ids, book);
+    expect([...m.keys()]).toEqual(["email_reply_received/dy_inbound", "email_sent/dy_a", "email_sent/dy_b", SCRIPT_POOL]);
+    // A: v1 + v2 sends, its 3 replies judged under c1 + 1 judged outside, each at the stage's unit cost
+    expect(m.get("email_sent/dy_a")).toMatchObject({ outcomes: 4, inputs: 100 });
+    expect(m.get("email_sent/dy_a")!.costUsd).toBeCloseTo(10 + 8 + 4 * 0.1, 10);
+    // B: its send + its loss + 1 reply
+    expect(m.get("email_sent/dy_b")).toMatchObject({ outcomes: 1, inputs: 50 });
+    expect(m.get("email_sent/dy_b")!.costUsd).toBeCloseTo(15 + 5 + 0.1, 10);
+    // the inbound script handed every reply it judged to the senders: no outcome, its judging cost gone with them
+    expect(m.get("email_reply_received/dy_inbound")).toMatchObject({ outcomes: 0 });
+    expect(m.get("email_reply_received/dy_inbound")!.costUsd).toBeCloseTo(0, 10);
+    // the history naming no script stays one pool
+    expect(m.get(SCRIPT_POOL)).toMatchObject({ outcomes: 0, costUsd: 2 });
+  });
+
+  it("every dollar and outcome once: the scripts sum to the pipe's one pool", () => {
+    const pool = pipeScriptCost("conversation", ids, book)!;
+    const parts = [...pipeScriptCosts("conversation", ids, book).values()];
+    expect(parts.reduce((a, p) => a + p.costUsd, 0)).toBeCloseTo(pool.costUsd, 10);
+    expect(parts.reduce((a, p) => a + p.outcomes, 0)).toBe(pool.outcomes);
+  });
+
+  it("per VERSION on demand; the mature cohort reads replies by the day the send ran", () => {
+    const byVersion = pipeScriptCosts("conversation", ids, book, undefined, (s) => s ?? SCRIPT_POOL);
+    expect(byVersion.get(A1)).toMatchObject({ outcomes: 3 });
+    expect(byVersion.get(A2)).toMatchObject({ outcomes: 1 });
+    const mature = pipeScriptCosts("conversation", ids, book, "2026-11-06");
+    // sends of 11-05 (A v1) and 11-06 (B) only; A v2 ran 11-08
+    expect(mature.get("email_sent/dy_a")).toMatchObject({ outcomes: 3 });
+    expect(mature.get("email_sent/dy_a")!.costUsd).toBeCloseTo(10 + 3 * 0.1, 10);
+    expect(mature.get("email_sent/dy_b")).toMatchObject({ outcomes: 1 });
+  });
+
+  it("a version name maps to its dynasty, no script to the pool", () => {
+    expect(scriptDynastyOfSlug("email_sent/dy_cold_email/v12")).toBe("email_sent/dy_cold_email");
+    expect(scriptDynastyOfSlug(null)).toBe(SCRIPT_POOL);
   });
 });

@@ -125,7 +125,7 @@ import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js"
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
 import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
-import { scriptsKeptByStrategy } from "../lib/script-strategy.js";
+import { excludedPipeCandidates, scriptsKeptByStrategy } from "../lib/script-strategy.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -275,7 +275,8 @@ async function computeMeasurements(): Promise<MeasurementStore> {
       }
       const strategiesInOrder = [defaultStrategyOf(plays, p.id), ...catalogued.filter((x) => !x.isDefault).map((x) => plays.strategies.get(x.strategyId) ?? null)];
       const prices = await withTimeout(
-        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => new Set(excludedDynasties(st && workflowStrategyOf(plays, st), dynasties, plays.tacticsByDynasty, nameOf).keys()))),
+        // Each play's strategy judges every candidate: a workflow on its workflow tactics, a script on its script ones.
+        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => excludedPipeCandidates(st, dynasties, plays))),
         MEASUREMENT_TIMEOUT_MS,
         `pipe ${p.id}`,
       );

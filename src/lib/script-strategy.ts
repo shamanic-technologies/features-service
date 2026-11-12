@@ -10,7 +10,7 @@
  * tactic) keeps every script of the Engine. A play the campaign's pipe does not catalogue keeps none (never a silent
  * widen). No order is served: workflow-service's Rating picks among the kept dynasties.
  */
-import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
+import { excludedDynasties, strategyOnSubject, strategyVerdict, tacticNameOf, workflowStrategyOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
 import { scriptDynastyKey, scriptWorksPipe, type RunnableScript } from "./script-catalogue-client.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
 
@@ -75,4 +75,26 @@ export function scriptsOnPipeOf(
     if (strategy === undefined) throw new Error(`campaign ${campaignId} keeps strategy ${stored!.strategyId} on ${pipe.outcome}, which the catalogue does not hold`);
     return { working: working.map((s) => s.dynasty), kept: scriptsKeptByStrategy(working, strategy, catalogue).keptDynasties };
   };
+}
+
+/**
+ * PURE (MON-SCRIPT-PRICES-2-1111): what a play's strategy subtracts from a pipe's priced candidates, workflow AND script
+ * dynasties alike. A workflow dynasty is judged on the strategy's WORKFLOW tactics (`excludedDynasties`), a script dynasty
+ * (`<outcome>/<dynasty>`, it holds a `/`) on its SCRIPT tactics, the rule its Engine's Rating applies per run
+ * (`scriptsKeptByStrategy`): every required tactic judged yes on it, every excluded one judged no; a strategy naming no
+ * script tactic keeps every script. Keys naming neither (the unnamed pool) are left to the caller.
+ */
+export function excludedPipeCandidates(strategy: Strategy | null, keys: Iterable<string>, c: Pick<PlayCatalogue, "tactics" | "tacticsByDynasty" | "tacticsByWriter">): Set<string> {
+  const all = [...keys];
+  const out = new Set<string>();
+  if (!strategy) return out;
+  const nameOf = tacticNameOf(c as PlayCatalogue);
+  const workflows = all.filter((k) => !k.includes("/"));
+  for (const k of excludedDynasties(workflowStrategyOf(c, strategy), workflows, c.tacticsByDynasty, nameOf).keys()) out.add(k);
+  const st = strategyOnSubject(strategy, "script", c.tactics);
+  if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return out;
+  for (const k of all.filter((x) => x.includes("/"))) {
+    if (!strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("script", k)), nameOf, "script").allowed) out.add(k);
+  }
+  return out;
 }

@@ -35,8 +35,9 @@ import type { Pricing } from "../lib/pricing.js";
 import { fetchFleetPositiveRepliesBySlug } from "../lib/fleet-positive-repliers.js";
 import { setReplyCountsOnSlugStats } from "../lib/crm-only-repliers.js";
 import { legCutoffIso, legMaturity, legMaturityFigures, outcomeFigures, type LegMaturityFigures, type OutcomeFigures } from "../lib/maturity.js";
-import { SCRIPTS_FIRST_DAY, dailyBookSinceDay, ledgerRegime, loadDailyLedgerBook, pipeFromKey, pipeOutcomeKey, runStartUntilOf, type LedgerBookRead } from "../lib/ledger-book.js";
-import { SCRIPT_POOL, ledgerSlugEvidence, pipeScriptCost, pipeWorkflowCosts, type PipeWorkflowCost } from "../lib/ledger-pipe-costs.js";
+import { SCRIPTS_FIRST_DAY, bookBasisOf, dailyBookSinceDay, ledgerRegime, loadDailyLedgerBook, pipeFromKey, pipeOutcomeKey, runStartUntilOf, type LedgerBookRead } from "../lib/ledger-book.js";
+import { SCRIPT_POOL, ledgerSlugEvidence, pipeScriptCosts, pipeWorkflowCosts, type PipeWorkflowCost } from "../lib/ledger-pipe-costs.js";
+import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
 import { withWorkflowRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
@@ -3646,16 +3647,19 @@ export async function excludedFromLegPrice(featureSlug: string, legKey: string):
 }
 
 async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
-  const [maturity, excluded, campaigns] = await Promise.all([
+  const [maturity, wfExcluded, campaigns, scripts] = await Promise.all([
     fetchFleetLegWorkflowMaturity(COLD_EMAIL_FEATURE_SLUG, legKey),
     excludedFromLegPrice(COLD_EMAIL_FEATURE_SLUG, legKey),
     fetchFleetLegCampaigns(COLD_EMAIL_FEATURE_SLUG, legKey),
+    pipeScriptFigures(COLD_EMAIL_FEATURE_SLUG, legKey),
   ]);
+  // Its scripts beside its workflows (MON-SCRIPT-PRICES-2-1111): since MIGRATE-1105 the campaigns run scripts.
+  const byDynasty = new Map(withScriptFigures(maturity.byDynasty, scripts));
   return pickLegPrice({
     legKey,
     featureSlug: COLD_EMAIL_FEATURE_SLUG,
-    byDynasty: new Map(maturity.byDynasty),
-    excluded,
+    byDynasty,
+    excluded: new Set([...wfExcluded, ...(await nonRunnableScriptKeys(byDynasty.keys()))]),
     campaignCount: campaigns.length,
   });
 }
@@ -3667,10 +3671,10 @@ async function coldEmailLegPrice(legKey: string): Promise<LegPrice> {
  * without walking anything. (Read by the agent catalogue, `routes/agent-catalogue.ts`.)
  */
 export async function fleetLegPrice(featureSlug: string, legKey: string): Promise<PipeLegPrice> {
-  // ONE rule for every pipe (`fleetPipeFigures`), the same one the workflow ranking reads, + its scripts (`pipeScriptFigures`).
-  const [figures, excluded, scripts] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey), pipeScriptFigures(featureSlug, legKey)]);
+  // ONE rule for every pipe (`fleetPipeFigures`, its workflows AND its scripts), the same one the workflow ranking reads.
+  const [figures, wfExcluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
   const byDynasty = new Map(figures.byDynasty);
-  if (scripts) byDynasty.set(SCRIPT_POOL, scripts);
+  const excluded = new Set([...wfExcluded, ...(await nonRunnableScriptKeys(byDynasty.keys()))]);
   return { ...pickLegPrice({ legKey, featureSlug, byDynasty, excluded, campaignCount: figures.campaignCount }), historyCostPerOutcomeUsd: pipeHistoryCostPerOutcomeUsd(byDynasty) };
 }
 
@@ -3684,12 +3688,13 @@ export async function fleetPlayPrices(
   legKey: string,
   strategyExclusions: (dynasties: readonly string[]) => ReadonlyArray<ReadonlySet<string>>,
 ): Promise<PipeLegPrice[]> {
-  const [figures, excluded, scripts] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey), pipeScriptFigures(featureSlug, legKey)]);
+  const [figures, wfExcluded] = await Promise.all([fleetPipeFigures(featureSlug, legKey), excludedFromLegPrice(featureSlug, legKey)]);
   const byDynasty = new Map(figures.byDynasty);
-  // The scripts' pool is the pipe's DEFAULT play's (the first): the campaigns of a non-default play are not split out of
-  // it yet, so a non-default play never reads it (its strategy judges workflows, the pool is none).
-  const exclusions = strategyExclusions([...byDynasty.keys()]).map((more, i) => (scripts && i > 0 ? new Set([...more, SCRIPT_POOL]) : more));
-  if (scripts) byDynasty.set(SCRIPT_POOL, scripts);
+  const excluded = new Set([...wfExcluded, ...(await nonRunnableScriptKeys(byDynasty.keys()))]);
+  // Every candidate, workflow or script dynasty, is judged by each play's strategy (`strategyExclusions`: a script on its
+  // script tactics, MON-SCRIPT-PRICES-2-1111). The pool of runs naming no script (`SCRIPT_POOL`, history before
+  // runs-service stated scripts) is judged on no tactic: only the DEFAULT play (the first) reads it.
+  const exclusions = strategyExclusions([...byDynasty.keys()]).map((more, i) => (i > 0 && byDynasty.has(SCRIPT_POOL) ? new Set([...more, SCRIPT_POOL]) : more));
   return exclusions.map((more) => ({
     ...pickLegPrice({ legKey, featureSlug, byDynasty, excluded: new Set([...excluded, ...more]), campaignCount: figures.campaignCount }),
     historyCostPerOutcomeUsd: pipeHistoryCostPerOutcomeUsd(byDynasty, more),
@@ -3697,53 +3702,73 @@ export async function fleetPlayPrices(
 }
 
 /**
- * A pipe's SCRIPTS, measured on runs-service's general ledger (MON-SCRIPT-PRICES-1111, `pipeScriptCost`): since
- * MIGRATE-1105 its campaigns run Engine scripts with no workflow, which every per-workflow read (`fleetPipeFigures`) is
- * blind to, so no pipe had a measured price any more (each borrowed a sibling's history, MON-PLAN-FAILED-1111). Read off
- * the DAILY book the Engine shadow already holds (`loadDailyLedgerBook`, one read per 2.5 h, gross), on the pipe's own
- * campaigns (the same set as its workflows'); flash = every run, mature = the leg's cohort (runs started before its
- * cutoff, `legCutoffIso`; a leg mature the day it is bought reads flash). The DECISION figure (cost-accounting rule 6:
- * the pipe's own cost per outcome + its yield, available now), so it does not wait for the ledger to reconcile. Null =
- * no script ran on its campaigns, or the book is unreadable / missing a past day of the scripts' era (said loud): the pipe
- * then reads as before.
+ * A pipe's SCRIPTS, each measured on runs-service's general ledger (MON-SCRIPT-PRICES-1111, per script since
+ * MON-SCRIPT-PRICES-2-1111: `pipeScriptCosts`): since MIGRATE-1105 its campaigns run Engine scripts with no workflow,
+ * which every per-workflow read is blind to. runs-service names the script each run works for (`scriptSlug`), so each
+ * script DYNASTY (`<outcome>/<dynasty>`, the key the Rating and the strategies judge) carries its own figures; runs that
+ * name none (history before the field) stay one pool (`SCRIPT_POOL`). Read off the DAILY book the Engine shadow already
+ * holds (`loadDailyLedgerBook`, one read per 2.5 h), on the pipe's own campaigns (the same set as its workflows');
+ * flash = every run, mature = the leg's cohort (runs started before its cutoff, `legCutoffIso`). The DECISION figure
+ * (cost-accounting rule 6: the pipe's own cost per outcome + its yield, available now), so it does not wait for the ledger
+ * to reconcile. Empty = no script ran on its campaigns, or the book is unreadable / missing a past day of the scripts' era
+ * (said loud): the pipe then reads its workflows only.
  */
-export async function pipeScriptFigures(featureSlug: string, legKey: string): Promise<LegMaturityFigures | null> {
+export async function pipeScriptFigures(featureSlug: string, legKey: string, pricing: PipeSpendPricing = "gross"): Promise<Array<[string, LegMaturityFigures]>> {
   try {
-    const [read, s, from, campaigns] = await Promise.all([loadDailyLedgerBook("gross", dailyBookSinceDay()), pipeOutcomeKey(featureSlug, legKey), pipeFromKey(featureSlug, legKey), getFleetLegCampaigns(featureSlug, legKey)]);
+    const [read, s, from, campaigns] = await Promise.all([loadDailyLedgerBook(bookBasisOf(pricing), dailyBookSinceDay()), pipeOutcomeKey(featureSlug, legKey), pipeFromKey(featureSlug, legKey), getFleetLegCampaigns(featureSlug, legKey)]);
     // today is never computed yet (runs-service stores a day once it is over): only a PAST day of the scripts' era blinds it
     const today = new Date().toISOString().slice(0, 10);
     const late = (read.missingDays ?? []).filter((d) => d >= SCRIPTS_FIRST_DAY && d < today);
     if (late.length > 0) {
       console.error(`[features-service] pipe ${featureSlug}|${legKey}: the daily ledger book misses ${late.length} day(s) of the scripts' era (${late.slice(0, 5).join(",")}), its scripts read unmeasured this pass`);
-      return null;
+      return [];
     }
     const ids = new Set(campaigns.map((c) => c.campaignId));
-    const flash = pipeScriptCost(s, ids, read.book);
-    if (!flash) return null;
+    const flash = pipeScriptCosts(s, ids, read.book);
+    if (flash.size === 0) return [];
     const cutoffIso = legCutoffIso(legKey);
-    const mature = cutoffIso ? pipeScriptCost(s, ids, read.book, runStartUntilOf(cutoffIso)) : flash;
+    const mature = cutoffIso ? pipeScriptCosts(s, ids, read.book, runStartUntilOf(cutoffIso)) : flash;
     // A pipe from Start works on no step of the funnel: what its runs consumed (an audience, a few CRM leads) is no base of a
     // conversion (lead sourcing read 1,925 leads found "from" 18 inputs, 10,694 %): no conversion, its cost per outcome only.
-    const figures = (v: PipeWorkflowCost | null) => (v ? outcomeFigures(v.costUsd, from === null ? 0 : v.inputs, v.outcomes) : outcomeFigures(0, 0, 0));
-    return legMaturityFigures(legKey, figures(flash), figures(mature));
+    const figures = (v: PipeWorkflowCost | undefined) => (v ? outcomeFigures(v.costUsd, from === null ? 0 : v.inputs, v.outcomes) : outcomeFigures(0, 0, 0));
+    return [...flash.keys()].map((k) => [k, legMaturityFigures(legKey, figures(flash.get(k)), figures(mature.get(k)))] as [string, LegMaturityFigures]);
   } catch (error) {
     console.error(`[features-service] pipe ${featureSlug}|${legKey}: its scripts are unreadable on the daily ledger book this pass:`, error);
-    return null;
+    return [];
   }
 }
 
+/** PURE. A pipe's workflow figures with its scripts' beside them (a script key never collides: it holds a `/`). */
+export function withScriptFigures(workflows: ReadonlyArray<[string, LegMaturityFigures]>, scripts: ReadonlyArray<[string, LegMaturityFigures]>): Array<[string, LegMaturityFigures]> {
+  return [...workflows.filter(([k]) => !scripts.some(([sk]) => sk === k)), ...scripts];
+}
+
+/**
+ * The script dynasties workflow-service can no longer run (no runnable version): they keep their measured figures on the
+ * pipe, never its price (the line `excludedFromLegPrice` draws for workflows). The unnamed pool (`SCRIPT_POOL`, runs before
+ * runs-service named scripts) is no dynasty: it keeps pricing the pipe as before.
+ */
+export async function nonRunnableScriptKeys(keys: Iterable<string>): Promise<Set<string>> {
+  const scriptKeys = [...keys].filter((k) => k.includes("/"));
+  if (scriptKeys.length === 0) return new Set();
+  const runnable = new Set((await readRunnableScriptsForCatalogue()).map(scriptDynastyKey));
+  return new Set(scriptKeys.filter((k) => !runnable.has(k)));
+}
+
 export async function computeOutcomePrices(): Promise<OutcomePricesPayload> {
-  const [visitLeg, replyLeg, meetingFleet, meetingExcluded] = await Promise.all([
+  const [visitLeg, replyLeg, meetingFleet, meetingExcluded, meetingScripts] = await Promise.all([
     coldEmailLegPrice("start_to_website_visit"),
     coldEmailLegPrice("start_to_conversation"),
     computeMeetingLegFleet(),
     excludedFromLegPrice(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY),
+    pipeScriptFigures(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY),
   ]);
+  const meetingByDynasty = new Map(withScriptFigures(meetingFleet.byDynasty, meetingScripts));
   const meetingLeg = pickLegPrice({
     legKey: MEETING_BOOKING_LEG_KEY,
     featureSlug: MEETING_BOOKING_FEATURE_SLUG,
-    byDynasty: new Map(meetingFleet.byDynasty),
-    excluded: meetingExcluded,
+    byDynasty: meetingByDynasty,
+    excluded: new Set([...meetingExcluded, ...(await nonRunnableScriptKeys(meetingByDynasty.keys()))]),
     campaignCount: meetingFleet.campaignCount,
   });
   if (meetingFleet.unattributableCampaignIds.length > 0) {
@@ -4027,17 +4052,26 @@ async function ledgerPipeFigures(
  */
 export type PipeSpendPricing = "gross" | "vendor" | "vendorUnpriced";
 
-export async function fleetPipeFigures(
-  featureSlug: string,
-  legKey: string,
-  pricing: PipeSpendPricing = "gross",
-): Promise<{
+type FleetPipeFigures = {
   byDynasty: Array<[string, LegMaturityFigures]>;
   cutoffIso: string | null;
   measured: boolean;
   campaignCount: number;
   meetingPopulation: MeetingPopulation | null;
-}> {
+};
+
+/**
+ * A pipe's figures per candidate: its WORKFLOW dynasties (`fleetWorkflowFigures`, the regime of the day) and its SCRIPT
+ * dynasties (`pipeScriptFigures`, the general ledger's daily book: MON-SCRIPT-PRICES-2-1111), on the same campaigns and the
+ * same basis. Every reader of a pipe's figures (the price, its plays, the workflow ranking and through it the fleet
+ * indexes, the public vendor twin) reads both: since MIGRATE-1105 the campaigns run scripts.
+ */
+export async function fleetPipeFigures(featureSlug: string, legKey: string, pricing: PipeSpendPricing = "gross"): Promise<FleetPipeFigures> {
+  const [workflows, scripts] = await Promise.all([fleetWorkflowFigures(featureSlug, legKey, pricing), pipeScriptFigures(featureSlug, legKey, pricing)]);
+  return { ...workflows, byDynasty: withScriptFigures(workflows.byDynasty, scripts) };
+}
+
+async function fleetWorkflowFigures(featureSlug: string, legKey: string, pricing: PipeSpendPricing = "gross"): Promise<FleetPipeFigures> {
   const pipePopulation = await getFleetLegPopulation(featureSlug, legKey);
   const onLedger = await ledgerPipeFigures(featureSlug, legKey, pipePopulation.campaigns, pricing);
   if (onLedger) {
@@ -4177,6 +4211,19 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
   }
   const names = new Map<string, string | null>();
   for (const w of workflows) if (!names.has(w.workflowDynastySlug)) names.set(w.workflowDynastySlug, w.workflowDynastyName ?? null);
+  // A pipe's SCRIPT dynasties rank beside its workflows (MON-SCRIPT-PRICES-2-1111): a runnable one is ACTIVE and runnable
+  // (its Engine's Rating may pick it), a retired one keeps its figures and stays unpickable, like a retired workflow. The
+  // unnamed pool (`SCRIPT_POOL`) is no script: shown when it spent, never pickable.
+  const executable = executableDynasties(workflows);
+  const scriptKeys = [...byDynasty.keys()].filter((k) => k.includes("/"));
+  if (scriptKeys.length > 0) {
+    const retired = await nonRunnableScriptKeys(scriptKeys);
+    for (const k of scriptKeys) {
+      if (retired.has(k)) continue;
+      assignments.set(k, "active");
+      executable.add(k);
+    }
+  }
   const rule = legMaturity(legKey);
   return {
     featureSlug,
@@ -4190,7 +4237,7 @@ export async function computeLegWorkflowRanking(featureSlug: string, legKey: str
       byDynasty,
       names,
       assignments,
-      executable: executableDynasties(workflows),
+      executable,
       ...(await netP.then((net) => ({ netSpend: net?.netSpend ?? null, lastRunAt: net?.lastRunAt ?? null }))),
       defaultConversionPct: legDefaultConversionPct(legKey),
     }),

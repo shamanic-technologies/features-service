@@ -48,15 +48,21 @@ export interface LedgerBookRead {
 const dayDims = (d: Record<string, string | null> | undefined): { runStartDay?: string | null } =>
   d && "runStartDay" in d ? { runStartDay: d.runStartDay ?? null } : {};
 
+/** The script of a group (and of its consumed input's producer), only when the read grouped by it (the daily book). */
+const scriptDims = (d: Record<string, string | null> | undefined): { scriptSlug?: string | null; sourceScriptSlug?: string | null } => ({
+  ...(d && "scriptSlug" in d ? { scriptSlug: d.scriptSlug ?? null } : {}),
+  ...(d && "sourceScriptSlug" in d ? { sourceScriptSlug: d.sourceScriptSlug ?? null } : {}),
+});
+
 /**
  * LEDGER-NEGATIVE-DAYS-1110: each produced group (outcome × campaign × workflow × audience) netted of its withdrawn Units by
  * THE rule (`standingUnitsByDay` over its run-start days; one bucket when the read has no day), in place.
  */
-function standProduced(rows: Array<{ outcomeKey: string; campaignId: string | null; workflowSlug: string | null; audienceId: string | null; occurrences: number; runStartDay?: string | null }>): void {
+function standProduced(rows: Array<{ outcomeKey: string; campaignId: string | null; workflowSlug: string | null; audienceId: string | null; occurrences: number; runStartDay?: string | null; scriptSlug?: string | null }>): void {
   if (!rows.some((r) => r.occurrences < 0)) return;
   const groups = new Map<string, typeof rows>();
   for (const r of rows) {
-    const k = JSON.stringify([r.outcomeKey, r.campaignId, r.workflowSlug, r.audienceId]);
+    const k = JSON.stringify([r.outcomeKey, r.campaignId, r.workflowSlug, r.audienceId, r.scriptSlug ?? null]);
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
   }
   for (const g of groups.values()) {
@@ -75,7 +81,7 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
   const produced = (producedBody.produced ?? []).map((g) => {
     const key = g.dimensions?.outcomeKey;
     if (!key) throw new Error("[features-service] ledger book: a produced group names no outcomeKey");
-    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis), ...dayDims(g.dimensions) };
+    return { outcomeKey: key, campaignId: g.dimensions?.campaignId ?? null, workflowSlug: g.dimensions?.workflowSlug ?? null, audienceId: g.dimensions?.audienceId ?? null, occurrences: g.occurrences ?? 0, costUsd: usd(g.cost, basis), ...dayDims(g.dimensions), ...scriptDims(g.dimensions) };
   });
   standProduced(produced);
   const consumed = [];
@@ -97,6 +103,7 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
       count,
       ...dayDims(g.dimensions),
       ...(g.dimensions && "sourceRunStartDay" in g.dimensions ? { sourceRunStartDay: g.dimensions.sourceRunStartDay ?? null } : {}),
+      ...scriptDims(g.dimensions),
     });
   }
   // runs-service's "produced none" holds the support marks too: only the rest is a pipe's loss
@@ -106,6 +113,7 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
     audienceId: s.dimensions?.audienceId ?? null,
     costUsd: Math.max(usd(s.producedNone, basis) - usd(s.support, basis), 0),
     ...dayDims(s.dimensions),
+    ...scriptDims(s.dimensions),
   }));
   const daysMissing = Math.max(...[producedBody, consumedBody, scopeBody].map((b) => (b.daysMissing ?? []).length));
   const missingDays = [...new Set([producedBody, consumedBody, scopeBody].flatMap((b) => b.daysMissing ?? []))].sort();
@@ -243,9 +251,10 @@ const DAILY_LAST_GOOD_MS = 24 * 3_600_000;
 
 async function readDailyBook(basis: BookBasis, sinceDay: string, key: string): Promise<LedgerBookRead> {
   const p = (async () => {
-    const produced = await read("outcomeKey,campaignId,workflowSlug,runStartDay", undefined, sinceDay);
-    const consumed = await read("outcomeKey,campaignId,workflowSlug,sourceCampaignId,sourceWorkflowSlug,runStartDay,sourceRunStartDay", undefined, sinceDay);
-    const scope = await read("campaignId,workflowSlug,runStartDay", undefined, sinceDay);
+    // + the script each run works for (MON-SCRIPT-PRICES-2-1111, runs-service 0111): a pipe's scripts are measured apart.
+    const produced = await read("outcomeKey,campaignId,workflowSlug,scriptSlug,runStartDay", undefined, sinceDay);
+    const consumed = await read("outcomeKey,campaignId,workflowSlug,scriptSlug,sourceCampaignId,sourceWorkflowSlug,sourceScriptSlug,runStartDay,sourceRunStartDay", undefined, sinceDay);
+    const scope = await read("campaignId,workflowSlug,scriptSlug,runStartDay", undefined, sinceDay);
     const value = parseLedgerBook(produced, consumed, scope, basis);
     held.set(key, { at: Date.now(), value });
     lastGoodDaily.set(basis, { at: Date.now(), value });
