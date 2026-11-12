@@ -25,6 +25,8 @@ export interface LedgerProducedRow {
   costUsd: number;
   /** UTC day the declaring run started (the daily book only, `loadDailyLedgerBook`). */
   runStartDay?: string | null;
+  /** The stored script the declaring run works for (`<outcome>/<dynasty>/v<version>`, runs-service 0111; daily book only). */
+  scriptSlug?: string | null;
 }
 
 export interface LedgerNoOutputRow {
@@ -34,6 +36,7 @@ export interface LedgerNoOutputRow {
   /** Spend of runs that produced nothing, support marks taken out (support is apart by design). */
   costUsd: number;
   runStartDay?: string | null;
+  scriptSlug?: string | null;
 }
 
 export interface LedgerConsumedRow {
@@ -50,6 +53,9 @@ export interface LedgerConsumedRow {
   /** UTC day the consuming run started, and the day the run that produced the consumed occurrence started (daily book only). */
   runStartDay?: string | null;
   sourceRunStartDay?: string | null;
+  /** The consuming run's script, and the script of the run that produced the consumed occurrence (daily book only). */
+  scriptSlug?: string | null;
+  sourceScriptSlug?: string | null;
 }
 
 export interface LedgerPipeBook {
@@ -288,4 +294,88 @@ export function pipeScriptCost(s: string, campaignIds: ReadonlySet<string>, book
   if (!any && credited === 0) return null;
   const outcomes = (cutDay === undefined ? Math.max(made - handedBack, 0) : most(madeByInput)) + credited;
   return { workflowSlug: SCRIPT_POOL, costUsd: Math.max(costUsd - handedBack * unit, 0) + credited * unit, outcomes, inputs: most(inputs) };
+}
+
+/** PURE. The script DYNASTY a stored script's name belongs to (`<outcome>/<dynasty>`, the key its verdicts and the Rating
+ *  use; `scriptDynastyKey`): its versions pool, like a workflow's. A run of no script = the pool of unnamed runs. */
+export function scriptDynastyOfSlug(slug: string | null | undefined): string {
+  if (!slug) return SCRIPT_POOL;
+  const m = /^(.+)\/v\d+$/.exec(slug);
+  return m ? m[1]! : slug;
+}
+
+/**
+ * Each SCRIPT of a pipe, measured apart (MON-SCRIPT-PRICES-2-1111): runs-service names the script every run works for
+ * (`scriptSlug`, the outermost script of its chain), so the pool above splits per script dynasty (`keyOf`, default
+ * `scriptDynastyOfSlug`; pass the identity for one figure per VERSION). The same rule, per script K:
+ *   cost     = K's no-workflow rows inside the pipe's campaigns + K's runs there that produced nothing
+ *              + the pipe's outcomes credited to K × the stage's own unit cost (`offCampaignUnitCost`)
+ *   outcomes = the pipe's outcome K's runs made there, + the ones made elsewhere whose consumed input K made
+ * An outcome belongs to the script that made its INPUT: a reply judged under another script of the pipe's campaigns (the
+ * inbound decision answering K's send) leaves that script for K at the stage's unit cost, as one judged outside does; a
+ * workflow's goes back to it. Rows naming no script (runs older than runs-service's script field, never stated) stay the
+ * one pool `SCRIPT_POOL`. Σ over the keys = `pipeScriptCost` (one pool), every dollar and outcome once. `cutDay` = the
+ * mature cohort, as there.
+ */
+export function pipeScriptCosts(
+  s: string,
+  campaignIds: ReadonlySet<string>,
+  book: LedgerPipeBook,
+  cutDay?: string,
+  keyOf: (slug: string | null | undefined) => string = scriptDynastyOfSlug,
+): Map<string, PipeWorkflowCost> {
+  const ran = (day: string | null | undefined) => cutDay === undefined || (day != null && day <= cutDay);
+  const inSet = (c: string | null) => c !== null && campaignIds.has(c);
+  type Acc = { cost: number; made: number; any: boolean; inputs: Map<string, number>; credited: Map<string, number>; handed: Map<string, number>; madeByInput: Map<string, number> };
+  const accs = new Map<string, Acc>();
+  const acc = (k: string): Acc => {
+    let a = accs.get(k);
+    if (!a) accs.set(k, (a = { cost: 0, made: 0, any: false, inputs: new Map(), credited: new Map(), handed: new Map(), madeByInput: new Map() }));
+    return a;
+  };
+  const add = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) ?? 0) + n);
+  for (const r of book.produced) {
+    if (r.workflowSlug !== null || !inSet(r.campaignId) || !ran(r.runStartDay)) continue;
+    const a = acc(keyOf(r.scriptSlug));
+    a.any = true;
+    a.cost += r.costUsd;
+    if (r.outcomeKey === s && cutDay === undefined) a.made += r.occurrences;
+  }
+  for (const r of book.noOutput) {
+    if (r.workflowSlug !== null || !inSet(r.campaignId) || !ran(r.runStartDay)) continue;
+    const a = acc(keyOf(r.scriptSlug));
+    a.any = true;
+    a.cost += r.costUsd;
+  }
+  for (const c of book.consumed) {
+    const poolRun = c.workflowSlug === null && inSet(c.campaignId);
+    const k = keyOf(c.scriptSlug);
+    if (poolRun && ran(c.runStartDay) && !inSet(c.sourceCampaignId)) add(acc(k).inputs, c.consumedKey, c.count);
+    if (c.consumerKey !== s || c.workflowSlug !== null) continue;
+    const fromPool = c.sourceWorkflowSlug === null && inSet(c.sourceCampaignId);
+    const sk = keyOf(c.sourceScriptSlug);
+    if (poolRun && c.sourceWorkflowSlug !== null && inSet(c.sourceCampaignId)) {
+      // a workflow's input: the outcome goes back to that workflow (`pipeWorkflowCosts`)
+      if (ran(c.runStartDay)) add(acc(k).handed, c.consumedKey, c.count);
+    } else if (poolRun && fromPool && sk !== k) {
+      // another script of the pipe made the input: the outcome leaves k for it
+      if (ran(c.runStartDay)) add(acc(k).handed, c.consumedKey, c.count);
+      if (ran(cutDay === undefined ? c.runStartDay : c.sourceRunStartDay)) add(acc(sk).credited, c.consumedKey, c.count);
+    } else if (poolRun) {
+      if (cutDay !== undefined && ran(c.sourceRunStartDay)) add(acc(k).madeByInput, c.consumedKey, c.count);
+    } else if (fromPool && ran(cutDay === undefined ? c.runStartDay : c.sourceRunStartDay)) {
+      add(acc(sk).credited, c.consumedKey, c.count);
+    }
+  }
+  const most = (m: Map<string, number>) => (m.size > 0 ? Math.max(...m.values()) : 0);
+  const unit = offCampaignUnitCost(s, book);
+  const out = new Map<string, PipeWorkflowCost>();
+  for (const [k, a] of [...accs].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))) {
+    const handed = most(a.handed);
+    const credited = most(a.credited);
+    if (!a.any && credited === 0) continue;
+    const outcomes = (cutDay === undefined ? Math.max(a.made - handed, 0) : most(a.madeByInput)) + credited;
+    out.set(k, { workflowSlug: k, costUsd: Math.max(a.cost - handed * unit, 0) + credited * unit, outcomes, inputs: most(a.inputs) });
+  }
+  return out;
 }
