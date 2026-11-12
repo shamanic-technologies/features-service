@@ -477,6 +477,13 @@
       "when": 1794844800000,
       "tag": "0067_campaign_engine_answers",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1794931200000,
+      "tag": "0068_brand_revenue_family_without_channels",
+      "breakpoints": true
     }
   ]
 }

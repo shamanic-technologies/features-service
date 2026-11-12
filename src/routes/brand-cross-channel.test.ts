@@ -382,6 +382,27 @@ describe("GET /brands/:brandId/revenue — a brand's money, across every channel
     expect(res.body.reason).toBe("brand_not_found");
   });
 
+  it("?organizations=count drops the companies and says how many, the rest of the body unchanged (MON-PAGE-SPEED-1111)", async () => {
+    mockFetch(TWO_CHANNELS);
+    const full = await request(app).get(`/brands/${BRAND}/revenue`).set(AUTH);
+    expect(full.status).toBe(200);
+    expect(Array.isArray(full.body.organizations)).toBe(true);
+    mockFetch(TWO_CHANNELS);
+    const slim = await request(app).get(`/brands/${BRAND}/revenue?organizations=count`).set(AUTH);
+    expect(slim.status).toBe(200);
+    expect(slim.body.organizations).toBeUndefined();
+    expect(slim.body.organizationCount).toBe(full.body.organizations.length);
+    const { organizations: _dropped, ...rest } = full.body;
+    expect({ ...slim.body, organizationCount: undefined }).toEqual({ ...rest, organizationCount: undefined });
+  });
+
+  it("an unrecognised ?organizations= is a 400, never a silent pick", async () => {
+    mockFetch(TWO_CHANNELS);
+    const res = await request(app).get(`/brands/${BRAND}/revenue?organizations=all`).set(AUTH);
+    expect(res.status).toBe(400);
+    expect(res.body.reason).toBe("organizations_unrecognised");
+  });
+
   it("still validates the query on the no-campaign path", async () => {
     mockFetch({ campaigns: {}, costByCampaign: {}, leads: [] });
     const res = await request(app).get(`/brands/${BRAND}/revenue?leads=nope`).set(AUTH);
