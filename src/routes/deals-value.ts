@@ -100,14 +100,14 @@ export function brandOfferScope(map: OfferChannelMap): { offerIds: string[]; cam
   };
 }
 
-class BrandHasNoOfferCampaignsError extends Error {
+export class BrandHasNoOfferCampaignsError extends Error {
   constructor(readonly brandId: string) {
     super(`no campaign of brand ${brandId} sells an offer, so its lifecycle has no scope`);
   }
 }
 
 /** `?columns=lifecycle` / `company_lifecycle` at the BRAND grain (the offer read's modes, every offer of the brand). */
-async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, columns: "lifecycle" | "company_lifecycle"): Promise<SnapshotJson> {
+export async function brandLifecycleRead(brandId: string, headers: DownstreamHeaders, columns: "lifecycle" | "company_lifecycle"): Promise<SnapshotJson> {
   const [map] = await Promise.all([withInteractiveReads(() => fetchOfferChannelMap(brandId, headers)), assertBrandHeld(brandId, headers)]);
   const scope = brandOfferScope(map);
   if (scope.offerIds.length === 0) throw new BrandHasNoOfferCampaignsError(brandId);
