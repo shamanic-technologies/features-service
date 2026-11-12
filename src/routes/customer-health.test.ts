@@ -8,6 +8,7 @@ import router, {
   __awaitCustomerHealthBuild,
   __resetCustomerHealthServing,
   __setCustomerHealthServingDeps,
+  warmCustomerHealthOnBoot,
 } from "./customer-health.js";
 import type { CustomerHealthBoard } from "../lib/customer-health-compute.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
@@ -147,5 +148,29 @@ describe("GET /internal/stats/customer-health (CUSTOMER-HEALTH-OOM-1023)", () =>
     const s = await request(app()).get("/internal/stats/customer-health/build-status").set("x-api-key", KEY);
     expect(s.body).toMatchObject({ running: false, lastFinished: { buildId: a.body.buildId, error: null } });
     expect(computeBoard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("customer-health boot step (MON-BOOT-SPIKE-1112)", () => {
+  it("a persisted copy younger than 15 min is installed and skipped: no build at boot", async () => {
+    const mem = memoryCells();
+    mem.cells.set(CELL, { text: JSON.stringify(board("stored")), computedAt: Date.now() - 60_000 });
+    const computeBoard = vi.fn(async () => board("new"));
+    __setCustomerHealthServingDeps({ ...mem, computeBoard, refresherBase: () => null });
+    expect(await warmCustomerHealthOnBoot()).toBe("skipped");
+    expect(computeBoard).not.toHaveBeenCalled();
+    const res = await request(app()).get("/internal/stats/customer-health").set("x-api-key", KEY);
+    expect(res.body.asOf).toBe("stored");
+  });
+
+  it("a stale copy is rebuilt ONCE and the step waits for it (one boot warm at a time)", async () => {
+    const mem = memoryCells();
+    mem.cells.set(CELL, { text: JSON.stringify(board("old")), computedAt: Date.now() - 60 * 60_000 });
+    const computeBoard = vi.fn(async () => board("rebuilt"));
+    __setCustomerHealthServingDeps({ ...mem, computeBoard, refresherBase: () => null });
+    expect(await warmCustomerHealthOnBoot()).toBe("built");
+    expect(computeBoard).toHaveBeenCalledTimes(1);
+    const res = await request(app()).get("/internal/stats/customer-health").set("x-api-key", KEY);
+    expect(res.body.asOf).toBe("rebuilt");
   });
 });

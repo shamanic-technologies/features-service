@@ -24,6 +24,7 @@ import { fetchBrandLegEconomics, type BrandLegEconomics } from "../lib/brand-leg
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { fetchOfferSteps, type OfferSteps } from "../lib/offer-steps-client.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { BRIEF_JUDGMENT_SUPPORT } from "../lib/platform-caller.js";
 import type { CatalogueModel, CataloguePipe } from "../lib/agent-catalogue.js";
 import type { ExpectedBasis } from "../lib/expected-return.js";
@@ -754,11 +755,38 @@ export function __resetBriefPlayForTest(): void {
   briefPlayHeld.clear();
 }
 
-/** 10 minutes after listen (the catalogue figures are warm by then), then every 3 hours. */
+/**
+ * When the next pass is due, from the STORED last pass (MON-BOOT-SPIKE-1112): 0 = now; a pass younger than the 3-hour
+ * cadence waits out the rest of it. PURE.
+ */
+export function factoryShadowPassDueInMs(lastPassAtMs: number | null | undefined, nowMs = Date.now()): number {
+  return storedCopyIsFresh(lastPassAtMs, SWEEP_EVERY_MS, nowMs) ? (lastPassAtMs as number) + SWEEP_EVERY_MS - nowMs : 0;
+}
+
+/** One clock tick: pass when the stored pass is 3 hours old, else wait out the rest; then re-arm. */
+async function factoryShadowClockTick(): Promise<void> {
+  let waitMs = SWEEP_EVERY_MS;
+  try {
+    const last = await loadFleetCell(PASS_CELL);
+    const dueInMs = factoryShadowPassDueInMs(last?.computedAt);
+    if (dueInMs > 0) {
+      waitMs = dueInMs;
+      console.log(`[features-service] factory shadow: last pass ${Math.round((SWEEP_EVERY_MS - dueInMs) / 60_000)} min old, next in ${Math.round(dueInMs / 60_000)} min`);
+    } else {
+      await runFactoryShadowPass();
+    }
+  } catch (err) {
+    console.error("[features-service] factory shadow pass failed:", err);
+  }
+  setTimeout(() => void factoryShadowClockTick(), Math.max(60_000, waitMs)).unref();
+}
+
+/**
+ * 10 minutes after listen (the catalogue figures are warm by then), then every 3 hours, counted from the STORED last pass
+ * (MON-BOOT-SPIKE-1112): a restart no longer re-runs a pass the previous process made minutes before (every deploy did).
+ */
 export function startFactoryShadowLoop(): void {
-  const tick = () => void runFactoryShadowPass().catch((err) => console.error("[features-service] factory shadow pass failed:", err));
-  setTimeout(tick, 600_000).unref();
-  setInterval(tick, SWEEP_EVERY_MS).unref();
+  setTimeout(() => void factoryShadowClockTick(), 600_000).unref();
   setInterval(() => void passIfNewCampaign().catch((err) => console.error("[features-service] new campaign probe failed:", err)), NEW_CAMPAIGN_PROBE_MS).unref();
 }
 

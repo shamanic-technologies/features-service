@@ -94,7 +94,7 @@ const { buildCatalogueModel } = await import("../lib/agent-catalogue.js");
 const { buildChannelCatalogue } = await import("../lib/channel-catalogue.js");
 const { SEED_FEATURES } = await import("../seed/features.js");
 const { servedLegKeyOf } = await import("../lib/funnel-legs.js");
-const { default: router, runFactoryShadowPass, engineResultsOf } = await import("./factory-shadow.js");
+const { default: router, runFactoryShadowPass, engineResultsOf, factoryShadowPassDueInMs } = await import("./factory-shadow.js");
 
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
 const channels = buildChannelCatalogue(SEED_FEATURES.filter((f) => f.status === "active"));
@@ -411,5 +411,14 @@ describe("ENGINE-FULL-MIGRATION-1102: a drive counts in ONE family, never every 
       ["conversation|start|-", 2, 0],
       ["conversation|start|email_pushed_via_api", 1, 1],
     ]);
+  });
+});
+
+describe("factory shadow clock (MON-BOOT-SPIKE-1112: a restart never re-runs a fresh pass)", () => {
+  it("a pass younger than 3 hours waits out the rest; an older one, or none, passes now", () => {
+    const now = 10 * 3_600_000;
+    expect(factoryShadowPassDueInMs(now - 60 * 60_000, now)).toBe(2 * 3_600_000);
+    expect(factoryShadowPassDueInMs(now - 3 * 3_600_000, now)).toBe(0);
+    expect(factoryShadowPassDueInMs(null, now)).toBe(0);
   });
 });
