@@ -51,6 +51,7 @@ import { playOfLegRead } from "./workflow-projection.js";
 import { readOutOfCreditProvidersSoft } from "../lib/vendor-credit-client.js";
 import { postWriterBars, ZERO_POST_FIGURES, type PostFigures, type PostWriterBars } from "../lib/post-writer-evidence.js";
 import { readPostPipeEvidence } from "../lib/post-writer-evidence-io.js";
+import { pipeLlmUniverse } from "../lib/engine-llm-universe-io.js";
 
 const router = Router();
 
@@ -537,8 +538,9 @@ router.get("/public/stats/leg-writer-ranking", async (req: Request, res: Respons
     const catalogue = await loadPlayCatalogue();
     const strategy = strategyId ? (catalogue.strategies.get(strategyId) ?? null) : null;
     if (strategyId && !strategy) return bad(res, 404, "strategy_not_found", `no strategy ${strategyId}`);
-    const p = await readLegWriterRanking(featureSlug, leg, 0);
-    if (!p) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${leg} is being built; retry in a few minutes`);
+    const built = await readLegWriterRanking(featureSlug, leg, 0);
+    if (!built) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${leg} is being built; retry in a few minutes`);
+    const p = withEngineLlmUniverse(built, await pipeLlmUniverse(featureSlug, leg));
     // Each template dynasty's own icon + colour (MARKS-1022); LLM rows carry none (the dashboard draws the provider's logo).
     const served = await withTemplateRankingMarks(servedRankings(p, catalogue, strategy));
     res.json({ featureSlug: p.featureSlug, legKey: p.legKey, pipeId: p.pipeId, computedAt: p.computedAt, costBasis: p.costBasis, rankBasis: p.rankBasis, maturity: p.maturity, writerEvidence: p.writerEvidence, strategyId, leftOut: p.leftOut, ...served });
@@ -580,18 +582,31 @@ export function withVendorCredit(p: LegWriterRankingPayload, outOfCredit: Readon
 }
 
 /**
+ * PURE (LLM-RATING-PER-ENGINE-1112, owner 2026-11-12): an LLM outside the Engine's universe (`engine_llm_universes`, the
+ * fleet row excludes Claude Fable and Claude Opus) is never selectable on this legacy per-pipe read either, until its
+ * callers move to `/internal/llm-pick`. Figures untouched.
+ */
+export function withEngineLlmUniverse(p: LegWriterRankingPayload, allowed: ReadonlySet<string>): LegWriterRankingPayload {
+  const candidates = p.llms.candidates.map((c) =>
+    c.selectable && !allowed.has(c.llmDynastySlug ?? c.key) ? { ...c, selectable: false, notSelectableReason: "not_in_engine_universe" } : c,
+  );
+  return { ...p, llms: { ...p.llms, candidates } };
+}
+
+/**
  * What a run of the pipe writes with today (BEST-TPL-LLM-1022): rank 1 template and rank 1 LLM under the play its campaign
  * unit names (`salesFunnelId`; null = the pipe's default play). Null = the pipe's writer ranking is not built yet.
  */
 export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000, campaignId: string | null = null) {
-  const [catalogue, played, built, outOfCredit] = await Promise.all([
+  const [catalogue, played, built, outOfCredit, universe] = await Promise.all([
     loadPlayCatalogue(),
     playOfLegRead(featureSlug, legKey, salesFunnelId, campaignId),
     readLegWriterRanking(featureSlug, legKey, waitMs),
     readOutOfCreditProvidersSoft(`writer pick ${featureSlug}|${legKey}`),
+    pipeLlmUniverse(featureSlug, legKey),
   ]);
   if (!built) return null;
-  const p = withVendorCredit(built, outOfCredit);
+  const p = withEngineLlmUniverse(withVendorCredit(built, outOfCredit), universe);
   const strategy = played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null;
   // A play the pipe does not catalogue rules out every workflow on the ladder; here it rules out every writer too.
   const unknownPlay = played !== null && !strategy;
