@@ -6546,6 +6546,121 @@ registry.registerPath({
   responses: { 200: { description: "One row per verdict", content: { "application/json": { schema: z.object({ count: z.number(), differ: z.number(), rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), outcome: z.string(), stored: z.string().nullable(), storedSource: z.string(), picked: z.string().nullable(), confidence: z.number().nullable(), note: z.string().nullable() })) }) } } }, 502: { description: "engine_strategy_eval_failed" } },
 });
 
+// ── LLM-RATING-PER-ENGINE-1112: the Rating rates LLMs per Engine ─────────────────────────────────────
+const EngineLlmUniverseSchema = z.object({
+  source: z.enum(["engine", "fleet", "none"]).describe("`engine` = the Engine's own row, `fleet` = the `*` row every Engine without one reads, `none` = no row (every served LLM)."),
+  allowed: z.array(z.string()).describe("LLM dynasty slugs this Engine may use today (served today, exclusions out)."),
+  excluded: z.array(z.string()),
+  decidedBy: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  note: z.string().nullable(),
+});
+const EngineLlmRowSchema = z.object({
+  llmDynastySlug: z.string(),
+  name: z.string(),
+  provider: z.string().nullable(),
+  allowed: z.boolean().describe("In the Engine's universe today."),
+  notPickableReason: z.enum(["not_in_engine_universe", "not_served_today", "vendor_out_of_credit"]).nullable(),
+  rank: z.number().nullable().describe("1 = today's favourite; null for an LLM that cannot be picked."),
+  shareOfDraws: z.number().nullable().describe("Share of the Rating's Thompson draws it wins today (0..1); null when it cannot be picked."),
+  shareOfPicks: z.number().nullable().describe("Share of the picks the Rating answered for this Engine in the last 30 days (0..1); null = no pick recorded."),
+  picks: z.number(),
+  calls: z.number().describe("LLM calls, whole history (workflow era included)."),
+  decisions: z.number().describe("Root runs (decisions) that called it."),
+  outcomes: z.number().describe("Units of the Engine's outcome the ledger credits to those decisions."),
+  spentUsdToDate: z.number().describe("Its own calls' billed money, whole history."),
+  spentUsdPerDay: z.number().describe("Mean billed money per day over the last 30 days, today included."),
+  dailySpend: z.array(z.object({ day: z.string(), calls: z.number(), spentUsd: z.number() })).describe("Last 30 days, oldest first, zeros included."),
+  costPerOutcomeUsd: z.number().nullable().describe("Its spend ÷ its outcomes; null with the reason."),
+  costPerOutcomeUnavailableReason: z.enum(["no_outcome_yet", "never_used"]).nullable(),
+  outcomeRate: z.number().nullable().describe("Share of its decisions that made a Unit (0..1); null = never used."),
+  firstCallDay: z.string().nullable(),
+  lastCallDay: z.string().nullable(),
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/llm-pick",
+  summary: "Which LLM one LLM call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
+  description:
+    "LLM-RATING-PER-ENGINE-1112 (owner 2026-11-12, option A). Thompson sampling on rate per dollar over the Engine's universe of LLMs (served today, vendor in credit), beliefs pooled Engine -> LLM -> LLM at this place, seeded from every past LLM call. Never a pipe, a channel or a default model. Send the run in `x-run-id`: the pick is recorded (share of picks, the call's place).",
+  tags: ["Internal"],
+  request: { query: z.object({ outcome: z.string().describe("The Engine's outcome key (e.g. x_post_published)."), place: z.string().describe("The name the script gives this LLM call (e.g. writer, angles, judge)."), campaignId: z.string().optional().describe("The campaign the run works for (recorded only).") }) },
+  responses: {
+    200: {
+      description: "The pick",
+      content: {
+        "application/json": {
+          schema: z.object({
+            outcome: z.string(),
+            place: z.string(),
+            llm: z.object({ llmDynastySlug: z.string(), name: z.string(), provider: z.string().nullable(), model: z.string().describe("The name to pass to chat-service / content-generation (the dynasty slug: it runs the dynasty's head).") }),
+            candidates: z.array(z.string()),
+            evidenceComputedAt: z.string().nullable(),
+            evidenceUnavailableReason: z.enum(["evidence_not_built_yet"]).nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "outcome_and_place_required" },
+    422: { description: "no_llm_in_engine_universe: no LLM of the Engine's universe is served with its vendor in credit. Write nothing and retry later." },
+    502: { description: "llm_rating_unreadable" },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/engine-llms",
+  summary: "Per Engine: its allowed LLMs, each ranked with usage stats, today's favourite (internal, api-key, staff)",
+  description: "LLM-RATING-PER-ENGINE-1112. Every figure served; the browser computes nothing. LLMs the Engine used that are outside its universe today are listed apart with their history (`outsideUniverse`).",
+  tags: ["Internal"],
+  request: { query: z.object({ outcome: z.string().optional().describe("One Engine only.") }) },
+  responses: {
+    200: {
+      description: "The Engines",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string(),
+            evidenceComputedAt: z.string().nullable(),
+            evidenceUnavailableReason: z.enum(["evidence_not_built_yet"]).nullable(),
+            evidenceCounts: z.object({ calls: z.number().describe("LLM calls copied, whole history."), callsWithNoEngine: z.number().describe("Calls whose script or workflow names no Engine (a Copilot turn, a staff call): in no Engine."), supportCalls: z.number(), decisionsAwaitingUnits: z.number().describe("Decisions whose ledger Units are not read yet (no Unit meanwhile)."), lastCallAt: z.string().nullable() }).nullable(),
+            engines: z.array(
+              z.object({
+                outcome: z.string(),
+                name: z.string(),
+                universe: EngineLlmUniverseSchema,
+                favourite: z.object({ llmDynastySlug: z.string(), name: z.string() }).nullable(),
+                places: z.array(z.object({ place: z.string(), picks: z.number() })),
+                llms: z.array(EngineLlmRowSchema),
+                outsideUniverse: z.array(EngineLlmRowSchema),
+                totals: z.object({ calls: z.number(), decisions: z.number(), outcomes: z.number(), spentUsdToDate: z.number() }),
+              }),
+            ),
+            limits: z.array(z.string()),
+          }),
+        },
+      },
+    },
+    502: { description: "llm_rating_unreadable" },
+  },
+});
+const UniverseRuleSchema = z.object({ outcome: z.string(), allowed: z.array(z.string()).nullable(), excluded: z.array(z.string()), decidedBy: z.string(), note: z.string().nullable(), decidedAt: z.string() });
+registry.registerPath({
+  method: "get",
+  path: "/internal/engine-llm-universes",
+  summary: "The stored LLM universes per Engine (internal, api-key, staff)",
+  tags: ["Internal"],
+  responses: { 200: { description: "Rows (`*` = every Engine without its own)", content: { "application/json": { schema: z.object({ universes: z.array(UniverseRuleSchema) }) } } }, 502: { description: "universes_unreadable" } },
+});
+registry.registerPath({
+  method: "put",
+  path: "/internal/engine-llm-universes",
+  summary: "Set one Engine's LLM universe, or the fleet row `*` (internal, api-key, staff)",
+  description: "`allowed` null = every LLM dynasty chat-service serves today; `excluded` comes out of it. An Engine's own row replaces the fleet row for that Engine.",
+  tags: ["Internal"],
+  request: { body: { content: { "application/json": { schema: z.object({ outcome: z.string(), allowed: z.array(z.string()).nullable(), excluded: z.array(z.string()), decidedBy: z.string(), note: z.string().optional() }) } } } },
+  responses: { 200: { description: "The stored row", content: { "application/json": { schema: UniverseRuleSchema } } }, 400: { description: "universe_unrecognised | llm_dynasty_unknown" }, 502: { description: "universe_unwritable" } },
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/leg-workflow-ranking",
