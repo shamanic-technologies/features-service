@@ -42,6 +42,9 @@ import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
 import legWriterRankingRoutes, { warmEveryLegWriterRanking } from "./routes/leg-writer-ranking.js";
 import scriptStrategyRoutes from "./routes/script-strategy.js";
 import engineStrategyRoutes from "./routes/engine-strategies.js";
+import engineLlmRatingRoutes from "./routes/engine-llm-rating.js";
+import { startEngineLlmEvidenceLoop, warmEngineLlmEvidence } from "./lib/engine-llm-rating-io.js";
+import { startLlmCallFeed } from "./lib/llm-call-feed.js";
 import customerHealthRoutes, { readCustomerHealthText } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
@@ -151,6 +154,7 @@ app.use(researchRoutes);
 app.use(legWriterRankingRoutes);
 app.use(scriptStrategyRoutes);
 app.use(engineStrategyRoutes);
+app.use(engineLlmRatingRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 
@@ -178,6 +182,8 @@ async function bootWarmSteps(): Promise<BootWarmStep[]> {
     { name: "outcome prices", run: () => warmOutcomePrices() },
     // The agent catalogue's pipe economics are fleet walks too: built off the request path.
     { name: "agent catalogue figures", run: () => warmCatalogueMeasurementsOnBoot() },
+    // The LLM Rating's evidence (every LLM call per Engine, LLM-RATING-PER-ENGINE-1112): stored, skipped while fresh.
+    { name: "LLM rating evidence", run: () => warmEngineLlmEvidence() },
   ];
   // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner 2026-10-10: no
   // special case; this used to warm the two cold-email pipes only).
@@ -269,6 +275,10 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startBulkRunSweep();
         // A campaign whose Engine cannot run is red on Monitoring (NO-BRIEF-UNBLOCK-1111, lib/engine-held-monitor.ts).
         startEngineHeldMonitor();
+        // The LLM Rating's evidence, rebuilt every 15 minutes (LLM-RATING-PER-ENGINE-1112).
+        startEngineLlmEvidenceLoop();
+        // ... from our copy of every LLM call the fleet made, followed every 2 minutes (lib/llm-call-feed.ts).
+        startLlmCallFeed();
         // The best template and LLM of every pipe holding a workflow (routes/leg-writer-ranking.ts, BEST-TPL-LLM-1022),
         // one pipe at a time, three minutes in (after the fleet cells it shares with Research are warm).
         setTimeout(() => void warmEveryLegWriterRanking().catch((err) => console.error("[features-service] leg writer ranking boot warm failed:", err)), 180_000).unref();
