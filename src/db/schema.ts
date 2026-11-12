@@ -1167,3 +1167,31 @@ export const llmDecisionUnits = pgTable("llm_decision_units", {
   units: jsonb("units").$type<Record<string, number>>(),
   readAt: timestamp("read_at", { withTimezone: true }),
 });
+
+/** Every template pick the Rating answered (LLM-RATING-PER-ENGINE-1112 phase 2). Migration 0071. */
+export const engineTemplatePicks = pgTable(
+  "engine_template_picks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    outcome: text("outcome").notNull(),
+    place: text("place").notNull(),
+    templateDynastySlug: text("template_dynasty_slug").notNull(),
+    runId: text("run_id"),
+    campaignId: text("campaign_id"),
+    pickedAt: timestamp("picked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("engine_template_picks_outcome_at").on(table.outcome, table.pickedAt), index("engine_template_picks_run").on(table.runId, table.templateDynastySlug)],
+);
+
+/** Which template dynasty each decision (run) wrote with (history feeds + picks). Migration 0071. */
+export const templateDecisions = pgTable(
+  "template_decisions",
+  {
+    decisionRunId: text("decision_run_id").notNull(),
+    templateDynastySlug: text("template_dynasty_slug").notNull(),
+    /** `thread_generation` | `sequence_copy` | `pick`. */
+    source: text("source").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "template_decisions_pk", columns: [table.decisionRunId, table.templateDynastySlug] })],
+);

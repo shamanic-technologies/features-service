@@ -6577,6 +6577,41 @@ const EngineLlmRowSchema = z.object({
   firstCallDay: z.string().nullable(),
   lastCallDay: z.string().nullable(),
 });
+const EngineTemplateRowSchema = EngineLlmRowSchema.omit({ llmDynastySlug: true, provider: true, allowed: true, notPickableReason: true }).extend({
+  templateDynastySlug: z.string(),
+  status: z.enum(["active", "deprecated"]).nullable(),
+  head: z.string().nullable().describe("The dynasty's head template (what a run writes with)."),
+  notPickableReason: z.enum(["not_active", "not_an_engine_template"]).nullable(),
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/template-pick",
+  summary: "Which template dynasty one writing call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
+  description:
+    "LLM-RATING-PER-ENGINE-1112 phase 2. Candidates = the active template dynasties (with a head) content-generation lists for the Engine's outcome, narrowed by the campaign's strategy on templates when `campaignId` is given; Thompson on rate per dollar, beliefs seeded from every decision a template wrote (thread generations, sequences) and every pick since. Send the run in `x-run-id`. Never a default template.",
+  tags: ["Internal"],
+  request: { query: z.object({ outcome: z.string(), place: z.string(), campaignId: z.string().optional().describe("Its strategy on templates narrows the candidates.") }) },
+  responses: {
+    200: {
+      description: "The pick",
+      content: {
+        "application/json": {
+          schema: z.object({
+            outcome: z.string(),
+            place: z.string(),
+            template: z.object({ templateDynastySlug: z.string(), name: z.string(), head: z.string().nullable() }),
+            candidates: z.array(z.string()),
+            evidenceComputedAt: z.string().nullable(),
+            evidenceUnavailableReason: z.enum(["evidence_not_built_yet"]).nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "outcome_and_place_required" },
+    422: { description: "no_template_for_engine: no active template dynasty the Engine may write with (under its campaign's strategy). Write nothing and retry later." },
+    502: { description: "template_rating_unreadable" },
+  },
+});
 registry.registerPath({
   method: "get",
   path: "/internal/llm-pick",
@@ -6584,7 +6619,7 @@ registry.registerPath({
   description:
     "LLM-RATING-PER-ENGINE-1112 (owner 2026-11-12, option A). Thompson sampling on rate per dollar over the Engine's universe of LLMs (served today, vendor in credit), beliefs pooled Engine -> LLM -> LLM at this place, seeded from every past LLM call. Never a pipe, a channel or a default model. Send the run in `x-run-id`: the pick is recorded (share of picks, the call's place).",
   tags: ["Internal"],
-  request: { query: z.object({ outcome: z.string().describe("The Engine's outcome key (e.g. x_post_published)."), place: z.string().describe("The name the script gives this LLM call (e.g. writer, angles, judge)."), campaignId: z.string().optional().describe("The campaign the run works for (recorded only).") }) },
+  request: { query: z.object({ outcome: z.string().describe("The Engine's outcome key (e.g. x_post_published)."), place: z.string().describe("The name the script gives this LLM call (e.g. writer, angles, judge)."), campaignId: z.string().optional().describe("The campaign the run works for: its strategy on LLMs narrows the candidates.") }) },
   responses: {
     200: {
       description: "The pick",
@@ -6631,8 +6666,17 @@ registry.registerPath({
                 favourite: z.object({ llmDynastySlug: z.string(), name: z.string() }).nullable(),
                 places: z.array(z.object({ place: z.string(), picks: z.number() })),
                 llms: z.array(EngineLlmRowSchema),
-                outsideUniverse: z.array(EngineLlmRowSchema),
+                outsideUniverse: z.array(EngineLlmRowSchema).describe("Every LLM outside the universe today (excluded, not served) and every one the Engine used before, with their history (rank null)."),
                 totals: z.object({ calls: z.number(), decisions: z.number(), outcomes: z.number(), spentUsdToDate: z.number() }),
+                templates: z
+                  .object({
+                    favourite: z.object({ templateDynastySlug: z.string(), name: z.string() }).nullable(),
+                    places: z.array(z.object({ place: z.string(), picks: z.number() })),
+                    rows: z.array(EngineTemplateRowSchema).describe("The Engine's template dynasties: pickable ones ranked (favourite first), then the deprecated / headless ones."),
+                    outsideEngine: z.array(EngineTemplateRowSchema).describe("Templates its decisions wrote with before that the Engine no longer lists."),
+                    totals: z.object({ calls: z.number(), decisions: z.number(), outcomes: z.number(), spentUsdToDate: z.number() }),
+                  })
+                  .describe("Phase 2: the same Rating over template dynasties. A row's calls / $ = the LLM calls of the decisions that wrote with it."),
               }),
             ),
             limits: z.array(z.string()),

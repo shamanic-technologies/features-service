@@ -26,6 +26,20 @@ vi.mock("../lib/llm-dynasties.js", () => ({
   ],
 }));
 vi.mock("../lib/vendor-credit-client.js", () => ({ readOutOfCreditProvidersSoft: async () => new Set<string>() }));
+vi.mock("../lib/fleet-leg-campaigns.js", () => ({ fetchCampaignPipe: async () => ({ found: false }) }));
+const templatePicks: Array<Record<string, unknown>> = [];
+vi.mock("../lib/engine-template-rating-io.js", () => {
+  const lines = [
+    { slug: "x-post-shape-rotation", name: "Shape rotation", head: "x-post-shape-rotation-v2", status: "active", pickable: true },
+    { slug: "x-post-old", name: "Old", head: "x-post-old-v1", status: "deprecated", pickable: false },
+  ];
+  return {
+    engineTemplateLines: async () => lines,
+    everyEngineTemplateLines: async () => new Map([["x_post_published", lines]]),
+    listTemplatePicks: async () => [],
+    recordTemplatePick: async (p: Record<string, unknown>) => void templatePicks.push(p),
+  };
+});
 vi.mock("../lib/fleet-cell-store.js", () => ({ loadFleetCell: async () => null, claimFleetCellBuild: async () => false, storeFleetCell: async () => undefined }));
 
 const { llmEvidence } = await import("../lib/engine-llm-rating.js");
@@ -40,7 +54,7 @@ function seed() {
     calls.push({ callRunId: `a${i}`, rootRunId: `r${i}`, day: "2026-11-08", outcome: "x_post_published", llmDynastySlug: "claude-sonnet", spentUsd: 0.03, support: false });
   }
   const evidence = [...llmEvidence(calls, () => 1, []).values()];
-  __resetEngineLlmEvidenceForTest({ computedAt: new Date().toISOString(), evidence, counts: { calls: 52, callsWithNoEngine: 0, decisionsAwaitingUnits: 0, supportCalls: 0, lastCallAt: null } });
+  __resetEngineLlmEvidenceForTest({ computedAt: new Date().toISOString(), evidence, templates: [], counts: { calls: 52, callsWithNoEngine: 0, decisionsAwaitingUnits: 0, supportCalls: 0, lastCallAt: null } });
 }
 
 beforeEach(() => {
@@ -76,6 +90,26 @@ describe("GET /internal/research/engine-llms", () => {
     expect(fable).toMatchObject({ calls: 26, outcomes: 26, rank: null });
     expect(fable.spentUsdToDate).toBeCloseTo(1.82, 6);
     expect(x.llms.find((r: { llmDynastySlug: string }) => r.llmDynastySlug === "claude-sonnet").calls).toBe(26);
+  });
+});
+
+describe("GET /internal/template-pick", () => {
+  it("picks only an active template dynasty of the Engine, records the pick", async () => {
+    for (let i = 0; i < 10; i++) {
+      const res = await request(app).get("/internal/template-pick?outcome=x_post_published&place=writer").set("x-api-key", "k").set("x-run-id", `t-${i}`);
+      expect(res.status).toBe(200);
+      expect(res.body.template).toEqual({ templateDynastySlug: "x-post-shape-rotation", name: "Shape rotation", head: "x-post-shape-rotation-v2" });
+    }
+    expect(templatePicks[0]).toMatchObject({ outcome: "x_post_published", place: "writer", templateDynastySlug: "x-post-shape-rotation", runId: "t-0" });
+  });
+  it("the staff read serves each Engine's templates, the deprecated one not pickable", async () => {
+    const res = await request(app).get("/internal/research/engine-llms?outcome=x_post_published").set("x-api-key", "k");
+    const t = res.body.engines[0].templates;
+    expect(t.rows.map((r: { templateDynastySlug: string; rank: number | null; notPickableReason: string | null }) => [r.templateDynastySlug, r.rank, r.notPickableReason])).toEqual([
+      ["x-post-shape-rotation", 1, null],
+      ["x-post-old", null, "not_active"],
+    ]);
+    expect(t.favourite.templateDynastySlug).toBe("x-post-shape-rotation");
   });
 });
 

@@ -55348,6 +55348,118 @@
         }
       }
     },
+    "/internal/template-pick": {
+      "get": {
+        "summary": "Which template dynasty one writing call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
+        "description": "LLM-RATING-PER-ENGINE-1112 phase 2. Candidates = the active template dynasties (with a head) content-generation lists for the Engine's outcome, narrowed by the campaign's strategy on templates when `campaignId` is given; Thompson on rate per dollar, beliefs seeded from every decision a template wrote (thread generations, sequences) and every pick since. Send the run in `x-run-id`. Never a default template.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "outcome",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "place",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Its strategy on templates narrows the candidates."
+            },
+            "required": false,
+            "description": "Its strategy on templates narrows the candidates.",
+            "name": "campaignId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pick",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "place": {
+                      "type": "string"
+                    },
+                    "template": {
+                      "type": "object",
+                      "properties": {
+                        "templateDynastySlug": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "head": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "templateDynastySlug",
+                        "name",
+                        "head"
+                      ]
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "evidenceComputedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "evidenceUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "evidence_not_built_yet",
+                        null
+                      ]
+                    }
+                  },
+                  "required": [
+                    "outcome",
+                    "place",
+                    "template",
+                    "candidates",
+                    "evidenceComputedAt",
+                    "evidenceUnavailableReason"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "outcome_and_place_required"
+          },
+          "422": {
+            "description": "no_template_for_engine: no active template dynasty the Engine may write with (under its campaign's strategy). Write nothing and retry later."
+          },
+          "502": {
+            "description": "template_rating_unreadable"
+          }
+        }
+      }
+    },
     "/internal/llm-pick": {
       "get": {
         "summary": "Which LLM one LLM call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
@@ -55379,10 +55491,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The campaign the run works for (recorded only)."
+              "description": "The campaign the run works for: its strategy on LLMs narrows the candidates."
             },
             "required": false,
-            "description": "The campaign the run works for (recorded only).",
+            "description": "The campaign the run works for: its strategy on LLMs narrows the candidates.",
             "name": "campaignId",
             "in": "query"
           }
@@ -55917,7 +56029,8 @@
                                 "firstCallDay",
                                 "lastCallDay"
                               ]
-                            }
+                            },
+                            "description": "Every LLM outside the universe today (excluded, not served) and every one the Engine used before, with their history (rank null)."
                           },
                           "totals": {
                             "type": "object",
@@ -55941,6 +56054,372 @@
                               "outcomes",
                               "spentUsdToDate"
                             ]
+                          },
+                          "templates": {
+                            "type": "object",
+                            "properties": {
+                              "favourite": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "templateDynastySlug": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "templateDynastySlug",
+                                  "name"
+                                ]
+                              },
+                              "places": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "place": {
+                                      "type": "string"
+                                    },
+                                    "picks": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "place",
+                                    "picks"
+                                  ]
+                                }
+                              },
+                              "rows": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "rank": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "1 = today's favourite; null for an LLM that cannot be picked."
+                                    },
+                                    "shareOfDraws": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the Rating's Thompson draws it wins today (0..1); null when it cannot be picked."
+                                    },
+                                    "shareOfPicks": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the picks the Rating answered for this Engine in the last 30 days (0..1); null = no pick recorded."
+                                    },
+                                    "picks": {
+                                      "type": "number"
+                                    },
+                                    "calls": {
+                                      "type": "number",
+                                      "description": "LLM calls, whole history (workflow era included)."
+                                    },
+                                    "decisions": {
+                                      "type": "number",
+                                      "description": "Root runs (decisions) that called it."
+                                    },
+                                    "outcomes": {
+                                      "type": "number",
+                                      "description": "Units of the Engine's outcome the ledger credits to those decisions."
+                                    },
+                                    "spentUsdToDate": {
+                                      "type": "number",
+                                      "description": "Its own calls' billed money, whole history."
+                                    },
+                                    "spentUsdPerDay": {
+                                      "type": "number",
+                                      "description": "Mean billed money per day over the last 30 days, today included."
+                                    },
+                                    "dailySpend": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "day": {
+                                            "type": "string"
+                                          },
+                                          "calls": {
+                                            "type": "number"
+                                          },
+                                          "spentUsd": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "day",
+                                          "calls",
+                                          "spentUsd"
+                                        ]
+                                      },
+                                      "description": "Last 30 days, oldest first, zeros included."
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Its spend ÷ its outcomes; null with the reason."
+                                    },
+                                    "costPerOutcomeUnavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_yet",
+                                        "never_used",
+                                        null
+                                      ]
+                                    },
+                                    "outcomeRate": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of its decisions that made a Unit (0..1); null = never used."
+                                    },
+                                    "firstCallDay": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "lastCallDay": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "templateDynastySlug": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "active",
+                                        "deprecated",
+                                        null
+                                      ]
+                                    },
+                                    "head": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "The dynasty's head template (what a run writes with)."
+                                    },
+                                    "notPickableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "not_active",
+                                        "not_an_engine_template",
+                                        null
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "rank",
+                                    "shareOfDraws",
+                                    "shareOfPicks",
+                                    "picks",
+                                    "calls",
+                                    "decisions",
+                                    "outcomes",
+                                    "spentUsdToDate",
+                                    "spentUsdPerDay",
+                                    "dailySpend",
+                                    "costPerOutcomeUsd",
+                                    "costPerOutcomeUnavailableReason",
+                                    "outcomeRate",
+                                    "firstCallDay",
+                                    "lastCallDay",
+                                    "templateDynastySlug",
+                                    "status",
+                                    "head",
+                                    "notPickableReason"
+                                  ]
+                                },
+                                "description": "The Engine's template dynasties: pickable ones ranked (favourite first), then the deprecated / headless ones."
+                              },
+                              "outsideEngine": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "rank": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "1 = today's favourite; null for an LLM that cannot be picked."
+                                    },
+                                    "shareOfDraws": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the Rating's Thompson draws it wins today (0..1); null when it cannot be picked."
+                                    },
+                                    "shareOfPicks": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of the picks the Rating answered for this Engine in the last 30 days (0..1); null = no pick recorded."
+                                    },
+                                    "picks": {
+                                      "type": "number"
+                                    },
+                                    "calls": {
+                                      "type": "number",
+                                      "description": "LLM calls, whole history (workflow era included)."
+                                    },
+                                    "decisions": {
+                                      "type": "number",
+                                      "description": "Root runs (decisions) that called it."
+                                    },
+                                    "outcomes": {
+                                      "type": "number",
+                                      "description": "Units of the Engine's outcome the ledger credits to those decisions."
+                                    },
+                                    "spentUsdToDate": {
+                                      "type": "number",
+                                      "description": "Its own calls' billed money, whole history."
+                                    },
+                                    "spentUsdPerDay": {
+                                      "type": "number",
+                                      "description": "Mean billed money per day over the last 30 days, today included."
+                                    },
+                                    "dailySpend": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "day": {
+                                            "type": "string"
+                                          },
+                                          "calls": {
+                                            "type": "number"
+                                          },
+                                          "spentUsd": {
+                                            "type": "number"
+                                          }
+                                        },
+                                        "required": [
+                                          "day",
+                                          "calls",
+                                          "spentUsd"
+                                        ]
+                                      },
+                                      "description": "Last 30 days, oldest first, zeros included."
+                                    },
+                                    "costPerOutcomeUsd": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Its spend ÷ its outcomes; null with the reason."
+                                    },
+                                    "costPerOutcomeUnavailableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "no_outcome_yet",
+                                        "never_used",
+                                        null
+                                      ]
+                                    },
+                                    "outcomeRate": {
+                                      "type": "number",
+                                      "nullable": true,
+                                      "description": "Share of its decisions that made a Unit (0..1); null = never used."
+                                    },
+                                    "firstCallDay": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "lastCallDay": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "templateDynastySlug": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "active",
+                                        "deprecated",
+                                        null
+                                      ]
+                                    },
+                                    "head": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "description": "The dynasty's head template (what a run writes with)."
+                                    },
+                                    "notPickableReason": {
+                                      "type": "string",
+                                      "nullable": true,
+                                      "enum": [
+                                        "not_active",
+                                        "not_an_engine_template",
+                                        null
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "rank",
+                                    "shareOfDraws",
+                                    "shareOfPicks",
+                                    "picks",
+                                    "calls",
+                                    "decisions",
+                                    "outcomes",
+                                    "spentUsdToDate",
+                                    "spentUsdPerDay",
+                                    "dailySpend",
+                                    "costPerOutcomeUsd",
+                                    "costPerOutcomeUnavailableReason",
+                                    "outcomeRate",
+                                    "firstCallDay",
+                                    "lastCallDay",
+                                    "templateDynastySlug",
+                                    "status",
+                                    "head",
+                                    "notPickableReason"
+                                  ]
+                                },
+                                "description": "Templates its decisions wrote with before that the Engine no longer lists."
+                              },
+                              "totals": {
+                                "type": "object",
+                                "properties": {
+                                  "calls": {
+                                    "type": "number"
+                                  },
+                                  "decisions": {
+                                    "type": "number"
+                                  },
+                                  "outcomes": {
+                                    "type": "number"
+                                  },
+                                  "spentUsdToDate": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "calls",
+                                  "decisions",
+                                  "outcomes",
+                                  "spentUsdToDate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "favourite",
+                              "places",
+                              "rows",
+                              "outsideEngine",
+                              "totals"
+                            ],
+                            "description": "Phase 2: the same Rating over template dynasties. A row's calls / $ = the LLM calls of the decisions that wrote with it."
                           }
                         },
                         "required": [
@@ -55951,7 +56430,8 @@
                           "places",
                           "llms",
                           "outsideUniverse",
-                          "totals"
+                          "totals",
+                          "templates"
                         ]
                       }
                     },

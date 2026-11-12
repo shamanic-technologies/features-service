@@ -12,10 +12,11 @@ import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { UNPLACED, type LlmDay, type LlmEvidence, type LlmLine, type PickRecord, type UniverseRule } from "./engine-llm-rating.js";
 import { listLlmPicks, listUniverseRules } from "./engine-llm-store.js";
+import { ingestTemplateDecisions } from "./engine-template-rating-io.js";
 import { readLlmDynasties } from "./llm-dynasties.js";
 import { readOutOfCreditProvidersSoft } from "./vendor-credit-client.js";
 
-export const EVIDENCE_CELL_KEY = "engine-llm-evidence-v1";
+export const EVIDENCE_CELL_KEY = "engine-llm-evidence-v2";
 export const EVIDENCE_FRESH_MS = 15 * 60_000;
 const CLAIM_MS = 10 * 60_000;
 /** Picks are read from this day on (the store starts on the ship day). */
@@ -34,6 +35,8 @@ export interface EvidenceCounts {
 export interface EvidenceBuild {
   computedAt: string;
   evidence: LlmEvidence[];
+  /** The same evidence per TEMPLATE dynasty (phase 2): each row's `llmDynastySlug` holds the template dynasty slug. */
+  templates: LlmEvidence[];
   counts: EvidenceCounts;
 }
 
@@ -129,11 +132,17 @@ interface StoredEvidence {
 }
 
 export const serializeEvidenceBuild = (b: EvidenceBuild): string =>
-  JSON.stringify({ computedAt: b.computedAt, counts: b.counts, evidence: b.evidence.map((e): StoredEvidence => ({ ...e, byPlace: [...e.byPlace] })) });
+  JSON.stringify({
+    computedAt: b.computedAt,
+    counts: b.counts,
+    evidence: b.evidence.map((e): StoredEvidence => ({ ...e, byPlace: [...e.byPlace] })),
+    templates: b.templates.map((e): StoredEvidence => ({ ...e, byPlace: [...e.byPlace] })),
+  });
 
 export function parseEvidenceBuild(text: string): EvidenceBuild {
-  const raw = JSON.parse(text) as { computedAt: string; counts: EvidenceCounts; evidence: StoredEvidence[] };
-  return { computedAt: raw.computedAt, counts: raw.counts, evidence: raw.evidence.map((e) => ({ ...e, byPlace: new Map(e.byPlace) })) };
+  const raw = JSON.parse(text) as { computedAt: string; counts: EvidenceCounts; evidence: StoredEvidence[]; templates?: StoredEvidence[] };
+  const parse = (e: StoredEvidence) => ({ ...e, byPlace: new Map(e.byPlace) });
+  return { computedAt: raw.computedAt, counts: raw.counts, evidence: raw.evidence.map(parse), templates: (raw.templates ?? []).map(parse) };
 }
 
 /**
@@ -197,9 +206,38 @@ export async function computeEvidence(): Promise<EvidenceBuild> {
     decisionDays.map((r) => ({ outcome: r.outcome, llmDynastySlug: r.llm_dynasty_slug, place: r.place, day: r.day, decisions: Number(r.decisions), successes: Number(r.successes), outcomes: Number(r.outcomes) })),
     callDays.map((r) => ({ outcome: r.outcome, llmDynastySlug: r.llm_dynasty_slug, place: r.place, day: r.day, calls: Number(r.calls), spentUsd: Number(r.spent_usd) })),
   );
+  // Templates: which dynasty each decision wrote with (history feeds first, then the picks), its decision's LLM spend
+  // and ledger Units, on the decision's first call day; placed by a recorded template pick of the decision's run.
+  try {
+    const ingested = await ingestTemplateDecisions();
+    console.log(`[features-service] template decisions ingested: ${ingested.threads} thread generations, ${ingested.sequences} new sequence decisions`);
+  } catch (error) {
+    console.error("[features-service] template decisions not ingested this build (the stored ones are read):", (error as Error).message);
+  }
+  const templateDays = (await db.execute(sql`
+    WITH filed AS (${FILED_CALLS}),
+    dec AS (
+      SELECT decision_run_id, outcome, min(started_at) AS first_at, sum(spent_usd) AS spent, count(*) AS calls FROM filed GROUP BY 1, 2
+    ), u AS (
+      SELECT d.*, t.template_dynasty_slug, COALESCE((x.units ->> d.outcome)::numeric, 0) AS units,
+             (SELECT p.place FROM engine_template_picks p WHERE p.run_id = d.decision_run_id AND p.outcome = d.outcome AND p.template_dynasty_slug = t.template_dynasty_slug ORDER BY p.picked_at DESC LIMIT 1) AS place
+      FROM dec d
+      JOIN template_decisions t ON t.decision_run_id = d.decision_run_id
+      LEFT JOIN llm_decision_units x ON x.decision_run_id = d.decision_run_id
+    )
+    SELECT outcome, template_dynasty_slug, place, to_char(first_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+           count(*)::int AS decisions, count(*) FILTER (WHERE units > 0)::int AS successes, COALESCE(sum(units), 0)::float AS outcomes,
+           sum(calls)::int AS calls, sum(spent)::float AS spent_usd
+    FROM u GROUP BY 1, 2, 3, 4
+  `)) as unknown as Array<{ outcome: string; template_dynasty_slug: string; place: string | null; day: string; decisions: number; successes: number; outcomes: number; calls: number; spent_usd: number }>;
+  const templates = evidenceFromAggregates(
+    templateDays.map((r) => ({ outcome: r.outcome, llmDynastySlug: r.template_dynasty_slug, place: r.place, day: r.day, decisions: Number(r.decisions), successes: Number(r.successes), outcomes: Number(r.outcomes) })),
+    templateDays.map((r) => ({ outcome: r.outcome, llmDynastySlug: r.template_dynasty_slug, place: r.place, day: r.day, calls: Number(r.calls), spentUsd: Number(r.spent_usd) })),
+  );
   return {
     computedAt: new Date().toISOString(),
     evidence,
+    templates,
     counts: {
       calls: Number(counts?.calls ?? 0),
       callsWithNoEngine: Number(counts?.no_engine ?? 0),
