@@ -484,6 +484,13 @@
       "when": 1794931200000,
       "tag": "0068_brand_revenue_family_without_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1795017600000,
+      "tag": "0069_engine_llm_rating",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric } from "drizzle-orm/pg-core";
+import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric, bigserial } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const features = pgTable(
@@ -1107,3 +1107,61 @@ export const campaignEngineAnswers = pgTable(
   },
   (table) => [primaryKey({ name: "campaign_engine_answers_pk", columns: [table.campaignId, table.outcome] })],
 );
+
+/**
+ * WHICH LLMs AN ENGINE MAY USE (LLM-RATING-PER-ENGINE-1112, owner 2026-11-12; `lib/engine-llm-rating.ts`). One row per
+ * Engine outcome; `*` = every Engine with no row of its own. `allowed` NULL = every LLM dynasty chat-service serves today;
+ * `excluded` comes out of that set. Seeded `*` = all but Claude Fable and Claude Opus. Migration 0069.
+ */
+export const engineLlmUniverses = pgTable("engine_llm_universes", {
+  outcome: text("outcome").primaryKey(),
+  allowed: text("allowed").array(),
+  excluded: text("excluded").array().notNull().default(sql`'{}'::text[]`),
+  decidedBy: text("decided_by").notNull(),
+  note: text("note"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type EngineLlmUniverseRow = typeof engineLlmUniverses.$inferSelect;
+
+/** Every LLM pick the Rating answered (LLM-RATING-PER-ENGINE-1112): its Engine, LLM call place, LLM and run. Migration 0069. */
+export const engineLlmPicks = pgTable(
+  "engine_llm_picks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    outcome: text("outcome").notNull(),
+    place: text("place").notNull(),
+    llmDynastySlug: text("llm_dynasty_slug").notNull(),
+    runId: text("run_id"),
+    campaignId: text("campaign_id"),
+    pickedAt: timestamp("picked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("engine_llm_picks_outcome_at").on(table.outcome, table.pickedAt), index("engine_llm_picks_run").on(table.runId)],
+);
+
+/** Our copy of runs-service's chat-service calls (LLM-RATING-PER-ENGINE-1112, `lib/llm-call-feed.ts`). Migration 0069. */
+export const llmCallCopy = pgTable(
+  "llm_call_copy",
+  {
+    callRunId: text("call_run_id").primaryKey(),
+    decisionRunId: text("decision_run_id").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    scriptSlug: text("script_slug"),
+    workflowSlug: text("workflow_slug"),
+    /** The Engine it worked for; null = none placed. */
+    outcome: text("outcome"),
+    /** chat-service's dynasty of its cost lines; null = none placed (not an LLM call). */
+    llmDynastySlug: text("llm_dynasty_slug"),
+    costNames: text("cost_names").array().notNull().default(sql`'{}'::text[]`),
+    spentUsd: numeric("spent_usd").notNull(),
+    supportFunction: text("support_function"),
+    copiedAt: timestamp("copied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("llm_call_copy_engine").on(table.outcome, table.llmDynastySlug), index("llm_call_copy_decision").on(table.decisionRunId)],
+);
+
+/** The Units the ledger credits to each decision, per outcome key (`read_at` null = to (re-)read). Migration 0069. */
+export const llmDecisionUnits = pgTable("llm_decision_units", {
+  decisionRunId: text("decision_run_id").primaryKey(),
+  units: jsonb("units").$type<Record<string, number>>(),
+  readAt: timestamp("read_at", { withTimezone: true }),
+});
