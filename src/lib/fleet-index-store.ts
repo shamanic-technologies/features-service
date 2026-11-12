@@ -16,6 +16,17 @@ export function utcDay(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
 
+/** When today's points were last recorded on the vendor basis (the recorder's LAST write each tick), null when never today. */
+export async function lastRecordedTodayAt(now: Date): Promise<number | null> {
+  const [row] = await db
+    .select({ at: sql<Date | string | null>`max(${fleetIndexPoints.recordedAt})` })
+    .from(fleetIndexPoints)
+    .where(and(eq(fleetIndexPoints.day, utcDay(now)), eq(fleetIndexPoints.basis, "recorded"), eq(fleetIndexPoints.costBasis, "vendor")));
+  if (!row?.at) return null;
+  const at = new Date(row.at).getTime();
+  return Number.isFinite(at) ? at : null;
+}
+
 /** Upsert today's point of each index (one statement per index, same day key). */
 export async function recordFleetIndexPoints(points: FleetIndexPoint[], now: Date, costBasis: IndexCostBasis = "billed"): Promise<void> {
   const day = utcDay(now);

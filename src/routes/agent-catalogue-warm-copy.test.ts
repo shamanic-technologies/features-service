@@ -111,7 +111,7 @@ process.env.NODE_ENV = "test";
 process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
-const { __resetCatalogueMeasurements, serializeFigures, parseFigures, warmCatalogueMeasurements } = await import("./agent-catalogue.js");
+const { __resetCatalogueMeasurements, serializeFigures, parseFigures, warmCatalogueMeasurements, warmCatalogueMeasurementsOnBoot } = await import("./agent-catalogue.js");
 
 const KEY = { "x-api-key": "test-key" };
 const COLD = "sales-cold-email-outreach|lead_found_to_conversation";
@@ -171,5 +171,31 @@ describe("a fresh process (every deploy) serves the stored catalogue figures, ne
     expect(stored.unreadable.has(COLD)).toBe(false);
     const res = await request(app).get("/internal/catalogue/pipes?limit=25").set(KEY);
     expect(res.body.rows.find((r: { id: string }) => r.id === COLD)).toMatchObject({ costUsd: 40, status: "measured" });
+  });
+});
+
+describe("the boot step starts from the stored copy (MON-PAGE-SPEED-2-1112)", () => {
+  const stored = (ageMs: number) => ({
+    computedAt: Date.now() - ageMs,
+    text: serializeFigures({
+      byPipe: new Map([[COLD, { basis: "mature", costPerOutcomeUsd: 40, conversionRatePct: 1, workflowDynastySlug: "orion" }]]),
+      byPlay: new Map(), unreadable: new Set(),
+      computedAt: "2026-11-12T08:14:02.144Z",
+      fleet: { lifetimeRevenue: { usd: 3000, offerCount: 12 } },
+    }),
+  });
+
+  it("skips the fleet rebuild while the stored copy is fresh (the build would hang here)", async () => {
+    cells.set("agent-catalogue-figures", stored(5 * 60_000));
+    await expect(warmCatalogueMeasurementsOnBoot()).resolves.toBe("skipped");
+    expect(cells.get("agent-catalogue-figures")!.text).toContain("2026-11-12T08:14:02.144Z");
+  });
+
+  it("rebuilds once the stored copy is past its fresh window", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    cells.set("agent-catalogue-figures", stored(60 * 60_000));
+    fleet.fails = true; // the rebuild ends (each pipe keeps its last figure)
+    await expect(warmCatalogueMeasurementsOnBoot()).resolves.toBe("built");
+    expect(parseFigures(cells.get("agent-catalogue-figures")!.text).computedAt).not.toBe("2026-11-12T08:14:02.144Z");
   });
 });

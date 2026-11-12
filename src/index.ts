@@ -29,11 +29,12 @@ import dealsValueRoutes from "./routes/deals-value.js";
 import offerLeadValuesRoutes from "./routes/offer-lead-values.js";
 import conversionRatesRoutes from "./routes/conversion-rates.js";
 import audienceStatsRoutes from "./routes/audience-stats.js";
-import publicRoutes, { warmFleetBrandSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices, warmLegWorkflowRanking } from "./routes/public.js";
+import publicRoutes, { warmFleetBrandSnapshotsOnBoot, warmShowcaseFunnelsOnBoot, warmOutcomePrices, warmLegWorkflowRankingOnBoot } from "./routes/public.js";
 import viewCacheAdminRoutes from "./routes/view-cache-admin.js";
 import workflowLegAssignmentsRoutes from "./routes/workflow-leg-assignments.js";
 import channelDeclarationsRoutes from "./routes/channel-declarations.js";
-import agentCatalogueRoutes, { warmCatalogueMeasurements } from "./routes/agent-catalogue.js";
+import agentCatalogueRoutes, { warmCatalogueMeasurementsOnBoot } from "./routes/agent-catalogue.js";
+import { scheduleBootWarms, type BootWarmStep } from "./lib/boot-warms.js";
 import { startTacticJudgmentLoop } from "./lib/tactic-judgments.js";
 import fleetIndexesRoutes, { startFleetIndexRecorder } from "./routes/fleet-indexes.js";
 import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
@@ -166,6 +167,33 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 });
 
 /**
+ * The boot warms of the SERVING process, in the order they run (one at a time, `lib/boot-warms.ts`). Every step starts
+ * from its stored copy and skips while that copy is fresh; meanwhile every read serves the stored copy.
+ */
+async function bootWarmSteps(): Promise<BootWarmStep[]> {
+  const steps: BootWarmStep[] = [
+    // The onboarding prices each outcome off this payload; its fleet walks must never run on a read.
+    { name: "outcome prices", run: () => warmOutcomePrices() },
+    // The agent catalogue's pipe economics are fleet walks too: built off the request path.
+    { name: "agent catalogue figures", run: () => warmCatalogueMeasurementsOnBoot() },
+  ];
+  // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner 2026-10-10: no
+  // special case; this used to warm the two cold-email pipes only).
+  const rows = await listLegAssignments().catch((err) => {
+    console.error("[features-service] leg workflow ranking boot warm: assignments unreadable, no ranking warmed this boot:", err);
+    return [];
+  });
+  for (const key of new Set(rows.map((r) => `${r.featureSlug}\u0000${r.legKey}`))) {
+    const [featureSlug, legKey] = key.split("\u0000");
+    steps.push({ name: `leg workflow ranking ${featureSlug}|${legKey}`, run: () => warmLegWorkflowRankingOnBoot(featureSlug, pipeLegKeyOf(featureSlug, legKey)) });
+  }
+  // The homepage showcase reads the snapshot rows, so it runs after them (it is held in memory: built once per boot).
+  steps.push({ name: "fleet brand snapshots", run: () => warmFleetBrandSnapshotsOnBoot() });
+  steps.push({ name: "showcase", run: () => warmShowcaseFunnelsOnBoot() });
+  return steps;
+}
+
+/**
  * Build the fleet positive-repliers cell (lib/fleet-positive-repliers.ts) for every cold-email channel in
  * the process that computes workflow projections, so the first ladder read after a deploy does not wait
  * on a whole-fleet lead walk. Sequential across channels; fire-and-forget; failures are logged.
@@ -214,16 +242,10 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         // Precompute the sibling scopes of every brand a customer reads (lib/view-keeper.ts). Timers are
         // unref'd and the first round waits a minute, so nothing here sits between boot and the port.
         startViewKeeper();
-        // AFTER listen(), fire-and-forget: this is an O(brands) engine fan-out that takes MINUTES, so
-        // awaiting it before the port bind would fail the deploy health check and roll the service back.
-        warmFleetBrandSnapshotsOnBoot();
-        // Same reason, same shape: the homepage gives its showcase read 8 seconds and drops the
-        // section rather than block a build, so the cell must never be cold when it asks.
-        warmShowcaseFunnelsOnBoot();
-        // The onboarding prices each outcome off this payload; its fleet walks must never run on a read.
-        void warmOutcomePrices();
-        // The agent catalogue's pipe economics are fleet walks too: built off the request path.
-        void warmCatalogueMeasurements();
+        // The fleet rebuilds a fresh process owes (MON-PAGE-SPEED-2-1112, lib/boot-warms.ts): ONE AT A TIME, 30 s after
+        // listen, each starting from the copy the previous process STORED and skipping when it is still fresh. Before,
+        // all of them fired here at once (prod 2026-11-12: load 15 -> 22, cached dashboard reads 1-8 s for minutes).
+        scheduleBootWarms(bootWarmSteps);
         // Jev judges every workflow version against every tactic once (lib/tactic-judgments.ts): first sweep a minute
         // after listen, then every 15 min, single-flight.
         startTacticJudgmentLoop();
@@ -245,16 +267,6 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startBulkRunSweep();
         // A campaign whose Engine cannot run is red on Monitoring (NO-BRIEF-UNBLOCK-1111, lib/engine-held-monitor.ts).
         startEngineHeldMonitor();
-        // Every pipe a workflow is assigned to gets its fleet ranking warmed, whatever its channel (owner
-        // 2026-10-10: no special case; this used to warm the two cold-email pipes only).
-        void listLegAssignments()
-          .then((rows) => {
-            for (const key of new Set(rows.map((r) => `${r.featureSlug}\u0000${r.legKey}`))) {
-              const [featureSlug, legKey] = key.split("\u0000");
-              void warmLegWorkflowRanking(featureSlug, pipeLegKeyOf(featureSlug, legKey));
-            }
-          })
-          .catch((err) => console.error("[features-service] leg workflow ranking boot warm: assignments unreadable:", err));
         // The best template and LLM of every pipe holding a workflow (routes/leg-writer-ranking.ts, BEST-TPL-LLM-1022),
         // one pipe at a time, three minutes in (after the fleet cells it shares with Research are warm).
         setTimeout(() => void warmEveryLegWriterRanking().catch((err) => console.error("[features-service] leg writer ranking boot warm failed:", err)), 180_000).unref();
