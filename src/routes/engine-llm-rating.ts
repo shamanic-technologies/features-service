@@ -44,7 +44,7 @@ router.get("/internal/llm-pick", apiKeyOnly, async (req: Request, res: Response)
   const campaignId = str(req.query.campaignId);
   const runId = str(req.headers["x-run-id"]);
   try {
-    const [inputs, ruledOut] = await Promise.all([readRatingInputs(`llm pick ${outcome}|${place}`), campaignRuledOut(campaignId, outcome, "llm")]);
+    const [inputs, ruledOut] = await Promise.all([readRatingInputs(`llm pick ${outcome}|${place}`), campaignRuledOut(campaignId, outcome, "llm", str(req.query.strategyId))]);
     const day = today();
     const picked = pickLlm({
       outcome,
@@ -72,6 +72,10 @@ router.get("/internal/llm-pick", apiKeyOnly, async (req: Request, res: Response)
       evidenceUnavailableReason: inputs.build ? null : "evidence_not_built_yet",
     });
   } catch (error) {
+    if (error instanceof StrategyNotFound) {
+      res.status(404).json({ error: error.message, reason: "strategy_not_found" });
+      return;
+    }
     console.error(`[features-service] llm-pick ${outcome}|${place}:`, error);
     res.status(502).json({ error: (error as Error).message, reason: "llm_rating_unreadable" });
   }
@@ -81,18 +85,30 @@ router.get("/internal/llm-pick", apiKeyOnly, async (req: Request, res: Response)
  * The campaign's strategy on one Engine, read on a writer subject (`llm` | `template`): a slug -> the reason it is ruled
  * out (its tactics), null = kept. No campaign, or a strategy naming no tactic of that subject = no filter (undefined).
  */
-async function campaignRuledOut(campaignId: string | null, outcome: string, kind: "llm" | "template"): Promise<((slug: string) => string | null) | undefined> {
-  if (!campaignId) return undefined;
-  const unit = await fetchCampaignPipe(campaignId);
-  if (!unit.found || !unit.salesFunnelCampaignId || !unit.orgId || !unit.brandId) return undefined;
-  const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
-  const strategy = stored.kind === "kept" ? stored.strategy : null;
-  if (!strategy) return undefined;
+async function campaignRuledOut(campaignId: string | null, outcome: string, kind: "llm" | "template", strategyId: string | null = null): Promise<((slug: string) => string | null) | undefined> {
   const catalogue = await loadPlayCatalogue();
+  let strategy = null;
+  if (campaignId) {
+    const unit = await fetchCampaignPipe(campaignId);
+    if (!unit.found || !unit.salesFunnelCampaignId || !unit.orgId || !unit.brandId) return undefined;
+    const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
+    strategy = stored.kind === "kept" ? stored.strategy : null;
+  } else if (strategyId) {
+    // No campaign yet (content-generation's preview of a brand-new brand): the strategy the caller names.
+    strategy = catalogue.strategies.get(strategyId) ?? null;
+    if (!strategy) throw new StrategyNotFound(strategyId);
+  }
+  if (!strategy) return undefined;
   const st = strategyOnSubject(strategy, kind, catalogue.tactics);
   if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return undefined;
   const nameOf = tacticNameOf(catalogue);
   return (slug) => strategyVerdict(st, catalogue.tacticsByWriter.get(writerSubjectKey(kind, slug)), nameOf).reason;
+}
+
+class StrategyNotFound extends Error {
+  constructor(readonly strategyId: string) {
+    super(`no strategy ${strategyId}`);
+  }
 }
 
 /** PURE: template lines as the Rating's lines (a template is "served" when it is pickable; no vendor). */
@@ -108,7 +124,7 @@ router.get("/internal/template-pick", apiKeyOnly, async (req: Request, res: Resp
   const campaignId = str(req.query.campaignId);
   const runId = str(req.headers["x-run-id"]);
   try {
-    const [lines, build, ruledOut] = await Promise.all([engineTemplateLines(outcome), readRatingInputs(`template pick ${outcome}|${place}`).then((i) => i.build), campaignRuledOut(campaignId, outcome, "template")]);
+    const [lines, build, ruledOut] = await Promise.all([engineTemplateLines(outcome), readRatingInputs(`template pick ${outcome}|${place}`).then((i) => i.build), campaignRuledOut(campaignId, outcome, "template", str(req.query.strategyId))]);
     const picked = pickLlm({
       outcome,
       place,
@@ -135,6 +151,10 @@ router.get("/internal/template-pick", apiKeyOnly, async (req: Request, res: Resp
       evidenceUnavailableReason: build ? null : "evidence_not_built_yet",
     });
   } catch (error) {
+    if (error instanceof StrategyNotFound) {
+      res.status(404).json({ error: error.message, reason: "strategy_not_found" });
+      return;
+    }
     console.error(`[features-service] template-pick ${outcome}|${place}:`, error);
     res.status(502).json({ error: (error as Error).message, reason: "template_rating_unreadable" });
   }
