@@ -251,7 +251,7 @@ async function assertBrandHeld(pendingCheck: Promise<unknown>): Promise<void> {
 }
 
 /** Named 404 / 409 / 502, shared by the handlers. */
-function handleError(res: import("express").Response, error: unknown, what: string) {
+export function handleError(res: import("express").Response, error: unknown, what: string) {
   if (error instanceof BrandOwnershipError) {
     return res.status(404).json({ error: error.message, reason: "brand_not_found", brandId: error.brandId });
   }
@@ -387,11 +387,33 @@ export function withOrganizationCount(body: SnapshotJson): SnapshotJson {
 async function handleBrandRevenue(req: import("express").Request, res: import("express").Response) {
   const organizations = parseOrganizationsDetail((req.query as Record<string, unknown>).organizations);
   if (organizations === null) return res.status(400).json(ORGANIZATIONS_DETAIL_ERROR);
-  const send = (body: SnapshotJson) => sendSnapshotJson(res, organizations === "count" ? withOrganizationCount(body) : body);
   try {
+    const outcome = await brandRevenueOutcome(req);
+    if ("refused" in outcome) return res.status(outcome.refused.status).json(outcome.refused.json);
+    sendSnapshotJson(res, organizations === "count" ? withOrganizationCount(outcome.body) : outcome.body);
+  } catch (error) {
+    return handleError(res, error, "revenue");
+  }
+}
+
+/** The brand revenue body a request asks, or the refusal (status + body) it earns. Errors propagate (`handleError`). */
+export type BrandRevenueOutcome = { body: SnapshotJson } | { refused: { status: number; json: unknown } };
+
+/**
+ * The brand's stored revenue body for this request (the newest cell of its family, MON-PAGE-SPEED-1111), else the
+ * full path once. Read by the paged company list (`routes/brand-companies.ts`), which derives its rows from it.
+ */
+export async function brandRevenueBodyFirst(req: import("express").Request): Promise<BrandRevenueOutcome> {
+  const first = await revenueFamilyFirst(req as never);
+  return first ? { body: first } : brandRevenueOutcome(req);
+}
+
+async function brandRevenueOutcome(req: import("express").Request): Promise<BrandRevenueOutcome> {
+  const refuse = (status: number, json: unknown): BrandRevenueOutcome => ({ refused: { status, json } });
+  {
     // `?funnel=` is RETIRED (wave C2): refused, never silently ignored. See lib/retired-funnel-param.ts.
     if (namesRetiredFunnel(req.query as Record<string, unknown>)) {
-      return res.status(400).json(FUNNEL_RETIRED_BODY);
+      return refuse(400, FUNNEL_RETIRED_BODY);
     }
     // The two brand-scoped pricing reads do not depend on the channel set, so they are asked in PARALLEL
     // with it instead of after it: the request waits on the slowest of the three, not their sum. Their
@@ -412,20 +434,20 @@ async function handleBrandRevenue(req: import("express").Request, res: import("e
       if (error instanceof BrandHasNoChannelsError) return null;
       throw error;
     });
-    if (resolved && !resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    if (resolved && !resolved.ok) return refuse(resolved.status, { error: resolved.error });
 
     // HOW MUCH OF A PERSON this body carries — omitted → `outcomes`, the twelve fields a browser reads
     // on the rows that reached something. `full` is the hydrated array. See lib/lead-detail.ts.
     const leadDetail = parseLeadDetail(req.query.leads);
     if (leadDetail === null) {
-      return res.status(400).json({ error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
+      return refuse(400, { error: `leads must be one of: ${LEAD_DETAIL_VALUES.join(", ")}` });
     }
 
     // WHOSE WINS THIS READ COUNTS. Omitted → every state → byte-identical to today. An unrecognised
     // word is a 400, never a silent pick. See lib/outcome-cause.ts.
     const causes = parseOutcomeCauses(req.query.cause);
     if (causes === null) {
-      return res.status(400).json({
+      return refuse(400, {
         error: `cause must be a comma-separated subset of: ${OUTCOME_CAUSES.join(", ")}`,
         reason: "cause_unrecognised",
       });
@@ -435,16 +457,16 @@ async function handleBrandRevenue(req: import("express").Request, res: import("e
     // ONE CHOSEN WINDOW of UTC days ending today (lib/revenue-window.ts). Omitted → no `window` key and
     // the same cache cell → byte-identical to today.
     const windowDays = parseWindowDays(req.query.windowDays);
-    if (windowDays === null) return res.status(400).json(WINDOW_DAYS_ERROR);
+    if (windowDays === null) return refuse(400, WINDOW_DAYS_ERROR);
 
     if (!resolved) {
       await assertBrandHeld(speculative.held);
-      return send(new SnapshotJson(JSON.stringify(servedRevenueBody({
+      return { body: new SnapshotJson(JSON.stringify(servedRevenueBody({
         brandId: req.params.brandId,
         costBasis: "charged" as const,
         channels: [],
         ...applyLeadDetail(noChannelRevenueBody(causes), leadDetail),
-      }))));
+      }))) };
     }
     const { brandId, pricing, headers, channels, featureSlugs } = resolved;
 
@@ -566,9 +588,7 @@ async function handleBrandRevenue(req: import("express").Request, res: import("e
       },
     });
 
-    send(payload);
-  } catch (error) {
-    return handleError(res, error, "revenue");
+    return { body: payload };
   }
 }
 

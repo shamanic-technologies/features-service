@@ -2960,6 +2960,114 @@ registry.registerPath({
   },
 });
 
+// ── GET /brands/{brandId}/companies[/{companyKey}] — the brand's companies, paged and slim (MON-PAGE-SPEED-2-1112) ──
+
+const companyLifecycleRefSchema = z.object({ key: z.string(), rank: z.number().int(), label: z.string() });
+
+const brandCompanyRowSchema = registry.register(
+  "BrandCompanyRow",
+  z.object({
+    organizationKey: z.string().describe("The row's identity, as on GET /brands/{brandId}/revenue `organizations[]`: `org:<orgId>`, or `lead:<leadId>` for a lead with no company."),
+    companyKey: z.string().nullable().describe("The key a company is addressed by on GET /brands/{brandId}/companies/{companyKey}: its domain when known, else its org id. Null = the row has neither (no page of its own)."),
+    orgId: z.string().nullable(),
+    orgName: z.string().nullable(),
+    orgDomain: z.string().nullable().describe("Company domain (no protocol, e.g. \"acme.com\"). Null when no domain is known."),
+    topPerson: topPersonSchema.nullable(),
+    peopleCount: z.number().int().describe("How many distinct people of this company the row is built from (same as the revenue row)."),
+    tags: z.array(z.string()).describe("The revenue row's path tags (contacted, delivered, visit, reply, meeting, ...), as served there."),
+    expectedRevenueUsd: z.number().describe("The revenue row's expected value of the company, as served there."),
+    mostAdvancedDate: z.string().nullable(),
+    lifecycle: companyLifecycleRefSchema.nullable().describe("The company's lifecycle rung (the highest any of its people reached), from GET /brands/{brandId}/deals-value?columns=company_lifecycle. Null = on no rung (or the brand sells no offer yet)."),
+  }),
+);
+
+const brandCompanyRungSchema = companyLifecycleRefSchema.extend({
+  organizationCount: z.number().int().describe("How many companies stand on this rung (their highest), as the lifecycle read serves it."),
+});
+
+const brandCompaniesQuery = z.object({
+  pricing: z.enum(["gross", "net"]).describe("Pricing basis of the revenue body the rows come from (each row's expectedRevenueUsd). Omit or 'gross' (DEFAULT) / 'net'. The dashboard reads 'net'.").optional(),
+  sort: z.enum(["value", "touch", "name"]).describe("Order of the rows. 'value' (DEFAULT): highest expectedRevenueUsd first; 'touch': latest mostAdvancedDate first; 'name': company name (else domain) A to Z. Ties keep the revenue body's order.").optional(),
+  q: z.string().describe("Search: every whitespace-separated word must appear in the company's name or domain (case-insensitive). Omitted or blank = every company.").optional(),
+  rung: z.string().describe("A lifecycle rung key (`rungs[].key`): only the companies standing on it. Omitted = every rung, and companies on none.").optional(),
+  offset: z.string().describe("Rows to skip, after sort and filter. DEFAULT 0.").optional(),
+  limit: z.string().describe("Rows to return, 1 to 5000. DEFAULT 60.").optional(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/companies",
+  summary: "The brand's companies, one page at a time",
+  description:
+    "The companies of GET /brands/{brandId}/revenue `organizations[]`, field for field (minus the logo URL), each with its lifecycle rung, sorted, searched and paged here so a page reads only the rows it draws: " +
+    "on our own brand the two bodies a Companies page read were 7.1 MB + 2.0 MB (11,345 companies, prod 2026-11-12); a page of 60 rows is ~35 KB. " +
+    "The rows are the brand revenue read's stored answer (the same cell that read serves first) joined to the brand company lifecycle cell; nothing is recomputed. " +
+    "`total` counts the rows matching the filter; `organizationCount` every company; `rungs` the served count per rung (unfiltered).",
+  tags: ["Stats"],
+  request: { headers: identityHeaders, params: z.object({ brandId: z.string() }), query: brandCompaniesQuery },
+  responses: {
+    200: {
+      description: "One page of the brand's companies.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            sort: z.enum(["value", "touch", "name"]),
+            q: z.string().nullable().describe("The trimmed search, or null."),
+            rung: z.string().nullable(),
+            offset: z.number().int(),
+            limit: z.number().int(),
+            total: z.number().int().describe("Rows matching sort + q + rung, before offset/limit."),
+            organizationCount: z.number().int().describe("Every company of the brand (the revenue body's organizations[] length)."),
+            rungs: z.array(brandCompanyRungSchema).describe("Every lifecycle rung in ladder order with its served company count. Empty when the brand sells no offer yet."),
+            companies: z.array(brandCompanyRowSchema),
+          }),
+        },
+      },
+    },
+    400: { description: "An invalid pricing, sort, offset, limit, q or rung (reason names it).", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "The caller does not hold this brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "The brand's channels price differently (as on GET /brands/{brandId}/revenue).", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/companies/{companyKey}",
+  summary: "One company of the brand, its place in the value order and its neighbours",
+  description:
+    "The row GET /brands/{brandId}/companies serves for this company (addressed by its `companyKey`: domain, else org id), its 1-based `position` in the value order (highest expectedRevenueUsd first) out of `organizationCount`, and the `companyKey` of the companies just before and after it in that order (a Company page's previous / next).",
+  tags: ["Stats"],
+  request: {
+    headers: identityHeaders,
+    params: z.object({ brandId: z.string(), companyKey: z.string() }),
+    query: z.object({ pricing: brandCompaniesQuery.shape.pricing }),
+  },
+  responses: {
+    200: {
+      description: "The company.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            company: brandCompanyRowSchema,
+            position: z.number().int().describe("1-based place in the value order."),
+            previousKey: z.string().nullable().describe("companyKey of the company ranked just above (null = first, or that company has no key)."),
+            nextKey: z.string().nullable().describe("companyKey of the company ranked just below (null = last, or that company has no key)."),
+            organizationCount: z.number().int(),
+            rungs: z.array(brandCompanyRungSchema),
+          }),
+        },
+      },
+    },
+    400: { description: "An invalid pricing value.", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "No company of the brand has this key (reason: company_not_found), or the caller does not hold the brand (reason: brand_not_found).", content: { "application/json": { schema: errorResponse } } },
+    409: { description: "The brand's channels price differently.", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "Downstream service error", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /brands/{brandId}/offers — the brand broken into its OFFERS, each at the offer grain ──
 //
 // The brand Overview lists a brand's offers in a table, one row each. The only way to ask for that was

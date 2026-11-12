@@ -20798,6 +20798,109 @@
           "channels"
         ]
       },
+      "BrandCompanyRow": {
+        "type": "object",
+        "properties": {
+          "organizationKey": {
+            "type": "string",
+            "description": "The row's identity, as on GET /brands/{brandId}/revenue `organizations[]`: `org:<orgId>`, or `lead:<leadId>` for a lead with no company."
+          },
+          "companyKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "The key a company is addressed by on GET /brands/{brandId}/companies/{companyKey}: its domain when known, else its org id. Null = the row has neither (no page of its own)."
+          },
+          "orgId": {
+            "type": "string",
+            "nullable": true
+          },
+          "orgName": {
+            "type": "string",
+            "nullable": true
+          },
+          "orgDomain": {
+            "type": "string",
+            "nullable": true,
+            "description": "Company domain (no protocol, e.g. \"acme.com\"). Null when no domain is known."
+          },
+          "topPerson": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "firstName": {
+                "type": "string",
+                "nullable": true
+              },
+              "lastName": {
+                "type": "string",
+                "nullable": true
+              },
+              "photoUrl": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "firstName",
+              "lastName",
+              "photoUrl"
+            ]
+          },
+          "peopleCount": {
+            "type": "integer",
+            "description": "How many distinct people of this company the row is built from (same as the revenue row)."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The revenue row's path tags (contacted, delivered, visit, reply, meeting, ...), as served there."
+          },
+          "expectedRevenueUsd": {
+            "type": "number",
+            "description": "The revenue row's expected value of the company, as served there."
+          },
+          "mostAdvancedDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "lifecycle": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "rank": {
+                "type": "integer"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "rank",
+              "label"
+            ],
+            "description": "The company's lifecycle rung (the highest any of its people reached), from GET /brands/{brandId}/deals-value?columns=company_lifecycle. Null = on no rung (or the brand sells no offer yet)."
+          }
+        },
+        "required": [
+          "organizationKey",
+          "companyKey",
+          "orgId",
+          "orgName",
+          "orgDomain",
+          "topPerson",
+          "peopleCount",
+          "tags",
+          "expectedRevenueUsd",
+          "mostAdvancedDate",
+          "lifecycle"
+        ]
+      },
       "BrandOffersResponse": {
         "type": "object",
         "properties": {
@@ -47145,6 +47248,532 @@
           },
           "409": {
             "description": "The brand runs channels that price on different funnels (reason: brand_channels_price_differently), so its money cannot honestly be answered as one figure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/companies": {
+      "get": {
+        "summary": "The brand's companies, one page at a time",
+        "description": "The companies of GET /brands/{brandId}/revenue `organizations[]`, field for field (minus the logo URL), each with its lifecycle rung, sorted, searched and paged here so a page reads only the rows it draws: on our own brand the two bodies a Companies page read were 7.1 MB + 2.0 MB (11,345 companies, prod 2026-11-12); a page of 60 rows is ~35 KB. The rows are the brand revenue read's stored answer (the same cell that read serves first) joined to the brand company lifecycle cell; nothing is recomputed. `total` counts the rows matching the filter; `organizationCount` every company; `rungs` the served count per rung (unfiltered).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis of the revenue body the rows come from (each row's expectedRevenueUsd). Omit or 'gross' (DEFAULT) / 'net'. The dashboard reads 'net'."
+            },
+            "required": false,
+            "description": "Pricing basis of the revenue body the rows come from (each row's expectedRevenueUsd). Omit or 'gross' (DEFAULT) / 'net'. The dashboard reads 'net'.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "value",
+                "touch",
+                "name"
+              ],
+              "description": "Order of the rows. 'value' (DEFAULT): highest expectedRevenueUsd first; 'touch': latest mostAdvancedDate first; 'name': company name (else domain) A to Z. Ties keep the revenue body's order."
+            },
+            "required": false,
+            "description": "Order of the rows. 'value' (DEFAULT): highest expectedRevenueUsd first; 'touch': latest mostAdvancedDate first; 'name': company name (else domain) A to Z. Ties keep the revenue body's order.",
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Search: every whitespace-separated word must appear in the company's name or domain (case-insensitive). Omitted or blank = every company."
+            },
+            "required": false,
+            "description": "Search: every whitespace-separated word must appear in the company's name or domain (case-insensitive). Omitted or blank = every company.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A lifecycle rung key (`rungs[].key`): only the companies standing on it. Omitted = every rung, and companies on none."
+            },
+            "required": false,
+            "description": "A lifecycle rung key (`rungs[].key`): only the companies standing on it. Omitted = every rung, and companies on none.",
+            "name": "rung",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Rows to skip, after sort and filter. DEFAULT 0."
+            },
+            "required": false,
+            "description": "Rows to skip, after sort and filter. DEFAULT 0.",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Rows to return, 1 to 5000. DEFAULT 60."
+            },
+            "required": false,
+            "description": "Rows to return, 1 to 5000. DEFAULT 60.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the brand's companies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "sort": {
+                      "type": "string",
+                      "enum": [
+                        "value",
+                        "touch",
+                        "name"
+                      ]
+                    },
+                    "q": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The trimmed search, or null."
+                    },
+                    "rung": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Rows matching sort + q + rung, before offset/limit."
+                    },
+                    "organizationCount": {
+                      "type": "integer",
+                      "description": "Every company of the brand (the revenue body's organizations[] length)."
+                    },
+                    "rungs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "rank": {
+                            "type": "integer"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "organizationCount": {
+                            "type": "integer",
+                            "description": "How many companies stand on this rung (their highest), as the lifecycle read serves it."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "rank",
+                          "label",
+                          "organizationCount"
+                        ]
+                      },
+                      "description": "Every lifecycle rung in ladder order with its served company count. Empty when the brand sells no offer yet."
+                    },
+                    "companies": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BrandCompanyRow"
+                      }
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "sort",
+                    "q",
+                    "rung",
+                    "offset",
+                    "limit",
+                    "total",
+                    "organizationCount",
+                    "rungs",
+                    "companies"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid pricing, sort, offset, limit, q or rung (reason names it).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller does not hold this brand (reason: brand_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The brand's channels price differently (as on GET /brands/{brandId}/revenue).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Downstream service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/companies/{companyKey}": {
+      "get": {
+        "summary": "One company of the brand, its place in the value order and its neighbours",
+        "description": "The row GET /brands/{brandId}/companies serves for this company (addressed by its `companyKey`: domain, else org id), its 1-based `position` in the value order (highest expectedRevenueUsd first) out of `organizationCount`, and the `companyKey` of the companies just before and after it in that order (a Company page's previous / next).",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "companyKey",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Pricing basis of the revenue body the rows come from (each row's expectedRevenueUsd). Omit or 'gross' (DEFAULT) / 'net'. The dashboard reads 'net'."
+            },
+            "required": false,
+            "description": "Pricing basis of the revenue body the rows come from (each row's expectedRevenueUsd). Omit or 'gross' (DEFAULT) / 'net'. The dashboard reads 'net'.",
+            "name": "pricing",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal org UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal org UUID from client-service",
+            "name": "x-org-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Internal user UUID from client-service"
+            },
+            "required": true,
+            "description": "Internal user UUID from client-service",
+            "name": "x-user-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Run ID for tracking and billing"
+            },
+            "required": true,
+            "description": "Run ID for tracking and billing",
+            "name": "x-run-id",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Brand UUID(s), comma-separated"
+            },
+            "required": false,
+            "description": "Brand UUID(s), comma-separated",
+            "name": "x-brand-id",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The company.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "company": {
+                      "$ref": "#/components/schemas/BrandCompanyRow"
+                    },
+                    "position": {
+                      "type": "integer",
+                      "description": "1-based place in the value order."
+                    },
+                    "previousKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "companyKey of the company ranked just above (null = first, or that company has no key)."
+                    },
+                    "nextKey": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "companyKey of the company ranked just below (null = last, or that company has no key)."
+                    },
+                    "organizationCount": {
+                      "type": "integer"
+                    },
+                    "rungs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "rank": {
+                            "type": "integer"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "organizationCount": {
+                            "type": "integer",
+                            "description": "How many companies stand on this rung (their highest), as the lifecycle read serves it."
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "rank",
+                          "label",
+                          "organizationCount"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "company",
+                    "position",
+                    "previousKey",
+                    "nextKey",
+                    "organizationCount",
+                    "rungs"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid pricing value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No company of the brand has this key (reason: company_not_found), or the caller does not hold the brand (reason: brand_not_found).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The brand's channels price differently.",
             "content": {
               "application/json": {
                 "schema": {

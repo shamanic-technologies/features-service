@@ -175,6 +175,7 @@ import { readFleetReturnSnapshotSoft, writeFleetReturnSnapshotSoft, type BrandSn
 import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 import { withCampaignNames } from "../lib/sales-path-names.js";
 import { withPipeIdentities } from "../lib/pipe-identities.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 
 const router = Router();
 
@@ -1038,22 +1039,23 @@ export async function warmFleetBrandSnapshot(featureSlug: string): Promise<void>
 }
 
 /**
- * Warm every cold-email channel's snapshot, fire-and-forget. Called AFTER `app.listen()` so a deploy fills the
- * snapshot without ever blocking the port bind (this fan-out is O(brands) and takes minutes).
+ * The boot step for every cold-email channel's snapshot (`lib/boot-warms.ts`, run after `app.listen()`, one step at a
+ * time). A channel whose STORED snapshot is younger than {@link FLEET_SNAPSHOT_STALE_MS} is not rebuilt: before
+ * MON-PAGE-SPEED-2-1112 every boot re-ran 65 brand engine passes over a snapshot written minutes before (prod
+ * 2026-11-12: rebuilt at 08:28 and again at 08:45). The showcase reads these rows: its own boot step runs after this one.
  */
-export function warmFleetBrandSnapshotsOnBoot(): void {
-  void (async () => {
-    try {
-      const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
-      const slugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
-      // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap.
-      for (const slug of slugs) await warmFleetBrandSnapshot(slug);
-      // The homepage's client PICKS are derived from the rows this warm just wrote.
-      warmShowcaseFunnelsOnBoot();
-    } catch (err) {
-      console.error("[features-service] fleet snapshot boot warm failed:", err);
-    }
-  })();
+export async function warmFleetBrandSnapshotsOnBoot(): Promise<"built" | "skipped"> {
+  const allFeatures = await db.query.features.findMany({ columns: { slug: true } });
+  const slugs = coldEmailOutreachSlugs(allFeatures.map((f) => f.slug));
+  let rebuilt = 0;
+  // Sequential ACROSS channels: each warm is already an O(brands) fan-out with its own cap.
+  for (const slug of slugs) {
+    const stored = await readFleetReturnSnapshotSoft(slug);
+    if (stored && storedCopyIsFresh(stored.computedAt.getTime(), FLEET_SNAPSHOT_STALE_MS)) continue;
+    await warmFleetBrandSnapshot(slug);
+    rebuilt += 1;
+  }
+  return rebuilt === 0 ? "skipped" : "built";
 }
 
 // ── Public workflow engagement latency handler ───────────────────────────────
@@ -3042,8 +3044,8 @@ interface ShowcasePayloads {
  * Fired AFTER `app.listen()` and never awaited: awaiting an O(brands) fan-out before the port binds
  * fails the deploy health check and rolls the service back.
  */
-export function warmShowcaseFunnelsOnBoot(): void {
-  void computeShowcasePayloads()
+export function warmShowcaseFunnelsOnBoot(): Promise<void> {
+  return computeShowcasePayloads()
     .then((payload) => {
       setPublicCache(showcaseFunnelsCache, "__showcase__", payload, LIFETIME_AGGREGATE_WINDOWS);
     })
@@ -4289,16 +4291,7 @@ export async function readLegWorkflowRanking(featureSlug: string, rawLegKey: str
   const key = `${featureSlug}|${legKey}`;
   // A fresh process (every deploy) serves the LAST build persisted by any process, and rebuilds behind it:
   // a read never waits on the fleet walk while a copy exists (the agent catalogue's 30 s callers timed out).
-  if (!legRankingStore.has(key)) {
-    const stored = await loadFleetCell(legRankingCellKey(key));
-    if (stored && !legRankingStore.has(key)) {
-      try {
-        legRankingStore.set(key, { value: JSON.parse(stored.text) as LegWorkflowRankingPayload, computedAt: stored.computedAt });
-      } catch (error) {
-        console.error(`[features-service] leg workflow ranking ${key}: persisted copy unreadable, rebuilding:`, error);
-      }
-    }
-  }
+  await installStoredLegRanking(key);
   if (legRankingStore.has(key)) {
     void warmLegWorkflowRanking(featureSlug, legKey);
     return legRankingStore.get(key)!.value;
@@ -4309,6 +4302,31 @@ export async function readLegWorkflowRanking(featureSlug: string, rawLegKey: str
     console.error(`[features-service] leg workflow ranking ${key} not built after ${Math.round(waitMs / 1000)}s:`, (error as Error).message);
     return null;
   }
+}
+
+/** Install the copy any process stored for this pipe when this process holds none (a read failure is logged by the store). */
+async function installStoredLegRanking(key: string): Promise<void> {
+  if (legRankingStore.has(key)) return;
+  const stored = await loadFleetCell(legRankingCellKey(key));
+  if (!stored || legRankingStore.has(key)) return;
+  try {
+    legRankingStore.set(key, { value: JSON.parse(stored.text) as LegWorkflowRankingPayload, computedAt: stored.computedAt });
+  } catch (error) {
+    console.error(`[features-service] leg workflow ranking ${key}: persisted copy unreadable, rebuilding:`, error);
+  }
+}
+
+/**
+ * The boot step for one pipe's ranking (`lib/boot-warms.ts`): start from the stored copy, rebuild only past its fresh
+ * window. Before MON-PAGE-SPEED-2-1112 every boot rebuilt all 29 assigned pipes at once from scratch.
+ */
+export async function warmLegWorkflowRankingOnBoot(featureSlug: string, rawLegKey: string): Promise<"built" | "skipped"> {
+  const legKey = pipeLegKeyOf(featureSlug, rawLegKey);
+  const key = `${featureSlug}|${legKey}`;
+  await installStoredLegRanking(key);
+  if (storedCopyIsFresh(legRankingStore.get(key)?.computedAt, LEG_RANKING_FRESH_MS)) return "skipped";
+  await warmLegWorkflowRanking(featureSlug, legKey);
+  return "built";
 }
 
 /** Test seam. */

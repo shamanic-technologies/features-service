@@ -21,7 +21,8 @@ import {
   type FleetIndexPoint,
   type MeetingPipeEvidence,
 } from "../lib/fleet-indexes.js";
-import { readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
+import { lastRecordedTodayAt, readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
+import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { vendorLegPrice, vendorPooled, vendorRankingRows, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
 import { PUBLIC_COST_BASIS_TEXT, VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
 import { meetingBookedPrice } from "../lib/outcome-prices.js";
@@ -349,9 +350,27 @@ function tick(): void {
     });
 }
 
+/**
+ * The boot tick skips when today's points were recorded less than {@link RECORD_EVERY_MS} ago (MON-PAGE-SPEED-2-1112: a
+ * deploy re-ran the whole recording, its fleet vendor reads included, a minute into every boot); the hourly clock records
+ * as before. An unreadable store records (the recorder's own path, logged).
+ */
+async function bootTick(): Promise<void> {
+  try {
+    const last = await lastRecordedTodayAt(new Date());
+    if (storedCopyIsFresh(last, RECORD_EVERY_MS)) {
+      console.log(`[features-service] fleet indexes: today's points recorded at ${new Date(last!).toISOString()}, boot recording skipped`);
+      return;
+    }
+  } catch (error) {
+    console.error("[features-service] fleet indexes: last recording unreadable, recording now:", error);
+  }
+  tick();
+}
+
 /** First recording a minute after listen (a deploy restarts the process more often than once a day), then hourly. */
 export function startFleetIndexRecorder(): void {
-  const first = setTimeout(tick, FIRST_RECORD_AFTER_MS);
+  const first = setTimeout(() => void bootTick(), FIRST_RECORD_AFTER_MS);
   first.unref?.();
   const every = setInterval(tick, RECORD_EVERY_MS);
   every.unref?.();
