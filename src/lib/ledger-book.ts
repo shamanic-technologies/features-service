@@ -25,6 +25,8 @@ interface WireCost {
 export type BookBasis = LedgerBasis | "unpricedGross";
 interface Wire {
   daysMissing?: string[];
+  /** The part of daysMissing that IS stored, computed before a fact recorded later (runs-service `daysStale`). */
+  daysStale?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
   consumed?: Array<{ dimensions?: Record<string, string | null>; consumptions?: string; unknownProvenance?: string }>;
   scope?: Array<{ dimensions?: Record<string, string | null>; spend?: WireCost; producedCost?: WireCost; producedNone?: WireCost; support?: WireCost }>;
@@ -42,6 +44,8 @@ export interface LedgerBookRead {
   daysMissing: number;
   /** The same days, listed (sorted). */
   missingDays?: string[];
+  /** Of `missingDays`, the days that ARE stored, only computed before a later fact (their rows are read, a tick behind). */
+  staleDays?: string[];
 }
 
 /** The run-start day of a group, only when the read grouped by it (the daily book): absent otherwise, rows unchanged. */
@@ -117,7 +121,11 @@ export function parseLedgerBook(producedBody: Wire, consumedBody: Wire, scopeBod
   }));
   const daysMissing = Math.max(...[producedBody, consumedBody, scopeBody].map((b) => (b.daysMissing ?? []).length));
   const missingDays = [...new Set([producedBody, consumedBody, scopeBody].flatMap((b) => b.daysMissing ?? []))].sort();
-  return { book: { produced, noOutput, consumed }, daysMissing, missingDays };
+  // a day is only stale when every section stores it (a section missing it outright is missing)
+  const staleIn = (b: Wire) => new Set(b.daysStale ?? []);
+  const stale = [producedBody, consumedBody, scopeBody].map(staleIn);
+  const staleDays = missingDays.filter((d) => stale.every((s, i) => s.has(d) || !([producedBody, consumedBody, scopeBody][i]!.daysMissing ?? []).includes(d)));
+  return { book: { produced, noOutput, consumed }, daysMissing, missingDays, staleDays };
 }
 
 /** The ledger's first month (runs-service states its own inception, 2026-02-02). */
@@ -164,6 +172,7 @@ async function readRange(groupBy: string, since: string, until: string, runStart
 export function concatWire(parts: readonly Wire[]): Wire {
   return {
     daysMissing: [...new Set(parts.flatMap((p) => p.daysMissing ?? []))],
+    daysStale: [...new Set(parts.flatMap((p) => p.daysStale ?? []))],
     produced: parts.flatMap((p) => p.produced ?? []),
     consumed: parts.flatMap((p) => p.consumed ?? []),
     scope: parts.flatMap((p) => p.scope ?? []),

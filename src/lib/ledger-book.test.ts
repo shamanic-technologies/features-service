@@ -71,3 +71,13 @@ function __resetLedgerBookHeldOnly() {
   vi.useFakeTimers();
   vi.setSystemTime(Date.now() + 16 * 60_000);
 }
+
+describe("a STALE day is stored (MON-SCRIPT-PRICES-2-1111)", () => {
+  it("lists apart the missing days every section stores, only computed before a later fact", () => {
+    const w = (missing: string[], stale: string[]) => ({ daysMissing: missing, daysStale: stale, produced: [], consumed: [], scope: [] });
+    const r = parseLedgerBook(w(["2026-11-07", "2026-11-08"], ["2026-11-07"]), w(["2026-11-07"], ["2026-11-07"]), w(["2026-11-07"], ["2026-11-07"]), "gross");
+    expect(r.missingDays).toEqual(["2026-11-07", "2026-11-08"]);
+    expect(r.staleDays).toEqual(["2026-11-07"]);
+    expect(concatWire([w(["a"], ["a"]), w(["b"], [])]).daysStale).toEqual(["a"]);
+  });
+});

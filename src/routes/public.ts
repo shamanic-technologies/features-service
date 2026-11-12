@@ -3716,9 +3716,13 @@ export async function fleetPlayPrices(
 export async function pipeScriptFigures(featureSlug: string, legKey: string, pricing: PipeSpendPricing = "gross"): Promise<Array<[string, LegMaturityFigures]>> {
   try {
     const [read, s, from, campaigns] = await Promise.all([loadDailyLedgerBook(bookBasisOf(pricing), dailyBookSinceDay()), pipeOutcomeKey(featureSlug, legKey), pipeFromKey(featureSlug, legKey), getFleetLegCampaigns(featureSlug, legKey)]);
-    // today is never computed yet (runs-service stores a day once it is over): only a PAST day of the scripts' era blinds it
+    // today is never computed yet (runs-service stores a day once it is over): only a PAST day of the scripts' era NOT
+    // STORED blinds it. A STALE day (stored, computed before a fact recorded later: every recent day while the campaigns
+    // run, prod 2026-11-12 11-07..11-12) is read as stored, a refresher tick behind: the decision figure is the one
+    // available now (cost-accounting rule 6), never none.
     const today = new Date().toISOString().slice(0, 10);
-    const late = (read.missingDays ?? []).filter((d) => d >= SCRIPTS_FIRST_DAY && d < today);
+    const stale = new Set(read.staleDays ?? []);
+    const late = (read.missingDays ?? []).filter((d) => d >= SCRIPTS_FIRST_DAY && d < today && !stale.has(d));
     if (late.length > 0) {
       console.error(`[features-service] pipe ${featureSlug}|${legKey}: the daily ledger book misses ${late.length} day(s) of the scripts' era (${late.slice(0, 5).join(",")}), its scripts read unmeasured this pass`);
       return [];
