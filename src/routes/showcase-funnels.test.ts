@@ -30,6 +30,14 @@ vi.mock("../db/index.js", () => ({
   },
   sql: {},
 }));
+// The stored showcase (MON-PAGE-SPEED-2-1112), in memory; emptied before every test.
+const cells = vi.hoisted(() => new Map<string, { text: string; computedAt: number }>());
+vi.mock("../lib/fleet-cell-store.js", () => ({
+  loadFleetCell: async (key: string) => cells.get(key) ?? null,
+  claimFleetCellBuild: async () => true,
+  storeFleetCell: async (key: string, text: string, computedAt: number) => void cells.set(key, { text, computedAt }),
+}));
+beforeEach(() => cells.clear());
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({
@@ -62,7 +70,7 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const { db } = await import("../db/index.js");
 const app = (await import("../index.js")).default;
-const { __resetShowcaseFunnelsCache, foldFleetSnapshotRows } = await import("./public.js");
+const { __resetShowcaseFunnelsCache, foldFleetSnapshotRows, warmShowcaseFunnelsOnBoot } = await import("./public.js");
 const { brandReadingFunnels } = await import("../lib/showcase-funnels.js");
 const { offerEconomicsFromDeclared } = await import("../lib/leg-economics-fixture.js");
 const { funnelLeg } = await import("../lib/funnel-legs.js");
@@ -486,6 +494,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(BASE);
     const plain = await get();
     __resetShowcaseFunnelsCache();
+    cells.clear(); // recompute on the new fixture, never the stored build
     mockFetch(BASE);
     const asked = await get(`?brandId=${OUTSIDER}`);
 
@@ -584,6 +593,7 @@ describe("GET /public/stats/showcase-funnels", () => {
 
     // A snapshot that holds only the client that produced nothing: something to say, and a different thing.
     __resetShowcaseFunnelsCache();
+    cells.clear(); // recompute on the new fixture, never the stored build
     mockFetch({ ...BASE, snapshot: [SNAPSHOT[3]] });
     const thin = await get();
     expect(thin.groups.recentlyStarted.unmeasuredReason).toBe("no_qualifying_clients");
@@ -719,6 +729,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     mockFetch(BASE);
     const cheap = brandOf(await get(), DOC).funnels[0];
     __resetShowcaseFunnelsCache();
+    cells.clear(); // recompute on the new fixture, never the stored build
     mockFetch({ ...BASE, spendCents: 20000 });
     const dear = brandOf(await get(), DOC).funnels[0];
     expect(dear.steps.map((s) => s.costPerReachUsd)).toEqual([50, 100, 200, 200, null]);
@@ -730,6 +741,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     const billed = brandOf(await get(), DOC).funnels[0];
 
     __resetShowcaseFunnelsCache();
+    cells.clear(); // recompute on the new fixture, never the stored build
     mockFetch({ ...BASE, spendCents: 10000, vendorSpendCents: 5000 });
     const vendor = brandOf(await get(), DOC).funnels[0];
 
@@ -743,6 +755,7 @@ describe("GET /public/stats/showcase-funnels", () => {
     const implicit = await get();
 
     __resetShowcaseFunnelsCache();
+    cells.clear(); // recompute on the new fixture, never the stored build
     mockFetch({ ...BASE, spendCents: 10000, netSpendCents: 5000 });
     const discounted = await get();
 
@@ -806,6 +819,42 @@ describe("GET /public/stats/showcase-funnels", () => {
 });
 
 // ── THE HERO ROW ON A WIDER FLEET (owner 2026-11-07, SHOWCASE-MAX-1107) ─────────────────────────
+describe("the stored showcase (MON-PAGE-SPEED-2-1112: a deploy never rebuilds a fresh one)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetShowcaseFunnelsCache();
+    withFeatures();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("every build is stored; a fresh process serves it with no walk, and its boot step skips", async () => {
+    mockFetch(READABLE_SHOCK);
+    const built = await get();
+    expect([...cells.keys()].some((k) => k.startsWith("showcase:"))).toBe(true);
+
+    __resetShowcaseFunnelsCache(); // a new process: nothing in memory
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("no fleet read may run");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(warmShowcaseFunnelsOnBoot()).resolves.toBe("skipped");
+    expect(await get()).toEqual(built);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("a stored copy past its fresh window is rebuilt by the boot step", async () => {
+    mockFetch(READABLE_SHOCK);
+    await get();
+    const [key, cell] = [...cells.entries()].find(([k]) => k.startsWith("showcase:"))!;
+    cells.set(key, { ...cell, computedAt: Date.now() - 20 * 60_000 });
+    __resetShowcaseFunnelsCache();
+    mockFetch(READABLE_SHOCK);
+    await expect(warmShowcaseFunnelsOnBoot()).resolves.toBe("built");
+    expect(cells.get(key)!.computedAt).toBeGreaterThan(Date.now() - 60_000);
+  });
+});
+
 describe("the hero row on a wider fleet", () => {
   const ANECDOTE = "aaaaaaaa-0000-4000-8000-000000000001"; // 1 positive reply: the obra.cam shape
   const FOUR = "aaaaaaaa-0000-4000-8000-000000000002";

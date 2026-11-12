@@ -9,6 +9,7 @@ import { fetchMeetingBookingGain, type MeetingBookingGain } from "../lib/meeting
 import { fetchMeetingBookingBeforeAfter, type MeetingBookingBeforeAfter } from "../lib/meeting-booking-before-after.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
+import { responseShapeFingerprint } from "../lib/response-shape.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
@@ -251,7 +252,7 @@ function inFlightFor(cache: PublicCache): Map<string, Promise<unknown>> {
   return flights;
 }
 
-function setPublicCache<T>(cache: PublicCache, key: string, payload: T, windows: CacheWindows): void {
+function setPublicCache<T>(cache: PublicCache, key: string, payload: T, windows: CacheWindows, computedAt = Date.now()): void {
   const now = Date.now();
   // Prune on write: a past-STALE entry is never served again, and these maps are keyed by
   // (featureSlug × objective × window params) on NO-AUTH routes — so without this an arbitrary caller
@@ -259,7 +260,7 @@ function setPublicCache<T>(cache: PublicCache, key: string, payload: T, windows:
   for (const [existingKey, entry] of cache) {
     if (entry.staleUntil <= now) cache.delete(existingKey);
   }
-  cache.set(key, { payload, freshUntil: now + windows.freshMs, staleUntil: now + windows.staleMs });
+  cache.set(key, { payload, freshUntil: computedAt + windows.freshMs, staleUntil: computedAt + windows.staleMs });
 }
 
 /** Run `compute` ONCE per (cache, key) at a time and store the result. Concurrent callers — a request-path
@@ -3044,14 +3045,50 @@ interface ShowcasePayloads {
  * Fired AFTER `app.listen()` and never awaited: awaiting an O(brands) fan-out before the port binds
  * fails the deploy health check and rolls the service back.
  */
-export function warmShowcaseFunnelsOnBoot(): Promise<void> {
-  return computeShowcasePayloads()
-    .then((payload) => {
-      setPublicCache(showcaseFunnelsCache, "__showcase__", payload, LIFETIME_AGGREGATE_WINDOWS);
-    })
-    .catch((err) => {
-      console.error("[features-service] showcase funnels boot warm failed:", err);
-    });
+export async function warmShowcaseFunnelsOnBoot(): Promise<"built" | "skipped"> {
+  await installStoredShowcase();
+  if ((showcaseFunnelsCache.get(SHOWCASE_KEY)?.freshUntil ?? 0) > Date.now()) return "skipped";
+  try {
+    await refreshPublicCache(showcaseFunnelsCache, SHOWCASE_KEY, LIFETIME_AGGREGATE_WINDOWS, computeAndStoreShowcase);
+  } catch (err) {
+    console.error("[features-service] showcase funnels boot warm failed:", err);
+  }
+  return "built";
+}
+
+const SHOWCASE_KEY = "__showcase__";
+
+/**
+ * THE STORED SHOWCASE (MON-PAGE-SPEED-2-1112). Held in memory only, every boot rebuilt it (prod 2026-11-12: 70 s of brand
+ * engine passes in the serving process, the dashboard's cached reads at 1-4 s meanwhile). Every build is stored
+ * (`lib/fleet-cell-store.ts`), keyed on this build's response shape so a deploy that changes the body never serves the
+ * old one; a fresh process installs it with its own age (fresh 15 min, stale 6 h, as in memory) and rebuilds only past
+ * fresh. A failed store read or write is logged by the store and the process builds as before.
+ */
+const showcaseCellKey = (): string => `showcase:${responseShapeFingerprint()}`;
+
+async function computeAndStoreShowcase(): Promise<ShowcasePayloads> {
+  const payload = await computeShowcasePayloads();
+  await storeFleetCell(showcaseCellKey(), JSON.stringify(payload), Date.now());
+  return payload;
+}
+
+let showcaseInstall: Promise<void> | null = null;
+function installStoredShowcase(): Promise<void> {
+  if (showcaseFunnelsCache.has(SHOWCASE_KEY)) return Promise.resolve();
+  showcaseInstall ??= (async () => {
+    const stored = await loadFleetCell(showcaseCellKey());
+    if (!stored || showcaseFunnelsCache.has(SHOWCASE_KEY)) return;
+    if (Date.now() - stored.computedAt >= LIFETIME_AGGREGATE_WINDOWS.staleMs) return;
+    try {
+      setPublicCache(showcaseFunnelsCache, SHOWCASE_KEY, JSON.parse(stored.text) as ShowcasePayloads, LIFETIME_AGGREGATE_WINDOWS, stored.computedAt);
+    } catch (error) {
+      console.error("[features-service] showcase: stored copy unreadable, rebuilding:", error);
+    }
+  })().finally(() => {
+    showcaseInstall = null;
+  });
+  return showcaseInstall;
 }
 
 /**
@@ -3232,12 +3269,13 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
 }
 
 async function readShowcasePayloads(): Promise<ShowcasePayloads> {
+  await installStoredShowcase();
   return servedPublicCached<ShowcasePayloads>({
     cache: showcaseFunnelsCache,
-    key: "__showcase__",
+    key: SHOWCASE_KEY,
     windows: LIFETIME_AGGREGATE_WINDOWS,
     label: "showcase funnels",
-    compute: computeShowcasePayloads,
+    compute: computeAndStoreShowcase,
   });
 }
 
