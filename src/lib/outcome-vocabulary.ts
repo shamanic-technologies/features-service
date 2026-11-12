@@ -83,6 +83,8 @@ export const TRIGGER_GLYPH = "⚡";
 export const outcomeTriggerLabel = (outcomeLabel: string): string => outcomeLabel;
 
 const pluralWord = (w: string): string => {
+  // Already plural ("Offer fields drafted" -> "Offer fields drafted", never "fieldses"): a consonant + s, never "ss".
+  if (/[^aeious]s$/i.test(w)) return w;
   if (/[^aeiou]y$/i.test(w)) return `${w.slice(0, -1)}ies`;
   if (/(s|x|z|ch|sh)$/i.test(w)) return `${w}es`;
   return `${w}s`;
