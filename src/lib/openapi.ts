@@ -9407,6 +9407,173 @@ registry.registerPath({
   },
 });
 
+// ── Research by Engine and script (RESEARCH-BY-ENGINE-1113) ─────────────
+
+const researchStepRefSchema = z.object({ key: z.string().describe("The catalogue step (or outcome) key."), name: z.string() });
+const researchMeasureSchema = z.object({
+  id: z.string().describe("`<engine>/<startsFrom or start>/<counts>`: stable, names no medium. Every Engine-keyed read is keyed on it."),
+  engine: z.string().describe("The Engine's outcome key."),
+  startsFrom: researchStepRefSchema.nullable().describe("The step the people measured stood at; null = from nothing."),
+  counts: researchStepRefSchema.describe("The step the figures count (a cost per outcome is per this step)."),
+  description: z.string(),
+});
+const researchEngineEntrySchema = z.object({
+  outcome: z.string().describe("The Engine: one per outcome (framework v10)."),
+  name: z.string(),
+  measures: z.array(researchMeasureSchema).describe("What its figures count, and among whom. Two sources counting the same step from the same step are ONE measure (listed together, figures never summed)."),
+});
+const researchNotCarriedSchema = z.array(z.object({ what: z.string(), reason: z.string() })).describe("Every figure of the per-source read this body could not carry, with why (never silent).");
+const researchEngineQuery = z.object({ basis: z.enum(["user", "actual"]).describe("Default `user` (billed).").optional(), view: researchViewParam });
+const researchEngineBadParam = { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } };
+const engineWordsNote =
+  "RESEARCH-BY-ENGINE-1113 (owner 2026-11-13, go « A »: the Research page carries no pipe anywhere). The SAME figures as the per-source read, regrouped by Engine (outcome) and measure, never recomputed (same population, same basis). Vocabulary: no field, key or enum value names a pipe, leg, channel, play or workflow (`workflow` -> `script`, `*_pipe` -> `*_engine`, `leg_*` -> `engine_*`), every sentence says script / Engine / step; identifiers (`key`, `slug`, `id`) are untouched.";
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/engines",
+  summary: "The Research file by Engine: studies on their Engine and measure (staff, api-key)",
+  description: `${engineWordsNote} Twin of /internal/research: \`engines[]\` replaces \`pipes[]\`; each study names \`engine\` + \`measure\` (null on an outcome-section study) and its id is re-keyed off its source (\`<measure>:script-roi\`); topic \`workflow\` reads \`script\`; outcome sections list \`measures\`; \`volume.scripts\` = the old \`volume.workflows\`; \`maturation.rules\` = the old per-leg rules.`,
+  tags: ["Internal"],
+  request: { query: researchEngineQuery },
+  responses: {
+    200: {
+      description: "The Research file by Engine",
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              computedAt: z.string(),
+              costBasis: z.enum(["user", "actual"]),
+              freshness: researchFreshnessSchema,
+              engines: z.array(researchEngineEntrySchema),
+              outcomes: z.array(z.object({ id: z.string(), measures: z.array(z.string()).optional() }).passthrough()),
+              studies: z.array(z.object({ id: z.string(), engine: z.string().nullable(), measure: z.string().nullable(), topic: z.string(), question: z.string() }).passthrough()),
+              unavailable: z.array(z.object({ id: z.string(), reason: z.string() })),
+              notCarried: researchNotCarriedSchema,
+            })
+            .passthrough(),
+        },
+      },
+    },
+    400: researchEngineBadParam,
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/engines/catalog",
+  summary: "The Research catalogue by Engine: per measure, its script, template and LLM pages (staff, api-key)",
+  description: `${engineWordsNote} Twin of /internal/research/catalog. Each script page = the old workflow page byte for byte (figures read live off the current ranking), plus \`tactics {llm, template}\`: the LLM and template it wrote with (\`wroteWith\`), else writes with now. Template and LLM pages keep their own performance tables (\`scripts\` lists the scripts using them).`,
+  tags: ["Internal"],
+  request: { query: researchEngineQuery },
+  responses: {
+    200: {
+      description: "The catalogue by Engine",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string(),
+            costBasis: z.enum(["user", "actual"]),
+            view: z.enum(["mature", "flash"]),
+            engines: z.array(
+              researchEngineEntrySchema.extend({
+                measures: z.array(
+                  researchMeasureSchema.extend({
+                    scripts: z.array(z.object({ key: z.string(), label: z.string(), tactics: z.object({ llm: z.object({ key: z.string(), label: z.string() }).passthrough().nullable(), template: z.object({ key: z.string(), label: z.string() }).passthrough().nullable() }) }).passthrough()),
+                    templates: z.array(z.object({ key: z.string(), label: z.string() }).passthrough()),
+                    llms: z.array(z.object({ key: z.string(), label: z.string() }).passthrough()),
+                  }),
+                ),
+              }),
+            ),
+            notCarried: researchNotCarriedSchema,
+          }),
+        },
+      },
+    },
+    400: researchEngineBadParam,
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/engines/performance",
+  summary: "The Research Performance tab by Engine: per measure, every script x template x LLM row (staff, api-key)",
+  description: `${engineWordsNote} Twin of /internal/research/performance: each row's \`script\` part = the old \`workflow\` part (\`deprecatedParts\` says \`script\`), \`servedNow.script\` likewise. A measure with ONE measured source serves its rows, totals and series as served; several measured sources list their rows and serve \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed).`,
+  tags: ["Internal"],
+  request: { query: researchEngineQuery },
+  responses: {
+    200: {
+      description: "The Performance tab by Engine",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string(),
+            freshness: researchFreshnessSchema,
+            costBasis: z.enum(["user", "actual"]),
+            view: z.enum(["mature", "flash"]),
+            engines: z.array(
+              researchEngineEntrySchema.extend({
+                measures: z.array(
+                  researchMeasureSchema
+                    .extend({
+                      rows: z.array(z.object({ key: z.string() }).passthrough()),
+                      totals: z.object({}).passthrough().nullable(),
+                      series: z.object({}).passthrough().nullable(),
+                      totalsUnavailableReason: z.enum(["no_source_measured", "several_sources_not_summed"]).nullable(),
+                    })
+                    .passthrough(),
+                ),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: researchEngineBadParam,
+    503: researchNotYet,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/engines/live-scripts",
+  summary: "The live script ranking of one Research measure (staff, api-key)",
+  description: `${engineWordsNote} Twin of /public/stats/leg-workflow-ranking for the Research page: the same rows (rank, figures, tactics, marks, place), \`scriptDynastySlug\` / \`scriptDynastyName\` for the old workflow fields. Several measured sources = rows listed, \`orderUnavailableReason: several_sources_ranked_apart\`.`,
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      measure: z.string().describe("A `measures[].id` of /internal/research/engines."),
+      pricing: z.enum(["gross", "net"]).describe("Default gross.").optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The measure's live script ranking",
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              pricing: z.enum(["gross", "net"]),
+              engine: z.string(),
+              measure: researchMeasureSchema,
+              computedAt: z.string().nullable(),
+              rows: z.array(z.object({ rank: z.number().int(), scriptDynastySlug: z.string(), scriptDynastyName: z.string().nullable().optional() }).passthrough()),
+              orderUnavailableReason: z.enum(["ranking_not_computed_yet", "several_sources_ranked_apart"]).nullable(),
+            })
+            .passthrough(),
+        },
+      },
+    },
+    400: { description: "`pricing_unrecognised`", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "`measure_not_found`", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "`live_scripts_unreadable`", content: { "application/json": { schema: errorResponse } } },
+    503: researchNotYet,
+  },
+});
+
 // ── Security advisories monitor (SEC-ADVISORIES-SERIES-1025) ─────────────
 
 const secAdvPointStatus = z.enum(["red", "green", "missing"]);
