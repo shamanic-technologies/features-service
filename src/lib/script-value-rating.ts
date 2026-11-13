@@ -20,14 +20,20 @@
  * - THE NOTE of a script = value credited per run ÷ cost per run. A decision figure: never served as a return (a return
  *   exists only at a campaign's Target); readers show costs per Unit and rates.
  * - THE PICK is Thompson sampling: each candidate's mix of strongest outcomes is a Dirichlet belief pulled toward its
- *   Engine's mix (a new script starts at the Engine's average, wide), one draw each, value drawn ÷ cost per run.
+ *   Engine's mix (every script of the Engine, candidates or not), one draw each, value drawn ÷ cost per run. The pull
+ *   weighs as many runs as it takes the Engine to make `PRIOR_CREDITED_RUNS` credited run: outcomes are rare (5 replies
+ *   in 13,731 sends), and a pull of a few runs gave a new script a belief of "certainly nothing" (prod 2026-11-13: a
+ *   zero-history fork scored 9e-173 against its incumbent, 0 picks in 50). With one credited run of prior a new script
+ *   is drawn above an incumbent at the Engine's average about a third of the time, until its own runs say otherwise.
  */
 import { gammaDraw } from "./engine-shadow.js";
 
 /** A measured step needs this many consumed Units to be a rate (the fleet's "measured from reached" bar). */
 export const MIN_CONSUMED_UNITS = 10;
-/** How many runs of the Engine's own mix a candidate's belief starts with. */
+/** The fewest runs of the Engine's own mix a candidate's belief starts with. */
 export const ENGINE_PRIOR_RUNS = 5;
+/** A candidate's belief starts with as many runs of the Engine's mix as hold this many credited runs. */
+export const PRIOR_CREDITED_RUNS = 1;
 
 export interface StepRate {
   fromOutcome: string;
@@ -212,13 +218,15 @@ export function pickScript(input: {
   const names = [...new Set(input.candidates)].sort();
   if (!names.length) return { outcome: input.outcome, scriptDynasty: null, basis: "no_candidate", candidates: [] };
   const rows = new Map(input.ratings.filter((r) => names.includes(r.scriptDynasty)).map((r) => [r.scriptDynasty, r]));
+  // The Engine's mix is every script of the Engine: two new candidates still start from what the Engine's runs showed.
+  const engineRows = input.ratings.filter((r) => r.outcome === input.outcome || names.includes(r.scriptDynasty));
   const engineMix = new Map<string | null, number>();
   const engineCredit = new Map<string | null, number>();
   let engineRuns = 0;
   let engineSpent = 0;
   let engineSpentRuns = 0;
   let engineValue = 0;
-  for (const r of rows.values()) {
+  for (const r of engineRows) {
     engineRuns += r.runs;
     engineValue += r.valueUsd;
     if (r.spentUsd !== null) {
@@ -236,15 +244,22 @@ export function pickScript(input: {
     return own !== null && own !== undefined && own > 0 ? own : engineCost;
   };
   if (!(engineValue > 0)) {
-    const order = names.map((n) => ({ scriptDynasty: n, runs: rows.get(n)?.runs ?? 0, cost: costOf(n) })).sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.scriptDynasty.localeCompare(b.scriptDynasty));
+    // Nothing to tell them apart but the cost: the cheapest per run, and equals in an order drawn each time (never the
+    // alphabet: the first name would take every run).
+    const order = names
+      .map((n) => ({ scriptDynasty: n, runs: rows.get(n)?.runs ?? 0, cost: costOf(n), tie: input.rng() }))
+      .sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.tie - b.tie);
     return { outcome: input.outcome, scriptDynasty: order[0]!.scriptDynasty, basis: "cost_only", candidates: order.map((o) => ({ scriptDynasty: o.scriptDynasty, runs: o.runs, score: null })) };
   }
   const kinds = [...engineMix.keys()];
   const valueOf = (o: string | null): number => (engineCredit.get(o) ?? 0) / (engineMix.get(o) ?? 1);
   const basis = engineCost === null ? "value_only" : "value_per_dollar";
+  let creditedRuns = 0;
+  for (const [k, n] of engineMix) if ((engineCredit.get(k) ?? 0) > 0) creditedRuns += n;
+  const priorRuns = Math.max(ENGINE_PRIOR_RUNS, creditedRuns > 0 ? (PRIOR_CREDITED_RUNS * engineRuns) / creditedRuns : 0);
   const scored = names.map((name) => {
     const own = new Map((rows.get(name)?.reached ?? []).map((x) => [x.outcome, x.runs]));
-    const draws = kinds.map((k) => gammaDraw(Math.max(1e-3, (own.get(k) ?? 0) + (ENGINE_PRIOR_RUNS * (engineMix.get(k) ?? 0)) / engineRuns), input.rng));
+    const draws = kinds.map((k) => gammaDraw(Math.max(1e-3, (own.get(k) ?? 0) + (priorRuns * (engineMix.get(k) ?? 0)) / engineRuns), input.rng));
     const total = draws.reduce((s, d) => s + d, 0);
     const value = kinds.reduce((s, k, i) => s + (draws[i]! / total) * valueOf(k), 0);
     const cost = costOf(name);

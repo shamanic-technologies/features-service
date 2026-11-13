@@ -122,7 +122,41 @@ describe("pickScript", () => {
     expect(tally.get("message_written/new_one") ?? 0).toBeGreaterThan(0);
   });
 
-  it("with no value anywhere the cheapest per run goes first (today's behaviour), then the slug", () => {
+  it("a new script is explored against an incumbent with thousands of runs and rare outcomes (prod 2026-11-13: 0 picks in 50)", () => {
+    const groups = [g("email_sent/incumbent", 13726, [], 520, ["email_sent"]), g("email_sent/incumbent", 5, ["lead_interested"], 2, ["email_sent"])];
+    const rows = scriptRatings({ groups, values: VALUES });
+    const r = rng();
+    let fork = 0;
+    for (let i = 0; i < 1000; i++) if (pickScript({ outcome: "email_sent", candidates: ["email_sent/incumbent", "email_sent/fork"], ratings: rows, values: VALUES, rng: r }).scriptDynasty === "email_sent/fork") fork++;
+    expect(fork).toBeGreaterThan(150);
+    expect(fork).toBeLessThan(600);
+  });
+
+  it("two new scripts start from what the Engine's other scripts showed, and both get picked", () => {
+    const rows = scriptRatings({ groups: GROUPS, values: VALUES });
+    const r = rng();
+    const tally = new Map<string, number>();
+    for (let i = 0; i < 200; i++) {
+      const p = pickScript({ outcome: "message_written", candidates: ["message_written/new_a", "message_written/new_b"], ratings: rows, values: VALUES, rng: r });
+      expect(p.basis).toBe("value_per_dollar");
+      tally.set(p.scriptDynasty!, (tally.get(p.scriptDynasty!) ?? 0) + 1);
+    }
+    expect(tally.get("message_written/new_a")!).toBeGreaterThan(40);
+    expect(tally.get("message_written/new_b")!).toBeGreaterThan(40);
+  });
+
+  it("nothing known at the Engine at all: equals are drawn, never the alphabet", () => {
+    const r = rng();
+    const tally = new Map<string, number>();
+    for (let i = 0; i < 200; i++) {
+      const p = pickScript({ outcome: "brand_new", candidates: ["brand_new/a", "brand_new/b"], ratings: [], values: VALUES, rng: r });
+      tally.set(p.scriptDynasty!, (tally.get(p.scriptDynasty!) ?? 0) + 1);
+    }
+    expect(tally.get("brand_new/a")!).toBeGreaterThan(40);
+    expect(tally.get("brand_new/b")!).toBeGreaterThan(40);
+  });
+
+  it("with no value anywhere the cheapest per run goes first (today's behaviour)", () => {
     const rows = scriptRatings({ groups: GROUPS, values: new Map() });
     const p = pickScript({ outcome: "message_written", candidates: candidates.slice(0, 2), ratings: rows, values: new Map(), rng: rng() });
     expect(p).toMatchObject({ scriptDynasty: "message_written/flash_lite", basis: "cost_only" });
