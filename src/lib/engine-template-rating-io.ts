@@ -127,16 +127,6 @@ export async function ingestTemplateDecisions(): Promise<{ threads: number; sequ
   return { threads: thread.length, sequences: Number((res as unknown as { count?: number }).count ?? 0) };
 }
 
-/** Record one template pick and the decision it makes (the asking run). A write failure logs loud, never fails the pick. */
-export async function recordTemplatePick(p: { outcome: string; place: string; templateDynastySlug: string; runId: string | null; campaignId: string | null }): Promise<void> {
-  try {
-    await db.insert(engineTemplatePicks).values(p);
-    if (p.runId) await db.insert(templateDecisions).values({ decisionRunId: p.runId, templateDynastySlug: p.templateDynastySlug, source: "pick" }).onConflictDoNothing();
-  } catch (error) {
-    console.error(`[features-service] template pick ${p.outcome}|${p.place} -> ${p.templateDynastySlug} not recorded:`, (error as Error).message);
-  }
-}
-
 export async function listTemplatePicks(sinceDay: string): Promise<PickRecord[]> {
   const rows = (await db.execute(sql`
     SELECT outcome, place, template_dynasty_slug, run_id, to_char(picked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day
