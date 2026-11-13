@@ -54841,6 +54841,10 @@
                     "type": "string",
                     "nullable": true,
                     "description": "Why the run was held, a short code (e.g. `budget_spent`); null = it ran."
+                  },
+                  "expected": {
+                    "type": "boolean",
+                    "description": "MON-HELD-FALSE-1113: true = the hold is a normal business state the caller decided on purpose (the client is out of credit, the daily ceiling is reached, a funnel max budget is spent): still named on the next-steps read, never red on Monitoring. Absent or false = a fault (red). Ignored when `heldReason` is null."
                   }
                 },
                 "required": [
@@ -54869,12 +54873,16 @@
                     "heldReason": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "expected": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "campaignId",
                     "outcome",
-                    "heldReason"
+                    "heldReason",
+                    "expected"
                   ]
                 }
               }
