@@ -231,7 +231,8 @@ export function campaignEngineScripts(input: {
     };
   });
   const valueOf = (o: string): number => input.values.get(o)?.valueUsd ?? 0;
-  return rows.sort(
+  // An Engine with no script and no run of this campaign says nothing (a verdict kept on an outcome its scripts left).
+  return rows.filter((r) => r.isTarget || r.scripts.length + r.ruledOut.length + r.past.length > 0).sort(
     (a, b) => Number(b.isTarget) - Number(a.isTarget) || valueOf(b.outcome) - valueOf(a.outcome) || b.campaign.runs - a.campaign.runs || a.outcome.localeCompare(b.outcome),
   );
 }
