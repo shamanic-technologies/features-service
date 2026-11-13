@@ -6,9 +6,6 @@
  */
 import { vi } from "vitest";
 
-// The legacy writer ranking's Engine universe (LLM-RATING-PER-ENGINE-1112): suites see every LLM allowed by default;
-// the filter itself is pinned in routes/leg-writer-ranking-universe.test.ts.
-vi.mock("./lib/engine-llm-universe-io.js", () => ({ pipeLlmUniverse: async () => ({ has: () => true }) as unknown as ReadonlySet<string> }));
 vi.mock("./lib/fleet-positive-repliers.js", () => ({
   fetchFleetPositiveRepliesBySlug: vi.fn(async () => undefined),
   fetchFleetMatureSlugStats: vi.fn(async () => undefined),
