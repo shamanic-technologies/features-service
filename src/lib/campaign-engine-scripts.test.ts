@@ -111,6 +111,11 @@ describe("campaignEngineScripts", () => {
     expect(open.ruledOut).toEqual([]);
   });
 
+  it("leaves out an Engine with no script and no run of this campaign (a verdict on an outcome its scripts left)", () => {
+    const out = run([{ outcome: "message_written", strategyId: "blind-only" }, { outcome: "conversation", strategyId: null }]);
+    expect(out.map((e) => e.outcome)).toEqual(["paid_client", "message_written"]);
+  });
+
   it("the same build reads the same shares on every read", () => {
     expect(run([{ outcome: "message_written", strategyId: "blind-only" }])).toEqual(engines);
   });
