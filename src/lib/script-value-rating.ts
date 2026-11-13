@@ -242,3 +242,18 @@ export function pickScript(input: {
   scored.sort((a, b) => b.score - a.score || a.scriptDynasty.localeCompare(b.scriptDynasty));
   return { outcome: input.outcome, scriptDynasty: scored[0]!.scriptDynasty, basis, candidates: scored };
 }
+
+/**
+ * A script re-homed under another outcome keeps its runs: a dynasty name runnable under exactly ONE outcome today takes
+ * every run recorded under that name, whatever outcome it was filed under then (`conversation/dy_follow_up_due` ->
+ * `lead_interested/dy_follow_up_due`). A name runnable under several outcomes, or under none, keeps its own keys.
+ */
+export function rehomeGroups(groups: readonly ReachGroup[], runnableDynasties: readonly string[]): ReachGroup[] {
+  const nameOf = (key: string): string => key.slice(key.indexOf("/") + 1);
+  const homes = new Map<string, Set<string>>();
+  for (const key of runnableDynasties) homes.set(nameOf(key), (homes.get(nameOf(key)) ?? new Set()).add(key));
+  return groups.map((g) => {
+    const home = homes.get(nameOf(g.scriptDynasty));
+    return home && home.size === 1 ? { ...g, scriptDynasty: [...home][0]! } : g;
+  });
+}

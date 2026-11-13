@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
+import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, rehomeGroups, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
 
 /**
  * SCRIPT-VALUE-RATING-1113 (owner 2026-11-13): a script run is credited the value of the strongest outcome its chain
@@ -130,5 +130,13 @@ describe("pickScript", () => {
 
   it("no candidate = no pick, with the reason", () => {
     expect(pickScript({ outcome: "message_written", candidates: [], ratings: [], values: VALUES, rng: rng() })).toMatchObject({ scriptDynasty: null, basis: "no_candidate" });
+  });
+});
+
+describe("rehomeGroups", () => {
+  it("a script re-homed under another outcome keeps its runs; an ambiguous or retired name keeps its own keys", () => {
+    const groups = [g("conversation/dy_follow_up_due", 3, [], 1), g("old/dy_twice", 1, [], 1), g("gone/dy_retired", 1, [], 1)];
+    const out = rehomeGroups(groups, ["lead_interested/dy_follow_up_due", "a/dy_twice", "b/dy_twice"]);
+    expect(out.map((x) => x.scriptDynasty)).toEqual(["lead_interested/dy_follow_up_due", "old/dy_twice", "gone/dy_retired"]);
   });
 });
