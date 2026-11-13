@@ -55904,6 +55904,342 @@
         }
       }
     },
+    "/internal/research/script-engines": {
+      "get": {
+        "summary": "Monitoring: what the Rating picks today, per Engine (internal, api-key, staff)",
+        "description": "Every Engine, its scripts ranked by today's share of draws among its runnable scripts (no campaign strategy narrowing), each with runs, what they reached, cost per run, the Rating's score and the LLM / template tactics it states. Built off the request path every 15 min, one stored copy; `health.broken` when the build is over an hour old.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "One Engine only."
+            },
+            "required": false,
+            "description": "One Engine only.",
+            "name": "outcome",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The board",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ledgerBuiltAt": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "draws": {
+                      "type": "number"
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "broken": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "board_not_rebuilt",
+                            null
+                          ]
+                        }
+                      },
+                      "required": [
+                        "broken",
+                        "reason"
+                      ]
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string",
+                            "description": "The Engine: the outcome its scripts make."
+                          },
+                          "outcomeValueUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "outcomeValueSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "anchor",
+                              "measured",
+                              "declared",
+                              null
+                            ]
+                          },
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "value_per_dollar",
+                              "value_only",
+                              "cost_only",
+                              "no_candidate"
+                            ],
+                            "description": "How the draws decided (`no_candidate` = no runnable script)."
+                          },
+                          "favourite": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The runnable script with the largest share of today's draws."
+                          },
+                          "runnableScripts": {
+                            "type": "number"
+                          },
+                          "runs": {
+                            "type": "number"
+                          },
+                          "scripts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "scriptDynasty": {
+                                  "type": "string",
+                                  "description": "`<outcome>/<dynasty>`, every version pooled."
+                                },
+                                "runnable": {
+                                  "type": "boolean",
+                                  "description": "Runnable today (workflow-service). A past script keeps its figures and draws nothing."
+                                },
+                                "version": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The runnable version; null = not runnable."
+                                },
+                                "shareOfDrawsPct": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Share of today's draws among the Engine's runnable scripts (the Rating's own Thompson draw, `draws` times), 0..100; null = not runnable."
+                                },
+                                "runs": {
+                                  "type": "number"
+                                },
+                                "reached": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "outcome": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "runs": {
+                                        "type": "number"
+                                      },
+                                      "creditUsd": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "outcome",
+                                      "runs",
+                                      "creditUsd"
+                                    ]
+                                  },
+                                  "description": "Runs by the strongest outcome their chain reached beyond their own Unit (null = none)."
+                                },
+                                "spentUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "costPerRunUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "valuePerRunUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "valuePerDollar": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The Rating's score (credited value per dollar spent): a decision figure, staff only, never a return."
+                                },
+                                "valuePerDollarUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "spend_not_served",
+                                    "no_spend",
+                                    "no_runs",
+                                    null
+                                  ]
+                                },
+                                "llms": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "place": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "provider": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "model": {
+                                        "type": "string",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "place",
+                                      "provider",
+                                      "model"
+                                    ]
+                                  },
+                                  "description": "The LLM tactics workflow-service states on the runnable version (`place` null = every call)."
+                                },
+                                "templates": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "place": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "templateDynastySlug": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "place",
+                                      "templateDynastySlug"
+                                    ]
+                                  },
+                                  "description": "The template tactics workflow-service states on the runnable version."
+                                },
+                                "runsByDay": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "day": {
+                                        "type": "string"
+                                      },
+                                      "runs": {
+                                        "type": "number"
+                                      },
+                                      "spentUsd": {
+                                        "type": "number",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "required": [
+                                      "day",
+                                      "runs",
+                                      "spentUsd"
+                                    ]
+                                  },
+                                  "description": "Runs and spend per UTC day, the last 30 days (days with no run left out)."
+                                }
+                              },
+                              "required": [
+                                "scriptDynasty",
+                                "runnable",
+                                "version",
+                                "shareOfDrawsPct",
+                                "runs",
+                                "reached",
+                                "spentUsd",
+                                "costPerRunUsd",
+                                "valuePerRunUsd",
+                                "valuePerDollar",
+                                "valuePerDollarUnavailableReason",
+                                "llms",
+                                "templates",
+                                "runsByDay"
+                              ]
+                            },
+                            "description": "Runnable first, by share of draws, then the Rating's score, runs, slug."
+                          },
+                          "drawShareHistory": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "day": {
+                                  "type": "string"
+                                },
+                                "shares": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "scriptDynasty": {
+                                        "type": "string"
+                                      },
+                                      "sharePct": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "scriptDynasty",
+                                      "sharePct"
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "day",
+                                "shares"
+                              ]
+                            },
+                            "description": "The stored daily series: each UTC day's share of draws per runnable script (the latest build of the day), last 30 days."
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "outcomeValueUsd",
+                          "outcomeValueSource",
+                          "basis",
+                          "favourite",
+                          "runnableScripts",
+                          "runs",
+                          "scripts",
+                          "drawShareHistory"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "ledgerBuiltAt",
+                    "computedAt",
+                    "draws",
+                    "health",
+                    "engines"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "script_engines_unreadable"
+          },
+          "503": {
+            "description": "script_engines_not_built_yet"
+          }
+        }
+      }
+    },
     "/internal/script-pick": {
       "get": {
         "summary": "Which script an Engine runs now, among the caller's candidates (internal, api-key)",

@@ -1,4 +1,4 @@
-import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric, bigserial } from "drizzle-orm/pg-core";
+import { pgTable, doublePrecision, uuid, text, boolean, integer, bigint, jsonb, timestamp, uniqueIndex, index, primaryKey, numeric, bigserial, date } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const features = pgTable(
@@ -1222,4 +1222,18 @@ export const unitClientReports = pgTable(
     index("unit_client_reports_at").on(table.reportedAt),
     index("unit_client_reports_org_subject").on(table.orgId, table.subjectService, table.subjectId),
   ],
+);
+
+/** The Rating's share of draws per script dynasty per day (SCRIPT-VALUE-RATING-1113-MON, migration 0074). */
+export const scriptDrawShareDays = pgTable(
+  "script_draw_share_days",
+  {
+    day: date("day", { mode: "string" }).notNull(),
+    scriptDynasty: text("script_dynasty").notNull(),
+    outcome: text("outcome").notNull(),
+    sharePct: doublePrecision("share_pct").notNull(),
+    runs: integer("runs").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "script_draw_share_days_pk", columns: [table.day, table.scriptDynasty] })],
 );
