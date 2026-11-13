@@ -5,7 +5,7 @@
  *
  * LLM-RATING-PER-ENGINE-1112 (owner 2026-11-13, « fini de migrer tout ça »): the routes `/public/stats/leg-writer-ranking`
  * and `/internal/writer-pick` (the per-pipe PICK) are DELETED: every LLM and template a run writes with is picked per Engine
- * by the Rating (`routes/engine-llm-rating.ts`). Never serve a per-pipe pick again.
+ * by the Rating (`routes/script-rating.ts`, scripts only). Never serve a per-pipe pick again.
  *
  * Evidence = the Research page's template and model bars (`generationBuckets`): every person the pipe's campaigns emailed
  * is filed under the template and the model that wrote their sequence (content-generation-service's record, the fleet
