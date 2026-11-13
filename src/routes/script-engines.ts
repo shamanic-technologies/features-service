@@ -17,6 +17,7 @@ import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { BOARD_DAYS, BOARD_DRAWS, dayBefore, scriptEngineBoard, type BoardEngine } from "../lib/script-engine-board.js";
 import { buildScriptRating } from "./script-rating.js";
 import { SCRIPT_ENGINES_CELL } from "../lib/engine-favourites.js";
+import type { OutcomeValue, ScriptRating } from "../lib/script-value-rating.js";
 
 const router = Router();
 
@@ -32,6 +33,10 @@ export interface ScriptEnginesCell {
   computedAt: string;
   draws: number;
   engines: BoardEngine[];
+  /** The Rating the board drew on (CAMPAIGN-SCRIPTS-1113: a campaign's own draw among the scripts its strategy keeps
+   *  reads it). Staff and the runner only: never served on a customer body. Absent on a build before it. */
+  ratings?: ScriptRating[];
+  values?: OutcomeValue[];
 }
 
 let building: Promise<"built" | "skipped"> | null = null;
@@ -48,7 +53,7 @@ export function warmScriptEngines(force = false): Promise<"built" | "skipped"> {
       const now = Date.now();
       const today = new Date(now).toISOString().slice(0, 10);
       const engines = scriptEngineBoard({ ratings: rating.scripts, values: rating.valueMap, runnable: rating.runnable, groups: rating.groups, today, rng: Math.random });
-      const cell: ScriptEnginesCell = { ledgerBuiltAt: rating.builtAt, computedAt: new Date(now).toISOString(), draws: BOARD_DRAWS, engines };
+      const cell: ScriptEnginesCell = { ledgerBuiltAt: rating.builtAt, computedAt: new Date(now).toISOString(), draws: BOARD_DRAWS, engines, ratings: rating.scripts, values: rating.values };
       await storeFleetCell(SCRIPT_ENGINES_CELL, JSON.stringify(cell), now);
       await storeTodayShares(today, engines);
       return "built";

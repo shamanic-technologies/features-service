@@ -46,6 +46,7 @@ import scriptStrategyRoutes from "./routes/script-strategy.js";
 import engineStrategyRoutes from "./routes/engine-strategies.js";
 import unitReportsRoutes from "./routes/unit-reports.js";
 import scriptRatingRoutes from "./routes/script-rating.js";
+import campaignEngineScriptsRoutes from "./routes/campaign-engine-scripts.js";
 import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "./routes/script-engines.js";
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
@@ -160,6 +161,7 @@ app.use(engineStrategyRoutes);
 app.use(unitReportsRoutes);
 app.use(scriptRatingRoutes);
 app.use(scriptEnginesRoutes);
+app.use(campaignEngineScriptsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 

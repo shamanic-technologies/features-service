@@ -6591,6 +6591,69 @@ registry.registerPath({
     503: { description: "script_engines_not_built_yet" },
   },
 });
+const CampaignScriptRunsSchema = z.object({
+  runs: z.number().describe("This campaign's runs of the script (its unit campaigns' script decisions), whole history."),
+  reached: z.array(z.object({ outcome: z.string().nullable(), label: z.string().nullable(), runs: z.number() })).describe("This campaign's runs by the strongest outcome each reached beyond its own Unit (`outcome` null = nothing beyond it), most runs first."),
+  spentUsd: z.number().nullable().describe("What those runs cost (billed, the decision and everything under it); null = runs-service does not serve it."),
+  costPerRunUsd: z.number().nullable(),
+  lastRunDay: z.string().nullable().describe("UTC day of this campaign's last run of the script; null = never ran here."),
+});
+const CampaignScriptRowSchema = z.object({
+  script: z.string().describe("`<outcome>/<dynasty>`: the Script dynasty (every version pooled)."),
+  dynasty: z.string(),
+  version: z.number().nullable().describe("The runnable version today; null = no longer runnable."),
+  description: z.string().nullable(),
+  shareOfDrawsPct: z.number().nullable().describe("Share of today's draws among the scripts this campaign's strategy keeps, 0..100 (they add to ~100); null = not competing (ruled out or no longer runnable)."),
+  drawnMost: z.boolean().describe("The script the draws pick most often today for this campaign."),
+  ruledOutReason: z.string().nullable().describe("Why the campaign's strategy rules it out, in words; null when kept."),
+  llms: z.array(z.object({ place: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable() })).describe("The LLM tactics the script states (`place` null = every call)."),
+  templates: z.array(z.object({ place: z.string().nullable(), templateDynastySlug: z.string() })).describe("The template tactics the script states."),
+  campaign: CampaignScriptRunsSchema,
+});
+const CampaignEngineSchema = z.object({
+  outcome: z.string().describe("The Engine: the outcome its scripts make."),
+  label: z.string(),
+  isTarget: z.boolean().describe("The Engine of the campaign's Target."),
+  strategyState: z.enum(["kept", "no_condition", "not_judged_yet"]).describe("`kept` = the campaign's brief keeps a strategy on this Engine; `no_condition` = every runnable script competes; `not_judged_yet` = the Engine runner judges the brief on its first run here (until then every runnable script is listed)."),
+  strategy: z.object({ id: z.string(), name: z.string(), description: z.string() }).nullable(),
+  rules: z.array(z.object({ kind: z.enum(["requires", "excludes"]), tacticId: z.string(), name: z.string(), clientLine: z.string().nullable() })).describe("What the strategy requires and excludes of a script, in words."),
+  drawRule: z.enum(["what_runs_led_to_per_cost", "what_runs_led_to", "cheapest_per_run", "no_script"]).describe("How today's draws choose: on what each script's runs led to per cost, on what they led to (no cost known), the cheapest per run (nothing valued yet), or nothing can run."),
+  runsNow: z.string().nullable().describe("The script the draws pick most now; null = none can run."),
+  scripts: z.array(CampaignScriptRowSchema).describe("The scripts competing for this campaign, most drawn first."),
+  ruledOut: z.array(CampaignScriptRowSchema).describe("Runnable scripts the strategy rules out, each with its reason (and this campaign's runs of it before)."),
+  past: z.array(CampaignScriptRowSchema).describe("Scripts this campaign ran on the Engine that are no longer runnable."),
+  campaign: z.object({ runs: z.number(), spentUsd: z.number().nullable(), costPerRunUsd: z.number().nullable() }).describe("This campaign's script runs on the Engine, every script."),
+});
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{id}/engine-scripts",
+  summary: "A campaign's Engines in scripts: what competes, today's draws, its own runs (org-scoped)",
+  description:
+    "CAMPAIGN-SCRIPTS-1113. From the campaign's Target down, at each Engine it uses (its Target's, those its brief keeps a strategy on, those its runs ran): the scripts its strategy keeps and what it rules out in words, today's share of draws among the kept ones (the Rating's own draw, for this campaign's candidates only; shares add to ~100), this campaign's own runs of each (runs, what they reached, cost per run, last day), and the script the draws pick most now. No decision score is served. 503 `script_rating_not_built_yet` while the Rating's first build runs (every 15 min).",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ brandId: z.string(), id: z.string().describe("The sales funnel campaign id.") }) },
+  responses: {
+    200: {
+      description: "The campaign's Engines",
+      content: {
+        "application/json": {
+          schema: z.object({
+            salesFunnelCampaignId: z.string(),
+            brandId: z.string(),
+            target: z.object({ key: z.string(), label: z.string() }).nullable(),
+            ratingComputedAt: z.string().describe("When the Rating the draws read was built."),
+            runsBuiltAt: z.string().nullable().describe("When runs-service built the script runs read (null = the campaign has none yet)."),
+            draws: z.number(),
+            engines: z.array(CampaignEngineSchema),
+          }),
+        },
+      },
+    },
+    404: { description: "sales_funnel_campaign_not_found | brand_not_found" },
+    502: { description: "campaign_engine_scripts_unreadable" },
+    503: { description: "script_rating_not_built_yet" },
+  },
+});
 registry.registerPath({
   method: "get",
   path: "/internal/script-pick",
