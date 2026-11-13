@@ -9,8 +9,8 @@ import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { LEAD_STATES } from "../lib/lead-states.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
-import { readRunnableScripts, scriptDynastyKey } from "../lib/script-catalogue-client.js";
-import { applyReports, outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ScriptRating } from "../lib/script-value-rating.js";
+import { readRunnableScripts, scriptDynastyKey, type RunnableScript } from "../lib/script-catalogue-client.js";
+import { applyReports, outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ReachGroup, type ScriptRating } from "../lib/script-value-rating.js";
 import { readOutcomeChains, readReportedDecisions } from "../lib/script-value-rating-io.js";
 import { listUnitReports } from "../lib/unit-client-reports-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
@@ -31,7 +31,8 @@ export interface ScriptRatingBody {
   clientReports: { units: number; decisions: number };
 }
 
-async function build(): Promise<ScriptRatingBody & { valueMap: Map<string, OutcomeValue> }> {
+/** The whole Rating: the served body, plus what Monitoring's board reads beside it (the groups and runnable scripts). */
+export async function buildScriptRating(): Promise<ScriptRatingBody & { valueMap: Map<string, OutcomeValue>; groups: ReachGroup[]; runnable: RunnableScript[] }> {
   const [chains, ltr, runnable, reports] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts(), listUnitReports()]);
   const reported = reports.length ? await readReportedDecisions(reports) : [];
   const model = await loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source);
@@ -47,12 +48,14 @@ async function build(): Promise<ScriptRatingBody & { valueMap: Map<string, Outco
     scripts: scriptRatings({ groups, values: valueMap }),
     clientReports: { units: reports.length, decisions: reported.length },
     valueMap,
+    groups,
+    runnable,
   };
 }
 
 router.get("/internal/script-ratings", apiKeyOnly, async (_req: Request, res: Response) => {
   try {
-    const { valueMap: _valueMap, ...body } = await build();
+    const { valueMap: _valueMap, groups: _groups, runnable: _runnable, ...body } = await buildScriptRating();
     res.json(body);
   } catch (error) {
     console.error("[features-service] script ratings:", error);
@@ -68,7 +71,7 @@ router.get("/internal/script-pick", apiKeyOnly, async (req: Request, res: Respon
     return;
   }
   try {
-    const b = await build();
+    const b = await buildScriptRating();
     res.json({ ...pickScript({ outcome, candidates: dynasties, ratings: b.scripts, values: b.valueMap, rng: Math.random }), builtAt: b.builtAt });
   } catch (error) {
     console.error(`[features-service] script pick ${outcome}:`, error);

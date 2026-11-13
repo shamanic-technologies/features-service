@@ -519,6 +519,13 @@
       "when": 1795363200000,
       "tag": "0073_unit_client_reports_unit_at",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1795449600000,
+      "tag": "0074_script_draw_share_days",
+      "breakpoints": true
     }
   ]
 }
