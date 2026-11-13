@@ -1555,8 +1555,8 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
 
 /**
  * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
- * ranking's first workflow x the Rating's favourite template and LLM of the pipe's Engine (LLM-RATING-PER-ENGINE-1112: the
- * per-pipe writer pick is deleted). A pipe whose pick cannot be read says so on its own block (logged), never fails the tab.
+ * ranking's first workflow x the template and LLM the Rating's favourite SCRIPT of the pipe's Engine states
+ * (SCRIPT-VALUE-RATING-1113-MON, `lib/engine-favourites.ts`: a pick is always a script). A pipe whose pick cannot be read says so on its own block (logged), never fails the tab.
  */
 async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNow> {
   const none = { workflow: null, template: null, llm: null };

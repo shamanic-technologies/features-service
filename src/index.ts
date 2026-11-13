@@ -43,12 +43,9 @@ import researchRoutes, { startResearchRefreshLoop } from "./routes/research.js";
 import { legWriterRankingBootPipes, warmLegWriterRankingOnBoot } from "./routes/leg-writer-ranking.js";
 import scriptStrategyRoutes from "./routes/script-strategy.js";
 import engineStrategyRoutes from "./routes/engine-strategies.js";
-import engineLlmRatingRoutes from "./routes/engine-llm-rating.js";
 import unitReportsRoutes from "./routes/unit-reports.js";
 import scriptRatingRoutes from "./routes/script-rating.js";
 import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "./routes/script-engines.js";
-import { startEngineLlmEvidenceLoop, warmEngineLlmEvidence } from "./lib/engine-llm-rating-io.js";
-import { startLlmCallFeed } from "./lib/llm-call-feed.js";
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import boxHealthRoutes from "./routes/box-health.js";
@@ -158,7 +155,6 @@ app.use(fleetIndexesRoutes);
 app.use(researchRoutes);
 app.use(scriptStrategyRoutes);
 app.use(engineStrategyRoutes);
-app.use(engineLlmRatingRoutes);
 app.use(unitReportsRoutes);
 app.use(scriptRatingRoutes);
 app.use(scriptEnginesRoutes);
@@ -189,8 +185,6 @@ async function bootWarmSteps(): Promise<BootWarmStep[]> {
     { name: "outcome prices", run: () => warmOutcomePrices() },
     // The agent catalogue's pipe economics are fleet walks too: built off the request path.
     { name: "agent catalogue figures", run: () => warmCatalogueMeasurementsOnBoot() },
-    // The LLM Rating's evidence (every LLM call per Engine, LLM-RATING-PER-ENGINE-1112): stored, skipped while fresh.
-    { name: "LLM rating evidence", run: () => warmEngineLlmEvidence() },
     // Monitoring's board of what the Rating picks per Engine (SCRIPT-VALUE-RATING-1113-MON): stored, skipped while fresh.
     { name: "script engines board", run: () => warmScriptEngines() },
   ];
@@ -295,12 +289,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startBulkRunSweep();
         // A campaign whose Engine cannot run is red on Monitoring (NO-BRIEF-UNBLOCK-1111, lib/engine-held-monitor.ts).
         startEngineHeldMonitor();
-        // The LLM Rating's evidence, rebuilt every 15 minutes (LLM-RATING-PER-ENGINE-1112).
-        startEngineLlmEvidenceLoop();
         // Monitoring's board of what the Rating picks per Engine, rebuilt every 15 minutes (SCRIPT-VALUE-RATING-1113-MON).
         startScriptEnginesLoop();
-        // ... from our copy of every LLM call the fleet made, followed every 2 minutes (lib/llm-call-feed.ts).
-        startLlmCallFeed();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
