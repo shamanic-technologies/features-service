@@ -122,16 +122,6 @@ export async function withFactoryEngineMarks<B>(body: B): Promise<B> {
   } as B;
 }
 
-/** The Research Engine places (`GET /internal/research/engine-places`), each candidate and favourite with its workflow's mark. */
-export async function withResearchPlaceMarks<C extends WorkflowRef, P extends { favourite: C | null; candidates: C[] }>(places: readonly P[]): Promise<P[]> {
-  const marks = await marksFor("workflow", places.flatMap((p) => p.candidates.map((c) => c.workflowDynastySlug)));
-  return places.map((p) => ({
-    ...p,
-    favourite: p.favourite ? withScriptMark(p.favourite, marks.get(p.favourite.workflowDynastySlug)) : null,
-    candidates: p.candidates.map((c) => withScriptMark(c, marks.get(c.workflowDynastySlug))),
-  }));
-}
-
 /** A campaign's people journeys (`GET /brands/:brandId/sales-funnel-campaigns/:id/people-journeys`), each script with its mark. */
 export async function withJourneyScriptMarks<S extends WorkflowRef, T extends { scripts: S[] }>(transitions: readonly T[]): Promise<Array<T & { scripts: Array<S & ScriptMark> }>> {
   const marks = await marksFor("workflow", transitions.flatMap((t) => t.scripts.map((s) => s.workflowDynastySlug)));
