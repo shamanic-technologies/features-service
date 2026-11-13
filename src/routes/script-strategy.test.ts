@@ -114,6 +114,15 @@ describe("POST /internal/campaign-engine-answers (NEXT-STEPS-TRUE-REASON-1111)",
     expect((await post({ campaignId: "c9", heldReason: "x" })).status).toBe(400);
     expect((await post({ campaignId: "c9", outcome: "email_sent" })).status).toBe(400);
     expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: "  " })).status).toBe(400);
+    expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: "x", expected: "yes" })).status).toBe(400);
+  });
+  it("records a hold stated as expected (MON-HELD-FALSE-1113); a cleared answer is never expected", async () => {
+    __resetEngineAnswersForTest();
+    const r = await post({ campaignId: "c9", outcome: "email_sent", heldReason: "daily_ceiling_reached", expected: true });
+    expect(r.status).toBe(202);
+    expect(r.body).toEqual({ campaignId: "c9", outcome: "email_sent", heldReason: "daily_ceiling_reached", expected: true });
+    expect(engineAnswersNow()).toMatchObject([{ heldReason: "daily_ceiling_reached", expected: true }]);
+    expect((await post({ campaignId: "c9", outcome: "email_sent", heldReason: null, expected: true })).body.expected).toBe(false);
   });
 
   it("a brand with zero history (no campaign yet) gets the Engine's runnable scripts, never a 503 (PREVIEW-EMAIL-503-1111)", async () => {

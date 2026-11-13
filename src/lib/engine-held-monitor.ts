@@ -3,6 +3,10 @@
  * the campaign's strategy keeps and got no answer it can run on) is RED on dashboard v2 Monitoring, check
  * `campaign-engine-held` in the box-checks registry (`lib/box-checks.ts`, the Box watchdogs tile). Red ONLY while broken:
  * a (campaign, Engine) counts when its LATEST answer within the last hour was a refusal; one good answer after it clears it.
+ * A hold its stating service calls EXPECTED (MON-HELD-FALSE-1113: the client is out of credit, the daily ceiling is
+ * reached, a funnel max budget is spent: decisions made on purpose, not a fault) is never red: it is counted apart in the
+ * run's details. The service that holds the run says which it is (`expected` on `POST /internal/campaign-engine-answers`);
+ * an answer that does not say is a fault (red), and every refusal of this service (`/internal/script-strategy`) is a fault.
  *
  * In memory: `/internal/script-strategy` notes every answer (`noteEngineAnswer`); a loop writes one run every 10 minutes
  * (first a minute after listen). A restart forgets the past answers: the runner asks again within minutes, so a campaign
@@ -23,13 +27,15 @@ export interface EngineAnswer {
   outcome: string;
   /** null = the runner got its scripts; else the refusal reason served. */
   heldReason: string | null;
+  /** MON-HELD-FALSE-1113: the holding service states the hold is a normal business state (never red). */
+  expected?: boolean;
   at: number;
 }
 
 const latest = new Map<string, EngineAnswer>();
 
-export function noteEngineAnswer(campaignId: string, outcome: string, heldReason: string | null, at = Date.now()): void {
-  latest.set(`${campaignId}|${outcome}`, { campaignId, outcome, heldReason, at });
+export function noteEngineAnswer(campaignId: string, outcome: string, heldReason: string | null, at = Date.now(), expected = false): void {
+  latest.set(`${campaignId}|${outcome}`, { campaignId, outcome, heldReason, expected: heldReason !== null && expected, at });
   // NEXT-STEPS-TRUE-REASON-1111: stored too, so the campaign's next-steps read names the Engine that cannot run.
   void persistEngineAnswer(campaignId, outcome, heldReason, at);
   if (latest.size > 20_000) {
@@ -48,7 +54,8 @@ export function engineAnswersNow(): EngineAnswer[] {
 /** PURE: the box-check run for the answers held now. */
 export function engineHeldRun(answers: readonly EngineAnswer[], now: number): BoxCheckRun {
   const recent = answers.filter((a) => now - a.at <= ENGINE_HELD_WINDOW_MS);
-  const held = recent.filter((a) => a.heldReason !== null).sort((a, b) => (a.campaignId < b.campaignId ? -1 : a.campaignId > b.campaignId ? 1 : a.outcome < b.outcome ? -1 : 1));
+  const expectedHolds = recent.filter((a) => a.heldReason !== null && a.expected === true);
+  const held = recent.filter((a) => a.heldReason !== null && a.expected !== true).sort((a, b) => (a.campaignId < b.campaignId ? -1 : a.campaignId > b.campaignId ? 1 : a.outcome < b.outcome ? -1 : 1));
   const campaigns = new Set(held.map((a) => a.campaignId)).size;
   return {
     check: ENGINE_HELD_CHECK,
@@ -56,7 +63,7 @@ export function engineHeldRun(answers: readonly EngineAnswer[], now: number): Bo
     ok: held.length === 0,
     reason:
       held.length === 0
-        ? `Every campaign Engine that asked in the last hour could run (${recent.length} asked).`
+        ? `Every campaign Engine that asked in the last hour could run (${recent.length} asked${expectedHolds.length ? `, ${expectedHolds.length} held on purpose: ${expectedReasonsLine(expectedHolds)}` : ""}).`
         : `${campaigns} campaign${campaigns === 1 ? "" : "s"} cannot run ${held.length === 1 ? "an Engine" : `${held.length} Engines`}: ${held
             .slice(0, 5)
             .map((a) => `${a.outcome} on ${a.campaignId} (${a.heldReason})`)
@@ -65,8 +72,26 @@ export function engineHeldRun(answers: readonly EngineAnswer[], now: number): Bo
     label: "Campaign Engines held",
     value: held.length,
     unit: "engines",
-    details: { held: held.slice(0, 100).map((a) => ({ campaignId: a.campaignId, outcome: a.outcome, reason: a.heldReason, at: new Date(a.at).toISOString() })), asked: recent.length },
+    details: {
+      held: held.slice(0, 100).map((a) => ({ campaignId: a.campaignId, outcome: a.outcome, reason: a.heldReason, at: new Date(a.at).toISOString() })),
+      heldOnPurpose: expectedHolds.length,
+      heldOnPurposeByReason: countByReason(expectedHolds),
+      asked: recent.length,
+    },
   };
+}
+
+function countByReason(answers: readonly EngineAnswer[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const a of answers) out[a.heldReason ?? ""] = (out[a.heldReason ?? ""] ?? 0) + 1;
+  return out;
+}
+
+function expectedReasonsLine(answers: readonly EngineAnswer[]): string {
+  return Object.entries(countByReason(answers))
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([reason, n]) => `${n} ${reason}`)
+    .join(", ");
 }
 
 let started = false;
