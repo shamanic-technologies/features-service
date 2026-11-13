@@ -43,6 +43,7 @@ import { legWriterRankingBootPipes, warmLegWriterRankingOnBoot } from "./routes/
 import scriptStrategyRoutes from "./routes/script-strategy.js";
 import engineStrategyRoutes from "./routes/engine-strategies.js";
 import engineLlmRatingRoutes from "./routes/engine-llm-rating.js";
+import unitReportsRoutes from "./routes/unit-reports.js";
 import { startEngineLlmEvidenceLoop, warmEngineLlmEvidence } from "./lib/engine-llm-rating-io.js";
 import { startLlmCallFeed } from "./lib/llm-call-feed.js";
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
@@ -154,6 +155,7 @@ app.use(researchRoutes);
 app.use(scriptStrategyRoutes);
 app.use(engineStrategyRoutes);
 app.use(engineLlmRatingRoutes);
+app.use(unitReportsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 

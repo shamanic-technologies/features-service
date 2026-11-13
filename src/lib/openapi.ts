@@ -6598,6 +6598,28 @@ registry.registerPath({
   responses: { 200: { description: "The stored row", content: { "application/json": { schema: UniverseRuleSchema } } }, 400: { description: "universe_unrecognised | llm_dynasty_unknown" }, 502: { description: "universe_unwritable" } },
 });
 
+const UnitReportRequestSchema = z.object({
+  outcomeKey: z.string().describe("The outcome of the Unit, as the ledger names it (e.g. `message_written`)."),
+  subjectService: z.string().describe("The service holding the Unit's subject, as the ledger names it."),
+  subjectId: z.string().describe("The subject's id in that service."),
+  kind: z.enum(["edited", "reported"]).describe("`edited` = the client changed what we wrote; `reported` = the client said it is not good (a Unit it cannot edit, e.g. a sent message)."),
+  source: z.string().describe("Where it was said (the dashboard, the API, the MCP, Sophie): free text."),
+  note: z.string().describe("What the client said, when it said something.").nullable().optional(),
+});
+registry.registerPath({
+  method: "post",
+  path: "/orgs/unit-reports",
+  summary: "A client says a Unit we made is not good (an edit, or a report)",
+  description: "One door for every surface. The Rating reads a reported Unit as worth nothing for the script that made it; silence says nothing, and there is no positive vote. Append-only.",
+  tags: ["Features"],
+  request: { body: { content: { "application/json": { schema: UnitReportRequestSchema } } } },
+  responses: {
+    201: { description: "The stored report", content: { "application/json": { schema: UnitReportRequestSchema.extend({ id: z.string(), orgId: z.string(), userId: z.string(), note: z.string().nullable(), reportedAt: z.string() }) } } },
+    400: { description: "unit_report_unrecognised" },
+    502: { description: "unit_report_unwritable" },
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/leg-workflow-ranking",
