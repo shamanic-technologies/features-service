@@ -38,6 +38,16 @@ export interface StepRate {
   ledUnits: number;
 }
 
+/**
+ * THE ONE RULE for whether the ledger MEASURES a step (the Rating's values and the client's rates read it alike,
+ * SCRIPT-VALUE-RATING-1113-RATES): at least `MIN_CONSUMED_UNITS` consumed Units of the step's start AND at least one of
+ * them led to its end; then the share, else null (the step takes a declared rate).
+ */
+export function measuredStepShare(s: Pick<StepRate, "consumedUnits" | "ledUnits">): number | null {
+  if (!(s.consumedUnits >= MIN_CONSUMED_UNITS) || !(s.ledUnits > 0)) return null;
+  return Math.min(1, s.ledUnits / s.consumedUnits);
+}
+
 export interface OutcomeValue {
   outcome: string;
   valueUsd: number;
@@ -59,9 +69,10 @@ export function outcomeValues(input: {
   const edges = new Map<string, Array<{ toOutcome: string; share: number }>>();
   for (const s of input.steps) {
     if (s.fromOutcome === s.toOutcome || s.fromOutcome === input.anchor.outcome) continue;
-    if (!(s.consumedUnits >= MIN_CONSUMED_UNITS) || !(s.ledUnits > 0)) continue;
+    const share = measuredStepShare(s);
+    if (share === null) continue;
     const list = edges.get(s.fromOutcome) ?? [];
-    list.push({ toOutcome: s.toOutcome, share: Math.min(1, s.ledUnits / s.consumedUnits) });
+    list.push({ toOutcome: s.toOutcome, share });
     edges.set(s.fromOutcome, list);
   }
   const outcomes = new Set<string>([...edges.keys(), ...input.declared.keys()]);

@@ -49437,6 +49437,183 @@
         }
       }
     },
+    "/brands/{brandId}/rate-sources": {
+      "get": {
+        "summary": "Which leg rates the client is asked: only those the brand's ledger cannot measure",
+        "description": "SCRIPT-VALUE-RATING-1113-RATES (owner 2026-11-13). Per leg the client can state today (brand-service's leg list): the brand's one-step rate in runs-service's outcome chains (of the consumed Units of the start, the share whose consuming run produced the end), measured when it passes the script Rating's bar (minConsumedUnits consumed, at least one led); otherwise ask: true, prefilled with defaultRatePct. A brand with too few Units is never measured on the fleet's rate. Additive: moves no price, campaign or expected return. Org-scoped (x-org-id); unknown or foreign brand = 404 brand_not_found; a producer down = 502 rate_sources_unreadable.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every leg with its source.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "builtAt": {
+                      "type": "string",
+                      "description": "When runs-service built the outcome chains."
+                    },
+                    "minConsumedUnits": {
+                      "type": "number"
+                    },
+                    "reportsMeetings": {
+                      "type": "boolean"
+                    },
+                    "legs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromStep": {
+                            "type": "string",
+                            "description": "brand-service's own step words (the key a leg-rate write joins on)."
+                          },
+                          "toStep": {
+                            "type": "string"
+                          },
+                          "legKey": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The catalogue leg (joins GET /public/channels legs[]); null = the catalogue carries none."
+                          },
+                          "fromOutcome": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The ledger outcome the leg starts from (the catalogue step, or the lead state the ledger declares it under); null = not a ledger step."
+                          },
+                          "toOutcome": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "ask": {
+                            "type": "boolean",
+                            "description": "true = the client is asked this rate: the brand's ledger does not measure it (see unmeasuredReason). false = measured, show it read-only."
+                          },
+                          "ratePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The rate in force, 0..100: measured, else stated by the client, else the default. Null only when none exists."
+                          },
+                          "source": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "measured",
+                              "stated",
+                              "default",
+                              null
+                            ]
+                          },
+                          "ledger": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "consumedUnits": {
+                                "type": "number"
+                              },
+                              "ledUnits": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "consumedUnits",
+                              "ledUnits"
+                            ],
+                            "description": "The brand's own ledger on the leg whatever the bar: consumed Units of the start, those whose consuming run produced the end. Null = not a ledger step."
+                          },
+                          "measuredRatePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The brand's measured rate (ledUnits / consumedUnits), null unless it passes the bar (the script Rating's rule)."
+                          },
+                          "unmeasuredReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "not_a_ledger_step",
+                              "too_few_units",
+                              "nothing_led_yet",
+                              "brand_reports_no_meetings",
+                              null
+                            ],
+                            "description": "Why the leg is asked. brand_reports_no_meetings = a leg touching a meeting step on a brand that never reported a meeting (MEETING-POPULATION-1018): unmeasured, never 0 %."
+                          },
+                          "statedRatePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "What the client stated, null when never stated."
+                          },
+                          "defaultRatePct": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The prefill of an asked rate."
+                          },
+                          "defaultSource": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "fleet_measured",
+                              "leg_default",
+                              null
+                            ],
+                            "description": "fleet_measured = every brand's ledger on the step passes the bar (never on a meeting leg); leg_default = the leg's seeded benchmark."
+                          }
+                        },
+                        "required": [
+                          "fromStep",
+                          "toStep",
+                          "legKey",
+                          "fromOutcome",
+                          "toOutcome",
+                          "ask",
+                          "ratePct",
+                          "source",
+                          "ledger",
+                          "measuredRatePct",
+                          "unmeasuredReason",
+                          "statedRatePct",
+                          "defaultRatePct",
+                          "defaultSource"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "builtAt",
+                    "minConsumedUnits",
+                    "reportsMeetings",
+                    "legs"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Brand not held by the org"
+          },
+          "502": {
+            "description": "A producer could not be read"
+          }
+        }
+      }
+    },
     "/brands/{brandId}/conversion-rates": {
       "get": {
         "summary": "The effective conversion rate of every arrow of a brand's funnels, and where it came from",
