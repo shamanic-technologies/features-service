@@ -6524,66 +6524,6 @@ const EngineTemplateRowSchema = EngineLlmRowSchema.omit({ llmDynastySlug: true, 
 });
 registry.registerPath({
   method: "get",
-  path: "/internal/template-pick",
-  summary: "Which template dynasty one writing call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
-  description:
-    "LLM-RATING-PER-ENGINE-1112 phase 2. Candidates = the active template dynasties (with a head) content-generation lists for the Engine's outcome, narrowed by the campaign's strategy on templates when `campaignId` is given; Thompson on rate per dollar, beliefs seeded from every decision a template wrote (thread generations, sequences) and every pick since. Send the run in `x-run-id`. Never a default template.",
-  tags: ["Internal"],
-  request: { query: z.object({ outcome: z.string(), place: z.string(), campaignId: z.string().optional().describe("Its strategy on templates narrows the candidates."), strategyId: z.string().optional().describe("No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`.") }) },
-  responses: {
-    200: {
-      description: "The pick",
-      content: {
-        "application/json": {
-          schema: z.object({
-            outcome: z.string(),
-            place: z.string(),
-            template: z.object({ templateDynastySlug: z.string(), name: z.string(), head: z.string().nullable() }),
-            candidates: z.array(z.string()),
-            evidenceComputedAt: z.string().nullable(),
-            evidenceUnavailableReason: z.enum(["evidence_not_built_yet"]).nullable(),
-          }),
-        },
-      },
-    },
-    400: { description: "outcome_and_place_required" },
-    404: { description: "strategy_not_found" },
-    422: { description: "no_template_for_engine: no active template dynasty the Engine may write with (under its campaign's strategy). Write nothing and retry later." },
-    502: { description: "template_rating_unreadable" },
-  },
-});
-registry.registerPath({
-  method: "get",
-  path: "/internal/llm-pick",
-  summary: "Which LLM one LLM call of a script uses: the Rating's pick for the Engine x place (internal, api-key)",
-  description:
-    "LLM-RATING-PER-ENGINE-1112 (owner 2026-11-12, option A). Thompson sampling on rate per dollar over the Engine's universe of LLMs (served today, vendor in credit), beliefs pooled Engine -> LLM -> LLM at this place, seeded from every past LLM call. Never a pipe, a channel or a default model. Send the run in `x-run-id`: the pick is recorded (share of picks, the call's place).",
-  tags: ["Internal"],
-  request: { query: z.object({ outcome: z.string().describe("The Engine's outcome key (e.g. x_post_published)."), place: z.string().describe("The name the script gives this LLM call (e.g. writer, angles, judge)."), campaignId: z.string().optional().describe("The campaign the run works for: its strategy on LLMs narrows the candidates."), strategyId: z.string().optional().describe("No campaign yet (a preview): the strategy that narrows the candidates (404 `strategy_not_found`). Ignored with `campaignId`.") }) },
-  responses: {
-    200: {
-      description: "The pick",
-      content: {
-        "application/json": {
-          schema: z.object({
-            outcome: z.string(),
-            place: z.string(),
-            llm: z.object({ llmDynastySlug: z.string(), name: z.string(), provider: z.string().nullable(), model: z.string().describe("The name to pass to chat-service / content-generation (the dynasty slug: it runs the dynasty's head).") }),
-            candidates: z.array(z.string()),
-            evidenceComputedAt: z.string().nullable(),
-            evidenceUnavailableReason: z.enum(["evidence_not_built_yet"]).nullable(),
-          }),
-        },
-      },
-    },
-    400: { description: "outcome_and_place_required" },
-    404: { description: "strategy_not_found" },
-    422: { description: "no_llm_in_engine_universe: no LLM of the Engine's universe is served with its vendor in credit. Write nothing and retry later." },
-    502: { description: "llm_rating_unreadable" },
-  },
-});
-registry.registerPath({
-  method: "get",
   path: "/internal/research/engine-llms",
   summary: "Per Engine: its allowed LLMs, each ranked with usage stats, today's favourite (internal, api-key, staff)",
   description: "LLM-RATING-PER-ENGINE-1112. Every figure served; the browser computes nothing. LLMs the Engine used that are outside its universe today are listed apart with their history (`outsideUniverse`).",
