@@ -1,11 +1,11 @@
 /**
  * THE BEST TEMPLATE AND THE BEST LLM OF EVERY PIPE THAT WRITES (BEST-TPL-LLM-1022, owner 2026-10-22). The order is
- * `lib/leg-writer-ranking.ts` (the ONE leg order the workflows follow, on $/outcome); this file reads the evidence,
- * builds it off the request path and serves it.
+ * `lib/leg-writer-ranking.ts` (the ONE leg order the workflows follow, on $/outcome); this file reads the evidence and
+ * builds it off the request path. Read by the Research page ONLY (its template / model bars and post figures).
  *
- *   GET /public/stats/leg-writer-ranking?featureSlug=&leg=[&strategyId=]   both rankings of one pipe (no identity)
- *   GET /internal/writer-pick?workflowSlug=[&campaignId=]                    what a run writes with (api key, workflow-service)
- *   GET /internal/writer-pick?campaignId=                                    the same for an Engine run (no workflow): the campaign's pipe
+ * LLM-RATING-PER-ENGINE-1112 (owner 2026-11-13, « fini de migrer tout ça »): the routes `/public/stats/leg-writer-ranking`
+ * and `/internal/writer-pick` (the per-pipe PICK) are DELETED: every LLM and template a run writes with is picked per Engine
+ * by the Rating (`routes/engine-llm-rating.ts`). Never serve a per-pipe pick again.
  *
  * Evidence = the Research page's template and model bars (`generationBuckets`): every person the pipe's campaigns emailed
  * is filed under the template and the model that wrote their sequence (content-generation-service's record, the fleet
@@ -20,8 +20,6 @@
  * at all says so (`writerEvidence: no_sequence_recorded_on_pipe`) and still picks: every candidate is LEARNING at $0, the
  * learning rule explores them in turn (WA-PIPE-RESEARCH-1023, supersedes "never a pick on zero evidence").
  */
-import { Router, type Request, type Response } from "express";
-import { apiKeyOnly } from "../middleware/auth.js";
 import { loadFleetCell, storeFleetCell } from "../lib/fleet-cell-store.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { awaitWarmStore } from "../lib/await-warm-store.js";
@@ -52,9 +50,7 @@ import { playOfLegRead } from "./workflow-projection.js";
 import { readOutOfCreditProvidersSoft } from "../lib/vendor-credit-client.js";
 import { postWriterBars, ZERO_POST_FIGURES, type PostFigures, type PostWriterBars } from "../lib/post-writer-evidence.js";
 import { readPostPipeEvidence } from "../lib/post-writer-evidence-io.js";
-import { pipeLlmUniverse } from "../lib/engine-llm-universe-io.js";
 
-const router = Router();
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -493,218 +489,3 @@ export function __resetLegWriterRanking(): void {
 
 // ── Serving: one strategy applied on read ──────────────────────────────────────────────────────
 
-export interface ServedWriterRanking {
-  rows: Array<TemplateRow | LlmRow>;
-  best: TemplateRow | LlmRow | null;
-  excluded: WriterRanking["excluded"];
-  /** Null when `best` is set; else why nothing is picked. */
-  unavailableReason: string | null;
-}
-
-/**
- * PURE. A strategy's verdict on one template dynasty / one LLM dynasty, judged on its own key (the template dynasty's
- * slug, judged on its head's text; the LLM dynasty's slug, judged on its head model: LLM-DYNASTY-1022-FS).
- */
-export function writerRuledOut(c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, strategy: Strategy | null, kind: "template" | "llm") {
-  if (!strategy) return undefined;
-  const st = strategyOnSubject(strategy, kind, c.tactics);
-  if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return undefined;
-  const nameOf = tacticNameOf(c as PlayCatalogue);
-  return (key: string): string | null => strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey(kind, key)), nameOf).reason;
-}
-
-/** PURE. The payload ranked under a strategy (null = none). An LLM row keeps only the aliases the strategy allows. */
-export function servedRankings(p: LegWriterRankingPayload, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, strategy: Strategy | null): { templates: ServedWriterRanking; llms: ServedWriterRanking } {
-  const tplOf = new Map(p.templates.candidates.map((x) => [x.key, x]));
-  const llmOf = new Map(p.llms.candidates.map((x) => [x.key, x]));
-  const llmRule = writerRuledOut(c, strategy, "llm");
-  const t = rankWriters(p.templates.candidates, writerRuledOut(c, strategy, "template"));
-  const l = rankWriters(p.llms.candidates, llmRule);
-  const tacticsOf = templateTacticsFrom(c);
-  const tRows: TemplateRow[] = t.rows.map((r) => {
-    const x = tplOf.get(r.key)!;
-    const tactics = tacticsOf(r.key);
-    return { ...r, templateDynastySlug: x.templateDynastySlug, head: x.head, status: x.status, tactics: tactics === "not_judged_yet" ? null : tactics, tacticsUnavailableReason: tactics === "not_judged_yet" ? tactics : null, postFigures: x.postFigures ?? null };
-  });
-  const lRows: LlmRow[] = l.rows.map((r) => {
-    const x = llmOf.get(r.key)!;
-    return { ...r, llmDynastySlug: x.llmDynastySlug ?? null, headModelId: x.headModelId ?? null, aliases: x.aliases, modelIds: x.modelIds, provider: x.provider, models: x.models ?? [], postFigures: x.postFigures ?? null };
-  });
-  // `strategy_excludes_every_candidate`: a run could have written with one of them, the strategy ruled every such one
-  // out (workflow-service refuses to write). `no_selectable_candidate`: nothing a run may write with, strategy or not.
-  // A pipe with no writer on record yet still picks (WA-PIPE-RESEARCH-1023, owner 2026-10-23: the WhatsApp workflows read
-  // their pipe's best template and LLM, « Learning when there is no outcome yet »): every candidate is then LEARNING at
-  // $0, and the learning rule IS the exploration (rank 1 goes first, the next one once it has spent). Supersedes
-  // BEST-TPL-LLM-1022's "never a pick on zero evidence": a pipe nobody may write for could never record a writer.
-  const why = (unavailable: string | null, best: unknown, rows: unknown[], excluded: ReadonlyArray<{ key: string }>, selectable: (key: string) => boolean) =>
-    best
-      ? null
-      : (unavailable ?? (excluded.some((x) => selectable(x.key)) ? "strategy_excludes_every_candidate" : rows.length === 0 && excluded.length === 0 ? "no_candidate" : "no_selectable_candidate"));
-  const pick = (rows: Array<TemplateRow | LlmRow>, best: WriterRankingRow | null) => (best ? (rows.find((r) => r.key === best.key) ?? null) : null);
-  const tBest = pick(tRows, t.best);
-  const lBest = pick(lRows, l.best);
-  return {
-    templates: { rows: tRows, best: tBest, excluded: t.excluded, unavailableReason: why(p.templates.unavailableReason, tBest, tRows, t.excluded, (k) => tplOf.get(k)?.selectable === true) },
-    llms: { rows: lRows, best: lBest, excluded: l.excluded, unavailableReason: why(p.llms.unavailableReason, lBest, lRows, l.excluded, (k) => llmOf.get(k)?.selectable === true) },
-  };
-}
-
-function bad(res: Response, status: number, reason: string, error: string) {
-  res.status(status).json({ error, reason });
-}
-
-router.get("/public/stats/leg-writer-ranking", async (req: Request, res: Response) => {
-  const featureSlug = typeof req.query.featureSlug === "string" ? req.query.featureSlug : "";
-  const leg = typeof req.query.leg === "string" ? req.query.leg : "";
-  const strategyId = typeof req.query.strategyId === "string" && req.query.strategyId ? req.query.strategyId : null;
-  if (!featureSlug || !leg) return bad(res, 400, "feature_and_leg_required", "featureSlug and leg are required");
-  try {
-    const catalogue = await loadPlayCatalogue();
-    const strategy = strategyId ? (catalogue.strategies.get(strategyId) ?? null) : null;
-    if (strategyId && !strategy) return bad(res, 404, "strategy_not_found", `no strategy ${strategyId}`);
-    const built = await readLegWriterRanking(featureSlug, leg, 0);
-    if (!built) return bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${leg} is being built; retry in a few minutes`);
-    const p = withEngineLlmUniverse(built, await pipeLlmUniverse(featureSlug, leg));
-    // Each template dynasty's own icon + colour (MARKS-1022); LLM rows carry none (the dashboard draws the provider's logo).
-    const served = await withTemplateRankingMarks(servedRankings(p, catalogue, strategy));
-    res.json({ featureSlug: p.featureSlug, legKey: p.legKey, pipeId: p.pipeId, computedAt: p.computedAt, costBasis: p.costBasis, rankBasis: p.rankBasis, maturity: p.maturity, writerEvidence: p.writerEvidence, strategyId, leftOut: p.leftOut, ...served });
-  } catch (error) {
-    console.error("[features-service] leg writer ranking read failed:", error);
-    bad(res, 500, "internal_error", "Internal server error");
-  }
-});
-
-/** The pipe a workflow version runs on: its dynasty's ONE active leg (owner 2026-10-19, one leg per workflow). */
-async function pipeOfWorkflow(workflowSlug: string): Promise<{ featureSlug: string; legKey: string; dynasty: string } | null> {
-  const rows = (await listLegAssignments()).filter((r) => r.state === "active");
-  const features = [...new Set(rows.map((r) => r.featureSlug))];
-  // The feature whose dynasties prefix the slug first (`<dynasty>-vN`), then the rest: a version is listed by one feature.
-  const likely = (f: string) => rows.some((r) => r.featureSlug === f && (workflowSlug === r.workflowDynastySlug || workflowSlug.startsWith(`${r.workflowDynastySlug}-`)));
-  for (const f of [...features.filter(likely), ...features.filter((f) => !likely(f))]) {
-    const w = (await fetchPublicWorkflows(f, "all")).find((x) => x.workflowSlug === workflowSlug || x.workflowDynastySlug === workflowSlug);
-    if (!w) continue;
-    const a = rows.find((r) => r.featureSlug === f && r.workflowDynastySlug === w.workflowDynastySlug);
-    return a ? { featureSlug: f, legKey: a.legKey, dynasty: w.workflowDynastySlug } : null;
-  }
-  return null;
-}
-
-/**
- * PURE (WRITER-PICK-VENDOR-CREDIT-1105). An LLM whose vendor chat-service states out of credit NOW is not selectable for
- * this pick (`vendor_out_of_credit`): the next ranked one is picked, none left = the usual `no_selectable_candidate`. The
- * vendor is the row's provider (or the provider of every active writer alias it runs under). Read at pick time, never stored in the build.
- */
-export function withVendorCredit(p: LegWriterRankingPayload, outOfCredit: ReadonlySet<string> | null): LegWriterRankingPayload {
-  if (!outOfCredit || outOfCredit.size === 0) return p;
-  const out = (provider: string | null | undefined) => !!provider && outOfCredit.has(provider.toLowerCase());
-  const vendorOut = (c: LegWriterRankingPayload["llms"]["candidates"][number]) => {
-    const active = c.aliases.filter((a) => a.status === "active");
-    return out(c.provider) || (active.length > 0 && active.every((a) => out(a.provider)));
-  };
-  const candidates = p.llms.candidates.map((c) => (c.selectable && vendorOut(c) ? { ...c, selectable: false, notSelectableReason: "vendor_out_of_credit" } : c));
-  return { ...p, llms: { ...p.llms, candidates } };
-}
-
-/**
- * PURE (LLM-RATING-PER-ENGINE-1112, owner 2026-11-12): an LLM outside the Engine's universe (`engine_llm_universes`, the
- * fleet row excludes Claude Fable and Claude Opus) is never selectable on this legacy per-pipe read either, until its
- * callers move to `/internal/llm-pick`. Figures untouched.
- */
-export function withEngineLlmUniverse(p: LegWriterRankingPayload, allowed: ReadonlySet<string>): LegWriterRankingPayload {
-  const candidates = p.llms.candidates.map((c) =>
-    c.selectable && !allowed.has(c.llmDynastySlug ?? c.key) ? { ...c, selectable: false, notSelectableReason: "not_in_engine_universe" } : c,
-  );
-  return { ...p, llms: { ...p.llms, candidates } };
-}
-
-/**
- * What a run of the pipe writes with today (BEST-TPL-LLM-1022): rank 1 template and rank 1 LLM under the play its campaign
- * unit names (`salesFunnelId`; null = the pipe's default play). Null = the pipe's writer ranking is not built yet.
- */
-export async function pickPipeWriters(featureSlug: string, legKey: string, salesFunnelId: string | null, waitMs = 30_000, campaignId: string | null = null) {
-  const [catalogue, played, built, outOfCredit, universe] = await Promise.all([
-    loadPlayCatalogue(),
-    playOfLegRead(featureSlug, legKey, salesFunnelId, campaignId),
-    readLegWriterRanking(featureSlug, legKey, waitMs),
-    readOutOfCreditProvidersSoft(`writer pick ${featureSlug}|${legKey}`),
-    pipeLlmUniverse(featureSlug, legKey),
-  ]);
-  if (!built) return null;
-  const p = withEngineLlmUniverse(withVendorCredit(built, outOfCredit), universe);
-  const strategy = played ? (catalogue.strategies.get(played.answer.strategyId) ?? null) : null;
-  // A play the pipe does not catalogue rules out every workflow on the ladder; here it rules out every writer too.
-  const unknownPlay = played !== null && !strategy;
-  const served = servedRankings(p, catalogue, strategy);
-  const t = unknownPlay ? null : (served.templates.best as TemplateRow | null);
-  const l = unknownPlay ? null : (served.llms.best as LlmRow | null);
-  // The run calls the DYNASTY SLUG when content-generation accepts it (LLM-DYNASTY-1022-CG: every name chat-service
-  // accepts, slugs included); else an active legacy alias of the same dynasty (chat-service runs the same head).
-  const activeAliases = l?.aliases.filter((a) => a.status === "active") ?? [];
-  const alias = activeAliases.find((a) => a.alias === l?.llmDynastySlug) ?? activeAliases[0] ?? null;
-  return {
-    payload: p,
-    strategyId: strategy?.id ?? null,
-    template: t,
-    templateUnavailableReason: t ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.templates.unavailableReason,
-    llm: l && alias ? l : null,
-    alias,
-    llmUnavailableReason: l && alias ? null : unknownPlay ? "play_not_catalogued_on_pipe" : served.llms.unavailableReason,
-  };
-}
-
-type PickedWriters = NonNullable<Awaited<ReturnType<typeof pickPipeWriters>>>;
-
-/** The pick's body, shared by both callers (a workflow run, a campaign-only Engine run): the same figures, same keys. */
-function pickBody(picked: PickedWriters) {
-  const { payload: p, template: t, llm: l, alias } = picked;
-  const figures = (r: WriterRankingRow) => ({ place: r.place, costPerOutcomeUsd: r.costPerOutcomeUsd, explorePriceUsd: r.explorePriceUsd, isMature: r.isMature, spentUsd: r.spentUsd, outcomes: r.outcomes, contacted: r.contacted });
-  return {
-    legKey: p.legKey,
-    pipeId: p.pipeId,
-    strategyId: picked.strategyId,
-    computedAt: p.computedAt,
-    template: t ? { templateDynastySlug: t.templateDynastySlug, head: t.head, name: t.label, ...figures(t) } : null,
-    templateUnavailableReason: picked.templateUnavailableReason,
-    // `llmDynastySlug` names the dynasty rank 1 is (LLM-DYNASTY-1022-FS: chat-service runs its head when called by the slug).
-    llm: l && alias ? { model: alias.alias, llmDynastySlug: l.llmDynastySlug, headModelId: l.headModelId, provider: alias.provider || l.provider, modelKey: l.key, label: l.label, ...figures(l) } : null,
-    llmUnavailableReason: picked.llmUnavailableReason,
-  };
-}
-
-const notComputed = (res: Response, featureSlug: string, legKey: string) =>
-  bad(res, 503, "writer_ranking_not_computed_yet", `the writer ranking of ${featureSlug}|${legKey} is being built: write nothing and retry in a few minutes (no default writer)`);
-
-router.get("/internal/writer-pick", apiKeyOnly, async (req: Request, res: Response) => {
-  const workflowSlug = typeof req.query.workflowSlug === "string" ? req.query.workflowSlug : "";
-  const campaignId = typeof req.query.campaignId === "string" && req.query.campaignId ? req.query.campaignId : null;
-  if (!workflowSlug && !campaignId) return bad(res, 400, "workflow_slug_or_campaign_id_required", "workflowSlug or campaignId is required");
-  try {
-    if (!workflowSlug) {
-      // WRITER-PICK-NO-WORKFLOW-1105: an Engine run executes no workflow; its pipe is its CAMPAIGN's own channel and leg
-      // (campaign-service's identity), its play the campaign's sales funnel. The same pick as a workflow on that pipe.
-      const unit = await fetchCampaignPipe(campaignId!);
-      if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
-      if (!unit.featureSlug || !unit.legKey) return bad(res, 422, "campaign_states_no_pipe", `campaign ${campaignId} states no ${unit.featureSlug ? "legKey" : "featureSlug"}: no pipe to pick a writer on`);
-      const picked = await pickPipeWriters(unit.featureSlug, unit.legKey, unit.salesFunnelId, 30_000, campaignId);
-      if (!picked) return notComputed(res, unit.featureSlug, unit.legKey);
-      return res.json({ workflowSlug: null, workflowDynastySlug: null, campaignId, featureSlug: unit.featureSlug, ...pickBody(picked) });
-    }
-    const pipe = await pipeOfWorkflow(workflowSlug);
-    if (!pipe) return bad(res, 404, "workflow_not_on_a_pipe", `${workflowSlug} is active on no pipe (GET /internal/workflow-leg-assignments)`);
-    let salesFunnelId: string | null = null;
-    if (campaignId) {
-      // The campaign UNIT's own sales funnel names the play (the leg ladder's rule), so its strategy narrows the writers.
-      const unit = await fetchCampaignSalesFunnelId(campaignId);
-      if (!unit.found) return bad(res, 404, "campaign_not_found", `campaign-service lists no campaign ${campaignId}`);
-      salesFunnelId = unit.salesFunnelId;
-    }
-    const picked = await pickPipeWriters(pipe.featureSlug, pipe.legKey, salesFunnelId, 30_000, campaignId);
-    if (!picked) return notComputed(res, pipe.featureSlug, pipe.legKey);
-    res.json({ workflowSlug, workflowDynastySlug: pipe.dynasty, featureSlug: pipe.featureSlug, ...pickBody(picked) });
-  } catch (error) {
-    console.error(`[features-service] writer pick ${workflowSlug || `campaign ${campaignId}`} failed:`, error);
-    bad(res, 502, "writer_pick_unreadable", `the writer pick could not be read: ${(error as Error).message}`);
-  }
-});
-
-export default router;

@@ -44,7 +44,8 @@ import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js"
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/research/run-cost.js";
-import { pickPipeWriters, readLegWriterRanking } from "./leg-writer-ranking.js";
+import { readLegWriterRanking } from "./leg-writer-ranking.js";
+import { engineFavourites, pipeEngineOutcome } from "../lib/engine-favourites.js";
 import { rankWriters } from "../lib/leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type PipeCatalogInput, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
@@ -1554,22 +1555,22 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
 
 /**
  * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
- * ranking's first workflow (what campaign-service runs) x the writer pick under the pipe's default play. A pipe whose
- * pick cannot be read says so on its own block (logged), never fails the tab.
+ * ranking's first workflow x the Rating's favourite template and LLM of the pipe's Engine (LLM-RATING-PER-ENGINE-1112: the
+ * per-pipe writer pick is deleted). A pipe whose pick cannot be read says so on its own block (logged), never fails the tab.
  */
 async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNow> {
   const none = { workflow: null, template: null, llm: null };
   if (!perf.featureSlug || !perf.legKey) return servedNowOf(perf, { ...none, unavailableReason: "pipe_not_read" });
   try {
-    const [ranking, picked] = await Promise.all([readLegWorkflowRanking(perf.featureSlug, perf.legKey, 0), pickPipeWriters(perf.featureSlug, perf.legKey, null, 0)]);
+    const outcome = await pipeEngineOutcome(perf.featureSlug, perf.legKey);
+    const [ranking, fav] = await Promise.all([readLegWorkflowRanking(perf.featureSlug, perf.legKey, 0), outcome ? engineFavourites(outcome) : Promise.resolve(null)]);
     if (!ranking) return servedNowOf(perf, { ...none, unavailableReason: "workflow_ranking_not_computed_yet" });
-    if (!picked) return servedNowOf(perf, { ...none, unavailableReason: "writer_ranking_not_computed_yet" });
+    if (!fav) return servedNowOf(perf, { ...none, unavailableReason: "served_pick_unreadable" });
     const first = ranking.rows.find((r) => r.goesFirst) ?? null;
     const labelOf = (key: string, part: "workflow" | "template" | "llm") => perf.rows.find((r) => r[part]?.key === key)?.[part]?.label ?? null;
     const workflow = first ? { key: first.workflowDynastySlug, label: labelOf(first.workflowDynastySlug, "workflow") ?? first.workflowDynastyName ?? first.workflowDynastySlug } : null;
-    const tplKey = picked.template ? (picked.template.templateDynastySlug ?? picked.template.key) : null;
-    const template = picked.template && tplKey ? { key: tplKey, label: labelOf(tplKey, "template") ?? picked.template.label } : null;
-    const llm = picked.llm ? { key: picked.llm.key, label: labelOf(picked.llm.key, "llm") ?? picked.llm.label } : null;
+    const template = fav.template ? { key: fav.template.key, label: labelOf(fav.template.key, "template") ?? fav.template.name } : null;
+    const llm = fav.llm ? { key: fav.llm.key, label: labelOf(fav.llm.key, "llm") ?? fav.llm.name } : null;
     return servedNowOf(perf, { workflow, template, llm, unavailableReason: null });
   } catch (error) {
     console.error(`[features-service] research performance: the served combination of ${perf.pipe} could not be read:`, error);
