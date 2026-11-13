@@ -10,8 +10,9 @@ import { apiKeyOnly } from "../middleware/auth.js";
 import { LEAD_STATES } from "../lib/lead-states.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
 import { readRunnableScripts, scriptDynastyKey } from "../lib/script-catalogue-client.js";
-import { outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ScriptRating } from "../lib/script-value-rating.js";
-import { readOutcomeChains } from "../lib/script-value-rating-io.js";
+import { applyReports, outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ScriptRating } from "../lib/script-value-rating.js";
+import { readOutcomeChains, readReportedDecisions } from "../lib/script-value-rating-io.js";
+import { listUnitReports } from "../lib/unit-client-reports-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 
 const router = Router();
@@ -26,21 +27,25 @@ export interface ScriptRatingBody {
   lifetimeRevenueSource: string | null;
   values: OutcomeValue[];
   scripts: ScriptRating[];
+  /** Client reports (an edit, or a "Report"): how many Units, and how many script decisions they took the credit of. */
+  clientReports: { units: number; decisions: number };
 }
 
 async function build(): Promise<ScriptRatingBody & { valueMap: Map<string, OutcomeValue> }> {
-  const [chains, ltr, runnable] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts()]);
+  const [chains, ltr, runnable, reports] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts(), listUnitReports()]);
+  const reported = reports.length ? await readReportedDecisions(reports) : [];
   const model = await loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source);
   const declared = new Map<string, number>();
   for (const [key, step] of model.steps) if (step.valueUsd !== null && step.valueUsd > 0) declared.set(key, step.valueUsd);
   const valueMap = outcomeValues({ steps: chains.steps, anchor: { outcome: ANCHOR_OUTCOME, valueUsd: ltr.usd }, declared });
-  const groups = rehomeGroups(chains.groups, runnable.map(scriptDynastyKey));
+  const groups = rehomeGroups(applyReports(chains.groups, reported), runnable.map(scriptDynastyKey));
   return {
     builtAt: chains.builtAt,
     lifetimeRevenueUsd: ltr.usd,
     lifetimeRevenueSource: ltr.source,
     values: [...valueMap.values()].sort((a, b) => b.valueUsd - a.valueUsd || a.outcome.localeCompare(b.outcome)),
     scripts: scriptRatings({ groups, values: valueMap }),
+    clientReports: { units: reports.length, decisions: reported.length },
     valueMap,
   };
 }

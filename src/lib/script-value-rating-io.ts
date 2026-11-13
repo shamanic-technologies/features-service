@@ -6,7 +6,8 @@
  */
 import { FLEET_LEDGER_HOLD_MS } from "./outcome-cost-totals-client.js";
 import { readRunsLedgerJson } from "./runs-ledger-read.js";
-import type { ReachGroup, StepRate } from "./script-value-rating.js";
+import { fetchWithRetry } from "./fetch-retry.js";
+import type { ReachGroup, ReportedDecision, StepRate } from "./script-value-rating.js";
 
 const STEP_RATES_PATH = "/internal/stats/outcome-chains/step-rates";
 const SCRIPT_REACH_PATH = "/internal/stats/outcome-chains/script-reach?groupBy=dynasty";
@@ -70,4 +71,59 @@ export async function readOutcomeChains(): Promise<{ builtAt: string; steps: Ste
   const s = parseStepRates(rates);
   const g = parseScriptReach(reach);
   return { builtAt: g.builtAt, steps: s.steps, groups: g.groups };
+}
+
+const UNIT_DECISIONS_PATH = "/internal/stats/outcome-chains/unit-decisions";
+const UNIT_DECISIONS_BATCH = 500;
+
+export interface ReportedUnit {
+  outcomeKey: string;
+  subjectService: string;
+  subjectId: string;
+  reportedAt: string;
+}
+
+/** PURE: the script decisions of a runs-service unit-decisions body, each once (several Units of one decision = one). */
+export function parseUnitDecisions(body: unknown, seen: Set<string>): ReportedDecision[] {
+  if (!isRecord(body) || !Array.isArray(body.units)) throw new Error("[features-service] outcome chains: unit-decisions served no units");
+  const out: ReportedDecision[] = [];
+  for (const u of body.units) {
+    if (!isRecord(u)) throw new Error("[features-service] outcome chains: a unit answer is not an object");
+    if (u.status !== "script_decision") continue;
+    const id = text(u.decisionRunId, "decisionRunId");
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const d = u.decision;
+    if (!isRecord(d)) throw new Error("[features-service] outcome chains: a script decision carries no decision");
+    const cents = typeof d.costInUsdCents === "string" && d.costInUsdCents.trim() !== "" ? Number(d.costInUsdCents) : NaN;
+    if (!Number.isFinite(cents) || cents < 0) throw new Error("[features-service] outcome chains: a decision's costInUsdCents is not an amount");
+    out.push({
+      scriptDynasty: text(d.scriptSlug, "scriptSlug").replace(/\/v\d+$/, ""),
+      day: text(d.day, "day"),
+      producedOutcomes: texts(d.producedOutcomes, "producedOutcomes"),
+      reachedOutcomes: texts(d.reachedOutcomes, "reachedOutcomes"),
+      spentUsd: cents / 100,
+    });
+  }
+  return out;
+}
+
+/**
+ * The script decision behind each reported Unit (runs-service resolves the Unit standing at the report time). FAIL-LOUD:
+ * a report we could not place would read as a good Unit. No report = no call.
+ */
+export async function readReportedDecisions(units: readonly ReportedUnit[]): Promise<ReportedDecision[]> {
+  const seen = new Set<string>();
+  const out: ReportedDecision[] = [];
+  for (let i = 0; i < units.length; i += UNIT_DECISIONS_BATCH) {
+    const batch = units.slice(i, i + UNIT_DECISIONS_BATCH).map((u) => ({ outcomeKey: u.outcomeKey, subjectService: u.subjectService, subjectId: u.subjectId, at: u.reportedAt }));
+    const res = await fetchWithRetry(
+      `${process.env.RUNS_SERVICE_URL}${UNIT_DECISIONS_PATH}`,
+      { method: "POST", headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "", "content-type": "application/json" }, body: JSON.stringify({ units: batch }) },
+      { backgroundShare: false },
+    );
+    if (!res.ok) throw new Error(`[features-service] runs-service ${UNIT_DECISIONS_PATH} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    out.push(...parseUnitDecisions(await res.json(), seen));
+  }
+  return out;
 }
