@@ -4373,6 +4373,16 @@ export function __resetLegWorkflowRanking(): void {
   legRankingWarm.clear();
 }
 
+/**
+ * One pipe's live ranking as `/public/stats/leg-workflow-ranking` serves it (pricing, tactics, marks); null = not built
+ * yet. Shared by Research's Engine read (`/internal/research/engines/live-scripts`). Marks unreadable throws.
+ */
+export async function servedLegWorkflowRanking(featureSlug: string, legKey: string, pricing: "gross" | "net"): Promise<LegWorkflowRankingPayload | null> {
+  const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
+  if (!stored) return null;
+  return withWorkflowRankingMarks(legRankingOnPricing(stored, pricing, await workflowTacticsOf()));
+}
+
 router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
   const featureSlug = req.query.featureSlug as string | undefined;
   // Every pipe's leg, sourcing (`start_to_lead_found`) included: one resolver, no special case (RANKING-SOURCE-LEG-1014).

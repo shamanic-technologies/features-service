@@ -116,7 +116,7 @@ const RANKING_WAIT_MS = 10 * 60_000;
 /** The first month runs carry cold email spend (the ledger starts in February 2026). */
 const FIRST_MONTH = "2026-01";
 
-type Basis = "user" | "actual";
+export type Basis = "user" | "actual";
 
 const monthStart = (ym: string) => `${ym}-01T00:00:00.000Z`;
 const nextMonth = (ym: string) => {
@@ -1504,6 +1504,42 @@ router.get("/internal/research/studies", apiKeyOnly, async (req, res) => {
   }
 });
 
+/** The catalogue as `/internal/research/catalog` serves it (every live overlay applied); null = not built yet. Shared by the Engine read. */
+export async function servedResearchCatalog(basis: Basis, view: ResearchView): Promise<ResearchCatalog | null> {
+  const build = await readResearchBuild(basis, view);
+  if (!build?.catalog) return null;
+  // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
+  // Workflows list prints, never the ranking its build held (up to 15 min older).
+  const studied = new Set<string>(STUDIED_PIPES.map((x) => x.id));
+  const others = build.file.pipes.filter((x) => !studied.has(x.id) && build.catalog?.[x.id]);
+  const catalogued = build.file.pipes.filter((x) => build.catalog?.[x.id]);
+  const [replyRanking, visitRanking, tacticsOf, otherRankings, liveDynasties] = await Promise.all([
+    readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0),
+    readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0),
+    readTemplateTactics(),
+    // Every other pipe's pages take its current ranking rows too (WA-PIPE-RESEARCH-1023); unreadable = the build's.
+    Promise.all(others.map((x) => readLegWorkflowRanking(x.channel, x.leg, 0).catch(() => null))),
+    // Each pipe's template statuses as content-generation states them now (TPL-STATUS-LIVE-1023); unreadable = the build's.
+    Promise.all(catalogued.map((x) => readLiveTemplateDynasties(x.channel, x.leg))),
+  ]);
+  const liveOf = new Map(catalogued.map((x, i) => [x.id, liveDynasties[i]!]));
+  // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022), and its status (TPL-STATUS-LIVE-1023).
+  const withTactics = <P extends { templates: CatalogTemplate[] }>(id: string, p: P): P => ({
+    ...p,
+    templates: withTemplateTactics(withLiveTemplateStatus(p.templates, liveOf.get(id) ?? null), tacticsOf),
+  });
+  return withResearchCatalogMarks(
+    Object.fromEntries(
+      Object.entries({
+        ...build.catalog,
+        ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null, view)])),
+        [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null, view),
+        [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null, view),
+      }).map(([id, p]) => [id, withTactics(id, p)]),
+    ) as ResearchCatalog,
+  );
+}
+
 router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
   const basis = basisOf(req.query.basis);
   if (!basis) {
@@ -1513,40 +1549,9 @@ router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
   const view = viewOf(req.query.view);
   if (!view) return badView(res);
   try {
-    const build = await readResearchBuild(basis, view);
-    if (!build?.catalog) return notYet(res);
-    // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
-    // Workflows list prints, never the ranking its build held (up to 15 min older).
-    const studied = new Set<string>(STUDIED_PIPES.map((x) => x.id));
-    const others = build.file.pipes.filter((x) => !studied.has(x.id) && build.catalog?.[x.id]);
-    const catalogued = build.file.pipes.filter((x) => build.catalog?.[x.id]);
-    const [replyRanking, visitRanking, tacticsOf, otherRankings, liveDynasties] = await Promise.all([
-      readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0),
-      readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0),
-      readTemplateTactics(),
-      // Every other pipe's pages take its current ranking rows too (WA-PIPE-RESEARCH-1023); unreadable = the build's.
-      Promise.all(others.map((x) => readLegWorkflowRanking(x.channel, x.leg, 0).catch(() => null))),
-      // Each pipe's template statuses as content-generation states them now (TPL-STATUS-LIVE-1023); unreadable = the build's.
-      Promise.all(catalogued.map((x) => readLiveTemplateDynasties(x.channel, x.leg))),
-    ]);
-    const liveOf = new Map(catalogued.map((x, i) => [x.id, liveDynasties[i]!]));
-    // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022), and its status (TPL-STATUS-LIVE-1023).
-    const withTactics = <P extends { templates: CatalogTemplate[] }>(id: string, p: P): P => ({
-      ...p,
-      templates: withTemplateTactics(withLiveTemplateStatus(p.templates, liveOf.get(id) ?? null), tacticsOf),
-    });
-    res.json(
-      await withResearchCatalogMarks(
-        Object.fromEntries(
-          Object.entries({
-            ...build.catalog,
-            ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null, view)])),
-            [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null, view),
-            [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null, view),
-          }).map(([id, p]) => [id, withTactics(id, p)]),
-        ) as ResearchCatalog,
-      ),
-    );
+    const catalog = await servedResearchCatalog(basis, view);
+    if (!catalog) return notYet(res);
+    res.json(catalog);
   } catch (error) {
     console.error("[features-service] research catalogue read failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -1578,6 +1583,22 @@ async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNo
   }
 }
 
+/** The Performance tab as `/internal/research/performance` serves it (marks + served now read live); null = not built yet. Shared by the Engine read. */
+export async function servedResearchPerformance(basis: Basis, view: ResearchView) {
+  const build = await readResearchBuild(basis, view);
+  // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
+  if (!build?.performance) return null;
+  const marked = await withPerformanceMarks(build.performance);
+  const pipes = Object.fromEntries(await Promise.all(Object.entries(marked).map(async ([id, perf]) => [id, { ...perf, servedNow: await readServedNow(perf) }] as const)));
+  return { computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes };
+}
+
+/** The file as `/internal/research` serves it, with its freshness; null = not built yet. Shared by the Engine read. */
+export async function servedResearchFile(basis: Basis, view: ResearchView) {
+  const file = await readResearch(basis, view);
+  return file ? { ...file, freshness: freshnessOf(file, basis, view) } : null;
+}
+
 router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
   const basis = basisOf(req.query.basis);
   if (!basis) {
@@ -1587,12 +1608,9 @@ router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
   try {
     const view = viewOf(req.query.view);
     if (!view) return badView(res);
-    const build = await readResearchBuild(basis, view);
-    // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
-    if (!build?.performance) return notYet(res);
-    const marked = await withPerformanceMarks(build.performance);
-    const pipes = Object.fromEntries(await Promise.all(Object.entries(marked).map(async ([id, perf]) => [id, { ...perf, servedNow: await readServedNow(perf) }] as const)));
-    res.json({ computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes });
+    const served = await servedResearchPerformance(basis, view);
+    if (!served) return notYet(res);
+    res.json(served);
   } catch (error) {
     console.error("[features-service] research performance read failed:", error);
     res.status(500).json({ error: "Internal server error" });
