@@ -55664,6 +55664,279 @@
         }
       }
     },
+    "/internal/script-ratings": {
+      "get": {
+        "summary": "Every outcome's value and every script's rating on what its runs led to (internal, api-key, staff)",
+        "description": "A script run is credited the value of the strongest outcome its chain reached in the ledger (the runs that consumed its Unit, then theirs), less the value of what it made itself. Fleet figures, read from runs-service's outcome chains.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "Values and ratings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "builtAt": {
+                      "type": "string"
+                    },
+                    "lifetimeRevenueUsd": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "lifetimeRevenueSource": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "valueUsd": {
+                            "type": "number",
+                            "description": "What one Unit of the outcome is worth on the way to a Paid client (fleet): the best measured next step's rate x that step's value, down from the lifetime revenue."
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "anchor",
+                              "measured",
+                              "declared"
+                            ],
+                            "description": "`anchor` = a Paid client (the lifetime revenue); `measured` = through a one-step rate the ledger measured; `declared` = the catalogue's step value (stated rates, else defaults), where the ledger cannot measure the step."
+                          },
+                          "via": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "toOutcome": {
+                                "type": "string"
+                              },
+                              "share": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "toOutcome",
+                              "share"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "valueUsd",
+                          "source",
+                          "via"
+                        ]
+                      }
+                    },
+                    "scripts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "scriptDynasty": {
+                            "type": "string",
+                            "description": "`<outcome>/<dynasty>`, every version pooled; a script re-homed under another outcome keeps its runs."
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "number"
+                          },
+                          "reached": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "outcome": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "runs": {
+                                  "type": "number"
+                                },
+                                "creditUsd": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "outcome",
+                                "runs",
+                                "creditUsd"
+                              ]
+                            },
+                            "description": "Runs by the strongest outcome their chain reached beyond their own Unit (null = none)."
+                          },
+                          "valueUsd": {
+                            "type": "number",
+                            "description": "Credited: each run's strongest outcome's value less the value of what it made itself."
+                          },
+                          "valuePerRunUsd": {
+                            "type": "number"
+                          },
+                          "spentUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "costPerRunUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "valuePerDollar": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "The decision figure the pick reads (credited value per dollar spent). Staff and the runner only: never a return, never shown to a customer."
+                          },
+                          "valuePerDollarUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "spend_not_served",
+                              "no_spend",
+                              null
+                            ]
+                          }
+                        },
+                        "required": [
+                          "scriptDynasty",
+                          "outcome",
+                          "runs",
+                          "reached",
+                          "valueUsd",
+                          "valuePerRunUsd",
+                          "spentUsd",
+                          "costPerRunUsd",
+                          "valuePerDollar",
+                          "valuePerDollarUnavailableReason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "builtAt",
+                    "lifetimeRevenueUsd",
+                    "lifetimeRevenueSource",
+                    "values",
+                    "scripts"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "script_rating_unreadable"
+          }
+        }
+      }
+    },
+    "/internal/script-pick": {
+      "get": {
+        "summary": "Which script an Engine runs now, among the caller's candidates (internal, api-key)",
+        "description": "One Thompson draw on credited value per dollar. No value known at the Engine = the cheapest per run (`cost_only`); no cost known = value alone (`value_only`). A 502 = pick nothing and retry, never a default script.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The Engine's outcome."
+            },
+            "required": true,
+            "description": "The Engine's outcome.",
+            "name": "outcome",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma list of `<outcome>/<dynasty>`: the runnable scripts the campaign's strategy keeps."
+            },
+            "required": true,
+            "description": "Comma list of `<outcome>/<dynasty>`: the runnable scripts the campaign's strategy keeps.",
+            "name": "dynasties",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pick",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "scriptDynasty": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "value_per_dollar",
+                        "value_only",
+                        "cost_only",
+                        "no_candidate"
+                      ]
+                    },
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "scriptDynasty": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "number"
+                          },
+                          "score": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "scriptDynasty",
+                          "runs",
+                          "score"
+                        ]
+                      }
+                    },
+                    "builtAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "outcome",
+                    "scriptDynasty",
+                    "basis",
+                    "candidates",
+                    "builtAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "script_pick_unrecognised"
+          },
+          "502": {
+            "description": "script_rating_unreadable"
+          }
+        }
+      }
+    },
     "/public/stats/leg-workflow-ranking": {
       "get": {
         "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",

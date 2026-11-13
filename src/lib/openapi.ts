@@ -6620,6 +6620,49 @@ registry.registerPath({
   },
 });
 
+const ScriptRatingValueSchema = z.object({
+  outcome: z.string(),
+  valueUsd: z.number().describe("What one Unit of the outcome is worth on the way to a Paid client (fleet): the best measured next step's rate x that step's value, down from the lifetime revenue."),
+  source: z.enum(["anchor", "measured", "declared"]).describe("`anchor` = a Paid client (the lifetime revenue); `measured` = through a one-step rate the ledger measured; `declared` = the catalogue's step value (stated rates, else defaults), where the ledger cannot measure the step."),
+  via: z.object({ toOutcome: z.string(), share: z.number() }).nullable(),
+});
+const ScriptRatingRowSchema = z.object({
+  scriptDynasty: z.string().describe("`<outcome>/<dynasty>`, every version pooled; a script re-homed under another outcome keeps its runs."),
+  outcome: z.string(),
+  runs: z.number(),
+  reached: z.array(z.object({ outcome: z.string().nullable(), runs: z.number(), creditUsd: z.number() })).describe("Runs by the strongest outcome their chain reached beyond their own Unit (null = none)."),
+  valueUsd: z.number().describe("Credited: each run's strongest outcome's value less the value of what it made itself."),
+  valuePerRunUsd: z.number(),
+  spentUsd: z.number().nullable(),
+  costPerRunUsd: z.number().nullable(),
+  valuePerDollar: z.number().nullable().describe("The decision figure the pick reads (credited value per dollar spent). Staff and the runner only: never a return, never shown to a customer."),
+  valuePerDollarUnavailableReason: z.enum(["spend_not_served", "no_spend"]).nullable(),
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/script-ratings",
+  summary: "Every outcome's value and every script's rating on what its runs led to (internal, api-key, staff)",
+  description: "A script run is credited the value of the strongest outcome its chain reached in the ledger (the runs that consumed its Unit, then theirs), less the value of what it made itself. Fleet figures, read from runs-service's outcome chains.",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "Values and ratings", content: { "application/json": { schema: z.object({ builtAt: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.string().nullable(), values: z.array(ScriptRatingValueSchema), scripts: z.array(ScriptRatingRowSchema) }) } } },
+    502: { description: "script_rating_unreadable" },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/script-pick",
+  summary: "Which script an Engine runs now, among the caller's candidates (internal, api-key)",
+  description: "One Thompson draw on credited value per dollar. No value known at the Engine = the cheapest per run (`cost_only`); no cost known = value alone (`value_only`). A 502 = pick nothing and retry, never a default script.",
+  tags: ["Internal"],
+  request: { query: z.object({ outcome: z.string().describe("The Engine's outcome."), dynasties: z.string().describe("Comma list of `<outcome>/<dynasty>`: the runnable scripts the campaign's strategy keeps.") }) },
+  responses: {
+    200: { description: "The pick", content: { "application/json": { schema: z.object({ outcome: z.string(), scriptDynasty: z.string().nullable(), basis: z.enum(["value_per_dollar", "value_only", "cost_only", "no_candidate"]), candidates: z.array(z.object({ scriptDynasty: z.string(), runs: z.number(), score: z.number().nullable() })), builtAt: z.string() }) } } },
+    400: { description: "script_pick_unrecognised" },
+    502: { description: "script_rating_unreadable" },
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/public/stats/leg-workflow-ranking",
