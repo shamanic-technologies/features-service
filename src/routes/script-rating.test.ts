@@ -29,7 +29,7 @@ vi.mock("../lib/script-catalogue-client.js", () => ({
     { outcome: "message_written", dynasty: "haiku" },
   ],
 }));
-let reports: Array<Record<string, string>> = [];
+let reports: Array<Record<string, string | null>> = [];
 let unitAnswers: unknown = { builtAt: "x", units: [] };
 let unitCalls: unknown[] = [];
 vi.mock("../lib/unit-client-reports-store.js", () => ({ listUnitReports: async () => reports }));
@@ -83,12 +83,12 @@ describe("GET /internal/script-ratings", () => {
 
   it("a Unit a client reported takes its decision's credit away, once, and the body says how many", async () => {
     const unit = { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", reportedAt: "2026-11-13T16:00:00.000Z" };
-    reports = [unit, { ...unit, reportedAt: "2026-11-13T17:00:00.000Z" }, { ...unit, subjectId: "L2" }];
+    reports = [unit, { ...unit, reportedAt: "2026-11-13T17:00:00.000Z", unitAt: "2026-11-01T08:30:00.000Z" }, { ...unit, subjectId: "L2" }];
     const decision = { scriptSlug: "message_written/haiku/v3", day: "2026-11-10", brandIds: [], producedOutcomes: ["message_written"], reachedOutcomes: ["conversation", "message_sent"], costInUsdCents: "0.4", netCostInUsdCents: "0.4" };
     unitAnswers = { builtAt: "x", units: [{ ...unit, status: "script_decision", decisionRunId: "r1", decision }, { ...unit, status: "script_decision", decisionRunId: "r1", decision }, { ...unit, subjectId: "L2", status: "no_unit", decisionRunId: null, decision: null }] };
     const res = await request(app).get("/internal/script-ratings").set(key);
     expect(res.status).toBe(200);
-    expect(unitCalls).toEqual([{ units: [{ outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-13T16:00:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-13T17:00:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L2", at: "2026-11-13T16:00:00.000Z" }] }]);
+    expect(unitCalls).toEqual([{ units: [{ outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-13T16:00:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-01T08:30:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L2", at: "2026-11-13T16:00:00.000Z" }] }]);
     expect(res.body.clientReports).toEqual({ units: 3, decisions: 1 });
     const haiku = res.body.scripts.find((s: { scriptDynasty: string }) => s.scriptDynasty === "message_written/haiku");
     expect(haiku).toMatchObject({ runs: 500, spentUsd: 2 });

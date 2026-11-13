@@ -10,9 +10,15 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 process.env.FEATURES_SERVICE_API_KEY = "k";
 
 const stored: Array<Record<string, unknown>> = [];
+const asked: Array<Record<string, unknown>> = [];
 let failWrite = false;
 vi.mock("../lib/unit-client-reports-store.js", () => ({
   UNIT_REPORT_KINDS: ["edited", "reported"],
+  listOrgUnitReports: async (q: Record<string, unknown>) => {
+    if (failWrite) throw new Error("db down");
+    asked.push(q);
+    return [{ id: "r1", ...q, kind: "reported", source: "dashboard", note: null, unitAt: null, reportedAt: "2026-11-13T16:00:00.000Z" }];
+  },
   recordUnitReport: async (r: Record<string, unknown>) => {
     if (failWrite) throw new Error("db down");
     stored.push(r);
@@ -30,6 +36,7 @@ const body = { outcomeKey: "message_written", subjectService: "lead-service", su
 
 beforeEach(() => {
   stored.length = 0;
+  asked.length = 0;
   failWrite = false;
 });
 
@@ -38,7 +45,7 @@ describe("POST /orgs/unit-reports", () => {
     const res = await request(app).post("/orgs/unit-reports").set(identity).send({ ...body, note: "wrong price" });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ id: expect.any(String), outcomeKey: "message_written", kind: "reported", reportedAt: expect.any(String) });
-    expect(stored).toEqual([{ orgId: ORG, userId: USER, outcomeKey: "message_written", subjectService: "lead-service", subjectId: "0c0010c9", kind: "reported", source: "dashboard", note: "wrong price" }]);
+    expect(stored).toEqual([{ orgId: ORG, userId: USER, outcomeKey: "message_written", subjectService: "lead-service", subjectId: "0c0010c9", kind: "reported", source: "dashboard", note: "wrong price", unitAt: null }]);
   });
 
   it("an edit of what we wrote is the other kind, no note needed", async () => {
@@ -54,6 +61,7 @@ describe("POST /orgs/unit-reports", () => {
     ["an unknown kind", { ...body, kind: "liked" }],
     ["no source", { ...body, source: "" }],
     ["a note that is not text", { ...body, note: 4 }],
+    ["a time that is not a time", { ...body, unitAt: "yesterday-ish" }],
   ])("refuses %s, stores nothing", async (_label, bad) => {
     const res = await request(app).post("/orgs/unit-reports").set(identity).send(bad);
     expect(res.status).toBe(400);
@@ -71,5 +79,30 @@ describe("POST /orgs/unit-reports", () => {
     const res = await request(app).post("/orgs/unit-reports").set(identity).send(body);
     expect(res.status).toBe(502);
     expect(res.body.reason).toBe("unit_report_unwritable");
+  });
+});
+
+describe("the Unit the client points at", () => {
+  it("keeps when the thing was made, so the ledger resolves that Unit and not the latest of its subject", async () => {
+    const res = await request(app).post("/orgs/unit-reports").set(identity).send({ ...body, unitAt: "2026-11-01T09:30:00+01:00" });
+    expect(res.status).toBe(201);
+    expect(stored[0]).toMatchObject({ unitAt: "2026-11-01T08:30:00.000Z" });
+  });
+});
+
+describe("GET /orgs/unit-reports", () => {
+  it("serves the caller's org's own reports of one subject", async () => {
+    const res = await request(app).get("/orgs/unit-reports?subjectService=lead-service&subjectId=0c0010c9&outcomeKey=message_written").set(identity);
+    expect(res.status).toBe(200);
+    expect(asked).toEqual([{ orgId: ORG, subjectService: "lead-service", subjectId: "0c0010c9", outcomeKey: "message_written" }]);
+    expect(res.body.reports).toHaveLength(1);
+  });
+
+  it("every outcome of the subject when none is named; a subject is required; a failed read is loud", async () => {
+    await request(app).get("/orgs/unit-reports?subjectService=lead-service&subjectId=x").set(identity);
+    expect(asked[0]).toMatchObject({ outcomeKey: null });
+    expect((await request(app).get("/orgs/unit-reports?subjectId=x").set(identity)).status).toBe(400);
+    failWrite = true;
+    expect((await request(app).get("/orgs/unit-reports?subjectService=a&subjectId=x").set(identity)).status).toBe(502);
   });
 });
