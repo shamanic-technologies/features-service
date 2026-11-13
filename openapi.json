@@ -55536,6 +55536,134 @@
         }
       }
     },
+    "/orgs/unit-reports": {
+      "post": {
+        "summary": "A client says a Unit we made is not good (an edit, or a report)",
+        "description": "One door for every surface. The Rating reads a reported Unit as worth nothing for the script that made it; silence says nothing, and there is no positive vote. Append-only.",
+        "tags": [
+          "Features"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "outcomeKey": {
+                    "type": "string",
+                    "description": "The outcome of the Unit, as the ledger names it (e.g. `message_written`)."
+                  },
+                  "subjectService": {
+                    "type": "string",
+                    "description": "The service holding the Unit's subject, as the ledger names it."
+                  },
+                  "subjectId": {
+                    "type": "string",
+                    "description": "The subject's id in that service."
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "edited",
+                      "reported"
+                    ],
+                    "description": "`edited` = the client changed what we wrote; `reported` = the client said it is not good (a Unit it cannot edit, e.g. a sent message)."
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Where it was said (the dashboard, the API, the MCP, Sophie): free text."
+                  },
+                  "note": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "What the client said, when it said something."
+                  }
+                },
+                "required": [
+                  "outcomeKey",
+                  "subjectService",
+                  "subjectId",
+                  "kind",
+                  "source"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcomeKey": {
+                      "type": "string",
+                      "description": "The outcome of the Unit, as the ledger names it (e.g. `message_written`)."
+                    },
+                    "subjectService": {
+                      "type": "string",
+                      "description": "The service holding the Unit's subject, as the ledger names it."
+                    },
+                    "subjectId": {
+                      "type": "string",
+                      "description": "The subject's id in that service."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "edited",
+                        "reported"
+                      ],
+                      "description": "`edited` = the client changed what we wrote; `reported` = the client said it is not good (a Unit it cannot edit, e.g. a sent message)."
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "Where it was said (the dashboard, the API, the MCP, Sophie): free text."
+                    },
+                    "note": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "orgId": {
+                      "type": "string"
+                    },
+                    "userId": {
+                      "type": "string"
+                    },
+                    "reportedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "outcomeKey",
+                    "subjectService",
+                    "subjectId",
+                    "kind",
+                    "source",
+                    "note",
+                    "id",
+                    "orgId",
+                    "userId",
+                    "reportedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unit_report_unrecognised"
+          },
+          "502": {
+            "description": "unit_report_unwritable"
+          }
+        }
+      }
+    },
     "/public/stats/leg-workflow-ranking": {
       "get": {
         "summary": "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
