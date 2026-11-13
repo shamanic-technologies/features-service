@@ -1213,7 +1213,13 @@ export const unitClientReports = pgTable(
     kind: text("kind").notNull(),
     source: text("source").notNull(),
     note: text("note"),
+    /** When the thing the client points at was made (one subject holds several Units over time). Migration 0073. */
+    unitAt: timestamp("unit_at", { withTimezone: true }),
     reportedAt: timestamp("reported_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("unit_client_reports_unit").on(table.outcomeKey, table.subjectService, table.subjectId), index("unit_client_reports_at").on(table.reportedAt)],
+  (table) => [
+    index("unit_client_reports_unit").on(table.outcomeKey, table.subjectService, table.subjectId),
+    index("unit_client_reports_at").on(table.reportedAt),
+    index("unit_client_reports_org_subject").on(table.orgId, table.subjectService, table.subjectId),
+  ],
 );

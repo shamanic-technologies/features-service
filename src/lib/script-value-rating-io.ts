@@ -81,6 +81,8 @@ export interface ReportedUnit {
   subjectService: string;
   subjectId: string;
   reportedAt: string;
+  /** When the thing the client points at was made; null = the Unit standing at the report time. */
+  unitAt: string | null;
 }
 
 /** PURE: the script decisions of a runs-service unit-decisions body, each once (several Units of one decision = one). */
@@ -116,7 +118,7 @@ export async function readReportedDecisions(units: readonly ReportedUnit[]): Pro
   const seen = new Set<string>();
   const out: ReportedDecision[] = [];
   for (let i = 0; i < units.length; i += UNIT_DECISIONS_BATCH) {
-    const batch = units.slice(i, i + UNIT_DECISIONS_BATCH).map((u) => ({ outcomeKey: u.outcomeKey, subjectService: u.subjectService, subjectId: u.subjectId, at: u.reportedAt }));
+    const batch = units.slice(i, i + UNIT_DECISIONS_BATCH).map((u) => ({ outcomeKey: u.outcomeKey, subjectService: u.subjectService, subjectId: u.subjectId, at: u.unitAt ?? u.reportedAt }));
     const res = await fetchWithRetry(
       `${process.env.RUNS_SERVICE_URL}${UNIT_DECISIONS_PATH}`,
       { method: "POST", headers: { "x-api-key": process.env.RUNS_SERVICE_API_KEY ?? "", "content-type": "application/json" }, body: JSON.stringify({ units: batch }) },
