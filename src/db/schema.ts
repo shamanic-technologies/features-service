@@ -1195,3 +1195,25 @@ export const templateDecisions = pgTable(
   },
   (table) => [primaryKey({ name: "template_decisions_pk", columns: [table.decisionRunId, table.templateDynastySlug] })],
 );
+
+/**
+ * A CLIENT SAYS A UNIT IS NOT GOOD (SCRIPT-VALUE-RATING-1113, owner 2026-11-13; `lib/unit-client-reports-store.ts`).
+ * One row per report: an edit of what we wrote (`edited`) or a "Report" (`reported`), on the Unit named as the ledger
+ * names it (outcome, subject service, subject id). Append-only; silence says nothing. Migration 0072.
+ */
+export const unitClientReports = pgTable(
+  "unit_client_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id").notNull(),
+    outcomeKey: text("outcome_key").notNull(),
+    subjectService: text("subject_service").notNull(),
+    subjectId: text("subject_id").notNull(),
+    kind: text("kind").notNull(),
+    source: text("source").notNull(),
+    note: text("note"),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("unit_client_reports_unit").on(table.outcomeKey, table.subjectService, table.subjectId), index("unit_client_reports_at").on(table.reportedAt)],
+);

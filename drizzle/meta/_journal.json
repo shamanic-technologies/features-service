@@ -505,6 +505,13 @@
       "when": 1795190400000,
       "tag": "0071_engine_template_rating",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1795276800000,
+      "tag": "0072_unit_client_reports",
+      "breakpoints": true
     }
   ]
 }
