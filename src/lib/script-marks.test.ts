@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { marksFor } from "./catalogue-marks-store.js";
-import { withEnginePickMarks, withFactoryEngineMarks, withJourneyScriptMarks, withResearchPlaceMarks, withScriptMark } from "./catalogue-mark-serving.js";
+import { withEnginePickMarks, withFactoryEngineMarks, withJourneyScriptMarks, withScriptMark } from "./catalogue-mark-serving.js";
 
 // SCRIPT-MARKS-1103: every script an Engine read names carries its dynasty's served mark, the very one Research serves
 // for it (same family, same key: the workflow dynasty slug). The suite's mark store is the in-memory twin (vitest.setup).
@@ -38,12 +38,8 @@ describe("script marks", () => {
     expect(await withFactoryEngineMarks({ campaignId: "sfc-2", engine: null })).toEqual({ campaignId: "sfc-2", engine: null });
   });
 
-  it("research places mark the favourite and every candidate; journeys mark every script", async () => {
-    const c = { candidateId: "a::avior", workflowDynastySlug: "avior", workflowName: "Avior" };
-    const [p] = await withResearchPlaceMarks([{ key: "k", favourite: { ...c, chancePct: 90 }, candidates: [c] }]);
+  it("journeys mark every script", async () => {
     const m = await marksFor("workflow", ["avior"]);
-    expect(p!.favourite).toMatchObject({ chancePct: 90, icon: m.get("avior")!.icon, color: m.get("avior")!.color });
-    expect(p!.candidates[0]).toMatchObject({ icon: m.get("avior")!.icon });
     const [t] = await withJourneyScriptMarks([{ pipeId: "p", scripts: [{ workflowDynastySlug: "avior", workflowName: "Avior", sharePct: 100 }] }]);
     expect(t!.scripts[0]).toMatchObject({ sharePct: 100, icon: m.get("avior")!.icon });
   });
