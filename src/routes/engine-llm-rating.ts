@@ -2,23 +2,22 @@
  * THE RATING RATES LLMs PER ENGINE (LLM-RATING-PER-ENGINE-1112; rule `lib/engine-llm-rating.ts`, IO
  * `lib/engine-llm-rating-io.ts`, stores `lib/engine-llm-store.ts`).
  *
- *   GET /internal/llm-pick?outcome=&place=[&campaignId=]   (api key) which LLM one call of a script uses (x-run-id = the run)
- *   GET /internal/template-pick?outcome=&place=[&campaignId=] (api key) which template dynasty it writes with (same Rating)
+ * The separate LLM and template PICKS are DELETED (SCRIPT-VALUE-RATING-1113, owner 2026-11-13: « un pick = toujours un
+ * script », the LLM and the template are tactics of the script; `routes/script-rating.ts` picks). What stays is the
+ * staff read of what each LLM and template did, and the stored universes it shows.
+ *
  *   GET /internal/research/engine-llms[?outcome=]          (api key, staff) per Engine: its universe, every LLM ranked + usage
  *   GET /internal/engine-llm-universes                     (api key, staff) the stored universes
  *   PUT /internal/engine-llm-universes                     (api key, staff) set one Engine's universe (or the fleet row `*`)
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { engineLlmBody, pickLlm, FLEET_UNIVERSE, SPEND_SERIES_DAYS } from "../lib/engine-llm-rating.js";
+import { engineLlmBody, FLEET_UNIVERSE, SPEND_SERIES_DAYS } from "../lib/engine-llm-rating.js";
 import { readRatingInputs } from "../lib/engine-llm-rating-io.js";
-import { listUniverseRules, putUniverseRule, recordLlmPick } from "../lib/engine-llm-store.js";
+import { listUniverseRules, putUniverseRule } from "../lib/engine-llm-store.js";
 import { readLlmDynasties } from "../lib/llm-dynasties.js";
-import { engineStrategyOfCampaign, labelOfOutcome } from "../lib/engine-strategy-io.js";
-import { engineTemplateLines, everyEngineTemplateLines, listTemplatePicks, recordTemplatePick, type TemplateLine } from "../lib/engine-template-rating-io.js";
-import { fetchCampaignPipe } from "../lib/fleet-leg-campaigns.js";
-import { loadPlayCatalogue } from "../lib/plays-store.js";
-import { strategyOnSubject, strategyVerdict, tacticNameOf, writerSubjectKey } from "../lib/plays.js";
+import { labelOfOutcome } from "../lib/engine-strategy-io.js";
+import { engineTemplateLines, everyEngineTemplateLines, listTemplatePicks, type TemplateLine } from "../lib/engine-template-rating-io.js";
 import type { EngineLlmBody, LlmRow } from "../lib/engine-llm-rating.js";
 
 const router = Router();
@@ -34,131 +33,8 @@ export const ENGINE_LLM_LIMITS = [
   `Daily spend covers the last ${SPEND_SERIES_DAYS} days, today included; every other figure is whole history.`,
 ];
 
-router.get("/internal/llm-pick", apiKeyOnly, async (req: Request, res: Response) => {
-  const outcome = str(req.query.outcome);
-  const place = str(req.query.place);
-  if (!outcome || !place) {
-    res.status(400).json({ error: "outcome and place are required", reason: "outcome_and_place_required" });
-    return;
-  }
-  const campaignId = str(req.query.campaignId);
-  const runId = str(req.headers["x-run-id"]);
-  try {
-    const [inputs, ruledOut] = await Promise.all([readRatingInputs(`llm pick ${outcome}|${place}`), campaignRuledOut(campaignId, outcome, "llm", str(req.query.strategyId))]);
-    const day = today();
-    const picked = pickLlm({
-      outcome,
-      place,
-      rules: inputs.rules,
-      lines: inputs.lines,
-      evidence: (inputs.build?.evidence ?? []).filter((e) => e.outcome === outcome),
-      outOfCreditProviders: inputs.outOfCreditProviders,
-      today: day,
-      seed: `${outcome}|${place}|${runId ?? `${Date.now()}-${Math.random()}`}`,
-      ruledOut,
-    });
-    if (picked.llmDynastySlug === null) {
-      res.status(422).json({ error: `no LLM of the ${outcome} Engine's universe can be picked now (not served or vendor out of credit)`, reason: picked.reason, outcome, place });
-      return;
-    }
-    await recordLlmPick({ outcome, place, llmDynastySlug: picked.llmDynastySlug, runId, campaignId });
-    const line = inputs.lines.find((l) => l.slug === picked.llmDynastySlug)!;
-    res.json({
-      outcome,
-      place,
-      llm: { llmDynastySlug: line.slug, name: line.name, provider: line.provider || null, model: line.slug },
-      candidates: picked.candidates,
-      evidenceComputedAt: inputs.build?.computedAt ?? null,
-      evidenceUnavailableReason: inputs.build ? null : "evidence_not_built_yet",
-    });
-  } catch (error) {
-    if (error instanceof StrategyNotFound) {
-      res.status(404).json({ error: error.message, reason: "strategy_not_found" });
-      return;
-    }
-    console.error(`[features-service] llm-pick ${outcome}|${place}:`, error);
-    res.status(502).json({ error: (error as Error).message, reason: "llm_rating_unreadable" });
-  }
-});
-
-/**
- * The campaign's strategy on one Engine, read on a writer subject (`llm` | `template`): a slug -> the reason it is ruled
- * out (its tactics), null = kept. No campaign, or a strategy naming no tactic of that subject = no filter (undefined).
- */
-async function campaignRuledOut(campaignId: string | null, outcome: string, kind: "llm" | "template", strategyId: string | null = null): Promise<((slug: string) => string | null) | undefined> {
-  const catalogue = await loadPlayCatalogue();
-  let strategy = null;
-  if (campaignId) {
-    const unit = await fetchCampaignPipe(campaignId);
-    if (!unit.found || !unit.salesFunnelCampaignId || !unit.orgId || !unit.brandId) return undefined;
-    const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
-    strategy = stored.kind === "kept" ? stored.strategy : null;
-  } else if (strategyId) {
-    // No campaign yet (content-generation's preview of a brand-new brand): the strategy the caller names.
-    strategy = catalogue.strategies.get(strategyId) ?? null;
-    if (!strategy) throw new StrategyNotFound(strategyId);
-  }
-  if (!strategy) return undefined;
-  const st = strategyOnSubject(strategy, kind, catalogue.tactics);
-  if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return undefined;
-  const nameOf = tacticNameOf(catalogue);
-  return (slug) => strategyVerdict(st, catalogue.tacticsByWriter.get(writerSubjectKey(kind, slug)), nameOf).reason;
-}
-
-class StrategyNotFound extends Error {
-  constructor(readonly strategyId: string) {
-    super(`no strategy ${strategyId}`);
-  }
-}
-
 /** PURE: template lines as the Rating's lines (a template is "served" when it is pickable; no vendor). */
 const templateRatingLines = (lines: readonly TemplateLine[]) => lines.map((l) => ({ slug: l.slug, name: l.name, provider: "", servedToday: l.pickable }));
-
-router.get("/internal/template-pick", apiKeyOnly, async (req: Request, res: Response) => {
-  const outcome = str(req.query.outcome);
-  const place = str(req.query.place);
-  if (!outcome || !place) {
-    res.status(400).json({ error: "outcome and place are required", reason: "outcome_and_place_required" });
-    return;
-  }
-  const campaignId = str(req.query.campaignId);
-  const runId = str(req.headers["x-run-id"]);
-  try {
-    const [lines, build, ruledOut] = await Promise.all([engineTemplateLines(outcome), readRatingInputs(`template pick ${outcome}|${place}`).then((i) => i.build), campaignRuledOut(campaignId, outcome, "template", str(req.query.strategyId))]);
-    const picked = pickLlm({
-      outcome,
-      place,
-      rules: [],
-      lines: templateRatingLines(lines),
-      evidence: (build?.templates ?? []).filter((e) => e.outcome === outcome),
-      outOfCreditProviders: new Set(),
-      today: today(),
-      seed: `template|${outcome}|${place}|${runId ?? `${Date.now()}-${Math.random()}`}`,
-      ruledOut,
-    });
-    if (picked.llmDynastySlug === null) {
-      res.status(422).json({ error: `no active template dynasty the ${outcome} Engine may write with${ruledOut ? " under its campaign's strategy" : ""}`, reason: "no_template_for_engine", outcome, place });
-      return;
-    }
-    await recordTemplatePick({ outcome, place, templateDynastySlug: picked.llmDynastySlug, runId, campaignId });
-    const line = lines.find((l) => l.slug === picked.llmDynastySlug)!;
-    res.json({
-      outcome,
-      place,
-      template: { templateDynastySlug: line.slug, name: line.name, head: line.head },
-      candidates: picked.candidates,
-      evidenceComputedAt: build?.computedAt ?? null,
-      evidenceUnavailableReason: build ? null : "evidence_not_built_yet",
-    });
-  } catch (error) {
-    if (error instanceof StrategyNotFound) {
-      res.status(404).json({ error: error.message, reason: "strategy_not_found" });
-      return;
-    }
-    console.error(`[features-service] template-pick ${outcome}|${place}:`, error);
-    res.status(502).json({ error: (error as Error).message, reason: "template_rating_unreadable" });
-  }
-});
 
 /** PURE: the template half of an Engine's staff body: the LLM Rating's rows, named as templates. */
 function templateBlock(b: EngineLlmBody, lines: readonly TemplateLine[]) {

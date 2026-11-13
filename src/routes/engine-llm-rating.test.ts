@@ -66,26 +66,6 @@ beforeEach(() => {
   seed();
 });
 
-describe("GET /internal/llm-pick", () => {
-  it("never answers Fable or Opus, records the pick with its run and place", async () => {
-    for (let i = 0; i < 30; i++) {
-      const res = await request(app).get("/internal/llm-pick?outcome=x_post_published&place=writer&campaignId=c1").set("x-api-key", "k").set("x-run-id", `run-${i}`);
-      expect(res.status).toBe(200);
-      expect(["claude-sonnet", "deepseek-flash"]).toContain(res.body.llm.llmDynastySlug);
-      expect(res.body.llm.model).toBe(res.body.llm.llmDynastySlug);
-    }
-    expect(recorded[0]).toMatchObject({ outcome: "x_post_published", place: "writer", runId: "run-0", campaignId: "c1" });
-  });
-  it("404 on a strategy that does not exist (preview, no campaign)", async () => {
-    const res = await request(app).get("/internal/llm-pick?outcome=x_post_published&place=writer&strategyId=nope").set("x-api-key", "k");
-    expect(res.status).toBe(404);
-    expect(res.body.reason).toBe("strategy_not_found");
-  });
-  it("400 without outcome and place", async () => {
-    expect((await request(app).get("/internal/llm-pick?outcome=x").set("x-api-key", "k")).status).toBe(400);
-  });
-});
-
 describe("GET /internal/research/engine-llms", () => {
   it("lists the allowed LLMs ranked and the past ones outside the universe with their calls and $", async () => {
     const res = await request(app).get("/internal/research/engine-llms").set("x-api-key", "k");
@@ -99,26 +79,6 @@ describe("GET /internal/research/engine-llms", () => {
     expect(fable).toMatchObject({ calls: 26, outcomes: 26, rank: null });
     expect(fable.spentUsdToDate).toBeCloseTo(1.82, 6);
     expect(x.llms.find((r: { llmDynastySlug: string }) => r.llmDynastySlug === "claude-sonnet").calls).toBe(26);
-  });
-});
-
-describe("GET /internal/template-pick", () => {
-  it("picks only an active template dynasty of the Engine, records the pick", async () => {
-    for (let i = 0; i < 10; i++) {
-      const res = await request(app).get("/internal/template-pick?outcome=x_post_published&place=writer").set("x-api-key", "k").set("x-run-id", `t-${i}`);
-      expect(res.status).toBe(200);
-      expect(res.body.template).toEqual({ templateDynastySlug: "x-post-shape-rotation", name: "Shape rotation", head: "x-post-shape-rotation-v2" });
-    }
-    expect(templatePicks[0]).toMatchObject({ outcome: "x_post_published", place: "writer", templateDynastySlug: "x-post-shape-rotation", runId: "t-0" });
-  });
-  it("the staff read serves each Engine's templates, the deprecated one not pickable", async () => {
-    const res = await request(app).get("/internal/research/engine-llms?outcome=x_post_published").set("x-api-key", "k");
-    const t = res.body.engines[0].templates;
-    expect(t.rows.map((r: { templateDynastySlug: string; rank: number | null; notPickableReason: string | null }) => [r.templateDynastySlug, r.rank, r.notPickableReason])).toEqual([
-      ["x-post-shape-rotation", 1, null],
-      ["x-post-old", null, "not_active"],
-    ]);
-    expect(t.favourite.templateDynastySlug).toBe("x-post-shape-rotation");
   });
 });
 

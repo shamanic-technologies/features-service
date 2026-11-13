@@ -31,15 +31,6 @@ export async function putUniverseRule(input: { outcome: string; allowed: string[
   return { outcome: row!.outcome, allowed: row!.allowed ?? null, excluded: row!.excluded ?? [], decidedBy: row!.decidedBy, note: row!.note ?? null, decidedAt: row!.decidedAt.toISOString() };
 }
 
-/** Record one pick. A write failure logs loud and never fails the pick (the run must not wait on the audit). */
-export async function recordLlmPick(p: { outcome: string; place: string; llmDynastySlug: string; runId: string | null; campaignId: string | null }): Promise<void> {
-  try {
-    await db.insert(engineLlmPicks).values(p);
-  } catch (error) {
-    console.error(`[features-service] LLM pick ${p.outcome}|${p.place} -> ${p.llmDynastySlug} not recorded:`, (error as Error).message);
-  }
-}
-
 /** Every pick since `sinceDay` (YYYY-MM-DD), newest first. */
 export async function listLlmPicks(sinceDay: string): Promise<PickRecord[]> {
   const rows = await db
