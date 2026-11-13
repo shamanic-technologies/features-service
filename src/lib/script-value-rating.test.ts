@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, rehomeGroups, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
+import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, rehomeGroups, applyReports, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
 
 /**
  * SCRIPT-VALUE-RATING-1113 (owner 2026-11-13): a script run is credited the value of the strongest outcome its chain
@@ -138,5 +138,25 @@ describe("rehomeGroups", () => {
     const groups = [g("conversation/dy_follow_up_due", 3, [], 1), g("old/dy_twice", 1, [], 1), g("gone/dy_retired", 1, [], 1)];
     const out = rehomeGroups(groups, ["lead_interested/dy_follow_up_due", "a/dy_twice", "b/dy_twice"]);
     expect(out.map((x) => x.scriptDynasty)).toEqual(["lead_interested/dy_follow_up_due", "old/dy_twice", "gone/dy_retired"]);
+  });
+});
+
+describe("applyReports", () => {
+  it("a reported run is worth nothing, its cost kept; the same script loses its lead", () => {
+    const groups = [g("message_written/haiku", 12, ["email_sent", "lead_interested"], 0.048), g("message_written/haiku", 488, ["email_sent"], 1.952)];
+    const reported = { scriptDynasty: "message_written/haiku", day: "2026-11-10", producedOutcomes: ["message_written"], reachedOutcomes: ["lead_interested", "email_sent"], spentUsd: 0.004 };
+    const before = scriptRatings({ groups, values: VALUES })[0]!;
+    const after = scriptRatings({ groups: applyReports(groups, [reported, reported, reported]), values: VALUES })[0]!;
+    expect(after.runs).toBe(500);
+    expect(after.spentUsd).toBeCloseTo(before.spentUsd!, 6);
+    expect(after.reached.find((r) => r.outcome === "lead_interested")!.runs).toBe(9);
+    expect(after.valueUsd).toBeCloseTo(before.valueUsd - 3 * (126 - 1.8711), 4);
+  });
+
+  it("a decision the groups do not hold changes nothing, and the input is left as it was", () => {
+    const groups = [g("message_written/haiku", 1, ["email_sent"], 0.004)];
+    const out = applyReports(groups, [{ scriptDynasty: "message_written/other", day: "2026-11-10", producedOutcomes: [], reachedOutcomes: [], spentUsd: 1 }, { scriptDynasty: "message_written/haiku", day: "2026-11-10", producedOutcomes: ["message_written"], reachedOutcomes: ["email_sent"], spentUsd: 0.004 }, { scriptDynasty: "message_written/haiku", day: "2026-11-10", producedOutcomes: ["message_written"], reachedOutcomes: ["email_sent"], spentUsd: 0.004 }]);
+    expect(out.reduce((n, x) => n + x.runs, 0)).toBe(1);
+    expect(groups[0]!.runs).toBe(1);
   });
 });

@@ -32,3 +32,11 @@ export async function recordUnitReport(input: UnitReportInput): Promise<UnitRepo
   const [row] = await db.insert(unitClientReports).values(input).returning();
   return { ...input, id: row!.id, reportedAt: row!.reportedAt.toISOString() };
 }
+
+/** Every reported Unit, as the ledger names it, with when it was reported. Fails loud. */
+export async function listUnitReports(): Promise<Array<Pick<UnitReport, "outcomeKey" | "subjectService" | "subjectId" | "reportedAt">>> {
+  const rows = await db
+    .select({ outcomeKey: unitClientReports.outcomeKey, subjectService: unitClientReports.subjectService, subjectId: unitClientReports.subjectId, reportedAt: unitClientReports.reportedAt })
+    .from(unitClientReports);
+  return rows.map((r) => ({ outcomeKey: r.outcomeKey, subjectService: r.subjectService, subjectId: r.subjectId, reportedAt: r.reportedAt.toISOString() }));
+}

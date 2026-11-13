@@ -29,6 +29,16 @@ vi.mock("../lib/script-catalogue-client.js", () => ({
     { outcome: "message_written", dynasty: "haiku" },
   ],
 }));
+let reports: Array<Record<string, string>> = [];
+let unitAnswers: unknown = { builtAt: "x", units: [] };
+let unitCalls: unknown[] = [];
+vi.mock("../lib/unit-client-reports-store.js", () => ({ listUnitReports: async () => reports }));
+vi.mock("../lib/fetch-retry.js", () => ({
+  fetchWithRetry: async (_url: string, init: { body: string }) => {
+    unitCalls.push(JSON.parse(init.body));
+    return { ok: true, status: 200, json: async () => unitAnswers, text: async () => "" };
+  },
+}));
 vi.mock("./agent-catalogue.js", () => ({
   loadCatalogueModelForLifetimeRevenue: async () => ({ steps: new Map([["meeting_booked", { valueUsd: 420 }], ["conversation", { valueUsd: 50 }], ["lead_found", { valueUsd: null }]]) }),
 }));
@@ -39,6 +49,9 @@ const key = { "x-api-key": "k" };
 
 beforeEach(() => {
   ledgerDown = false;
+  reports = [];
+  unitCalls = [];
+  unitAnswers = { builtAt: "x", units: [] };
   rates = { builtAt: "2026-11-13T16:40:37.347Z", brandId: null, consumed: [], steps: [step("message_written", "message_sent", 1000, 990), step("message_sent", "conversation", 1000, 15), step("conversation", "meeting_booked", 100, 30), step("meeting_booked", "meeting_attended", 5, 4)] };
   reach = {
     builtAt: "2026-11-13T16:40:37.347Z",
@@ -66,6 +79,25 @@ describe("GET /internal/script-ratings", () => {
     expect(res.body.scripts[0]).toMatchObject({ runs: 500, spentUsd: 2, costPerRunUsd: 0.004 });
     expect(Math.round(res.body.scripts[0].valuePerDollar)).toBe(749);
     expect(Math.round(res.body.scripts[1].valuePerDollar)).toBe(506);
+  });
+
+  it("a Unit a client reported takes its decision's credit away, once, and the body says how many", async () => {
+    const unit = { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", reportedAt: "2026-11-13T16:00:00.000Z" };
+    reports = [unit, { ...unit, reportedAt: "2026-11-13T17:00:00.000Z" }, { ...unit, subjectId: "L2" }];
+    const decision = { scriptSlug: "message_written/haiku/v3", day: "2026-11-10", brandIds: [], producedOutcomes: ["message_written"], reachedOutcomes: ["conversation", "message_sent"], costInUsdCents: "0.4", netCostInUsdCents: "0.4" };
+    unitAnswers = { builtAt: "x", units: [{ ...unit, status: "script_decision", decisionRunId: "r1", decision }, { ...unit, status: "script_decision", decisionRunId: "r1", decision }, { ...unit, subjectId: "L2", status: "no_unit", decisionRunId: null, decision: null }] };
+    const res = await request(app).get("/internal/script-ratings").set(key);
+    expect(res.status).toBe(200);
+    expect(unitCalls).toEqual([{ units: [{ outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-13T16:00:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L1", at: "2026-11-13T17:00:00.000Z" }, { outcomeKey: "message_written", subjectService: "lead-service", subjectId: "L2", at: "2026-11-13T16:00:00.000Z" }] }]);
+    expect(res.body.clientReports).toEqual({ units: 3, decisions: 1 });
+    const haiku = res.body.scripts.find((s: { scriptDynasty: string }) => s.scriptDynasty === "message_written/haiku");
+    expect(haiku).toMatchObject({ runs: 500, spentUsd: 2 });
+    expect(haiku.reached.find((r: { outcome: string }) => r.outcome === "conversation").runs).toBe(11);
+  });
+
+  it("no report = the ledger is not asked", async () => {
+    await request(app).get("/internal/script-ratings").set(key);
+    expect(unitCalls).toEqual([]);
   });
 
   it("a ledger that does not serve the spend yet: rated on value, no value per dollar, said why", async () => {

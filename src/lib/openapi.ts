@@ -6645,7 +6645,7 @@ registry.registerPath({
   description: "A script run is credited the value of the strongest outcome its chain reached in the ledger (the runs that consumed its Unit, then theirs), less the value of what it made itself. Fleet figures, read from runs-service's outcome chains.",
   tags: ["Internal"],
   responses: {
-    200: { description: "Values and ratings", content: { "application/json": { schema: z.object({ builtAt: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.string().nullable(), values: z.array(ScriptRatingValueSchema), scripts: z.array(ScriptRatingRowSchema) }) } } },
+    200: { description: "Values and ratings", content: { "application/json": { schema: z.object({ builtAt: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.string().nullable(), values: z.array(ScriptRatingValueSchema), scripts: z.array(ScriptRatingRowSchema), clientReports: z.object({ units: z.number(), decisions: z.number() }).describe("Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away.") }) } } },
     502: { description: "script_rating_unreadable" },
   },
 });
