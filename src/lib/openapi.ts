@@ -6460,13 +6460,19 @@ registry.registerPath({
             campaignId: z.string().describe("The campaign UNIT the run belongs to."),
             outcome: z.string().describe("The Engine: the outcome the run makes."),
             heldReason: z.string().nullable().describe("Why the run was held, a short code (e.g. `budget_spent`); null = it ran."),
+            expected: z
+              .boolean()
+              .optional()
+              .describe(
+                "MON-HELD-FALSE-1113: true = the hold is a normal business state the caller decided on purpose (the client is out of credit, the daily ceiling is reached, a funnel max budget is spent): still named on the next-steps read, never red on Monitoring. Absent or false = a fault (red). Ignored when `heldReason` is null.",
+              ),
           }),
         },
       },
     },
   },
   responses: {
-    202: { description: "Recorded", content: { "application/json": { schema: z.object({ campaignId: z.string(), outcome: z.string(), heldReason: z.string().nullable() }) } } },
+    202: { description: "Recorded", content: { "application/json": { schema: z.object({ campaignId: z.string(), outcome: z.string(), heldReason: z.string().nullable(), expected: z.boolean() }) } } },
     400: { description: "engine_answer_unrecognised" },
   },
 });

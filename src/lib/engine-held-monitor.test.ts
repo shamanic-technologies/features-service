@@ -26,4 +26,26 @@ describe("campaign-engine-held: red on Monitoring only while an Engine cannot ru
     expect(r.reason).toMatch(/1 campaign cannot run an Engine: message_written on c1 \(script_strategy_unreadable\)/);
     expect(BoxCheckRunSchema.safeParse(r).success).toBe(true);
   });
+  it("a hold its service calls expected (out of credit, ceiling reached) is never red, counted apart (MON-HELD-FALSE-1113)", () => {
+    const r = engineHeldRun(
+      [
+        { campaignId: "c1", outcome: "message_written", heldReason: "Insufficient credits", expected: true, at: now - 60_000 },
+        { campaignId: "c2", outcome: "message_written", heldReason: "daily_ceiling_reached", expected: true, at: now - 60_000 },
+        { campaignId: "c3", outcome: "message_written", heldReason: "daily_ceiling_reached", expected: true, at: now - 60_000 },
+      ],
+      now,
+    );
+    expect(r).toMatchObject({ ok: true, value: 0, details: { heldOnPurpose: 3, heldOnPurposeByReason: { "Insufficient credits": 1, daily_ceiling_reached: 2 } } });
+    expect(r.reason).toMatch(/3 held on purpose: 2 daily_ceiling_reached, 1 Insufficient credits/);
+    const mixed = engineHeldRun(
+      [
+        { campaignId: "c1", outcome: "message_written", heldReason: "Insufficient credits", expected: true, at: now - 60_000 },
+        { campaignId: "c4", outcome: "message_written", heldReason: "budgets_unreadable", at: now - 60_000 },
+      ],
+      now,
+    );
+    expect(mixed).toMatchObject({ ok: false, value: 1 });
+    expect(mixed.reason).toMatch(/budgets_unreadable/);
+    expect(BoxCheckRunSchema.safeParse(r).success).toBe(true);
+  });
 });

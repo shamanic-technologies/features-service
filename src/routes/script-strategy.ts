@@ -93,11 +93,13 @@ router.post("/internal/campaign-engine-answers", apiKeyOnly, (req: Request, res:
   const campaignId = typeof b.campaignId === "string" ? b.campaignId.trim() : "";
   const outcome = typeof b.outcome === "string" ? b.outcome.trim() : "";
   const heldReason = b.heldReason === null ? null : typeof b.heldReason === "string" && b.heldReason.trim() ? b.heldReason.trim() : undefined;
-  if (!campaignId || !outcome || heldReason === undefined) {
-    return res.status(400).json({ error: "campaignId, outcome and heldReason (a reason, or null when the Engine ran) are required", reason: "engine_answer_unrecognised" });
+  // MON-HELD-FALSE-1113: `expected: true` = a hold made on purpose (out of credit, ceiling reached): never red on Monitoring.
+  const expected = b.expected === undefined ? false : typeof b.expected === "boolean" ? b.expected : undefined;
+  if (!campaignId || !outcome || heldReason === undefined || expected === undefined) {
+    return res.status(400).json({ error: "campaignId, outcome and heldReason (a reason, or null when the Engine ran) are required; expected, when sent, is a boolean", reason: "engine_answer_unrecognised" });
   }
-  noteEngineAnswer(campaignId, outcome, heldReason);
-  res.status(202).json({ campaignId, outcome, heldReason });
+  noteEngineAnswer(campaignId, outcome, heldReason, Date.now(), expected);
+  res.status(202).json({ campaignId, outcome, heldReason, expected: heldReason !== null && expected });
 });
 
 export default router;
