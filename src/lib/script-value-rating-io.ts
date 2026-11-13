@@ -129,3 +129,22 @@ export async function readReportedDecisions(units: readonly ReportedUnit[]): Pro
   }
   return out;
 }
+
+/** PURE: a step-rates body as a book (the denominators of every consumed outcome beside the chained pairs). */
+export function parseStepRateBook(body: unknown): { builtAt: string; consumed: Map<string, number>; steps: StepRate[] } {
+  const { builtAt, steps } = parseStepRates(body);
+  const raw = (body as Record<string, unknown>).consumed;
+  if (!Array.isArray(raw)) throw new Error("[features-service] outcome chains: step-rates served no consumed list");
+  const consumed = new Map<string, number>();
+  for (const c of raw) {
+    if (!isRecord(c)) throw new Error("[features-service] outcome chains: a consumed row is not an object");
+    consumed.set(text(c.outcome, "outcome"), count(c.consumedUnits, "consumedUnits"));
+  }
+  return { builtAt, consumed, steps };
+}
+
+/** One brand's step-rates book and the fleet's (null brand). Held like every ledger read; FAIL-LOUD. */
+export async function readStepRateBook(brandId: string | null): Promise<{ builtAt: string; consumed: Map<string, number>; steps: StepRate[] }> {
+  const path = brandId === null ? STEP_RATES_PATH : `${STEP_RATES_PATH}?brandId=${encodeURIComponent(brandId)}`;
+  return parseStepRateBook(await readRunsLedgerJson(path, brandId === null ? FLEET_LEDGER_HOLD_MS : 60_000));
+}

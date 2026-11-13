@@ -4167,6 +4167,54 @@ const brandConversionRatesResponseRef = registry.register(
   }),
 );
 
+const legRateSourceSchema = z.object({
+  fromStep: z.string().describe("brand-service's own step words (the key a leg-rate write joins on)."),
+  toStep: z.string(),
+  legKey: z.string().nullable().describe("The catalogue leg (joins GET /public/channels legs[]); null = the catalogue carries none."),
+  fromOutcome: z.string().nullable().describe("The ledger outcome the leg starts from (the catalogue step, or the lead state the ledger declares it under); null = not a ledger step."),
+  toOutcome: z.string().nullable(),
+  ask: z.boolean().describe("true = the client is asked this rate: the brand's ledger does not measure it (see unmeasuredReason). false = measured, show it read-only."),
+  ratePct: z.number().nullable().describe("The rate in force, 0..100: measured, else stated by the client, else the default. Null only when none exists."),
+  source: z.enum(["measured", "stated", "default"]).nullable(),
+  ledger: z.object({ consumedUnits: z.number(), ledUnits: z.number() }).nullable().describe("The brand's own ledger on the leg whatever the bar: consumed Units of the start, those whose consuming run produced the end. Null = not a ledger step."),
+  measuredRatePct: z.number().nullable().describe("The brand's measured rate (ledUnits / consumedUnits), null unless it passes the bar (the script Rating's rule)."),
+  unmeasuredReason: z.enum(["not_a_ledger_step", "too_few_units", "nothing_led_yet", "brand_reports_no_meetings"]).nullable().describe("Why the leg is asked. brand_reports_no_meetings = a leg touching a meeting step on a brand that never reported a meeting (MEETING-POPULATION-1018): unmeasured, never 0 %."),
+  statedRatePct: z.number().nullable().describe("What the client stated, null when never stated."),
+  defaultRatePct: z.number().nullable().describe("The prefill of an asked rate."),
+  defaultSource: z.enum(["fleet_measured", "leg_default"]).nullable().describe("fleet_measured = every brand's ledger on the step passes the bar (never on a meeting leg); leg_default = the leg's seeded benchmark."),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/rate-sources",
+  summary: "Which leg rates the client is asked: only those the brand's ledger cannot measure",
+  description:
+    "SCRIPT-VALUE-RATING-1113-RATES (owner 2026-11-13). Per leg the client can state today (brand-service's leg list): the brand's one-step rate in runs-service's outcome chains " +
+    "(of the consumed Units of the start, the share whose consuming run produced the end), measured when it passes the script Rating's bar (minConsumedUnits consumed, at least one led); " +
+    "otherwise ask: true, prefilled with defaultRatePct. A brand with too few Units is never measured on the fleet's rate. Additive: moves no price, campaign or expected return. " +
+    "Org-scoped (x-org-id); unknown or foreign brand = 404 brand_not_found; a producer down = 502 rate_sources_unreadable.",
+  tags: ["Stats"],
+  request: { params: z.object({ brandId: z.string() }) },
+  responses: {
+    200: {
+      description: "Every leg with its source.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            builtAt: z.string().describe("When runs-service built the outcome chains."),
+            minConsumedUnits: z.number(),
+            reportsMeetings: z.boolean(),
+            legs: z.array(legRateSourceSchema),
+          }),
+        },
+      },
+    },
+    404: { description: "Brand not held by the org" },
+    502: { description: "A producer could not be read" },
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/conversion-rates",
