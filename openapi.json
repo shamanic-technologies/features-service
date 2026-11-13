@@ -55818,6 +55818,22 @@
                           "valuePerDollarUnavailableReason"
                         ]
                       }
+                    },
+                    "clientReports": {
+                      "type": "object",
+                      "properties": {
+                        "units": {
+                          "type": "number"
+                        },
+                        "decisions": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "units",
+                        "decisions"
+                      ],
+                      "description": "Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away."
                     }
                   },
                   "required": [
@@ -55825,7 +55841,8 @@
                     "lifetimeRevenueUsd",
                     "lifetimeRevenueSource",
                     "values",
-                    "scripts"
+                    "scripts",
+                    "clientReports"
                   ]
                 }
               }

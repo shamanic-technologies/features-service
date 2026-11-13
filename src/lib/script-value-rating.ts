@@ -257,3 +257,32 @@ export function rehomeGroups(groups: readonly ReachGroup[], runnableDynasties: r
     return home && home.size === 1 ? { ...g, scriptDynasty: [...home][0]! } : g;
   });
 }
+
+/** One script decision a client reported (an edit of what it wrote, or a "Report"), in a reach group's own terms. */
+export interface ReportedDecision {
+  scriptDynasty: string;
+  day: string;
+  producedOutcomes: readonly string[];
+  reachedOutcomes: readonly string[];
+  spentUsd: number | null;
+}
+
+/**
+ * A reported Unit is worth nothing for the script that made it (owner 2026-11-13): its decision leaves its group and
+ * stands alone as a run that made and reached nothing, its cost kept. A decision the groups no longer hold (the ledger
+ * rebuilt since) changes nothing. Each decision is passed once, however many times its Units were reported.
+ */
+export function applyReports(groups: readonly ReachGroup[], reported: readonly ReportedDecision[]): ReachGroup[] {
+  const keyOf = (g: Pick<ReachGroup, "scriptDynasty" | "day" | "producedOutcomes" | "reachedOutcomes">): string => JSON.stringify([g.scriptDynasty, g.day, [...g.producedOutcomes].sort(), [...g.reachedOutcomes].sort()]);
+  const out = groups.map((g) => ({ ...g }));
+  const index = new Map<string, ReachGroup>();
+  for (const g of out) if (!index.has(keyOf(g))) index.set(keyOf(g), g);
+  for (const r of reported) {
+    const g = index.get(keyOf(r));
+    if (!g || !(g.runs > 0)) continue;
+    g.runs -= 1;
+    if (g.spentUsd !== null && r.spentUsd !== null) g.spentUsd = Math.max(0, g.spentUsd - r.spentUsd);
+    out.push({ scriptDynasty: r.scriptDynasty, day: r.day, producedOutcomes: [], reachedOutcomes: [], runs: 1, spentUsd: g.spentUsd === null ? null : r.spentUsd });
+  }
+  return out;
+}
