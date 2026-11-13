@@ -79667,6 +79667,1179 @@
         }
       }
     },
+    "/internal/research/engines": {
+      "get": {
+        "summary": "The Research file by Engine: studies on their Engine and measure (staff, api-key)",
+        "description": "RESEARCH-BY-ENGINE-1113 (owner 2026-11-13, go « A »: the Research page carries no pipe anywhere). The SAME figures as the per-source read, regrouped by Engine (outcome) and measure, never recomputed (same population, same basis). Vocabulary: no field, key or enum value names a pipe, leg, channel, play or workflow (`workflow` -> `script`, `*_pipe` -> `*_engine`, `leg_*` -> `engine_*`), every sentence says script / Engine / step; identifiers (`key`, `slug`, `id`) are untouched. Twin of /internal/research: `engines[]` replaces `pipes[]`; each study names `engine` + `measure` (null on an outcome-section study) and its id is re-keyed off its source (`<measure>:script-roi`); topic `workflow` reads `script`; outcome sections list `measures`; `volume.scripts` = the old `volume.workflows`; `maturation.rules` = the old per-leg rules.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ],
+              "description": "Default `user` (billed)."
+            },
+            "required": false,
+            "description": "Default `user` (billed).",
+            "name": "basis",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Research file by Engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "actual"
+                      ]
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "computedAt": {
+                          "type": "string",
+                          "description": "When the served build was computed (= the file's `computedAt`)."
+                        },
+                        "refreshEveryMinutes": {
+                          "type": "integer",
+                          "description": "The build's cadence: 15 on the billed basis, 360 on the vendor-cost twin."
+                        },
+                        "staleAfterMinutes": {
+                          "type": "integer",
+                          "description": "Twice the cadence: past it, the served build is out of date."
+                        },
+                        "ageMinutes": {
+                          "type": "integer",
+                          "description": "Whole minutes since `computedAt`, at this read."
+                        },
+                        "stale": {
+                          "type": "boolean",
+                          "description": "`ageMinutes > staleAfterMinutes`: the page must say the figures are out of date, with their time."
+                        },
+                        "rebuilding": {
+                          "type": "boolean",
+                          "description": "A build of this basis and view is running now."
+                        }
+                      },
+                      "required": [
+                        "computedAt",
+                        "refreshEveryMinutes",
+                        "staleAfterMinutes",
+                        "ageMinutes",
+                        "stale",
+                        "rebuilding"
+                      ],
+                      "description": "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so."
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string",
+                            "description": "The Engine: one per outcome (framework v10)."
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "measures": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "description": "`<engine>/<startsFrom or start>/<counts>`: stable, names no medium. Every Engine-keyed read is keyed on it."
+                                },
+                                "engine": {
+                                  "type": "string",
+                                  "description": "The Engine's outcome key."
+                                },
+                                "startsFrom": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the people measured stood at; null = from nothing."
+                                },
+                                "counts": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the figures count (a cost per outcome is per this step)."
+                                },
+                                "description": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "engine",
+                                "startsFrom",
+                                "counts",
+                                "description"
+                              ]
+                            },
+                            "description": "What its figures count, and among whom. Two sources counting the same step from the same step are ONE measure (listed together, figures never summed)."
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "name",
+                          "measures"
+                        ]
+                      }
+                    },
+                    "outcomes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "measures": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id"
+                        ],
+                        "additionalProperties": {
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "studies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "engine": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "measure": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "topic": {
+                            "type": "string"
+                          },
+                          "question": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "engine",
+                          "measure",
+                          "topic",
+                          "question"
+                        ],
+                        "additionalProperties": {
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "unavailable": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "notCarried": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "what": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "what",
+                          "reason"
+                        ]
+                      },
+                      "description": "Every figure of the per-source read this body could not carry, with why (never silent)."
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "costBasis",
+                    "freshness",
+                    "engines",
+                    "outcomes",
+                    "studies",
+                    "unavailable",
+                    "notCarried"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised` / `view_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/engines/catalog": {
+      "get": {
+        "summary": "The Research catalogue by Engine: per measure, its script, template and LLM pages (staff, api-key)",
+        "description": "RESEARCH-BY-ENGINE-1113 (owner 2026-11-13, go « A »: the Research page carries no pipe anywhere). The SAME figures as the per-source read, regrouped by Engine (outcome) and measure, never recomputed (same population, same basis). Vocabulary: no field, key or enum value names a pipe, leg, channel, play or workflow (`workflow` -> `script`, `*_pipe` -> `*_engine`, `leg_*` -> `engine_*`), every sentence says script / Engine / step; identifiers (`key`, `slug`, `id`) are untouched. Twin of /internal/research/catalog. Each script page = the old workflow page byte for byte (figures read live off the current ranking), plus `tactics {llm, template}`: the LLM and template it wrote with (`wroteWith`), else writes with now. Template and LLM pages keep their own performance tables (`scripts` lists the scripts using them).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ],
+              "description": "Default `user` (billed)."
+            },
+            "required": false,
+            "description": "Default `user` (billed).",
+            "name": "basis",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalogue by Engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "actual"
+                      ]
+                    },
+                    "view": {
+                      "type": "string",
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string",
+                            "description": "The Engine: one per outcome (framework v10)."
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "measures": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "description": "`<engine>/<startsFrom or start>/<counts>`: stable, names no medium. Every Engine-keyed read is keyed on it."
+                                },
+                                "engine": {
+                                  "type": "string",
+                                  "description": "The Engine's outcome key."
+                                },
+                                "startsFrom": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the people measured stood at; null = from nothing."
+                                },
+                                "counts": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the figures count (a cost per outcome is per this step)."
+                                },
+                                "description": {
+                                  "type": "string"
+                                },
+                                "scripts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      },
+                                      "tactics": {
+                                        "type": "object",
+                                        "properties": {
+                                          "llm": {
+                                            "type": "object",
+                                            "nullable": true,
+                                            "properties": {
+                                              "key": {
+                                                "type": "string"
+                                              },
+                                              "label": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "key",
+                                              "label"
+                                            ],
+                                            "additionalProperties": {
+                                              "nullable": true
+                                            }
+                                          },
+                                          "template": {
+                                            "type": "object",
+                                            "nullable": true,
+                                            "properties": {
+                                              "key": {
+                                                "type": "string"
+                                              },
+                                              "label": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "key",
+                                              "label"
+                                            ],
+                                            "additionalProperties": {
+                                              "nullable": true
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "llm",
+                                          "template"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label",
+                                      "tactics"
+                                    ],
+                                    "additionalProperties": {
+                                      "nullable": true
+                                    }
+                                  }
+                                },
+                                "templates": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ],
+                                    "additionalProperties": {
+                                      "nullable": true
+                                    }
+                                  }
+                                },
+                                "llms": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key",
+                                      "label"
+                                    ],
+                                    "additionalProperties": {
+                                      "nullable": true
+                                    }
+                                  }
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "engine",
+                                "startsFrom",
+                                "counts",
+                                "description",
+                                "scripts",
+                                "templates",
+                                "llms"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "name",
+                          "measures"
+                        ]
+                      }
+                    },
+                    "notCarried": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "what": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "what",
+                          "reason"
+                        ]
+                      },
+                      "description": "Every figure of the per-source read this body could not carry, with why (never silent)."
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "costBasis",
+                    "view",
+                    "engines",
+                    "notCarried"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised` / `view_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/engines/performance": {
+      "get": {
+        "summary": "The Research Performance tab by Engine: per measure, every script x template x LLM row (staff, api-key)",
+        "description": "RESEARCH-BY-ENGINE-1113 (owner 2026-11-13, go « A »: the Research page carries no pipe anywhere). The SAME figures as the per-source read, regrouped by Engine (outcome) and measure, never recomputed (same population, same basis). Vocabulary: no field, key or enum value names a pipe, leg, channel, play or workflow (`workflow` -> `script`, `*_pipe` -> `*_engine`, `leg_*` -> `engine_*`), every sentence says script / Engine / step; identifiers (`key`, `slug`, `id`) are untouched. Twin of /internal/research/performance: each row's `script` part = the old `workflow` part (`deprecatedParts` says `script`), `servedNow.script` likewise. A measure with ONE measured source serves its rows, totals and series as served; several measured sources list their rows and serve `totals: null` + `totalsUnavailableReason: several_sources_not_summed` (never summed).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user",
+                "actual"
+              ],
+              "description": "Default `user` (billed)."
+            },
+            "required": false,
+            "description": "Default `user` (billed).",
+            "name": "basis",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mature",
+                "flash"
+              ],
+              "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`."
+            },
+            "required": false,
+            "description": "MATURITY-VIEW-1023 (owner 2026-10-23). Which half EVERY figure of the build is read on: `mature` (default) = the people we started writing to before the leg's cutoff, every outcome they sent since; `flash` = everything to date. A workflow below its leg's maturity bar stays marked Learning on both; the order a pipe picks by never moves. Any other value = 400 `view_unrecognised`.",
+            "name": "view",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Performance tab by Engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "freshness": {
+                      "type": "object",
+                      "properties": {
+                        "computedAt": {
+                          "type": "string",
+                          "description": "When the served build was computed (= the file's `computedAt`)."
+                        },
+                        "refreshEveryMinutes": {
+                          "type": "integer",
+                          "description": "The build's cadence: 15 on the billed basis, 360 on the vendor-cost twin."
+                        },
+                        "staleAfterMinutes": {
+                          "type": "integer",
+                          "description": "Twice the cadence: past it, the served build is out of date."
+                        },
+                        "ageMinutes": {
+                          "type": "integer",
+                          "description": "Whole minutes since `computedAt`, at this read."
+                        },
+                        "stale": {
+                          "type": "boolean",
+                          "description": "`ageMinutes > staleAfterMinutes`: the page must say the figures are out of date, with their time."
+                        },
+                        "rebuilding": {
+                          "type": "boolean",
+                          "description": "A build of this basis and view is running now."
+                        }
+                      },
+                      "required": [
+                        "computedAt",
+                        "refreshEveryMinutes",
+                        "staleAfterMinutes",
+                        "ageMinutes",
+                        "stale",
+                        "rebuilding"
+                      ],
+                      "description": "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so."
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "actual"
+                      ]
+                    },
+                    "view": {
+                      "type": "string",
+                      "enum": [
+                        "mature",
+                        "flash"
+                      ]
+                    },
+                    "engines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcome": {
+                            "type": "string",
+                            "description": "The Engine: one per outcome (framework v10)."
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "measures": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "description": "`<engine>/<startsFrom or start>/<counts>`: stable, names no medium. Every Engine-keyed read is keyed on it."
+                                },
+                                "engine": {
+                                  "type": "string",
+                                  "description": "The Engine's outcome key."
+                                },
+                                "startsFrom": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the people measured stood at; null = from nothing."
+                                },
+                                "counts": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string",
+                                      "description": "The catalogue step (or outcome) key."
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "name"
+                                  ],
+                                  "description": "The step the figures count (a cost per outcome is per this step)."
+                                },
+                                "description": {
+                                  "type": "string"
+                                },
+                                "rows": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "key"
+                                    ],
+                                    "additionalProperties": {
+                                      "nullable": true
+                                    }
+                                  }
+                                },
+                                "totals": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {},
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                },
+                                "series": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {},
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                },
+                                "totalsUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_source_measured",
+                                    "several_sources_not_summed",
+                                    null
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "engine",
+                                "startsFrom",
+                                "counts",
+                                "description",
+                                "rows",
+                                "totals",
+                                "series",
+                                "totalsUnavailableReason"
+                              ],
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "outcome",
+                          "name",
+                          "measures"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "computedAt",
+                    "freshness",
+                    "costBasis",
+                    "view",
+                    "engines"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`basis_unrecognised` / `view_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/research/engines/live-scripts": {
+      "get": {
+        "summary": "The live script ranking of one Research measure (staff, api-key)",
+        "description": "RESEARCH-BY-ENGINE-1113 (owner 2026-11-13, go « A »: the Research page carries no pipe anywhere). The SAME figures as the per-source read, regrouped by Engine (outcome) and measure, never recomputed (same population, same basis). Vocabulary: no field, key or enum value names a pipe, leg, channel, play or workflow (`workflow` -> `script`, `*_pipe` -> `*_engine`, `leg_*` -> `engine_*`), every sentence says script / Engine / step; identifiers (`key`, `slug`, `id`) are untouched. Twin of /public/stats/leg-workflow-ranking for the Research page: the same rows (rank, figures, tactics, marks, place), `scriptDynastySlug` / `scriptDynastyName` for the old workflow fields. Several measured sources = rows listed, `orderUnavailableReason: several_sources_ranked_apart`.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "A `measures[].id` of /internal/research/engines."
+            },
+            "required": true,
+            "description": "A `measures[].id` of /internal/research/engines.",
+            "name": "measure",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Default gross."
+            },
+            "required": false,
+            "description": "Default gross.",
+            "name": "pricing",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The measure's live script ranking",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ]
+                    },
+                    "engine": {
+                      "type": "string"
+                    },
+                    "measure": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "`<engine>/<startsFrom or start>/<counts>`: stable, names no medium. Every Engine-keyed read is keyed on it."
+                        },
+                        "engine": {
+                          "type": "string",
+                          "description": "The Engine's outcome key."
+                        },
+                        "startsFrom": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "key": {
+                              "type": "string",
+                              "description": "The catalogue step (or outcome) key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "name"
+                          ],
+                          "description": "The step the people measured stood at; null = from nothing."
+                        },
+                        "counts": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string",
+                              "description": "The catalogue step (or outcome) key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "name"
+                          ],
+                          "description": "The step the figures count (a cost per outcome is per this step)."
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "engine",
+                        "startsFrom",
+                        "counts",
+                        "description"
+                      ]
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "rank": {
+                            "type": "integer"
+                          },
+                          "scriptDynastySlug": {
+                            "type": "string"
+                          },
+                          "scriptDynastyName": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "rank",
+                          "scriptDynastySlug"
+                        ],
+                        "additionalProperties": {
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "orderUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "ranking_not_computed_yet",
+                        "several_sources_ranked_apart",
+                        null
+                      ]
+                    }
+                  },
+                  "required": [
+                    "pricing",
+                    "engine",
+                    "measure",
+                    "computedAt",
+                    "rows",
+                    "orderUnavailableReason"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`pricing_unrecognised`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`measure_not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`live_scripts_unreadable`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`research_not_computed_yet`: the first build after this deploy is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/security-advisories/reports": {
       "post": {
         "summary": "Store one day's security audit report of every prod repo (internal, api-key)",
