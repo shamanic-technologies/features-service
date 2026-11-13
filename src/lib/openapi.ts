@@ -6651,6 +6651,46 @@ registry.registerPath({
     502: { description: "script_rating_unreadable" },
   },
 });
+const ScriptEngineRowSchema = z.object({
+  scriptDynasty: z.string().describe("`<outcome>/<dynasty>`, every version pooled."),
+  runnable: z.boolean().describe("Runnable today (workflow-service). A past script keeps its figures and draws nothing."),
+  version: z.number().nullable().describe("The runnable version; null = not runnable."),
+  shareOfDrawsPct: z.number().nullable().describe("Share of today's draws among the Engine's runnable scripts (the Rating's own Thompson draw, `draws` times), 0..100; null = not runnable."),
+  runs: z.number(),
+  reached: z.array(z.object({ outcome: z.string().nullable(), runs: z.number(), creditUsd: z.number() })).describe("Runs by the strongest outcome their chain reached beyond their own Unit (null = none)."),
+  spentUsd: z.number().nullable(),
+  costPerRunUsd: z.number().nullable(),
+  valuePerRunUsd: z.number().nullable(),
+  valuePerDollar: z.number().nullable().describe("The Rating's score (credited value per dollar spent): a decision figure, staff only, never a return."),
+  valuePerDollarUnavailableReason: z.enum(["spend_not_served", "no_spend", "no_runs"]).nullable(),
+  llms: z.array(z.object({ place: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable() })).describe("The LLM tactics workflow-service states on the runnable version (`place` null = every call)."),
+  templates: z.array(z.object({ place: z.string().nullable(), templateDynastySlug: z.string() })).describe("The template tactics workflow-service states on the runnable version."),
+  runsByDay: z.array(z.object({ day: z.string(), runs: z.number(), spentUsd: z.number().nullable() })).describe("Runs and spend per UTC day, the last 30 days (days with no run left out)."),
+});
+const ScriptEngineSchema = z.object({
+  outcome: z.string().describe("The Engine: the outcome its scripts make."),
+  outcomeValueUsd: z.number().nullable(),
+  outcomeValueSource: z.enum(["anchor", "measured", "declared"]).nullable(),
+  basis: z.enum(["value_per_dollar", "value_only", "cost_only", "no_candidate"]).describe("How the draws decided (`no_candidate` = no runnable script)."),
+  favourite: z.string().nullable().describe("The runnable script with the largest share of today's draws."),
+  runnableScripts: z.number(),
+  runs: z.number(),
+  scripts: z.array(ScriptEngineRowSchema).describe("Runnable first, by share of draws, then the Rating's score, runs, slug."),
+  drawShareHistory: z.array(z.object({ day: z.string(), shares: z.array(z.object({ scriptDynasty: z.string(), sharePct: z.number() })) })).describe("The stored daily series: each UTC day's share of draws per runnable script (the latest build of the day), last 30 days."),
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/research/script-engines",
+  summary: "Monitoring: what the Rating picks today, per Engine (internal, api-key, staff)",
+  description: "Every Engine, its scripts ranked by today's share of draws among its runnable scripts (no campaign strategy narrowing), each with runs, what they reached, cost per run, the Rating's score and the LLM / template tactics it states. Built off the request path every 15 min, one stored copy; `health.broken` when the build is over an hour old.",
+  tags: ["Internal"],
+  request: { query: z.object({ outcome: z.string().describe("One Engine only.").optional() }) },
+  responses: {
+    200: { description: "The board", content: { "application/json": { schema: z.object({ ledgerBuiltAt: z.string(), computedAt: z.string(), draws: z.number(), health: z.object({ broken: z.boolean(), reason: z.enum(["board_not_rebuilt"]).nullable() }), engines: z.array(ScriptEngineSchema) }) } } },
+    502: { description: "script_engines_unreadable" },
+    503: { description: "script_engines_not_built_yet" },
+  },
+});
 registry.registerPath({
   method: "get",
   path: "/internal/script-pick",
