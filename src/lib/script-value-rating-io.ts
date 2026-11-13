@@ -148,3 +148,17 @@ export async function readStepRateBook(brandId: string | null): Promise<{ builtA
   const path = brandId === null ? STEP_RATES_PATH : `${STEP_RATES_PATH}?brandId=${encodeURIComponent(brandId)}`;
   return parseStepRateBook(await readRunsLedgerJson(path, brandId === null ? FLEET_LEDGER_HOLD_MS : 60_000));
 }
+
+/** CAMPAIGN-SCRIPTS-1113: runs-service's parameter narrowing script-reach to the decisions run for given campaigns. */
+export const SCRIPT_REACH_CAMPAIGNS_PARAM = "campaignIds";
+
+/**
+ * The script decisions run FOR the given campaigns (a funnel campaign's unit campaigns), by dynasty and day, same
+ * definitions as the fleet read. Held 60 s like a brand ledger read. FAIL-LOUD. No campaign = no read.
+ */
+export async function readCampaignScriptReach(campaignIds: readonly string[]): Promise<{ builtAt: string; groups: ReachGroup[] }> {
+  const ids = [...new Set(campaignIds)].sort();
+  if (!ids.length) return { builtAt: new Date(0).toISOString(), groups: [] };
+  const path = `${SCRIPT_REACH_PATH}&${SCRIPT_REACH_CAMPAIGNS_PARAM}=${ids.map(encodeURIComponent).join(",")}`;
+  return parseScriptReach(await readRunsLedgerJson(path, 60_000));
+}
