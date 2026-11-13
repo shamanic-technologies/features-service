@@ -6605,7 +6605,9 @@ const UnitReportRequestSchema = z.object({
   kind: z.enum(["edited", "reported"]).describe("`edited` = the client changed what we wrote; `reported` = the client said it is not good (a Unit it cannot edit, e.g. a sent message)."),
   source: z.string().describe("Where it was said (the dashboard, the API, the MCP, Sophie): free text."),
   note: z.string().describe("What the client said, when it said something.").nullable().optional(),
+  unitAt: z.string().describe("When the thing the client points at was made (ISO), e.g. a message's send time. One subject holds several Units over time (a lead holds every message written for them): the Unit standing THEN is the one reported. Absent = the Unit standing when the report is made.").nullable().optional(),
 });
+const UnitReportSchema = UnitReportRequestSchema.extend({ id: z.string(), orgId: z.string(), userId: z.string(), note: z.string().nullable(), unitAt: z.string().nullable(), reportedAt: z.string() });
 registry.registerPath({
   method: "post",
   path: "/orgs/unit-reports",
@@ -6614,9 +6616,21 @@ registry.registerPath({
   tags: ["Features"],
   request: { body: { content: { "application/json": { schema: UnitReportRequestSchema } } } },
   responses: {
-    201: { description: "The stored report", content: { "application/json": { schema: UnitReportRequestSchema.extend({ id: z.string(), orgId: z.string(), userId: z.string(), note: z.string().nullable(), reportedAt: z.string() }) } } },
+    201: { description: "The stored report", content: { "application/json": { schema: UnitReportSchema } } },
     400: { description: "unit_report_unrecognised" },
     502: { description: "unit_report_unwritable" },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/orgs/unit-reports",
+  summary: "The org's own reports of one subject (what a page shows as reported)",
+  tags: ["Features"],
+  request: { query: z.object({ subjectService: z.string(), subjectId: z.string(), outcomeKey: z.string().describe("One outcome of the subject; absent = every outcome.").optional() }) },
+  responses: {
+    200: { description: "Newest first", content: { "application/json": { schema: z.object({ reports: z.array(UnitReportSchema) }) } } },
+    400: { description: "unit_report_unrecognised" },
+    502: { description: "unit_reports_unreadable" },
   },
 });
 
