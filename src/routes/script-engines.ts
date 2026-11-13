@@ -16,10 +16,10 @@ import { claimFleetCellBuild, loadFleetCell, storeFleetCell } from "../lib/fleet
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { BOARD_DAYS, BOARD_DRAWS, dayBefore, scriptEngineBoard, type BoardEngine } from "../lib/script-engine-board.js";
 import { buildScriptRating } from "./script-rating.js";
+import { SCRIPT_ENGINES_CELL } from "../lib/engine-favourites.js";
 
 const router = Router();
 
-export const SCRIPT_ENGINES_CELL = "script-engines-v1";
 /** Rebuilt on this clock. */
 export const SCRIPT_ENGINES_FRESH_MS = 15 * 60_000;
 /** A build older than this is broken (four missed rebuilds): red on Monitoring. */

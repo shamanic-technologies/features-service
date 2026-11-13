@@ -1,23 +1,25 @@
 /**
- * WHAT A PIPE'S ENGINE WRITES WITH TODAY (LLM-RATING-PER-ENGINE-1112): the Rating's favourite LLM and favourite template
- * dynasty for the Engine a catalogue pipe produces (its finer outcome, else its `to` step). Read by the Research
- * Performance tab's "served now" (it read the deleted per-pipe writer pick). Same figures as the staff read
- * `/internal/research/engine-llms`; held 60 s per Engine.
+ * WHAT A PIPE'S ENGINE WRITES WITH TODAY (SCRIPT-VALUE-RATING-1113-MON, owner 2026-11-13: « un pick = toujours un
+ * script », the LLM and the template are tactics of the script). The Rating's favourite SCRIPT of the Engine a catalogue
+ * pipe produces (its finer outcome, else its `to` step), read off Monitoring's stored board (`routes/script-engines.ts`),
+ * and the LLM and template that script states (its writer's when it names places, else its first). Read by the Research
+ * Performance tab's "served now". The LLM is named by its chat-service dynasty (the Research model pages' key).
  */
-import { engineLlmBody, type EngineLlmBody } from "./engine-llm-rating.js";
-import { readRatingInputs } from "./engine-llm-rating-io.js";
-import { engineTemplateLines, listTemplatePicks } from "./engine-template-rating-io.js";
+import { loadFleetCell } from "./fleet-cell-store.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { pipeLegKeyOf } from "./funnel-legs.js";
+import { llmDynastyIndex, readLlmDynastiesSoft } from "./llm-dynasties.js";
+import type { BoardEngine, ScriptLlmTactic, ScriptTemplateTactic } from "./script-engine-board.js";
+
+/** The fleet cell Monitoring's board is stored under (`routes/script-engines.ts` writes it). */
+export const SCRIPT_ENGINES_CELL = "script-engines-v1";
 
 export interface EngineFavourites {
   outcome: string;
+  script: string | null;
   llm: { key: string; name: string } | null;
   template: { key: string; name: string } | null;
 }
-
-const HOLD_MS = 60_000;
-const held = new Map<string, { at: number; value: Promise<EngineFavourites> }>();
 
 /** The Engine outcome of one catalogue pipe; null = the catalogue lists no such pipe. */
 export async function pipeEngineOutcome(featureSlug: string, legKey: string): Promise<string | null> {
@@ -26,31 +28,34 @@ export async function pipeEngineOutcome(featureSlug: string, legKey: string): Pr
   return t ? (t.outcome ?? t.to.key) : null;
 }
 
-/** PURE: the favourite of a body (null when nothing can be picked). */
-const favouriteOf = (b: EngineLlmBody) => (b.favourite ? { key: b.favourite.llmDynastySlug, name: b.favourite.name } : null);
+/** PURE: the writer's entry when places are named, else the first. */
+export function writingTactic<T extends { place: string | null }>(list: readonly T[]): T | null {
+  return list.find((t) => t.place === null) ?? list.find((t) => t.place === "writer") ?? list[0] ?? null;
+}
 
-/** The Engine's favourite LLM and template today. FAIL-LOUD. */
-export function engineFavourites(outcome: string): Promise<EngineFavourites> {
-  const hit = held.get(outcome);
-  if (hit && Date.now() - hit.at < HOLD_MS) return hit.value;
-  const value = (async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const [inputs, lines, templatePicks] = await Promise.all([readRatingInputs(`engine favourites ${outcome}`), engineTemplateLines(outcome), listTemplatePicks("2026-11-01")]);
-    const llmBody = engineLlmBody({ outcome, rules: inputs.rules, lines: inputs.lines, evidence: (inputs.build?.evidence ?? []).filter((e) => e.outcome === outcome), picks: inputs.picks, outOfCreditProviders: inputs.outOfCreditProviders, today });
-    const tplBody = engineLlmBody({
-      outcome,
-      rules: [],
-      lines: lines.map((l) => ({ slug: l.slug, name: l.name, provider: "", servedToday: l.pickable })),
-      evidence: (inputs.build?.templates ?? []).filter((e) => e.outcome === outcome),
-      picks: templatePicks,
-      outOfCreditProviders: new Set(),
-      today,
-    });
-    return { outcome, llm: favouriteOf(llmBody), template: favouriteOf(tplBody) };
-  })();
-  held.set(outcome, { at: Date.now(), value });
-  value.catch(() => {
-    if (held.get(outcome)?.value === value) held.delete(outcome);
-  });
-  return value;
+/** PURE: the favourite script of one Engine's board and the LLM / template it states. */
+export function favouritesOfBoard(
+  engine: Pick<BoardEngine, "outcome" | "favourite" | "scripts">,
+  dynastyOfName: (name: string) => { slug: string; name: string } | null,
+): EngineFavourites {
+  const row = engine.favourite ? engine.scripts.find((s) => s.scriptDynasty === engine.favourite) ?? null : null;
+  const llm: ScriptLlmTactic | null = row ? writingTactic(row.llms) : null;
+  const tpl: ScriptTemplateTactic | null = row ? writingTactic(row.templates) : null;
+  const dyn = llm?.model ? dynastyOfName(llm.model) : null;
+  return {
+    outcome: engine.outcome,
+    script: engine.favourite,
+    llm: llm?.model ? (dyn ? { key: dyn.slug, name: dyn.name } : { key: llm.model, name: llm.model }) : null,
+    template: tpl ? { key: tpl.templateDynastySlug, name: tpl.templateDynastySlug } : null,
+  };
+}
+
+/** The Engine's favourite script today and what it writes with; null = the board is not built or holds no such Engine. */
+export async function engineFavourites(outcome: string): Promise<EngineFavourites | null> {
+  const stored = await loadFleetCell(SCRIPT_ENGINES_CELL);
+  if (!stored) return null;
+  const engine = (JSON.parse(stored.text) as { engines: BoardEngine[] }).engines.find((e) => e.outcome === outcome);
+  if (!engine) return null;
+  const index = llmDynastyIndex(await readLlmDynastiesSoft("engine favourites"));
+  return favouritesOfBoard(engine, index.dynastyOfName);
 }
