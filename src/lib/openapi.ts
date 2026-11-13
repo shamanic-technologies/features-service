@@ -6321,65 +6321,6 @@ const writerRankingSchema = z.object({
   unavailableReason: z.string().nullable(),
 });
 
-registry.registerPath({
-  method: "get",
-  path: "/public/stats/leg-writer-ranking",
-  summary: "The best template dynasty and the best LLM of one pipe, on $/outcome (public, no auth)",
-  description:
-    "BEST-TPL-LLM-1022 (owner 2026-10-22): a pipe chooses its template dynasty and its LLM independently, each the cheapest per outcome on the leg, with the workflows' rule: a mature item (outcomes on runs started before the leg's cutoff reach the leg's bar) is priced on its mature cost per outcome; a learning item on its spend so far ÷ max(outcomes, 1), and goes before the best mature one while that is lower ($0 never used = first). Figures = the Research page's template and model bars (same evidence, pooling, maturity). LLM-DYNASTY-1022-FS: an LLM row is a chat-service LLM DYNASTY (`key` = `llmDynastySlug`, `gemini-flash`), every version's spend, people and outcomes pooled and its maturity read on the pooled figures; `models[]` = each version's share (they add up to the row). Which dynasty an alias / model id / slug belongs to is chat-service's (`/internal/model-dynasties`); a model it places in none keeps its own row (`llmDynastySlug` null); dynasties unreadable = every model its own row, `llms.dynastiesUnavailableReason`. An LLM tactic judges the dynasty on its head model. Optional `strategyId` narrows each list with the strategy's template / LLM tactics. Built off the request path (boot warm, 15 min); never built = 503 `writer_ranking_not_computed_yet`. `writerEvidence` other than `measured` (an internal pipe, or no sequence recorded yet) = rows served, no `best`.",
-  tags: ["Public"],
-  request: {
-    query: z.object({
-      featureSlug: z.string(),
-      leg: z.string().describe("Any pipe's leg key (either outbound spelling)."),
-      strategyId: z.string().describe("A strategy id (404 `strategy_not_found`).").optional(),
-    }),
-  },
-  responses: {
-    200: {
-      description: "Both rankings",
-      content: {
-        "application/json": {
-          schema: z.object({
-            featureSlug: z.string(),
-            legKey: z.string(),
-            pipeId: z.string(),
-            computedAt: z.string().nullable(),
-            costBasis: z.literal("incurred"),
-            rankBasis: z.literal("cost_per_outcome"),
-            maturity: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoffIso: z.string().nullable() }),
-            writerEvidence: z.enum(["measured", "internal_pipe_not_measured_per_writer", "no_sequence_recorded_on_pipe"]),
-            strategyId: z.string().nullable(),
-            leftOut: z.object({ templates: z.object({ contacted: z.number(), outcomes: z.number() }), llms: z.object({ contacted: z.number(), outcomes: z.number() }) }).describe("People whose writer is not on record: in no bar (as on the Research page)."),
-            templates: writerRankingSchema.extend({
-              rows: z.array(writerRankingRowSchema.extend({ templateDynastySlug: z.string().nullable(), head: z.string().nullable(), status: z.enum(["active", "deprecated"]).nullable(), postFigures: postFiguresSchema, tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."), tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."), icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."), })),
-            }),
-            llms: writerRankingSchema.extend({
-              rows: z.array(
-                writerRankingRowSchema.extend({
-                  llmDynastySlug: z.string().nullable().describe("chat-service's LLM dynasty this row is (= `key`); null = a model chat-service places in no dynasty, its own row."),
-                  headModelId: z.string().nullable().describe("The dynasty's head: what a run calling the dynasty slug gets."),
-                  aliases: z.array(z.object({ alias: z.string(), provider: z.string(), status: z.enum(["active", "deprecated"]) })).describe("content-generation writer aliases running this dynasty, active first."),
-                  modelIds: z.array(z.string()).describe("Every concrete model id of the dynasty."),
-                  provider: z.string().nullable(),
-                  postFigures: postFiguresSchema,
-                  models: z
-                    .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), basis: z.enum(["mature", "flash"]), spentUsd: z.number(), contacted: z.number(), outcomes: z.number() }))
-                    .describe("Per model, newest first: its share of the row, read on the row's basis (they add up to it). Zero for a version that never wrote. Empty on an internal pipe (its ledger names the alias, not the version)."),
-                }),
-              ),
-              dynastiesUnavailableReason: z.string().nullable().describe("`llm_dynasties_unreadable` when chat-service's dynasties could not be read this build (every model its own row).").optional(),
-            }),
-          }),
-        },
-      },
-    },
-    400: { description: "featureSlug and leg are required" },
-    404: { description: "strategy_not_found" },
-    503: { description: "writer_ranking_not_computed_yet: the pipe's ranking is being built; a caller writes nothing and retries later (no default writer)" },
-  },
-});
-
 const writerPickFigures = {
   place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]),
   costPerOutcomeUsd: z.number().nullable(),
@@ -6389,62 +6330,6 @@ const writerPickFigures = {
   outcomes: z.number(),
   contacted: z.number(),
 };
-registry.registerPath({
-  method: "get",
-  path: "/internal/writer-pick",
-  summary: "What one run writes with: the best template dynasty and LLM of its pipe (internal, api-key; workflow-service)",
-  description:
-    "BEST-TPL-LLM-1022. The pipe = the workflow dynasty's ONE active leg assignment. A pipe with no writer on record yet (`writerEvidence: no_sequence_recorded_on_pipe` on the ranking) still picks (WA-PIPE-RESEARCH-1023): every candidate is Learning at $0 (`place: explore`, `isMature: false`), rank 1 goes first and the next once it has spent. `campaignId` (optional) = the campaign UNIT whose own sales funnel names the play, so its strategy narrows the candidates (absent = the pipe's default play). Rank 1 of `/public/stats/leg-writer-ranking` under that strategy. A null `template` / `llm` carries its reason. STRATEGY refusals (a run must not write): `strategy_excludes_every_candidate` (every candidate a run could write with is ruled out by the play's strategy), `play_not_catalogued_on_pipe`. An LLM whose vendor chat-service states out of credit NOW (`GET /internal/vendor-credit`, read live, held 60 s) is not selectable for the pick (WRITER-PICK-VENDOR-CREDIT-1105): the next ranked LLM is answered, none left = `no_selectable_candidate`. Nothing pickable / readable: `no_selectable_candidate`, `no_candidate`, `template_dynasties_unreadable`, `writer_models_unreadable`, `model_ids_unreadable`. A caller without a pick (any null `template` / `llm`, or a 503) writes nothing and retries later: there is no default writer, never the workflow's own template or LLM (NO-WRITER-FALLBACK-1030); `internal_pipe_not_measured_per_writer` is no longer served (internal pipes are measured on the follow-up ledger since v0.179.341).",
-  tags: ["Internal"],
-  request: {
-    query: z.object({
-      workflowSlug: z.string().optional().describe("The VERSION executing (or its dynasty). Absent = an Engine run with no workflow: `campaignId` alone names the pipe."),
-      campaignId: z
-        .string()
-        .optional()
-        .describe("The campaign UNIT. With `workflowSlug`: its sales funnel names the play. ALONE (WRITER-PICK-NO-WORKFLOW-1105, an Engine run executing a stored script, no workflow): the pipe = the campaign's own `featureSlug` + `legKey` (campaign-service), the play = its sales funnel; the same pick a workflow on that pipe gets."),
-    }),
-  },
-  responses: {
-    200: {
-      description: "The pick",
-      content: {
-        "application/json": {
-          schema: z.object({
-            workflowSlug: z.string().nullable().describe("Null on a campaign-only pick."),
-            workflowDynastySlug: z.string().nullable().describe("Null on a campaign-only pick."),
-            campaignId: z.string().optional().describe("Served on a campaign-only pick (no workflowSlug asked)."),
-            featureSlug: z.string(),
-            legKey: z.string(),
-            pipeId: z.string(),
-            strategyId: z.string().nullable(),
-            computedAt: z.string().nullable(),
-            template: z.object({ templateDynastySlug: z.string().nullable().describe("content-generation's dynasty: write with its head."), head: z.string().nullable(), name: z.string(), ...writerPickFigures }).nullable(),
-            templateUnavailableReason: z.string().nullable(),
-            llm: z
-              .object({
-                model: z.string().describe("What the run sends as `/generate` body.model: the picked dynasty's SLUG when content-generation lists it active (`gemini-flash`), else an active legacy alias of the same dynasty; chat-service runs the dynasty's head for either."),
-                llmDynastySlug: z.string().nullable().describe("LLM-DYNASTY-1022-FS: the LLM dynasty rank 1 is (`gemini-flash`); calling chat-service `/complete` with it runs the head. Null = a model chat-service places in no dynasty."),
-                headModelId: z.string().nullable(),
-                provider: z.string().nullable(),
-                modelKey: z.string().describe("The ranking row's key (the dynasty slug)."),
-                label: z.string(),
-                ...writerPickFigures,
-              })
-              .nullable(),
-            llmUnavailableReason: z.string().nullable(),
-          }),
-        },
-      },
-    },
-    400: { description: "workflow_slug_or_campaign_id_required: neither was given" },
-    404: { description: "workflow_not_on_a_pipe | campaign_not_found (campaign-service lists no such campaign)" },
-    422: { description: "campaign_states_no_pipe: a campaign-only pick on a campaign stating no featureSlug or legKey" },
-    502: { description: "writer_pick_unreadable" },
-    503: { description: "writer_ranking_not_computed_yet: the pipe's ranking is being built; a caller writes nothing and retries later (no default writer)" },
-  },
-});
-
 registry.registerPath({
   method: "post",
   path: "/internal/campaign-engine-answers",
