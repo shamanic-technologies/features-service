@@ -233,6 +233,8 @@ vi.mock("./public.js", async (importOriginal) => {
   const order = ["nova", "orion"];
   return {
     ...(await importOriginal<typeof import("./public.js")>()),
+    // EXPECTED-FLEET-RATE-1116: the catalogue reads the fleet's measured conversions (none measured here).
+    awaitFleetLegConversionRatesFromOutcomePrices: vi.fn(async () => new Map()),
     fleetLegPrice: vi.fn(async () => price(order[0])),
     fleetPlayPrices: vi.fn(async (_s: string, _l: string, exclusions: (d: readonly string[]) => ReadonlyArray<ReadonlySet<string>>) =>
       exclusions(order).map((ex) => price(order.find((d) => !ex.has(d)) ?? null)),

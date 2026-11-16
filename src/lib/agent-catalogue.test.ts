@@ -416,7 +416,7 @@ describe("a learning funnel still serves an EXPECTED cost per paying client and 
     const [source, email, booking, attended, closing] = e.legs;
     // The CRM source has no fleet history: the highest mature price of another source on Start -> Lead found.
     expect(source).toMatchObject({ pipeId: "sourcing-crm-contacts|start_to_lead_found", costPerOutcomeUsd: 0.5, costSource: "same_leg_fleet", costBasis: "fleet", ratePct: null });
-    expect(email).toMatchObject({ costPerOutcomeUsd: 40, costSource: "workflow", costBasis: "measured", ratePct: 1, rateSource: "measured_pipe", rateBasis: "measured" });
+    expect(email).toMatchObject({ costPerOutcomeUsd: 40, costSource: "workflow", costBasis: "measured", ratePct: 1, rateSource: "measured_pipe", rateBasis: "fleet" });
     expect(booking).toMatchObject({ costPerOutcomeUsd: 0, costSource: "customer_team", costBasis: null, ratePct: 26.67, rateSource: "offer_measured" });
     expect(attended.rateSource).toBe("offer_measured");
     expect(closing).toMatchObject({ outcomesNeededPerPayingClient: 1, ratePct: 65.12 });

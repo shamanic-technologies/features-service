@@ -21,6 +21,16 @@ describe("expected % Conversion of the sliced ladder", () => {
     expect(expectedStepConversion("meeting_booked", null, input)).toMatchObject({ ratePct: 80, basis: "measured", toStep: "meeting_attended" });
   });
 
+  it("EXPECTED-FLEET-RATE-1116: a leg resolved on its default reads the fleet's measured rate; a brand's own measured one wins", () => {
+    const fleet = new Map([
+      ["conversation_to_meeting_booked|ai-meeting-booking", 12],
+      ["meeting_booked_to_meeting_attended|ai-meeting-booking", 50],
+    ]);
+    const withFleet = { ...input, fleetConversions: fleet };
+    expect(expectedStepConversion("conversation", null, withFleet)).toMatchObject({ ratePct: 12, basis: "fleet", source: "fleet_measured", legKey: "conversation_to_meeting_booked" });
+    expect(expectedStepConversion("meeting_booked", null, withFleet)).toMatchObject({ ratePct: 80, basis: "measured" });
+  });
+
   it("a step the priced paths do not walk still reads the catalogue leg out of it", () => {
     const purchaseOnly = { ...input, pricedFunnelKeys: ["website_purchases"] as never };
     expect(expectedStepConversion("conversation", null, purchaseOnly)).toMatchObject({ ratePct: 30, toStep: "meeting_booked" });

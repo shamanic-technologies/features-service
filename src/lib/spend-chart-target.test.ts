@@ -88,6 +88,7 @@ describe("the model's route rides its expected figure (off the wire)", () => {
       rates: [{ legKey: "conversation_to_paid_client", effectiveRatePct: 5, source: "manual", measured: { basis: "our_leads" } }] as never,
       prices: new Map(),
       fleetPrices: new Map([["start_to_conversation|sales-cold-email-outreach", 40]]),
+      fleetRates: new Map(),
     },
   };
 

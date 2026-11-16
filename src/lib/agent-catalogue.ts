@@ -109,6 +109,8 @@ import { codedStepSubjectKindOf, isOutcomeSubjectKind, type OutcomeSubjectKind }
 import { CHANNEL_STEPS, isDeclaredStepKey, type ChannelStepKey } from "./acquisition-channels.js";
 import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
+import { NO_FLEET_LEG_RATES, fleetLegRatePct, type FleetLegRates } from "./fleet-leg-rates.js";
+import { noteExactLegCost } from "./exact-leg-costs.js";
 import type { ExpectedBasis } from "./expected-return.js";
 import { FUNNEL_LEGS, legacyFunnelIdAliasOf, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
@@ -255,6 +257,12 @@ export interface CatalogueInputs {
    * the fleet rate. Absent on the fleet catalogue.
    */
   offerRates?: ReadonlyMap<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
+  /**
+   * The fleet's MEASURED conversion per (leg, channel) (`fleetLegConversionRatesFromOutcomePrices`): an EXPECTED figure's
+   * rate rung after the brand's own, before the default (`expectedFunnelEconomics`, EXPECTED-FLEET-RATE-1116). Absent =
+   * none measured (a read that prices no expected figure).
+   */
+  fleetLegRates?: FleetLegRates;
   /** The trigger types stored (`channel_trigger_types`: the coded ones and those declared at run time). The coded
    *  list (`lib/channel-triggers.ts`) is read in any case: it is what boot upserts. */
   triggers?: ReadonlyArray<{ id: string; label: string; fromStep?: string | null; kind?: string | null }>;
@@ -467,7 +475,7 @@ export interface ExpectedFunnelLeg {
   legKey: string;
   /** Null on the entry leg (its rate prices nothing). */
   ratePct: number | null;
-  rateSource: CatalogueRateSource | "default_entry" | null;
+  rateSource: CatalogueRateSource | "fleet_measured" | "default_entry" | null;
   rateBasis: ExpectedBasis | null;
   outcomesNeededPerPayingClient: number | null;
   pipeId: string | null;
@@ -506,6 +514,8 @@ export interface CatalogueModel {
   anyStepTriggers?: ReadonlySet<string>;
   /** PURE: a chain's leg rates, the same rule every path of the model uses (a trigger-headed path built on demand). */
   ratesOfChain: (chain: ReadonlyArray<{ legKey: string; fromStep: string | null; toStep: string }>) => CataloguePath["rates"];
+  /** The fleet's measured conversion per (leg, channel), the EXPECTED rate rung after the brand's own (`lib/fleet-leg-rates.ts`). */
+  fleetLegRates: FleetLegRates;
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueBasis: ExpectedBasis;
   channels: readonly PublicChannel[];
@@ -720,13 +730,16 @@ const BASIS_RANK: Record<ExpectedBasis, number> = { measured: 0, stated: 1, flee
 const weakest = (bases: ReadonlyArray<ExpectedBasis | null>): ExpectedBasis | null =>
   bases.reduce<ExpectedBasis | null>((w, b) => (b === null ? w : w === null || BASIS_RANK[b] > BASIS_RANK[w] ? b : w), null);
 
-/** The basis of a path leg rate in the words of `lib/expected-return.ts`. */
-export const rateBasisOf = (source: CatalogueRateSource | "default_entry"): ExpectedBasis | null =>
-  source === "measured_pipe" || source === "offer_measured" || source === "offer_team_measured"
+/** The basis of a path leg rate in the words of `lib/expected-return.ts`. `measured_pipe` is the FLEET's measured
+ *  conversion (best mature pipe), never the brand's own: `fleet` (EXPECTED-FLEET-RATE-1116). */
+export const rateBasisOf = (source: CatalogueRateSource | "fleet_measured" | "default_entry"): ExpectedBasis | null =>
+  source === "offer_measured" || source === "offer_team_measured"
     ? "measured"
     : source === "offer_stated"
       ? "stated"
-      : source === "default" || source === "default_entry"
+      : source === "measured_pipe" || source === "fleet_measured"
+        ? "fleet"
+        : source === "default" || source === "default_entry"
           ? "default"
           : null;
 
@@ -739,7 +752,9 @@ export function expectedFunnelEconomics(
   legs: readonly FunnelLeg[],
   lifetimeRevenueUsd: number | null,
   lifetimeRevenueBasis: ExpectedBasis,
-  takeoverValueUsd: number | null = 0,
+  takeoverValueUsd: number | null,
+  /** The fleet's measured conversion per (leg, channel): the rung after the brand's own (`CatalogueModel.fleetLegRates`). */
+  fleetLegRates: FleetLegRates,
 ): ExpectedFunnelEconomics {
   const out: ExpectedFunnelLeg[] = [];
   let needed: number | null = 1;
@@ -768,6 +783,7 @@ export function expectedFunnelEconomics(
       if (!c) reason ??= `pipe_unpriced:${pipe.id}`;
       else {
         Object.assign(leg, { costPerOutcomeUsd: round2(c.costPerOutcomeUsd), costSource: c.source, costBasis: c.basis });
+        noteExactLegCost(leg, c.costPerOutcomeUsd);
         if (needed !== null) cost += c.costPerOutcomeUsd * needed;
       }
     }
@@ -775,7 +791,15 @@ export function expectedFunnelEconomics(
       const r = path.rates[i];
       const from = pipe?.fromStep ?? null;
       const to = pipe?.toStep ?? null;
-      let rate: { ratePct: number; source: CatalogueRateSource | "default_entry" } | null = usable(r.ratePct) && r.source ? { ratePct: r.ratePct, source: r.source } : null;
+      // THE ORDER (EXPECTED-FLEET-RATE-1116, `lib/fleet-leg-rates.ts`): the brand's own / a measured pipe's rate (the
+      // path's), then the fleet's measured conversion of the leg on this pipe's channel, then the defaults. A path rate
+      // that is only a default never outranks a fleet measurement.
+      let rate: { ratePct: number; source: CatalogueRateSource | "fleet_measured" | "default_entry" } | null =
+        usable(r.ratePct) && r.source && r.source !== "default" ? { ratePct: r.ratePct, source: r.source } : null;
+      // The customer's own team names no channel of ours: the lowest rate the fleet measured on the leg.
+      const fleet = !rate && pipe ? fleetLegRatePct(fleetLegRates, pipe.computedLegKey, pipe.operatedBy === "platform" ? pipe.channelSlug : null) : null;
+      if (!rate && fleet !== null) rate = { ratePct: fleet, source: "fleet_measured" };
+      if (!rate && usable(r.ratePct) && r.source === "default") rate = { ratePct: r.ratePct, source: "default" };
       if (!rate && from === SOURCED_STEP && to && usable(DEFAULT_ENTRY_RATE_PCT[to as ChannelStepKey])) rate = { ratePct: DEFAULT_ENTRY_RATE_PCT[to as ChannelStepKey]!, source: "default_entry" };
       if (!rate && from && to) {
         const d = defaultLegRatePct(from as ChannelStepKey, to as ChannelStepKey);
@@ -986,6 +1010,7 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
     triggerSteps,
     anyStepTriggers,
     ratesOfChain,
+    fleetLegRates: inputs.fleetLegRates ?? NO_FLEET_LEG_RATES,
     lifetimeRevenueUsd: inputs.lifetimeRevenueUsd,
     lifetimeRevenueBasis: inputs.lifetimeRevenueBasis ?? "fleet",
     channels: inputs.channels,
@@ -1255,7 +1280,7 @@ function enumerateFunnels(model: CatalogueModel, path: CataloguePath, cap: numbe
           legs: acc,
           channelSlugs: slugs,
           economics: funnelEconomics(path, acc, model.lifetimeRevenueUsd, takeoverValue),
-          expected: expectedFunnelEconomics(path, acc, model.lifetimeRevenueUsd, model.lifetimeRevenueBasis, takeoverValue),
+          expected: expectedFunnelEconomics(path, acc, model.lifetimeRevenueUsd, model.lifetimeRevenueBasis, takeoverValue, model.fleetLegRates),
         });
       }
       return;

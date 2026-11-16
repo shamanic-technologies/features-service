@@ -171,6 +171,13 @@ process.env.FEATURE_VIEW_CACHE_ENABLED = "false";
 
 const app = (await import("../index.js")).default;
 const { __setCatalogueMeasurementsForTest } = await import("./agent-catalogue.js");
+// EXPECTED-FLEET-RATE-1116: the catalogue reads the fleet's measured conversions off the outcome prices (none here).
+(await import("./public.js")).__setOutcomePricesForTest({
+  grain: "fleet",
+  costBasis: "incurred",
+  computedAt: new Date(0).toISOString(),
+  outcomes: { websiteVisit: { legs: [] }, meetingBooked: { legs: [] } },
+} as never);
 const { isComposedNameOf } = await import("../lib/funnel-names.js");
 const { seedPipeTriggerOf } = await import("../lib/sales-path-names.js");
 /** A funnel's name says what it does (owner 2026-10-16): one of its composed candidates, never a pool word. */

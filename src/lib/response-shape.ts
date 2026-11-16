@@ -69,25 +69,31 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // TEAM-PART-ENTRY-1116: a part with no intake of its own counts the entry Units the rest of its campaign made.
   // FLEET-CONVERSION-BOOT-1116: the fleet's measured conversion awaited at boot (a cell froze the 1 % default).
   // FLEET-ENTRY-ROUTE-1116: a Target chart's entry leg on the fleet's measured rate over the route's default.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "fleet-entry-route-1116",
+  // EXPECTED-FLEET-RATE-1116: every expected figure prices a leg brand measured > stated > FLEET MEASURED > default
+  // (`lib/fleet-leg-rates.ts`): every route below serving an expected figure re-keys its cells.
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "expected-fleet-rate-1116",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
-  "/offers/{offerId}/spend-charts": "fleet-entry-route-1116",
-  "/brands/{brandId}/spend-charts": "fleet-entry-route-1116",
-  "/brands/{brandId}/sales-funnel-campaigns": "ledger-negative-days-1110",
+  "/offers/{offerId}/spend-charts": "expected-fleet-rate-1116",
+  "/brands/{brandId}/spend-charts": "expected-fleet-rate-1116",
+  "/brands/{brandId}/sales-funnel-campaigns": "expected-fleet-rate-1116",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
   // OUTCOME-TOTAL-UNITS-1110: our Units net of withdrawn ones (a negative ledger day), + totalOutcomes.
   // LEDGER-NEGATIVE-DAYS-1110: EVERY ledger read nets withdrawn Units by one rule (`standingUnitsByDay`): every route below.
-  "/offers/{offerId}/outcome-cost-series": "ledger-negative-days-1110",
-  "/brands/{brandId}/outcome-cost-series": "ledger-negative-days-1110",
-  "/offers/{offerId}/outcomes": "fleet-conversion-boot-1116",
-  "/offers/{offerId}/revenue": "ledger-negative-days-1110",
-  "/brands/{brandId}/offers": "ledger-negative-days-1110",
-  "/brands/{brandId}/revenue": "ledger-negative-days-1110",
+  "/offers/{offerId}/outcome-cost-series": "expected-fleet-rate-1116",
+  "/brands/{brandId}/outcome-cost-series": "expected-fleet-rate-1116",
+  "/offers/{offerId}/outcomes": "expected-fleet-rate-1116",
+  "/offers/{offerId}/revenue": "expected-fleet-rate-1116",
+  "/brands/{brandId}/offers": "expected-fleet-rate-1116",
+  "/brands/{brandId}/revenue": "expected-fleet-rate-1116",
   // CAMPAIGN-CONVERSION-1116: the Milestones chain leaves a unit jumping Start -> Target out of the walk.
   "/brands/{brandId}/campaign-targets": "campaign-conversion-1116",
-  "/features/{featureSlug}/revenue": "ledger-negative-days-1110",
-  "/features/{featureSlug}/stats": "ledger-negative-days-1110",
+  "/features/{featureSlug}/revenue": "expected-fleet-rate-1116",
+  "/features/{featureSlug}/stats": "expected-fleet-rate-1116",
+  // EXPECTED-FLEET-RATE-1116: the sales paths' leg rates and the catalogue-priced figures read the fleet rung too.
+  "/offers/{offerId}/sales-paths": "expected-fleet-rate-1116",
+  "/brands/{brandId}/lived-sales-paths": "expected-fleet-rate-1116",
+  "/brands/{brandId}/published-units/{outcomeKey}": "expected-fleet-rate-1116",
 };
 
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */
