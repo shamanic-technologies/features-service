@@ -52,7 +52,7 @@ export function warmScriptEngines(force = false): Promise<"built" | "skipped"> {
       const rating = await buildScriptRating();
       const now = Date.now();
       const today = new Date(now).toISOString().slice(0, 10);
-      const engines = scriptEngineBoard({ ratings: rating.scripts, values: rating.valueMap, runnable: rating.runnable, groups: rating.groups, today, rng: Math.random });
+      const engines = scriptEngineBoard({ ratings: rating.scripts, values: rating.valueMap, runnable: rating.runnable, groups: rating.groups, servedBy: rating.servedBy, today, rng: Math.random });
       const cell: ScriptEnginesCell = { ledgerBuiltAt: rating.builtAt, computedAt: new Date(now).toISOString(), draws: BOARD_DRAWS, engines, ratings: rating.scripts, values: rating.values };
       await storeFleetCell(SCRIPT_ENGINES_CELL, JSON.stringify(cell), now);
       await storeTodayShares(today, engines);
