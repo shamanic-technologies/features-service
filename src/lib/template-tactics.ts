@@ -1,6 +1,5 @@
 /**
- * Serving each TEMPLATE dynasty's tactics (TPL-TACTICS-ROWS-1022): the template twin of the workflow ranking rows'
- * `tactics` (`workflowTacticsFrom`, routes/public.ts). Template tactics (the email angles: Blind / Named / Offer angle)
+ * Serving each TEMPLATE dynasty's tactics (TPL-TACTICS-ROWS-1022). Template tactics (the email angles: Blind / Named / Offer angle)
  * are judged on each dynasty's HEAD text (`sweepWriterTacticJudgments`, verdicts in `writer_tactic_verdicts`, keyed on
  * the dynasty slug). Read live at every request, never from a stored build, so the Templates list and writer-pick read
  * the same verdicts.

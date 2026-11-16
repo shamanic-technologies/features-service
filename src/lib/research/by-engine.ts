@@ -513,19 +513,3 @@ export function engineHistoryOf(perfBySource: Readonly<Record<string, PerfLike>>
 export function enginePerformanceOf(history: readonly EngineHistoryEntry[], scripts: EngineScriptsInput, now: Date = new Date()): Record<string, unknown> {
   return { engines: history.map((e) => ({ ...e, measures: e.measures.map((m) => withMeasureScripts(m, m, scripts.of(m), scripts.favourite(m.engine), now)) })) };
 }
-
-// ── Live script ranking ─────────────────────────────────────────────────────────────────────────────────────────────
-
-interface RankingLike {
-  rows: ReadonlyArray<unknown>;
-}
-
-/** PURE. One measure's live script ranking: the ranking rows of its source (several = listed, order stated as not shared). */
-export function engineLiveScriptsOf(measure: ResearchMeasure, rankings: ReadonlyArray<RankingLike | null>): Record<string, unknown> {
-  const present = rankings.filter((r): r is RankingLike => !!r);
-  const filled = present.filter((r) => r.rows.length > 0);
-  const base = filled[0] ?? present[0] ?? null;
-  const body = base ? (inEngineWords(base) as unknown as Record<string, unknown>) : { computedAt: null, rows: [] };
-  if (filled.length <= 1) return { ...body, engine: measure.engine, measure, orderUnavailableReason: base ? null : "ranking_not_computed_yet" };
-  return { ...body, engine: measure.engine, measure, rows: filled.flatMap((r) => inEngineWords(r.rows)), orderUnavailableReason: "several_sources_ranked_apart" };
-}
