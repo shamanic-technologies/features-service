@@ -13,6 +13,7 @@
  */
 
 import { accountingReturn, outcomeAccountingOf, yieldToNext, type AccountingReturn, type ExpectedRouteFigures, type OutcomeAccounting } from "./outcome-accounting.js";
+import { roiMultipleOf } from "./roi-multiple.js";
 
 /** The four published outcomes this read serves, each with its own row source (hard-coded per outcome, owner). */
 export const PUBLISHED_OUTCOME_KEYS = ["threads_post_published", "x_post_published", "linkedin_post_published", "newsletter_email_sent"] as const;
@@ -471,7 +472,7 @@ export function measuredReturnOf(units: number, valueUsd: number | null, spentUs
   if (units === 0) return { roiMultiple: null, valueUsd: null, spentUsd, learning, unavailableReason: "no_unit_yet" };
   if (unvalued || valueUsd === null) return { roiMultiple: null, valueUsd: null, spentUsd, learning, unavailableReason: "unit_has_no_value" };
   if (spentUsd === null || !(spentUsd > 0)) return { roiMultiple: null, valueUsd: round(valueUsd, 2), spentUsd, learning, unavailableReason: "nothing_spent_yet" };
-  return { roiMultiple: round(valueUsd / spentUsd, 2), valueUsd: round(valueUsd, 2), spentUsd: round(spentUsd), learning, unavailableReason: null };
+  return { roiMultiple: roiMultipleOf(valueUsd, spentUsd), valueUsd: round(valueUsd, 2), spentUsd: round(spentUsd), learning, unavailableReason: null };
 }
 
 /** PURE. The expected return of one more Unit: value / expected cost per Unit. */
@@ -479,7 +480,7 @@ export function expectedReturnOf(valuePerUnitUsd: number | null, cost: { costPer
   const base = { valuePerUnitUsd, costPerUnitUsd: cost?.costPerUnitUsd ?? null, costSource: cost?.costSource ?? null, basis: cost?.basis ?? null, pipeId: cost?.pipeId ?? null };
   if (valuePerUnitUsd === null) return { ...base, roiMultiple: null, unavailableReason: valueReason ?? "unit_has_no_value" };
   if (!cost || !(cost.costPerUnitUsd > 0)) return { ...base, roiMultiple: null, unavailableReason: cost ? "pipe_cost_zero" : "no_pipe_prices_outcome" };
-  return { ...base, roiMultiple: round(valuePerUnitUsd / cost.costPerUnitUsd, 2), unavailableReason: null };
+  return { ...base, roiMultiple: roiMultipleOf(valuePerUnitUsd, cost.costPerUnitUsd), unavailableReason: null };
 }
 
 /**

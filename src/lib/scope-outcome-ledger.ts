@@ -19,6 +19,7 @@
  * production).
  */
 import type { StepTracedCost } from "./step-cost-attribution.js";
+import { roiMultipleOf } from "./roi-multiple.js";
 
 export interface LedgerOutcomeCost {
   /** Every-path unit cost (own production + inputs at their unit cost), null when the outcome is no pipe's output in scope. */
@@ -260,7 +261,7 @@ export function ledgerRealizedReturn(
   if (lifetimeRevenueUsd === null) return { realizedReturn: null, unavailableReason: "lifetime_revenue_not_stated" };
   const revenue = round(paidClient.ourUnits * lifetimeRevenueUsd, 2);
   return {
-    realizedReturn: { closedWonCount: paidClient.ourUnits, closedWonRevenueUsd: revenue, spentUsd, roiMultiple: spentUsd !== null && spentUsd > 0 ? round(revenue / spentUsd, 2) : null },
+    realizedReturn: { closedWonCount: paidClient.ourUnits, closedWonRevenueUsd: revenue, spentUsd, roiMultiple: spentUsd !== null && spentUsd > 0 ? roiMultipleOf(revenue, spentUsd) : null },
     unavailableReason: null,
   };
 }

@@ -25,6 +25,7 @@
  *      `outcome_is_no_campaign_target`.
  * Only Units performed by OURS enter cost, yield and return; the client's team Units are counted apart (cost $0 to us).
  */
+import { roiMultipleOf } from "./roi-multiple.js";
 
 /** The weight of the route's rate as a prior, in trials (framework §8 worked example: a fleet yield counted as 200 trials). */
 export const PRIOR_TRIALS = 200;
@@ -324,8 +325,8 @@ export function accountingReturn(
   return {
     isCampaignTarget: true,
     targetCampaignIds: [...targetCampaignIds].sort(),
-    measured: { roiMultiple: mReason === null ? round(valueUsd! / spent!, 2) : null, targetUnits: measured ? units : null, valueUsd, spentUsd: spent, learning: units < RETURN_MIN_UNITS, unavailableReason: mReason },
-    expected: { roiMultiple: eReason === null ? round(valuePerUnitUsd! / costFromStartUsd!, 2) : null, valuePerUnitUsd, costFromStartUsd, unavailableReason: eReason },
+    measured: { roiMultiple: mReason === null ? roiMultipleOf(valueUsd!, spent!) : null, targetUnits: measured ? units : null, valueUsd, spentUsd: spent, learning: units < RETURN_MIN_UNITS, unavailableReason: mReason },
+    expected: { roiMultiple: eReason === null ? roiMultipleOf(valuePerUnitUsd!, costFromStartUsd!) : null, valuePerUnitUsd, costFromStartUsd, unavailableReason: eReason },
     unavailableReason: null,
   };
 }
