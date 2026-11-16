@@ -9,6 +9,7 @@
  * - how often the Rating draws each TODAY among the kept ones (`pickScript`, `CAMPAIGN_DRAWS` draws on the fleet
  *   Rating the Monitoring board stored: the exact draw the runner makes for this campaign), so the shares add to 100;
  *   never the fleet board's share among every runnable script (a brief that narrows reads a different share);
+ * Engines listed = the ones the campaign USES: its Target's, those the runner asked a strategy for, those its runs ran.
  * - what THIS campaign's own runs of each did (runs, the strongest outcome each run reached, cost per run, last day).
  *
  * The Rating's score (value credited per dollar) is a staff DECISION figure: it is read to draw, never served here.
@@ -120,8 +121,10 @@ function campaignRunsOf(rating: ScriptRating | undefined, lastDay: string | unde
 /** PURE: every Engine the campaign uses, its Target first, then the most valued outcome, then the most run. */
 export function campaignEngineScripts(input: {
   target: string | null;
-  /** The campaign's stored strategy per Engine (`campaign_engine_strategies`). */
+  /** The campaign's stored strategy per Engine (`campaign_engine_strategies`): read on the Engines it uses, never a reason to list one. */
   stored: readonly Pick<StoredEngineStrategy, "outcome" | "strategyId" | "campaignId">[];
+  /** The Engines the runner asked a strategy for, for this campaign's units (`campaign_engine_answers`). */
+  asked: readonly string[];
   runnable: readonly RunnableScript[];
   catalogue: Pick<PlayCatalogue, "tactics" | "strategies" | "tacticsByWriter">;
   /** The fleet Rating (every script's runs and reach): what the runner draws on. */
@@ -138,7 +141,10 @@ export function campaignEngineScripts(input: {
   const lastDay = new Map<string, string>();
   for (const g of input.campaignGroups) if (g.runs > 0 && g.day > (lastDay.get(g.scriptDynasty) ?? "")) lastDay.set(g.scriptDynasty, g.day);
   const storedByOutcome = new Map(input.stored.map((s) => [s.outcome, s]));
-  const outcomes = new Set<string>(storedByOutcome.keys());
+  // The Engines the campaign USES: its Target's, those the runner asked for it, those its runs ran. A stored verdict alone
+  // lists nothing (the S6 migration carried one onto every Engine of the funnel, most never asked since: prod 2026-11-16,
+  // 65dc0617 listed Email found, Message sent and Booking call with no script competing).
+  const outcomes = new Set<string>(input.asked);
   for (const key of campaignRatings.keys()) outcomes.add(engineOfDynasty(key));
   if (input.target && input.runnable.some((s) => s.outcome === input.target)) outcomes.add(input.target);
 
@@ -235,7 +241,7 @@ export function campaignEngineScripts(input: {
     };
   });
   const valueOf = (o: string): number => input.values.get(o)?.valueUsd ?? 0;
-  // An Engine with no script and no run of this campaign says nothing (a verdict kept on an outcome its scripts left).
+  // An Engine with no script and no run of this campaign says nothing (an outcome its scripts left).
   return rows.filter((r) => r.isTarget || r.scripts.length + r.ruledOut.length + r.past.length > 0).sort(
     (a, b) => Number(b.isTarget) - Number(a.isTarget) || valueOf(b.outcome) - valueOf(a.outcome) || b.campaign.runs - a.campaign.runs || a.outcome.localeCompare(b.outcome),
   );

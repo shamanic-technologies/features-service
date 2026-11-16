@@ -17,6 +17,7 @@ import { fetchSalesFunnelCampaigns } from "../lib/sales-funnel-campaigns-client.
 import { loadFleetCell } from "../lib/fleet-cell-store.js";
 import { SCRIPT_ENGINES_CELL } from "../lib/engine-favourites.js";
 import { listEngineStrategies, labelOfOutcome } from "../lib/engine-strategy-io.js";
+import { readAskedEngines } from "../lib/engine-answers-store.js";
 import { readRunnableScripts, scriptDynastyKey } from "../lib/script-catalogue-client.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { readCampaignScriptReach } from "../lib/script-value-rating-io.js";
@@ -44,8 +45,9 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/engine-scripts", apiKeyA
       return void res.status(503).json({ error: "The script Rating is being built (every 15 minutes).", reason: "script_rating_not_built_yet" });
     }
     const unitIds = row.units.map((u) => u.campaignId);
-    const [strategies, runnable, catalogue, reach, declared] = await Promise.all([
+    const [strategies, asked, runnable, catalogue, reach, declared] = await Promise.all([
       listEngineStrategies(row.id),
+      readAskedEngines(unitIds),
       readRunnableScripts(),
       loadPlayCatalogue(),
       readCampaignScriptReach(unitIds),
@@ -60,6 +62,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/engine-scripts", apiKeyA
     const engines = campaignEngineScripts({
       target: row.target ?? null,
       stored: strategies,
+      asked,
       runnable,
       catalogue,
       fleetRatings: cell.ratings,

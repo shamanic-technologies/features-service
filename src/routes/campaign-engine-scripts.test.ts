@@ -36,6 +36,7 @@ vi.mock("../lib/plays-store.js", () => ({ loadPlayCatalogue: async () => ({ tact
 const reach = vi.fn();
 vi.mock("../lib/script-value-rating-io.js", () => ({ readCampaignScriptReach: (ids: string[]) => reach(ids) }));
 vi.mock("../lib/channel-declarations-store.js", () => ({ listDeclaredSteps: async () => [] }));
+vi.mock("../lib/engine-answers-store.js", () => ({ readAskedEngines: async () => ["message_written"] }));
 
 const { default: routes } = await import("./campaign-engine-scripts.js");
 const app = express().use(routes);
