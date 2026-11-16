@@ -14,7 +14,7 @@
  *   is re-asked only when its brief moves: the migration changes nothing that runs.
  */
 import { createHash } from "node:crypto";
-import { strategyOnSubject, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
+import { strategyOnEngine, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 
@@ -88,7 +88,7 @@ export function engineStrategyOptions(
   const keep = new Set<string>();
   for (const s of c.strategies.values()) {
     if (own.length === 0) break;
-    const kept = scriptsKeptByStrategy(own.filter((x) => judgedOn(x, s, c)), s, c);
+    const kept = scriptsKeptByStrategy(own.filter((x) => judgedOn(x, own, s, c)), s, c);
     if (kept.scriptTacticIds.length > 0 && kept.keptDynasties.length > 0 && kept.scripts.some((x) => !x.kept)) keep.add(s.id);
   }
   for (const id of carried) {
@@ -107,8 +107,8 @@ export function engineStrategyOptions(
 }
 
 /** PURE: whether a script holds a verdict on every script tactic the strategy names. */
-function judgedOn(script: RunnableScript, s: Strategy, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">): boolean {
-  const st = strategyOnSubject(s, "script", c.tactics);
+function judgedOn(script: RunnableScript, own: readonly RunnableScript[], s: Strategy, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">): boolean {
+  const st = strategyOnEngine(s, own, c.tactics);
   const v = c.tacticsByWriter.get(writerSubjectKey("script", scriptDynastyKey(script)));
   return [...st.requiresTacticIds, ...st.excludesTacticIds].every((t) => v?.has(t) === true);
 }

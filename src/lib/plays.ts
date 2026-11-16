@@ -37,6 +37,11 @@ export interface Tactic {
   clientLine?: string | null;
   /** What the tactic tags (BEST-TPL-LLM-1022); absent = `workflow`. */
   appliesTo?: TacticSubject;
+  /**
+   * The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY; `strategyOnEngine`): it narrows
+   * an Engine only where one of its runnable scripts states one of them. Null / absent = every Engine.
+   */
+  decidedByFields?: string[] | null;
 }
 
 /**
@@ -68,9 +73,15 @@ export function strategyOnSubject(strategy: Strategy, subject: TacticSubject, ta
 /** What a `writer_tactic_verdicts` row judges: every subject but a workflow version (which has its own table). */
 export type WriterSubjectKind = Exclude<TacticSubject, "workflow">;
 
-/** One stored Jev verdict on one template dynasty, LLM dynasty or script dynasty (`writer_tactic_verdicts`). */
+/**
+ * Every subject a `writer_tactic_verdicts` row may name: a writer subject, or an ENGINE (ONE-WRITER-N-MODELS-1116-LEADS-ONLY,
+ * key = its outcome): the verdict then says whether the script tactic is a CHOICE the Engine's scripts make themselves.
+ */
+export type VerdictSubjectKind = WriterSubjectKind | "engine";
+
+/** One stored Jev verdict on one template dynasty, LLM dynasty, script dynasty or Engine (`writer_tactic_verdicts`). */
 export interface WriterTacticVerdictRow {
-  subjectKind: WriterSubjectKind;
+  subjectKind: VerdictSubjectKind;
   subjectKey: string;
   tacticId: string;
   subjectVersion: string;
@@ -82,7 +93,27 @@ export interface WriterTacticVerdictRow {
 }
 
 /** PURE: `<kind>|<key>` -> tactic id -> verdict. */
-export const writerSubjectKey = (kind: WriterSubjectKind, key: string): string => `${kind}|${key}`;
+export const writerSubjectKey = (kind: VerdictSubjectKind, key: string): string => `${kind}|${key}`;
+
+/**
+ * PURE (ONE-WRITER-N-MODELS-1116-LEADS-ONLY, owner 2026-11-16): the strategy as the scripts of ONE Engine read it: its
+ * script tactics (`strategyOnSubject(…, "script")`), minus every tactic about a matter this Engine does not decide. A
+ * tactic states the script tactics fields it is about (`decidedByFields`, data); the Engine decides it when one of its
+ * runnable scripts STATES one of those fields. « Leads only » is about who a script claims (`relationships`): the sender
+ * claims the person, a writer only writes for the person its asker hands it and states no `relationships`, so on Message
+ * written it narrows nothing (prod 2026-11-16: it kept only the answer writer there and every cold email run of three
+ * live campaigns refused at the writer), while on Message sent it keeps narrowing. A tactic stating no field (« Rings the
+ * sales rep ») applies on every Engine, Booking call included. Never a dynasty, Engine or campaign named in code.
+ */
+export function strategyOnEngine(strategy: Strategy, engineScripts: ReadonlyArray<{ tactics: Record<string, unknown> }>, tactics: ReadonlyMap<string, Tactic>): Strategy {
+  const onScripts = strategyOnSubject(strategy, "script", tactics);
+  const applies = (id: string) => {
+    const fields = tactics.get(id)?.decidedByFields;
+    if (!fields || fields.length === 0) return true;
+    return engineScripts.some((s) => fields.some((f) => s.tactics[f] !== undefined && s.tactics[f] !== null));
+  };
+  return { ...onScripts, requiresTacticIds: onScripts.requiresTacticIds.filter(applies), excludesTacticIds: onScripts.excludesTacticIds.filter(applies) };
+}
 export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
   const out = new Map<string, Map<string, boolean>>();
   for (const r of rows) {

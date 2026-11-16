@@ -16,7 +16,7 @@
  * No Engine or outcome is named in code: every one comes off the stored strategies, the campaign's runs and its Target.
  */
 import type { PlayCatalogue, Strategy, Tactic } from "./plays.js";
-import { strategyOnSubject } from "./plays.js";
+import { strategyOnEngine } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
@@ -156,7 +156,7 @@ export function campaignEngineScripts(input: {
       if (!strategy) throw new Error(`campaign ${row.campaignId} keeps strategy ${row.strategyId} on ${outcome}, which the catalogue does not hold`);
     }
     const state: StrategyState = !row ? "not_judged_yet" : strategy ? "kept" : "no_condition";
-    const onScripts = strategy ? strategyOnSubject(strategy, "script", input.catalogue.tactics) : null;
+    const onScripts = strategy ? strategyOnEngine(strategy, input.runnable.filter((s) => s.outcome === outcome), input.catalogue.tactics) : null;
     const tactic = (id: string): Tactic | undefined => input.catalogue.tactics.get(id);
     const rules = onScripts
       ? [
