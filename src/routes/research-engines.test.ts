@@ -55,6 +55,20 @@ describe("research by Engine routes", () => {
     expect(sourceWordsLeft(live.body)).toEqual([]);
   });
 
+  it("performance: the Engine's scripts that ran lead the measure, measured on the ledger (RESEARCH-PERF-SCRIPTS-1116)", async () => {
+    const { loadDailyLedgerBook } = await import("../lib/ledger-book.js");
+    vi.mocked(loadDailyLedgerBook).mockResolvedValueOnce({
+      book: { produced: [{ outcomeKey: "message_sent", campaignId: "c1", workflowSlug: null, occurrences: 10, costUsd: 2, runStartDay: "2026-11-10", scriptSlug: "email_sent/dy_a/v1" }], noOutput: [], consumed: [] },
+      daysMissing: 0,
+      missingDays: [],
+    });
+    const perf = await get("/internal/research/engines/performance?view=flash");
+    const m = perf.body.engines[0].measures[0];
+    expect(m.rows[0]).toMatchObject({ key: "email_sent/dy_a", era: "scripts", status: "deprecated", spentUsd: { value: 2 }, untested: false });
+    expect(m).toMatchObject({ scriptsUnavailableReason: null, totals: { spentUsd: { value: 2 } } });
+    expect(sourceWordsLeft(perf.body)).toEqual([]);
+  });
+
   it("refuses unknown params and an unknown measure; 503 before the first build", async () => {
     expect((await get("/internal/research/engines?view=both")).body.reason).toBe("view_unrecognised");
     expect((await get("/internal/research/engines/catalog?basis=x")).body.reason).toBe("basis_unrecognised");

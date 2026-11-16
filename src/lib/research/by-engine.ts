@@ -14,6 +14,9 @@
  *   script / Engine / step. Guard `lib/research/by-engine.test.ts`.
  */
 
+import { monthText, type MeasureScripts, type ScriptPoint } from "./engine-script-performance.js";
+import { n, pctText, usd } from "./format.js";
+
 /** One Research source (the per-source reads key on `sourceId`) placed on its Engine. */
 export interface EngineSource {
   sourceId: string;
@@ -309,20 +312,196 @@ interface PerfLike {
   series: unknown;
 }
 
-/** PURE. The Performance tab by Engine: per measure, its rows (script x template x LLM), totals, series, served now. */
-export function enginePerformanceOf(pipes: Readonly<Record<string, PerfLike>>, sources: readonly EngineSource[], stepName: (key: string) => string): Record<string, unknown> {
+/** The scripts of one measure on the ledger (`lib/research/engine-script-performance.ts`), or why they are not read. */
+export interface MeasureScriptsRead {
+  scripts: MeasureScripts | null;
+  unavailableReason: "ledger_book_unreadable" | "ledger_book_missing_days" | null;
+}
+
+/** The Rating's favourite script of an Engine today and the LLM / template it states (`lib/engine-favourites.ts`). */
+export interface EngineFavouriteLike {
+  script: string | null;
+  llm: { key: string; name: string } | null;
+  template: { key: string; name: string } | null;
+}
+
+export interface EngineScriptsInput {
+  of: (m: ResearchMeasure) => MeasureScriptsRead;
+  /** undefined = not read (the board is not built). */
+  favourite: (engine: string) => EngineFavouriteLike | null | undefined;
+}
+
+interface FigureLike {
+  value: number | null;
+}
+interface CountLike {
+  value: number;
+}
+interface TotalsLike {
+  spentUsd: CountLike;
+  outcomes: CountLike;
+  contacted: CountLike;
+  conversionRatePct: FigureLike;
+}
+interface PointLike {
+  month: string;
+  outcomes: number;
+  spentUsd: number;
+  conversionRatePct: number | null;
+}
+interface RowLike {
+  key: string;
+  rank?: number;
+  written?: boolean;
+  deprecatedParts?: string[];
+}
+
+const measured = (value: number, display: (v: number) => string) => ({ value, display: display(value), basis: "measured" as const, source: "own" as const, unavailableReason: null });
+const notMeasured = (reason: string) => ({ value: null, display: null, basis: null, source: null, unavailableReason: reason });
+
+/** PURE. Totals of spend / outcomes / contacted, their cost per outcome and conversion measured on the sums. */
+function totalsOf(a: { spentUsd: number; outcomes: number; contacted: number }) {
+  return {
+    costPerOutcomeUsd: Math.round(a.outcomes) >= 1 && a.spentUsd > 0 ? measured(a.spentUsd / a.outcomes, usd) : notMeasured("no_outcome_on_engine"),
+    conversionRatePct: a.contacted > 0 ? measured((100 * a.outcomes) / a.contacted, pctText) : notMeasured("nobody_emailed_on_engine"),
+    outcomes: { value: a.outcomes, display: n(Math.round(a.outcomes)) },
+    spentUsd: { value: a.spentUsd, display: usd(a.spentUsd) },
+    contacted: { value: a.contacted, display: n(Math.round(a.contacted)) },
+  };
+}
+
+/**
+ * PURE. The cumulative month series of the history (the workflow era's points) and of the scripts, added month by month;
+ * its last point = the totals. A history point states no base, so its conversion's base is read back off its rate (none
+ * when the rate is 0 and scripts add to that month: the point's conversion is then null, never guessed).
+ */
+export function mergedSeries(history: readonly PointLike[], scripts: readonly ScriptPoint[], historyContacted: number, now: Date) {
+  const months = [...history.map((p) => p.month), ...scripts.map((p) => p.month)].sort();
+  const thisMonth = now.toISOString().slice(0, 7);
+  if (months.length === 0) return null;
+  const h = new Map(history.map((p) => [p.month, p] as const));
+  const sc = new Map(scripts.map((p) => [p.month, p] as const));
+  const lastHistory = history[history.length - 1] ?? null;
+  const points: Array<{ month: string; label: string; costPerOutcomeUsd: number | null; conversionRatePct: number | null; outcomes: number; spentUsd: number }> = [];
+  let carryS: ScriptPoint | null = null;
+  for (let ym = months[0]!; ym <= thisMonth; ym = nextMonthOf(ym)) {
+    const hp = h.get(ym) ?? (lastHistory && ym > lastHistory.month ? lastHistory : null);
+    const sp = sc.get(ym) ?? (carryS && ym > carryS.month ? carryS : null);
+    if (sc.has(ym)) carryS = sc.get(ym)!;
+    const isLast = ym === thisMonth;
+    const hContacted = !hp ? 0 : isLast && hp === lastHistory ? historyContacted : hp.conversionRatePct === null ? 0 : hp.conversionRatePct > 0 ? (100 * hp.outcomes) / hp.conversionRatePct : null;
+    const spentUsd = (hp?.spentUsd ?? 0) + (sp?.spentUsd ?? 0);
+    const outcomes = (hp?.outcomes ?? 0) + (sp?.outcomes ?? 0);
+    const contacted = hContacted === null ? (sp && sp.contacted > 0 ? null : 0) : hContacted + (sp?.contacted ?? 0);
+    points.push({
+      month: ym,
+      label: monthText(ym),
+      costPerOutcomeUsd: Math.round(outcomes) >= 1 && spentUsd > 0 ? spentUsd / outcomes : null,
+      conversionRatePct: contacted === null ? null : hContacted === null ? hp!.conversionRatePct : contacted > 0 ? (100 * outcomes) / contacted : null,
+      outcomes,
+      spentUsd,
+    });
+  }
+  return { grain: "month" as const, points };
+}
+
+const nextMonthOf = (ym: string) => {
+  const y = Number(ym.slice(0, 4));
+  const m = Number(ym.slice(5, 7));
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+};
+
+/**
+ * PURE. One measure's Performance on scripts (RESEARCH-PERF-SCRIPTS-1116): the scripts of its Engine first (what produces
+ * the outcome today, measured on the ledger, `era: scripts`), then the workflow era's rows that wrote (`era: history`, all
+ * deprecated: no campaign runs a workflow since MIGRATE-1105). The combinations of the workflow era that never wrote are
+ * not listed (`combinationsNeverRunNotListed`): nothing can run them. Totals and series = scripts + history, so
+ * Σ rows' spend = the totals.
+ */
+export function withMeasureScripts(
+  m: ResearchMeasure,
+  body: Record<string, unknown>,
+  read: MeasureScriptsRead,
+  fav: EngineFavouriteLike | null | undefined,
+  now: Date,
+): Record<string, unknown> {
+  const all = (body.rows as RowLike[] | undefined) ?? [];
+  const history = all
+    .filter((r) => r.written !== false)
+    .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+    .map((r) => ({ ...r, era: "history" as const, status: "deprecated" as const, deprecatedParts: [...new Set([...(r.deprecatedParts ?? []), "script"])] }));
+  const scriptRows = read.scripts?.rows ?? [];
+  const rows = [...scriptRows, ...history].map((r, i) => ({ ...r, rank: i + 1 }));
+  const reason = body.totalsUnavailableReason as string | null | undefined;
+  const ht = body.totals as TotalsLike | null | undefined;
+  const sum = { spentUsd: 0, outcomes: 0, contacted: 0 };
+  for (const r of scriptRows) {
+    sum.spentUsd += r.spentUsd.value;
+    sum.outcomes += r.outcomes.value;
+    sum.contacted += r.contacted.value;
+  }
+  const several = reason === "several_sources_not_summed";
+  const hasHistory = !!ht;
+  let totals: unknown = several ? null : body.totals ?? null;
+  let series: unknown = several ? null : body.series ?? null;
+  let totalsUnavailableReason: string | null = reason ?? null;
+  if (!several && scriptRows.length > 0) {
+    totals = totalsOf({ spentUsd: (ht?.spentUsd.value ?? 0) + sum.spentUsd, outcomes: (ht?.outcomes.value ?? 0) + sum.outcomes, contacted: (ht?.contacted.value ?? 0) + sum.contacted });
+    const hs = ((body.series as { points?: PointLike[] } | null | undefined)?.points ?? []) as PointLike[];
+    series = mergedSeries(hasHistory ? hs : [], read.scripts?.points ?? [], ht?.contacted.value ?? 0, now);
+    totalsUnavailableReason = null;
+  }
+  const favRow = fav?.script ? scriptRows.find((r) => r.key === fav.script) ?? null : null;
+  const servedNow =
+    fav === undefined
+      ? { script: null, template: null, llm: null, row: null, unavailableReason: "served_pick_unreadable" }
+      : !fav || !fav.script
+        ? { script: null, template: null, llm: null, row: null, unavailableReason: "no_runnable_script" }
+        : {
+            script: { key: fav.script, label: favRow?.script.label ?? fav.script.slice(fav.script.indexOf("/") + 1) },
+            template: fav.template ? { key: fav.template.key, label: fav.template.name } : null,
+            llm: fav.llm ? { key: fav.llm.key, label: fav.llm.name } : null,
+            row: favRow,
+            unavailableReason: favRow ? null : "combination_not_listed",
+          };
+  return {
+    ...m,
+    ...body,
+    rowsCover: "scripts_that_ran_and_history",
+    figuresBasis: "scripts_on_ledger_history_on_bars",
+    rows,
+    totals,
+    series,
+    totalsUnavailableReason,
+    scriptsUnavailableReason: read.unavailableReason,
+    unplacedScriptOutcomes: read.scripts?.unplacedOutcomes ?? null,
+    combinationsNeverRunNotListed: all.length - history.length,
+    servedNow,
+  };
+}
+
+/** PURE. The Performance tab by Engine: per measure, its rows (scripts, then the history), totals, series, served now. */
+export function enginePerformanceOf(
+  pipes: Readonly<Record<string, PerfLike>>,
+  sources: readonly EngineSource[],
+  stepName: (key: string) => string,
+  scripts?: EngineScriptsInput,
+  now: Date = new Date(),
+): Record<string, unknown> {
   const engines = enginesOf(sources, stepName).map((e) => ({
     ...e,
     measures: e.measures.map((m) => {
       const perfs = sources.filter((s) => measureIdOf(s.engine, s.startsFrom, s.counts) === m.id).flatMap((s) => (pipes[s.sourceId] ? [pipes[s.sourceId]!] : []));
       const filled = perfs.filter((p) => p.rows.length > 0 || p.totals !== null);
       const base = filled[0] ?? perfs[0] ?? null;
-      if (!base) return { ...m, rows: [], totals: null, series: null, totalsUnavailableReason: "no_source_measured" };
-      const body = inEngineWords(base) as unknown as Record<string, unknown>;
-      if (filled.length <= 1) return { ...m, ...body, totalsUnavailableReason: null };
-      // Several sources measured the same thing on different campaigns: their rows are listed, never summed.
-      const rows = filled.flatMap((p) => inEngineWords(p.rows));
-      return { ...m, ...body, rows, totals: null, series: null, totalsUnavailableReason: "several_sources_not_summed" };
+      const body: Record<string, unknown> = !base
+        ? { rows: [], totals: null, series: null, totalsUnavailableReason: "no_source_measured" }
+        : filled.length <= 1
+          ? { ...(inEngineWords(base) as unknown as Record<string, unknown>), totalsUnavailableReason: null }
+          : // Several sources measured the same thing on different campaigns: their rows are listed, never summed.
+            { ...(inEngineWords(base) as unknown as Record<string, unknown>), rows: filled.flatMap((p) => inEngineWords(p.rows)), totals: null, series: null, totalsUnavailableReason: "several_sources_not_summed" };
+      if (!scripts) return { ...m, ...body };
+      return withMeasureScripts(m, body, scripts.of(m), scripts.favourite(m.engine), now);
     }),
   }));
   return { engines };
