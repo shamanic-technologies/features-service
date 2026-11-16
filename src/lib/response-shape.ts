@@ -67,10 +67,11 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // 2026-11-16 13:07 UTC the Wide Email chart still served a cell computed before its deploy (`no_entry_population`).
   // PART-ENTRY-1116: a part counts from the Units it took in; a group from its earliest entry. Both fixes retire here.
   // TEAM-PART-ENTRY-1116: a part with no intake of its own counts the entry Units the rest of its campaign made.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "team-part-entry-1116",
+  // FLEET-CONVERSION-BOOT-1116: the fleet's measured conversion awaited at boot (a cell froze the 1 % default).
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "fleet-conversion-boot-1116",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
-  "/offers/{offerId}/spend-charts": "part-entry-1116",
-  "/brands/{brandId}/spend-charts": "part-entry-1116",
+  "/offers/{offerId}/spend-charts": "fleet-conversion-boot-1116",
+  "/brands/{brandId}/spend-charts": "fleet-conversion-boot-1116",
   "/brands/{brandId}/sales-funnel-campaigns": "ledger-negative-days-1110",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
@@ -78,7 +79,7 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // LEDGER-NEGATIVE-DAYS-1110: EVERY ledger read nets withdrawn Units by one rule (`standingUnitsByDay`): every route below.
   "/offers/{offerId}/outcome-cost-series": "ledger-negative-days-1110",
   "/brands/{brandId}/outcome-cost-series": "ledger-negative-days-1110",
-  "/offers/{offerId}/outcomes": "ledger-negative-days-1110",
+  "/offers/{offerId}/outcomes": "fleet-conversion-boot-1116",
   "/offers/{offerId}/revenue": "ledger-negative-days-1110",
   "/brands/{brandId}/offers": "ledger-negative-days-1110",
   "/brands/{brandId}/revenue": "ledger-negative-days-1110",

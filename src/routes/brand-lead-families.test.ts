@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
+// FLEET-CONVERSION-BOOT-1116: the fleet's measured conversions are awaited off the outcome-prices store; none measured here.
+vi.mock("./public.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("./public.js")>()), awaitFleetLegConversionRatesFromOutcomePrices: async () => new Map() }));
 vi.mock("../db/index.js", () => ({
   db: { query: { features: { findFirst: vi.fn(), findMany: vi.fn() } } },
   sql: {},

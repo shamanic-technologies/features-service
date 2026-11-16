@@ -13,7 +13,13 @@ vi.mock("../lib/fleet-cell-store.js", () => ({
   storeFleetCell: async (key: string, text: string, computedAt: number) => void cells.set(key, { text, computedAt }),
 }));
 
-import { __resetOutcomePrices, awaitFleetLegCostsFromOutcomePrices, type OutcomePricesPayload } from "./public.js";
+import {
+  __resetOutcomePrices,
+  awaitFleetLegConversionRatesFromOutcomePrices,
+  awaitFleetLegCostsFromOutcomePrices,
+  fleetLegConversionRatesFromOutcomePrices,
+  type OutcomePricesPayload,
+} from "./public.js";
 
 const COLD = "sales-cold-email-outreach";
 const leg = (legKey: string, featureSlug: string, costPerOutcomeUsd: number) => ({ legKey, featureSlug, costPerOutcomeUsd, conversionRatePct: 1.2 });
@@ -58,5 +64,21 @@ describe("outcome prices across a restart (LEDGER-LOAD-1107-ROI-BOOT)", () => {
 
   it("nothing persisted and the build fails: still a visible 'not computed yet', never a guessed price", async () => {
     await expect(awaitFleetLegCostsFromOutcomePrices(50)).rejects.toThrow(/not computed yet/);
+  });
+});
+
+describe("the fleet's measured conversion across a restart (FLEET-CONVERSION-BOOT-1116)", () => {
+  // Prod 2026-11-16: a spend-charts read 90 s after a restart read the store before the persisted build was restored, so
+  // the Wide Email cold email part served the 1 % seeded default beside the fleet's measured rate, frozen in its cell.
+  it("the boot-window read restores the persisted build first: the measured rate, never an empty map", async () => {
+    cells.set("outcome-prices-v1", { text: JSON.stringify(payload), computedAt: Date.parse("2026-11-07T17:50:00Z") });
+    expect(fleetLegConversionRatesFromOutcomePrices().size).toBe(0); // the synchronous read: what the charts used to get
+    __resetOutcomePrices();
+    const rates = await awaitFleetLegConversionRatesFromOutcomePrices(20_000);
+    expect(rates.get(`start_to_conversation|${COLD}`)).toBe(1.2);
+  });
+
+  it("nothing persisted and the build fails: a visible 'not computed yet', never the default", async () => {
+    await expect(awaitFleetLegConversionRatesFromOutcomePrices(50)).rejects.toThrow(/not computed yet/);
   });
 });
