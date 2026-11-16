@@ -69,6 +69,10 @@ export function parseScriptReach(body: unknown): { builtAt: string; groups: Reac
         runs: count(r.runs, "runs"),
         spentUsd,
       };
+      // ONE-WRITER-N-MODELS-1116: the script that asked these decisions (runs-service names the decision holding the run
+      // that opened them), when the read serves it; absent = not served (counted at the candidate alone).
+      if (typeof r.askedByScriptDynasty === "string" && r.askedByScriptDynasty !== "") group.askedBy = r.askedByScriptDynasty;
+      else if (r.askedByScriptDynasty !== undefined && r.askedByScriptDynasty !== null) throw new Error("[features-service] outcome chains: askedByScriptDynasty is not text");
       // The cost names billed in making these decisions' Units: their own work + the writing behind what they consumed.
       if (namesAsked) group.writerCostNames = [...new Set([...texts(r.costNames, "costNames"), ...texts(r.sourceCostNames, "sourceCostNames")])].sort();
       return group;

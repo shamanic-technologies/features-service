@@ -6,6 +6,7 @@
  * FAIL-LOUD: a caller either retries next sweep or answers 502 (the runner then runs nothing and retries).
  */
 import { fetchWithRetry } from "./fetch-retry.js";
+import type { ScriptMerge } from "./script-value-rating.js";
 
 export interface RunnableScript {
   id: string;
@@ -109,8 +110,54 @@ export async function readRunnableScriptsForCatalogue(): Promise<RunnableScript[
   }
 }
 
+/** PURE: the merges of a workflow-service body. FAIL-LOUD on a row that does not name its two scripts. */
+export function parseScriptMerges(body: unknown): ScriptMerge[] {
+  const rows = body && typeof body === "object" ? (body as { merges?: unknown }).merges : undefined;
+  if (!Array.isArray(rows)) throw new Error("[features-service] workflow-service /internal/scripts/merges served no merges array");
+  const key = (v: unknown, what: string): string => {
+    if (typeof v !== "string" || !/^[^/]+\/[^/]+$/.test(v)) throw new Error(`[features-service] script merges: ${what} is not <outcome>/<dynasty>`);
+    return v;
+  };
+  return rows.map((r) => {
+    if (!r || typeof r !== "object") throw new Error("[features-service] script merges: a merge is not an object");
+    const m = r as Record<string, unknown>;
+    return { absorbed: key(m.absorbed, "absorbed"), survivor: key(m.survivor, "survivor"), askedBy: m.askedBy === null || m.askedBy === undefined ? null : key(m.askedBy, "askedBy") };
+  });
+}
+
+let heldMerges: { at: number; value: Promise<ScriptMerge[]> } | null = null;
+
+/**
+ * ONE-WRITER-N-MODELS-1116: every merge workflow-service made of a per-model copy into its survivors (`GET
+ * /internal/scripts/merges`), shared 60 s. FAIL-LOUD like every Rating input, with ONE exception: a 404 means
+ * workflow-service does not serve the route yet, and a merge it has not made cannot exist (it serves every merge it
+ * makes, from its first one): no merge, logged loud. Delete that exception once the route is live.
+ */
+export function readScriptMerges(): Promise<ScriptMerge[]> {
+  if (heldMerges && Date.now() - heldMerges.at < HELD_MS) return heldMerges.value;
+  const value = (async () => {
+    const base = process.env.WORKFLOW_SERVICE_URL;
+    const apiKey = process.env.WORKFLOW_SERVICE_API_KEY;
+    if (!base || !apiKey) throw new Error("[features-service] WORKFLOW_SERVICE_URL / WORKFLOW_SERVICE_API_KEY not configured");
+    const url = `${base}/internal/scripts/merges`;
+    const res = await fetchWithRetry(url, { headers: { "x-api-key": apiKey } }, { timeoutMs: TIMEOUT_MS });
+    if (res.status === 404) {
+      console.error(`[features-service] ${url} 404: workflow-service serves no merges route yet, read as no merge`);
+      return [];
+    }
+    if (!res.ok) throw new Error(`workflow-service ${url} ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    return parseScriptMerges(await res.json());
+  })();
+  heldMerges = { at: Date.now(), value };
+  value.catch(() => {
+    if (heldMerges?.value === value) heldMerges = null;
+  });
+  return value;
+}
+
 /** Test seam. */
 export function __resetRunnableScriptsForTest(): void {
   held = null;
   lastGood = null;
+  heldMerges = null;
 }
