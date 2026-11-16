@@ -10040,6 +10040,17 @@ registry.registerPath({
 });
 
 const campaignTargetValue = z.number().nullable();
+// PROJECTION-CAP-1117: why nothing is expected NOW (a cap reached for its current window), until `resumesAt`.
+const projectionPausedFields = {
+  pausedReason: z
+    .enum(["budget_cap_reached", "volume_cap_reached"])
+    .nullable()
+    .describe(
+      "PROJECTION-CAP-1117: the campaign spends nothing NOW: its max budget (`budget_cap_reached`) or max volume (`volume_cap_reached`) is reached for the " +
+        "current window; `daily` expects 0 until `resumesAt` (the window's reset), then the normal pace, and `nextExpectedAt` counts from there. null = spending.",
+    ),
+  resumesAt: z.string().nullable().describe("When the campaign spends again (the cap's next window, UTC midnight); null when not paused."),
+};
 registry.registerPath({
   method: "get",
   path: "/brands/{brandId}/campaign-targets",
@@ -10052,8 +10063,10 @@ registry.registerPath({
     "null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day " +
     "(that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current " +
     "Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, " +
-    "else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = now + 24 h ÷ outcomesPerDay; null + `unavailableReason` " +
-    "otherwise. `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
+    "else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` " +
+    "otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains " +
+    "in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), " +
+    "`budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
     "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, " +
     "LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
     "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). " +
@@ -10097,7 +10110,8 @@ registry.registerPath({
                   costPerTargetBasis: z.string().nullable(),
                   spendPerDayUsd: campaignTargetValue,
                   spendPerDaySource: z.enum(["daily_budget", "spend_pace_7d"]).nullable(),
-                  outcomesPerDay: campaignTargetValue,
+                  outcomesPerDay: campaignTargetValue.describe("The pace WHILE the campaign spends (a paused campaign keeps it; `daily` carries the pause)."),
+                  ...projectionPausedFields,
                   daily: z.array(z.object({ date: z.string(), expectedOutcomes: z.number(), cumulativeExpectedOutcomes: z.number() })),
                   nextExpectedAt: z.string().nullable(),
                   nextExpectedInHours: campaignTargetValue,
@@ -10123,6 +10137,7 @@ registry.registerPath({
                     conversionToNextUnavailableReason: z.string().nullable(),
                     projection: z.object({
                       outcomesPerDay: campaignTargetValue,
+                      ...projectionPausedFields,
                       daily: z.array(z.object({ date: z.string(), expectedOutcomes: z.number(), cumulativeExpectedOutcomes: z.number() })),
                       nextExpectedAt: z.string().nullable(),
                       nextExpectedInHours: campaignTargetValue,
@@ -10155,6 +10170,7 @@ registry.registerPath({
                     spendPerDayUsd: campaignTargetValue,
                     spendPerDaySource: z.enum(["daily_budget", "spend_pace_7d", "mixed"]).nullable(),
                     outcomesPerDay: campaignTargetValue.describe("Σ each projected campaign's own expected outcomes per day."),
+                    ...projectionPausedFields,
                     daily: z.array(z.object({ date: z.string(), expectedOutcomes: z.number(), cumulativeExpectedOutcomes: z.number() })),
                     nextExpectedAt: z.string().nullable(),
                     nextExpectedInHours: campaignTargetValue,

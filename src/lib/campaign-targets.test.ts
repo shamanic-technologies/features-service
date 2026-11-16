@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { campaignTargetRowOf, offerTargetsOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetInput } from "./campaign-targets.js";
+import { campaignTargetRowOf, offerTargetFromLedger, offerTargetsOf, sumCumulativeDays, PROJECTION_DAYS, type CampaignTargetInput } from "./campaign-targets.js";
 
 const NOW = "2026-11-06T12:00:00.000Z";
 const base: CampaignTargetInput = {
@@ -26,6 +26,7 @@ const base: CampaignTargetInput = {
   targetValueUnavailableReason: null,
   plan: { computedAt: "2026-11-06T09:00:00.000Z", funnelId: "f1", costPerTargetUsd: 50, basis: "fleet", unavailableReason: null },
   dailyBudgetUsd: 100,
+  capacity: { campaignStatus: "ongoing", budget: null, volumeReached: null, unreadableReason: null },
   now: NOW,
 };
 
@@ -169,5 +170,39 @@ describe("one entry per (offer, Target) (TARGET-ROWS-UNIQUE-1107)", () => {
     ]);
     expect(entries[1]).toMatchObject({ outcomesToDate: null, spentUsd: 600, outcomesUnavailableReason: "campaign_states_no_target", costPerOutcomeUsd: null, projection: { outcomesPerDay: null, unavailableReason: "campaign_states_no_target" } });
     expect(entries[1]!.measuredReturn.roiMultiple).toBeNull();
+  });
+});
+
+describe("PROJECTION-CAP-1117: the projection reads what the campaign can really spend", () => {
+  const capped: CampaignTargetInput = {
+    ...base,
+    capacity: { ...base.capacity, budget: { period: "monthly", amountUsd: 3000, periodEnd: "2026-12-01T00:00:00.000Z", remainingUsd: 0, reached: true } },
+  };
+
+  it("a monthly cap reached: 0 a day until Dec 1, then the plan's pace; the next one counted from the reset", () => {
+    const p = campaignTargetRowOf(capped).projection;
+    expect(p).toMatchObject({ outcomesPerDay: 2, pausedReason: "budget_cap_reached", resumesAt: "2026-12-01T00:00:00.000Z", unavailableReason: null });
+    // Nov 6 12:00 -> Dec 1 00:00 = 588 h, then 24 h ÷ 2.
+    expect(p.nextExpectedInHours).toBe(600);
+    expect(p.daily.slice(0, 24).every((d) => d.expectedOutcomes === 0)).toBe(true);
+    expect(p.daily[24]).toEqual({ date: "2026-12-01", expectedOutcomes: 2, cumulativeExpectedOutcomes: 5 });
+  });
+
+  it("a stopped campaign expects nothing, whatever its plan", () => {
+    const p = campaignTargetRowOf({ ...base, capacity: { ...base.capacity, campaignStatus: "stopped" } }).projection;
+    expect(p).toMatchObject({ outcomesPerDay: null, daily: [], nextExpectedAt: null, pausedReason: null, unavailableReason: "campaign_stopped" });
+  });
+
+  it("merged on one Target: a capped campaign adds nothing until its reset, the other keeps its pace; the ledger re-base keeps the schedule", () => {
+    const member = (i: CampaignTargetInput) => ({ input: i, row: campaignTargetRowOf(i) });
+    const c2: CampaignTargetInput = { ...base, salesFunnelCampaignId: "c2", plan: { ...base.plan!, costPerTargetUsd: 100 } };
+    const [entry] = offerTargetsOf([member(capped), member(c2)]);
+    expect(entry!.projection).toMatchObject({ outcomesPerDay: 3, pausedReason: null, nextExpectedInHours: 24 });
+    expect(entry!.projection.daily[0]!.expectedOutcomes).toBe(1);
+    expect(entry!.projection.daily[24]!.expectedOutcomes).toBe(3);
+    const [alone] = offerTargetsOf([member(capped)]);
+    const rebased = offerTargetFromLedger(alone!, null, 400, null, NOW);
+    expect(rebased.projection).toMatchObject({ pausedReason: "budget_cap_reached", nextExpectedInHours: 600 });
+    expect(rebased.projection.daily[24]!.cumulativeExpectedOutcomes).toBe(2);
   });
 });

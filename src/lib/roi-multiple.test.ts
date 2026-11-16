@@ -49,6 +49,7 @@ describe("ROI-ROUNDING-1116: a served ROI multiple keeps significant digits, nev
       targetValueUnavailableReason: null,
       plan: null,
       dailyBudgetUsd: 100,
+      capacity: { campaignStatus: "ongoing", budget: null, volumeReached: null, unreadableReason: null },
       now: "2026-11-16T12:00:00.000Z",
     } as unknown as CampaignTargetInput;
     expect(campaignTargetRowOf(base).measuredReturn.roiMultiple).toBe(TINY);
