@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-// TPL-STATUS-LIVE-1023: the catalogue read serves each template's status as content-generation states it NOW, over the
+// TPL-STATUS-LIVE-1023: the catalogue (as the Engine catalogue read serves it) carries each template's status as content-generation states it NOW, over the
 // stored build (both views, both bases).
 describe("research catalogue template status is live", () => {
   it("a template deprecated after the build reads deprecated on the next read; unreadable keeps the build's", async () => {
@@ -29,21 +29,15 @@ describe("research catalogue template status is live", () => {
     const readLive = vi.fn(async () => live);
     vi.doMock("../lib/writer-catalogue-client.js", async (orig) => ({ ...(await orig<object>()), readLiveTemplateDynasties: readLive }));
     vi.doMock("./public.js", async (orig) => ({ ...(await orig<object>()), readLegWorkflowRanking: vi.fn(async () => null) }));
-    const express = (await import("express")).default;
-    const request = (await import("supertest")).default;
     const m = await import("./research.js");
-    process.env.FEATURES_SERVICE_API_KEY = "k";
-    const app = express().use(m.default);
-    for (const q of ["", "?view=flash", "?basis=actual", "?basis=actual&view=flash"]) {
-      const res = await request(app).get(`/internal/research/catalog${q}`).set("x-api-key", "k");
-      expect(res.status).toBe(200);
-      const t = res.body["cold-email-positive-reply"].templates[0];
-      expect([t.status, t.versions[0].status]).toEqual(["deprecated", "deprecated"]);
+    for (const [basis, view] of [["user", "mature"], ["user", "flash"], ["actual", "mature"], ["actual", "flash"]] as const) {
+      const catalog = (await m.servedResearchCatalog(basis, view))!;
+      const t = catalog["cold-email-positive-reply"].templates[0]!;
+      expect([t.status, t.versions[0]!.status]).toEqual(["deprecated", "deprecated"]);
     }
     expect(readLive).toHaveBeenCalledWith("sales-cold-email-outreach", "lead_found_to_conversation");
     live = "template_dynasties_unreadable";
-    const res = await request(app).get("/internal/research/catalog").set("x-api-key", "k");
-    expect(res.status).toBe(200);
-    expect(res.body["cold-email-positive-reply"].templates[0].status).toBe("active");
+    const catalog = (await m.servedResearchCatalog("user", "mature"))!;
+    expect(catalog["cold-email-positive-reply"].templates[0]!.status).toBe("active");
   }, 30_000);
 });
