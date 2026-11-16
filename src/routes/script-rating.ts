@@ -9,8 +9,8 @@ import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
 import { LEAD_STATES } from "../lib/lead-states.js";
 import { offerLifetimeRevenue } from "../lib/offer-lifetime-revenue.js";
-import { readRunnableScripts, scriptDynastyKey, type RunnableScript } from "../lib/script-catalogue-client.js";
-import { applyReports, outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ReachGroup, type ScriptRating } from "../lib/script-value-rating.js";
+import { readRunnableScripts, readScriptMerges, scriptDynastyKey, type RunnableScript } from "../lib/script-catalogue-client.js";
+import { applyMerges, applyReports, askedRatings, outcomeValues, pickScript, rehomeGroups, scriptRatings, type AskedRatings, type OutcomeValue, type ReachGroup, type ScriptRating } from "../lib/script-value-rating.js";
 import { readOutcomeChains, readReportedDecisions } from "../lib/script-value-rating-io.js";
 import { listUnitReports } from "../lib/unit-client-reports-store.js";
 import { readLlmCostNames } from "../lib/llm-cost-names-client.js";
@@ -38,6 +38,11 @@ export interface ScriptRatingBody {
    * by script and the LLM dynasties the ledger names. Out of every script's score. Empty while the ledger names none.
    */
   otherModels: OtherModelRuns[];
+  /**
+   * ONE-WRITER-N-MODELS-1116: the ratings per place a script was asked from, finest first in the pick's cascade:
+   * per asking script, then per asking Engine (`scripts` = the candidate alone). Empty while the ledger names no asker.
+   */
+  asked: Array<{ askedBy: string; level: "script" | "engine"; scripts: ScriptRating[] }>;
 }
 
 /**
@@ -62,16 +67,18 @@ export async function attributeServedModels(
 
 /** The whole Rating: the served body, plus what Monitoring's board reads beside it (the groups and runnable scripts). */
 export async function buildScriptRating(): Promise<
-  ScriptRatingBody & { valueMap: Map<string, OutcomeValue>; groups: ReachGroup[]; runnable: RunnableScript[]; servedBy: Map<string, ServedByRow[]> }
+  ScriptRatingBody & { valueMap: Map<string, OutcomeValue>; groups: ReachGroup[]; runnable: RunnableScript[]; servedBy: Map<string, ServedByRow[]>; askedRatings: AskedRatings }
 > {
-  const [chains, ltr, runnable, reports] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts(), listUnitReports()]);
+  const [chains, ltr, runnable, reports, merges] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts(), listUnitReports(), readScriptMerges()]);
   const reported = reports.length ? await readReportedDecisions(reports) : [];
   const model = await loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source);
   const declared = new Map<string, number>();
   for (const [key, step] of model.steps) if (step.valueUsd !== null && step.valueUsd > 0) declared.set(key, step.valueUsd);
   const valueMap = outcomeValues({ steps: chains.steps, anchor: { outcome: ANCHOR_OUTCOME, valueUsd: ltr.usd }, declared });
-  const groups = rehomeGroups(applyReports(chains.groups, reported), runnable.map(scriptDynastyKey));
+  // A merged per-model copy's decisions count for each survivor at its place (before the re-homing of retired names).
+  const groups = rehomeGroups(applyMerges(applyReports(chains.groups, reported), merges), runnable.map(scriptDynastyKey));
   const served = await attributeServedModels(groups, runnable);
+  const asked = askedRatings({ groups: served.own, values: valueMap });
   return {
     builtAt: chains.builtAt,
     lifetimeRevenueUsd: ltr.usd,
@@ -80,6 +87,11 @@ export async function buildScriptRating(): Promise<
     scripts: scriptRatings({ groups: served.own, values: valueMap }),
     clientReports: { units: reports.length, decisions: reported.length },
     otherModels: served.otherModels,
+    asked: [
+      ...[...asked.byScript].map(([askedBy, scripts]) => ({ askedBy, level: "script" as const, scripts })),
+      ...[...asked.byEngine].map(([askedBy, scripts]) => ({ askedBy, level: "engine" as const, scripts })),
+    ].sort((a, b) => a.askedBy.localeCompare(b.askedBy) || a.level.localeCompare(b.level)),
+    askedRatings: asked,
     valueMap,
     // The board's runs per day read the same decisions as each row's runs: the script's own combination only.
     groups: served.own,
@@ -90,7 +102,7 @@ export async function buildScriptRating(): Promise<
 
 router.get("/internal/script-ratings", apiKeyOnly, async (_req: Request, res: Response) => {
   try {
-    const { valueMap: _valueMap, groups: _groups, runnable: _runnable, servedBy: _servedBy, ...body } = await buildScriptRating();
+    const { valueMap: _valueMap, groups: _groups, runnable: _runnable, servedBy: _servedBy, askedRatings: _askedRatings, ...body } = await buildScriptRating();
     res.json(body);
   } catch (error) {
     console.error("[features-service] script ratings:", error);
@@ -101,13 +113,16 @@ router.get("/internal/script-ratings", apiKeyOnly, async (_req: Request, res: Re
 router.get("/internal/script-pick", apiKeyOnly, async (req: Request, res: Response) => {
   const outcome = typeof req.query.outcome === "string" ? req.query.outcome.trim() : "";
   const dynasties = typeof req.query.dynasties === "string" ? req.query.dynasties.split(",").map((d) => d.trim()).filter(Boolean) : [];
-  if (!outcome || !dynasties.length || dynasties.some((d) => !d.startsWith(`${outcome}/`))) {
-    res.status(400).json({ error: "outcome and dynasties (comma list of <outcome>/<dynasty> of that outcome) are required", reason: "script_pick_unrecognised" });
+  // ONE-WRITER-N-MODELS-1116: the script asking for this pick (absent = a campaign's own run, as before).
+  const askedBy = typeof req.query.askedBy === "string" && req.query.askedBy.trim() !== "" ? req.query.askedBy.trim() : null;
+  if (!outcome || !dynasties.length || dynasties.some((d) => !d.startsWith(`${outcome}/`)) || (askedBy !== null && !/^[^/]+\/[^/]+$/.test(askedBy))) {
+    res.status(400).json({ error: "outcome and dynasties (comma list of <outcome>/<dynasty> of that outcome) are required; askedBy, when sent, is <outcome>/<dynasty>", reason: "script_pick_unrecognised" });
     return;
   }
   try {
     const b = await buildScriptRating();
-    res.json({ ...pickScript({ outcome, candidates: dynasties, ratings: b.scripts, values: b.valueMap, rng: Math.random }), builtAt: b.builtAt });
+    const pick = pickScript({ outcome, candidates: dynasties, ratings: b.scripts, values: b.valueMap, rng: Math.random, asked: askedBy ? { by: askedBy, ratings: b.askedRatings } : null });
+    res.json({ ...pick, ...(askedBy ? { askedBy } : {}), builtAt: b.builtAt });
   } catch (error) {
     console.error(`[features-service] script pick ${outcome}:`, error);
     res.status(502).json({ error: (error as Error).message, reason: "script_rating_unreadable" });

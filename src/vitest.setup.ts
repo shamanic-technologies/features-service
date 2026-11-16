@@ -276,6 +276,8 @@ vi.mock("./lib/ledger-book.js", async (importOriginal) => ({
 vi.mock("./lib/script-catalogue-client.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/script-catalogue-client.js")>()),
   readRunnableScriptsForCatalogue: vi.fn(async () => []),
+  // ONE-WRITER-N-MODELS-1116: no merge unless a suite states one.
+  readScriptMerges: vi.fn(async () => []),
 }));
 
 /**

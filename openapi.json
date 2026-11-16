@@ -54138,6 +54138,114 @@
                         ]
                       },
                       "description": "Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away."
+                    },
+                    "asked": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "askedBy": {
+                            "type": "string",
+                            "description": "The asking script `<outcome>/<dynasty>` (level `script`) or the asking Engine `<outcome>` (level `engine`)."
+                          },
+                          "level": {
+                            "type": "string",
+                            "enum": [
+                              "script",
+                              "engine"
+                            ]
+                          },
+                          "scripts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "scriptDynasty": {
+                                  "type": "string",
+                                  "description": "`<outcome>/<dynasty>`, every version pooled; a script re-homed under another outcome keeps its runs."
+                                },
+                                "outcome": {
+                                  "type": "string"
+                                },
+                                "runs": {
+                                  "type": "number"
+                                },
+                                "reached": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "outcome": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "runs": {
+                                        "type": "number"
+                                      },
+                                      "creditUsd": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "outcome",
+                                      "runs",
+                                      "creditUsd"
+                                    ]
+                                  },
+                                  "description": "Runs by the strongest outcome their chain reached beyond their own Unit (null = none)."
+                                },
+                                "valueUsd": {
+                                  "type": "number",
+                                  "description": "Credited: each run's strongest outcome's value less the value of what it made itself."
+                                },
+                                "valuePerRunUsd": {
+                                  "type": "number"
+                                },
+                                "spentUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "costPerRunUsd": {
+                                  "type": "number",
+                                  "nullable": true
+                                },
+                                "valuePerDollar": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "The decision figure the pick reads (credited value per dollar spent). Staff and the runner only: never a return, never shown to a customer."
+                                },
+                                "valuePerDollarUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "spend_not_served",
+                                    "no_spend",
+                                    null
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "scriptDynasty",
+                                "outcome",
+                                "runs",
+                                "reached",
+                                "valueUsd",
+                                "valuePerRunUsd",
+                                "spentUsd",
+                                "costPerRunUsd",
+                                "valuePerDollar",
+                                "valuePerDollarUnavailableReason"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "askedBy",
+                          "level",
+                          "scripts"
+                        ]
+                      },
+                      "description": "ONE-WRITER-N-MODELS-1116: the ratings of the scripts each asker asked (a writer asking a completion, a sender asking a writer). The pick of an asked script cascades asking script > asking Engine > the candidate alone (`scripts`): each finer place starts from the coarser belief worth one credited run, its own runs taking over as they land. Empty while the ledger names no asker."
                     }
                   },
                   "required": [
@@ -54147,7 +54255,8 @@
                     "values",
                     "scripts",
                     "clientReports",
-                    "otherModels"
+                    "otherModels",
+                    "asked"
                   ]
                 }
               }
@@ -55255,6 +55364,16 @@
             "description": "Comma list of `<outcome>/<dynasty>`: the runnable scripts the campaign's strategy keeps.",
             "name": "dynasties",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "ONE-WRITER-N-MODELS-1116: the script asking for this pick (`<outcome>/<dynasty>`: a writer asking a completion). The note of each candidate is then read for that asker, falling back to the asker's Engine, then to the candidate alone. Absent = a campaign's own run: the candidate alone, as before."
+            },
+            "required": false,
+            "description": "ONE-WRITER-N-MODELS-1116: the script asking for this pick (`<outcome>/<dynasty>`: a writer asking a completion). The note of each candidate is then read for that asker, falling back to the asker's Engine, then to the candidate alone. Absent = a campaign's own run: the candidate alone, as before.",
+            "name": "askedBy",
+            "in": "query"
           }
         ],
         "responses": {
@@ -55290,7 +55409,8 @@
                             "type": "string"
                           },
                           "runs": {
-                            "type": "number"
+                            "type": "number",
+                            "description": "The candidate's runs at the finest place read (the asking script when `askedBy` is sent)."
                           },
                           "score": {
                             "type": "number",
@@ -55303,6 +55423,10 @@
                           "score"
                         ]
                       }
+                    },
+                    "askedBy": {
+                      "type": "string",
+                      "description": "Echoed when sent."
                     },
                     "builtAt": {
                       "type": "string"

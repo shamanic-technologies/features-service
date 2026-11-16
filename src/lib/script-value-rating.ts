@@ -128,6 +128,11 @@ export interface ReachGroup {
    * as runs-service states them; null / absent = the ledger does not say (the decision is read as its script's own).
    */
   writerCostNames?: readonly string[] | null;
+  /**
+   * ONE-WRITER-N-MODELS-1116: the script that ASKED these decisions (`<outcome>/<dynasty>`: a writer asking a completion,
+   * a sender asking a writer); null / absent = a campaign's own run, or the ledger does not say.
+   */
+  askedBy?: string | null;
 }
 
 /** The strongest outcome a run made or reached: the most valued one; none valued = nothing. */
@@ -219,6 +224,8 @@ export function pickScript(input: {
   ratings: readonly ScriptRating[];
   values: ReadonlyMap<string, OutcomeValue>;
   rng: () => number;
+  /** ONE-WRITER-N-MODELS-1116: the script asking for this pick and the ratings per asker; absent = the candidate alone. */
+  asked?: { by: string; ratings: AskedRatings } | null;
 }): ScriptPick {
   const names = [...new Set(input.candidates)].sort();
   if (!names.length) return { outcome: input.outcome, scriptDynasty: null, basis: "no_candidate", candidates: [] };
@@ -262,16 +269,93 @@ export function pickScript(input: {
   let creditedRuns = 0;
   for (const [k, n] of engineMix) if ((engineCredit.get(k) ?? 0) > 0) creditedRuns += n;
   const priorRuns = Math.max(ENGINE_PRIOR_RUNS, creditedRuns > 0 ? (PRIOR_CREDITED_RUNS * engineRuns) / creditedRuns : 0);
+  // ONE-WRITER-N-MODELS-1116: the finer places, coarsest first (the asking Engine, then the asking script). Each starts
+  // from the candidate's belief one level up, worth one credited run (never fewer than ENGINE_PRIOR_RUNS runs); its own
+  // runs there land on top and take over as they grow. No asker = no finer place: the draw is the candidate's alone.
+  const levels = finerLevels(input.asked ?? null);
   const scored = names.map((name) => {
     const own = new Map((rows.get(name)?.reached ?? []).map((x) => [x.outcome, x.runs]));
-    const draws = kinds.map((k) => gammaDraw(Math.max(1e-3, (own.get(k) ?? 0) + (priorRuns * (engineMix.get(k) ?? 0)) / engineRuns), input.rng));
+    let alphas = kinds.map((k) => (own.get(k) ?? 0) + (priorRuns * (engineMix.get(k) ?? 0)) / engineRuns);
+    let cost = costOf(name);
+    let runs = rows.get(name)?.runs ?? 0;
+    for (const level of levels) {
+      const row = level.get(name);
+      const total = alphas.reduce((s, a) => s + a, 0);
+      const credited = kinds.reduce((s, k, i) => s + (valueOf(k) > 0 ? alphas[i]! : 0), 0);
+      const weight = Math.max(ENGINE_PRIOR_RUNS, credited > 0 ? (PRIOR_CREDITED_RUNS * total) / credited : 0);
+      const ownHere = new Map((row?.reached ?? []).map((x) => [x.outcome, x.runs]));
+      alphas = kinds.map((k, i) => (ownHere.get(k) ?? 0) + (total > 0 ? (weight * alphas[i]!) / total : 0));
+      if (row?.costPerRunUsd !== null && row?.costPerRunUsd !== undefined && row.costPerRunUsd > 0) cost = row.costPerRunUsd;
+      runs = row?.runs ?? 0;
+    }
+    const draws = alphas.map((a) => gammaDraw(Math.max(1e-3, a), input.rng));
     const total = draws.reduce((s, d) => s + d, 0);
     const value = kinds.reduce((s, k, i) => s + (draws[i]! / total) * valueOf(k), 0);
-    const cost = costOf(name);
-    return { scriptDynasty: name, runs: rows.get(name)?.runs ?? 0, score: cost === null ? value : value / cost };
+    return { scriptDynasty: name, runs, score: cost === null ? value : value / cost };
   });
   scored.sort((a, b) => b.score - a.score || a.scriptDynasty.localeCompare(b.scriptDynasty));
   return { outcome: input.outcome, scriptDynasty: scored[0]!.scriptDynasty, basis, candidates: scored };
+}
+
+/** The candidates' ratings at the asking Engine, then at the asking script (each keyed on the candidate). */
+function finerLevels(asked: { by: string; ratings: AskedRatings } | null): Array<Map<string, ScriptRating>> {
+  if (!asked) return [];
+  const at = (rows: readonly ScriptRating[] | undefined) => new Map((rows ?? []).map((r) => [r.scriptDynasty, r]));
+  return [at(asked.ratings.byEngine.get(engineOfDynasty(asked.by))), at(asked.ratings.byScript.get(asked.by))];
+}
+
+/**
+ * ONE-WRITER-N-MODELS-1116 (owner 2026-11-16): the note of a candidate is kept per (asking script, candidate), falling back
+ * to (asking Engine, candidate), then to the candidate alone (`scriptRatings` over every group). Same rule as
+ * `scriptRatings`, over the decisions each asker asked. A group no script asked counts at the candidate alone only.
+ */
+export interface AskedRatings {
+  /** Asking script `<outcome>/<dynasty>` -> the ratings of the scripts it asked. */
+  byScript: Map<string, ScriptRating[]>;
+  /** Asking Engine `<outcome>` -> the ratings of the scripts its scripts asked. */
+  byEngine: Map<string, ScriptRating[]>;
+}
+
+export function askedRatings(input: { groups: readonly ReachGroup[]; values: ReadonlyMap<string, OutcomeValue> }): AskedRatings {
+  const byScript = new Map<string, ReachGroup[]>();
+  const byEngine = new Map<string, ReachGroup[]>();
+  for (const g of input.groups) {
+    if (typeof g.askedBy !== "string" || g.askedBy === "") continue;
+    byScript.set(g.askedBy, [...(byScript.get(g.askedBy) ?? []), g]);
+    const e = engineOfDynasty(g.askedBy);
+    byEngine.set(e, [...(byEngine.get(e) ?? []), g]);
+  }
+  const rate = (m: Map<string, ReachGroup[]>) => new Map([...m].map(([k, groups]) => [k, scriptRatings({ groups, values: input.values })]));
+  return { byScript: rate(byScript), byEngine: rate(byEngine) };
+}
+
+/** One merge workflow-service made (`GET /internal/scripts/merges`): a per-model copy now counts at `survivor`, asked by `askedBy`. */
+export interface ScriptMerge {
+  absorbed: string;
+  survivor: string;
+  /** The script that asks the survivor at this place; null = the survivor is a campaign's own pick. */
+  askedBy: string | null;
+}
+
+/**
+ * ONE-WRITER-N-MODELS-1116: history is carried, never lost. Every decision of an absorbed copy also counts for each of its
+ * survivors, at the place the merge names (a copy merged into a writer AND a model counts at both, each in its own Engine).
+ * Produced and reached outcomes stay as recorded. A group no merge names is unchanged.
+ */
+export function applyMerges(groups: readonly ReachGroup[], merges: readonly ScriptMerge[]): ReachGroup[] {
+  const byAbsorbed = new Map<string, ScriptMerge[]>();
+  const seen = new Set<string>();
+  for (const m of merges) {
+    const key = JSON.stringify([m.absorbed, m.survivor, m.askedBy]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    byAbsorbed.set(m.absorbed, [...(byAbsorbed.get(m.absorbed) ?? []), m]);
+  }
+  if (!byAbsorbed.size) return [...groups];
+  return groups.flatMap((g) => {
+    const rows = byAbsorbed.get(g.scriptDynasty);
+    return rows ? rows.map((m) => ({ ...g, scriptDynasty: m.survivor, askedBy: m.askedBy })) : [g];
+  });
 }
 
 /**

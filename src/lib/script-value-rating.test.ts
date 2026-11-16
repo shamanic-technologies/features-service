@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, rehomeGroups, applyReports, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
+import { outcomeValues, scriptRatings, pickScript, strongestOf, creditOf, rehomeGroups, applyReports, applyMerges, askedRatings, MIN_CONSUMED_UNITS, type ReachGroup, type StepRate } from "./script-value-rating.js";
 
 /**
  * SCRIPT-VALUE-RATING-1113 (owner 2026-11-13): a script run is credited the value of the strongest outcome its chain
@@ -192,5 +192,121 @@ describe("applyReports", () => {
     const out = applyReports(groups, [{ scriptDynasty: "message_written/other", day: "2026-11-10", producedOutcomes: [], reachedOutcomes: [], spentUsd: 1 }, { scriptDynasty: "message_written/haiku", day: "2026-11-10", producedOutcomes: ["message_written"], reachedOutcomes: ["email_sent"], spentUsd: 0.004 }, { scriptDynasty: "message_written/haiku", day: "2026-11-10", producedOutcomes: ["message_written"], reachedOutcomes: ["email_sent"], spentUsd: 0.004 }]);
     expect(out.reduce((n, x) => n + x.runs, 0)).toBe(1);
     expect(groups[0]!.runs).toBe(1);
+  });
+});
+
+/**
+ * ONE-WRITER-N-MODELS-1116 (owner 2026-11-16): the model is picked per asking script, cascading to the asking Engine,
+ * then to the model alone. Completions of two models asked by writers of Message written (and of another Engine).
+ */
+describe("the pick of an asked script (ONE-WRITER-N-MODELS-1116)", () => {
+  const seeded = () => {
+    let s = 7;
+    return () => ((s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296);
+  };
+  const HAIKU = "llm_completion/dy_claude_haiku";
+  const OPUS = "llm_completion/dy_claude_opus";
+  const MODELS = [HAIKU, OPUS];
+  // A completion asked by a writer: its own Unit, then the message, the send and sometimes an interested lead.
+  const c = (model: string, askedBy: string | null, runs: number, interested: number, costPerRun: number): ReachGroup[] => [
+    { scriptDynasty: model, day: "2026-11-15", producedOutcomes: ["llm_completion"], reachedOutcomes: ["message_written", "email_sent"], runs: runs - interested, spentUsd: (runs - interested) * costPerRun, askedBy },
+    { scriptDynasty: model, day: "2026-11-15", producedOutcomes: ["llm_completion"], reachedOutcomes: ["message_written", "email_sent", "lead_interested"], runs: interested, spentUsd: interested * costPerRun, askedBy },
+  ];
+  const FREE_OFFER = "message_written/dy_free_offer";
+  const THREE_LINES = "message_written/dy_three_line_reply";
+  // Free offer: Haiku leads (10 vs 1 interested in 1,000); three-line reply: Opus leads (12 vs 1). Same cost per run.
+  // Another Engine's writer (a post) asks Opus far more often and well: the model alone (fleet) leans to Opus.
+  const GROUPS: ReachGroup[] = [
+    ...c(HAIKU, FREE_OFFER, 1000, 10, 0.002),
+    ...c(OPUS, FREE_OFFER, 1000, 1, 0.002),
+    ...c(HAIKU, THREE_LINES, 300, 1, 0.002),
+    ...c(OPUS, THREE_LINES, 300, 12, 0.002),
+    ...c(HAIKU, "post_written/dy_thread", 5000, 5, 0.002),
+    ...c(OPUS, "post_written/dy_thread", 5000, 100, 0.002),
+  ];
+  const ratings = scriptRatings({ groups: GROUPS, values: VALUES });
+  const asked = askedRatings({ groups: GROUPS, values: VALUES });
+  const tally = (by: string | null, n = 400): Map<string, number> => {
+    const r = seeded();
+    const t = new Map<string, number>();
+    for (let i = 0; i < n; i++) {
+      const p = pickScript({ outcome: "llm_completion", candidates: MODELS, ratings, values: VALUES, rng: r, asked: by ? { by, ratings: asked } : null });
+      t.set(p.scriptDynasty!, (t.get(p.scriptDynasty!) ?? 0) + 1);
+    }
+    return t;
+  };
+
+  it("two writers of Message written settle on two different models, each on its own history", () => {
+    const free = tally(FREE_OFFER);
+    const three = tally(THREE_LINES);
+    expect(free.get(HAIKU) ?? 0).toBeGreaterThan(free.get(OPUS) ?? 0);
+    expect(three.get(OPUS) ?? 0).toBeGreaterThan(three.get(HAIKU) ?? 0);
+  });
+
+  it("a writer with no history of its own is served its Engine's ranking, not the model's fleet ranking", () => {
+    // Message written's writers together: Haiku 11 interested in 1,300, Opus 13 in 1,300 = near even; make the Engine
+    // lean to Haiku by a writer with Haiku far ahead and no fleet weight elsewhere.
+    const groups = [...GROUPS, ...c(HAIKU, "message_written/dy_story", 2000, 40, 0.002), ...c(OPUS, "message_written/dy_story", 2000, 2, 0.002)];
+    const rows = scriptRatings({ groups, values: VALUES });
+    const at = askedRatings({ groups, values: VALUES });
+    const fleetHaiku = rows.find((r) => r.scriptDynasty === HAIKU)!.valuePerDollar!;
+    const fleetOpus = rows.find((r) => r.scriptDynasty === OPUS)!.valuePerDollar!;
+    expect(fleetOpus).toBeGreaterThan(fleetHaiku);
+    const r = seeded();
+    const t = new Map<string, number>();
+    for (let i = 0; i < 400; i++) {
+      const p = pickScript({ outcome: "llm_completion", candidates: MODELS, ratings: rows, values: VALUES, rng: r, asked: { by: "message_written/dy_brand_new", ratings: at } });
+      t.set(p.scriptDynasty!, (t.get(p.scriptDynasty!) ?? 0) + 1);
+    }
+    expect(t.get(HAIKU) ?? 0).toBeGreaterThan(t.get(OPUS) ?? 0);
+    expect(t.get(OPUS) ?? 0).toBeGreaterThan(0);
+  });
+
+  it("an asking Engine with no history at all is served the model's fleet ranking", () => {
+    const t = tally("brand_new_engine/dy_first");
+    expect(t.get(OPUS) ?? 0).toBeGreaterThan(t.get(HAIKU) ?? 0);
+  });
+
+  it("a pick with no askedBy answers exactly as before (same draws, same scores)", () => {
+    const a = pickScript({ outcome: "llm_completion", candidates: MODELS, ratings, values: VALUES, rng: seeded() });
+    const b = pickScript({ outcome: "llm_completion", candidates: MODELS, ratings, values: VALUES, rng: seeded(), asked: null });
+    expect(b).toEqual(a);
+    // The pre-cascade rule, recomputed by hand for the first candidate: alpha = own runs + prior x the Engine's mix.
+    expect(a.candidates.map((x) => x.runs).sort()).toEqual([6300, 6300]);
+  });
+});
+
+describe("applyMerges (ONE-WRITER-N-MODELS-1116)", () => {
+  const ABSORBED = "email_sent/dy_cold_email_signed_sender_client_brand__claude_haiku__cresn";
+  const WRITER = "message_written/dy_free_offer";
+  const SENDER = "email_sent/dy_cold_email_signed_sender_client_brand";
+  const MODEL = "llm_completion/dy_claude_haiku";
+  const MERGES = [
+    { absorbed: ABSORBED, survivor: WRITER, askedBy: SENDER },
+    { absorbed: ABSORBED, survivor: MODEL, askedBy: WRITER },
+    { absorbed: ABSORBED, survivor: MODEL, askedBy: WRITER },
+  ];
+  const groups = [g(ABSORBED, 488, ["lead_interested"], 1.952, ["email_sent"]), g("message_written/untouched", 3, [], 0.01)];
+
+  it("a per-model copy's decisions count for each survivor at its place; a repeated merge row counts once", () => {
+    const out = applyMerges(groups, MERGES);
+    expect(out.map((x) => [x.scriptDynasty, x.askedBy ?? null, x.runs])).toEqual([
+      [WRITER, SENDER, 488],
+      [MODEL, WRITER, 488],
+      ["message_written/untouched", null, 3],
+    ]);
+    expect(out[0]!.producedOutcomes).toEqual(["email_sent"]);
+  });
+
+  it("the merged history rates the writer under its sender and the model under its writer", () => {
+    const at = askedRatings({ groups: applyMerges(groups, MERGES), values: VALUES });
+    expect(at.byScript.get(SENDER)!.map((r) => [r.scriptDynasty, r.runs])).toEqual([[WRITER, 488]]);
+    expect(at.byScript.get(WRITER)!.map((r) => [r.scriptDynasty, r.runs])).toEqual([[MODEL, 488]]);
+    expect(at.byEngine.get("message_written")!.map((r) => r.scriptDynasty)).toEqual([MODEL]);
+    expect(at.byEngine.get("email_sent")!.map((r) => r.scriptDynasty)).toEqual([WRITER]);
+  });
+
+  it("no merge = the groups unchanged", () => {
+    expect(applyMerges(groups, [])).toEqual(groups);
   });
 });
