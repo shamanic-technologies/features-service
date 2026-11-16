@@ -13,6 +13,10 @@ import { readRunnableScripts, scriptDynastyKey, type RunnableScript } from "../l
 import { applyReports, outcomeValues, pickScript, rehomeGroups, scriptRatings, type OutcomeValue, type ReachGroup, type ScriptRating } from "../lib/script-value-rating.js";
 import { readOutcomeChains, readReportedDecisions } from "../lib/script-value-rating-io.js";
 import { listUnitReports } from "../lib/unit-client-reports-store.js";
+import { readLlmCostNames } from "../lib/llm-cost-names-client.js";
+import { llmDynastyIndex, readLlmDynasties } from "../lib/llm-dynasties.js";
+import { llmTacticsOf } from "../lib/script-engine-board.js";
+import { servedByScript, splitByServedModel, statedLlmsOf, type OtherModelRuns, type ServedByRow } from "../lib/served-model.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
 
 const router = Router();
@@ -29,10 +33,37 @@ export interface ScriptRatingBody {
   scripts: ScriptRating[];
   /** Client reports (an edit, or a "Report"): how many Units, and how many script decisions they took the credit of. */
   clientReports: { units: number; decisions: number };
+  /**
+   * SERVED-MODEL-1116: decisions another model wrote (a fallback, or history a dynasty inherited before its re-point),
+   * by script and the LLM dynasties the ledger names. Out of every script's score. Empty while the ledger names none.
+   */
+  otherModels: OtherModelRuns[];
+}
+
+/**
+ * SERVED-MODEL-1116: split the groups by the model that served them. The cost-name catalogue and the dynasties are read
+ * only when the ledger names writer cost names on some group (FAIL-LOUD then, like every Rating input); else every group
+ * is its script's own, byte for byte as before.
+ */
+export async function attributeServedModels(
+  groups: readonly ReachGroup[],
+  runnable: readonly RunnableScript[],
+): Promise<{ own: ReachGroup[]; otherModels: OtherModelRuns[]; servedBy: Map<string, ServedByRow[]> }> {
+  if (!groups.some((g) => Array.isArray(g.writerCostNames))) return { own: [...groups], otherModels: [], servedBy: new Map() };
+  const [llmOfCostName, dynasties] = await Promise.all([readLlmCostNames(), readLlmDynasties()]);
+  const index = llmDynastyIndex(dynasties);
+  const stated = statedLlmsOf(
+    runnable.map((s) => ({ key: scriptDynastyKey(s), llms: llmTacticsOf(s.tactics) })),
+    (name) => index.dynastyOfName(name)?.slug ?? null,
+  );
+  const { own, otherModels } = splitByServedModel({ groups, stated, llmOfCostName });
+  return { own, otherModels, servedBy: servedByScript({ groups, stated, llmOfCostName }) };
 }
 
 /** The whole Rating: the served body, plus what Monitoring's board reads beside it (the groups and runnable scripts). */
-export async function buildScriptRating(): Promise<ScriptRatingBody & { valueMap: Map<string, OutcomeValue>; groups: ReachGroup[]; runnable: RunnableScript[] }> {
+export async function buildScriptRating(): Promise<
+  ScriptRatingBody & { valueMap: Map<string, OutcomeValue>; groups: ReachGroup[]; runnable: RunnableScript[]; servedBy: Map<string, ServedByRow[]> }
+> {
   const [chains, ltr, runnable, reports] = await Promise.all([readOutcomeChains(), offerLifetimeRevenue(null), readRunnableScripts(), listUnitReports()]);
   const reported = reports.length ? await readReportedDecisions(reports) : [];
   const model = await loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source);
@@ -40,22 +71,26 @@ export async function buildScriptRating(): Promise<ScriptRatingBody & { valueMap
   for (const [key, step] of model.steps) if (step.valueUsd !== null && step.valueUsd > 0) declared.set(key, step.valueUsd);
   const valueMap = outcomeValues({ steps: chains.steps, anchor: { outcome: ANCHOR_OUTCOME, valueUsd: ltr.usd }, declared });
   const groups = rehomeGroups(applyReports(chains.groups, reported), runnable.map(scriptDynastyKey));
+  const served = await attributeServedModels(groups, runnable);
   return {
     builtAt: chains.builtAt,
     lifetimeRevenueUsd: ltr.usd,
     lifetimeRevenueSource: ltr.source,
     values: [...valueMap.values()].sort((a, b) => b.valueUsd - a.valueUsd || a.outcome.localeCompare(b.outcome)),
-    scripts: scriptRatings({ groups, values: valueMap }),
+    scripts: scriptRatings({ groups: served.own, values: valueMap }),
     clientReports: { units: reports.length, decisions: reported.length },
+    otherModels: served.otherModels,
     valueMap,
-    groups,
+    // The board's runs per day read the same decisions as each row's runs: the script's own combination only.
+    groups: served.own,
     runnable,
+    servedBy: served.servedBy,
   };
 }
 
 router.get("/internal/script-ratings", apiKeyOnly, async (_req: Request, res: Response) => {
   try {
-    const { valueMap: _valueMap, groups: _groups, runnable: _runnable, ...body } = await buildScriptRating();
+    const { valueMap: _valueMap, groups: _groups, runnable: _runnable, servedBy: _servedBy, ...body } = await buildScriptRating();
     res.json(body);
   } catch (error) {
     console.error("[features-service] script ratings:", error);

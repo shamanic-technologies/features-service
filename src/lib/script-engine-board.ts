@@ -8,6 +8,7 @@
  */
 import type { RunnableScript } from "./script-catalogue-client.js";
 import { scriptDynastyKey } from "./script-catalogue-client.js";
+import type { ServedByRow } from "./served-model.js";
 import { engineOfDynasty, pickScript, type OutcomeValue, type ReachGroup, type ScriptPick, type ScriptRating } from "./script-value-rating.js";
 
 /** Draws per Engine: a share is read to the half percent. */
@@ -44,6 +45,14 @@ export interface BoardScriptRow {
   llms: ScriptLlmTactic[];
   templates: ScriptTemplateTactic[];
   runsByDay: Array<{ day: string; runs: number; spentUsd: number | null }>;
+  /**
+   * SERVED-MODEL-1116: the script's decisions by the LLM dynasties that actually served them (the ledger's billed
+   * names; `servedLlms` null = the ledger names none). `own` false = another model wrote them (a fallback, or history
+   * before a re-point): out of `runs` and every figure above. Empty while the ledger names no model.
+   */
+  servedBy: ServedByRow[];
+  /** Runs another model wrote (Σ `servedBy` rows with `own` false). */
+  runsByOtherModels: number;
 }
 
 export interface BoardEngine {
@@ -99,6 +108,8 @@ export function scriptEngineBoard(input: {
   values: ReadonlyMap<string, OutcomeValue>;
   runnable: readonly RunnableScript[];
   groups: readonly ReachGroup[];
+  /** Per script, its decisions by the model that served them (SERVED-MODEL-1116); absent = none named. */
+  servedBy?: ReadonlyMap<string, ServedByRow[]>;
   today: string;
   rng: () => number;
   draws?: number;
@@ -119,7 +130,7 @@ export function scriptEngineBoard(input: {
     byDay.set(g.scriptDynasty, days);
   }
   const engines = new Map<string, Set<string>>();
-  for (const key of [...runnableByKey.keys(), ...ratingByKey.keys()]) {
+  for (const key of [...runnableByKey.keys(), ...ratingByKey.keys(), ...(input.servedBy?.keys() ?? [])]) {
     const outcome = runnableByKey.get(key)?.outcome ?? ratingByKey.get(key)?.outcome ?? engineOfDynasty(key);
     engines.set(outcome, (engines.get(outcome) ?? new Set()).add(key));
   }
@@ -154,6 +165,8 @@ export function scriptEngineBoard(input: {
         runsByDay: days
           ? [...days.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, d]) => ({ day, runs: d.runs, spentUsd: d.known ? Math.round(d.spent * 1e6) / 1e6 : null }))
           : [],
+        servedBy: input.servedBy?.get(key) ?? [],
+        runsByOtherModels: (input.servedBy?.get(key) ?? []).filter((x) => !x.own).reduce((n, x) => n + x.runs, 0),
       };
     });
     scripts.sort(
