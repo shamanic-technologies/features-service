@@ -6547,7 +6547,7 @@ registry.registerPath({
   description: "A script run is credited the value of the strongest outcome its chain reached in the ledger (the runs that consumed its Unit, then theirs), less the value of what it made itself. Fleet figures, read from runs-service's outcome chains.",
   tags: ["Internal"],
   responses: {
-    200: { description: "Values and ratings", content: { "application/json": { schema: z.object({ builtAt: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.string().nullable(), values: z.array(ScriptRatingValueSchema), scripts: z.array(ScriptRatingRowSchema), clientReports: z.object({ units: z.number(), decisions: z.number() }).describe("Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away.") }) } } },
+    200: { description: "Values and ratings", content: { "application/json": { schema: z.object({ builtAt: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.string().nullable(), values: z.array(ScriptRatingValueSchema), scripts: z.array(ScriptRatingRowSchema), clientReports: z.object({ units: z.number(), decisions: z.number() }), otherModels: z.array(z.object({ scriptDynasty: z.string(), servedLlms: z.array(z.string()), runs: z.number(), spentUsd: z.number().nullable(), producedOutcomes: z.array(z.string()), reachedOutcomes: z.array(z.string()) })).describe("SERVED-MODEL-1116: decisions another model wrote than the one the script states (a fallback, or the history a dynasty inherited before its re-point), by script and the LLM dynasties the ledger names. Out of every script's score.").describe("Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away.") }) } } },
     502: { description: "script_rating_unreadable" },
   },
 });
@@ -6566,6 +6566,10 @@ const ScriptEngineRowSchema = z.object({
   llms: z.array(z.object({ place: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable() })).describe("The LLM tactics workflow-service states on the runnable version (`place` null = every call)."),
   templates: z.array(z.object({ place: z.string().nullable(), templateDynastySlug: z.string() })).describe("The template tactics workflow-service states on the runnable version."),
   runsByDay: z.array(z.object({ day: z.string(), runs: z.number(), spentUsd: z.number().nullable() })).describe("Runs and spend per UTC day, the last 30 days (days with no run left out)."),
+  servedBy: z
+    .array(z.object({ servedLlms: z.array(z.string()).nullable(), own: z.boolean(), runs: z.number() }))
+    .describe("SERVED-MODEL-1116: the script's decisions by the LLM dynasties the ledger says actually served them (null = names none). `own` false = another model wrote them (a fallback, or history before a re-point): out of `runs` and every figure of the row. Empty while the ledger names no model."),
+  runsByOtherModels: z.number().describe("Runs another model wrote (the `servedBy` rows with `own` false)."),
 });
 const ScriptEngineSchema = z.object({
   outcome: z.string().describe("The Engine: the outcome its scripts make."),

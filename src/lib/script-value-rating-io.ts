@@ -11,6 +11,12 @@ import type { ReachGroup, ReportedDecision, StepRate } from "./script-value-rati
 
 const STEP_RATES_PATH = "/internal/stats/outcome-chains/step-rates";
 const SCRIPT_REACH_PATH = "/internal/stats/outcome-chains/script-reach?groupBy=dynasty";
+/**
+ * SERVED-MODEL-1116: the fleet read also asks each group's billed cost names: `costNames` (the decisions' own work) and
+ * `sourceCostNames` (the script decisions whose Units they consumed, one hop: the writing behind a send). Groups split
+ * so that decisions billing different names never share one; figures sum to the plain read's.
+ */
+const FLEET_SCRIPT_REACH_PATH = `${SCRIPT_REACH_PATH}&include=costNames`;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const count = (v: unknown, what: string): number => {
@@ -44,6 +50,7 @@ export function parseStepRates(body: unknown): { builtAt: string; steps: StepRat
  */
 export function parseScriptReach(body: unknown): { builtAt: string; groups: ReachGroup[] } {
   if (!isRecord(body) || !Array.isArray(body.groups)) throw new Error("[features-service] outcome chains: script-reach served no groups");
+  const namesAsked = Array.isArray(body.include) && body.include.includes("costNames");
   return {
     builtAt: text(body.builtAt, "builtAt"),
     groups: body.groups.map((r) => {
@@ -54,7 +61,7 @@ export function parseScriptReach(body: unknown): { builtAt: string; groups: Reac
         if (!Number.isFinite(cents) || cents < 0) throw new Error("[features-service] outcome chains: costInUsdCents is not an amount");
         spentUsd = cents / 100;
       }
-      return {
+      const group: ReachGroup = {
         scriptDynasty: text(r.scriptDynasty, "scriptDynasty"),
         day: text(r.day, "day"),
         producedOutcomes: texts(r.producedOutcomes, "producedOutcomes"),
@@ -62,12 +69,15 @@ export function parseScriptReach(body: unknown): { builtAt: string; groups: Reac
         runs: count(r.runs, "runs"),
         spentUsd,
       };
+      // The cost names billed in making these decisions' Units: their own work + the writing behind what they consumed.
+      if (namesAsked) group.writerCostNames = [...new Set([...texts(r.costNames, "costNames"), ...texts(r.sourceCostNames, "sourceCostNames")])].sort();
+      return group;
     }),
   };
 }
 
 export async function readOutcomeChains(): Promise<{ builtAt: string; steps: StepRate[]; groups: ReachGroup[] }> {
-  const [rates, reach] = await Promise.all([readRunsLedgerJson(STEP_RATES_PATH, FLEET_LEDGER_HOLD_MS), readRunsLedgerJson(SCRIPT_REACH_PATH, FLEET_LEDGER_HOLD_MS)]);
+  const [rates, reach] = await Promise.all([readRunsLedgerJson(STEP_RATES_PATH, FLEET_LEDGER_HOLD_MS), readRunsLedgerJson(FLEET_SCRIPT_REACH_PATH, FLEET_LEDGER_HOLD_MS)]);
   const s = parseStepRates(rates);
   const g = parseScriptReach(reach);
   return { builtAt: g.builtAt, steps: s.steps, groups: g.groups };

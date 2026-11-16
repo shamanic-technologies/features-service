@@ -123,6 +123,11 @@ export interface ReachGroup {
   runs: number;
   /** What those runs cost (the decision and everything under it); null = the ledger does not serve it. */
   spentUsd: number | null;
+  /**
+   * SERVED-MODEL-1116: the LLM cost names billed in MAKING the decisions' Units (the writing behind a send included),
+   * as runs-service states them; null / absent = the ledger does not say (the decision is read as its script's own).
+   */
+  writerCostNames?: readonly string[] | null;
 }
 
 /** The strongest outcome a run made or reached: the most valued one; none valued = nothing. */

@@ -54833,7 +54833,51 @@
                       "required": [
                         "units",
                         "decisions"
-                      ],
+                      ]
+                    },
+                    "otherModels": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "scriptDynasty": {
+                            "type": "string"
+                          },
+                          "servedLlms": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "runs": {
+                            "type": "number"
+                          },
+                          "spentUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "producedOutcomes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "reachedOutcomes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "scriptDynasty",
+                          "servedLlms",
+                          "runs",
+                          "spentUsd",
+                          "producedOutcomes",
+                          "reachedOutcomes"
+                        ]
+                      },
                       "description": "Client reports (an edit of what we wrote, or a report): the Units reported and the script decisions whose credit they took away."
                     }
                   },
@@ -54843,7 +54887,8 @@
                     "lifetimeRevenueSource",
                     "values",
                     "scripts",
-                    "clientReports"
+                    "clientReports",
+                    "otherModels"
                   ]
                 }
               }
@@ -55101,6 +55146,37 @@
                                     ]
                                   },
                                   "description": "Runs and spend per UTC day, the last 30 days (days with no run left out)."
+                                },
+                                "servedBy": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "servedLlms": {
+                                        "type": "array",
+                                        "nullable": true,
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "own": {
+                                        "type": "boolean"
+                                      },
+                                      "runs": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "required": [
+                                      "servedLlms",
+                                      "own",
+                                      "runs"
+                                    ]
+                                  },
+                                  "description": "SERVED-MODEL-1116: the script's decisions by the LLM dynasties the ledger says actually served them (null = names none). `own` false = another model wrote them (a fallback, or history before a re-point): out of `runs` and every figure of the row. Empty while the ledger names no model."
+                                },
+                                "runsByOtherModels": {
+                                  "type": "number",
+                                  "description": "Runs another model wrote (the `servedBy` rows with `own` false)."
                                 }
                               },
                               "required": [
@@ -55117,7 +55193,9 @@
                                 "valuePerDollarUnavailableReason",
                                 "llms",
                                 "templates",
-                                "runsByDay"
+                                "runsByDay",
+                                "servedBy",
+                                "runsByOtherModels"
                               ]
                             },
                             "description": "Runnable first, by share of draws, then the Rating's score, runs, slug."
