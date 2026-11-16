@@ -192,16 +192,18 @@ interface ChartContext {
 }
 
 async function chartContext(brandId: string, unitIds: readonly string[], pricing: Pricing, headers: DownstreamHeaders): Promise<ChartContext> {
-  const { fleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
+  const { awaitFleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
   const handedRows = unitIds.length > 0 ? await fetchFollowupActionRows(brandId, unitIds) : [];
-  const [rates] = await Promise.all([
+  // FLEET-CONVERSION-BOOT-1116: awaited, so a read right after boot never charts the seeded default over a measured rate.
+  const [rates, fleetConversions] = await Promise.all([
     getBrandEffectiveRates(brandId, headers.orgId).catch((err: Error) => {
       console.error(`[features-service] spend charts: brand rates unreadable for brand ${brandId} (expected conversion of later legs null): ${err.message}`);
       return null;
     }),
+    awaitFleetLegConversionRatesFromOutcomePrices(),
   ]);
   const byLeg = new Map((rates?.legs ?? []).filter((l) => l.legKey).map((l) => [l.legKey!, { ratePct: l.effectiveRatePct, source: l.source }] as const));
-  return { brandId, handedRows, fleetConversions: fleetLegConversionRatesFromOutcomePrices(), brandRateOf: (k) => byLeg.get(k) ?? null, pricing, headers };
+  return { brandId, handedRows, fleetConversions, brandRateOf: (k) => byLeg.get(k) ?? null, pricing, headers };
 }
 
 const chartOf = (ctx: ChartContext, scope: ChartScope, expected: ExpectedReturn): Promise<SpendChart> =>

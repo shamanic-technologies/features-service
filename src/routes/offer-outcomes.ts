@@ -60,10 +60,12 @@ async function withExpectedLadder<P extends { exclusiveLadder: Parameters<typeof
   pricedFunnelKeys: readonly SalesFunnelKey[],
   pipeline: P,
 ): Promise<P> {
-  const { fleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
+  const { awaitFleetLegConversionRatesFromOutcomePrices } = await import("./public.js");
+  // FLEET-CONVERSION-BOOT-1116: awaited, a boot-window read never prices the default over the fleet's measured rate.
+  const fleetConversions = await awaitFleetLegConversionRatesFromOutcomePrices();
   return {
     ...pipeline,
-    exclusiveLadder: withExpectedConversions(pipeline.exclusiveLadder, { rates, pricedFunnelKeys, fleetConversions: fleetLegConversionRatesFromOutcomePrices() }),
+    exclusiveLadder: withExpectedConversions(pipeline.exclusiveLadder, { rates, pricedFunnelKeys, fleetConversions }),
   };
 }
 
