@@ -22,7 +22,13 @@ vi.mock("../lib/runs-ledger-read.js", () => ({
 }));
 vi.mock("../lib/outcome-cost-totals-client.js", () => ({ FLEET_LEDGER_HOLD_MS: 0 }));
 vi.mock("../lib/offer-lifetime-revenue.js", () => ({ offerLifetimeRevenue: async () => ({ usd: 2100, source: "fleet_median" }) }));
+let merges: unknown[] = [];
+let mergesDown = false;
 vi.mock("../lib/script-catalogue-client.js", () => ({
+  readScriptMerges: async () => {
+    if (mergesDown) throw new Error("workflow-service /internal/scripts/merges 503");
+    return merges;
+  },
   scriptDynastyKey: (s: { outcome: string; dynasty: string }) => `${s.outcome}/${s.dynasty}`,
   readRunnableScripts: async () => [
     { outcome: "message_written", dynasty: "flash_lite" },
@@ -49,6 +55,8 @@ const key = { "x-api-key": "k" };
 
 beforeEach(() => {
   ledgerDown = false;
+  merges = [];
+  mergesDown = false;
   reports = [];
   unitCalls = [];
   unitAnswers = { builtAt: "x", units: [] };
@@ -140,6 +148,41 @@ describe("GET /internal/script-pick", () => {
 
   it("an unreadable ledger is a 502: the caller picks nothing on a guess", async () => {
     ledgerDown = true;
+    expect((await request(app).get("/internal/script-pick?outcome=message_written&dynasties=message_written/haiku").set(key)).status).toBe(502);
+  });
+
+  it("ONE-WRITER-N-MODELS-1116: askedBy reads the asker's own history, malformed askedBy is refused, no askedBy answers as before", async () => {
+    // Writer A asked flash_lite (4 interested in 500) and haiku (12 in 500): haiku leads for A. The fleet favours flash_lite.
+    const asked = (scriptDynasty: string, askedByScriptDynasty: string, runs: number, reached: string[], cents: string) => ({ ...group(scriptDynasty, runs, reached, cents), askedByScriptDynasty });
+    (reach as { groups: unknown[] }).groups = [
+      asked("message_written/haiku", "email_sent/writer_a", 12, ["conversation", "message_sent"], "4.8"),
+      asked("message_written/haiku", "email_sent/writer_a", 488, ["message_sent"], "195.2"),
+      asked("message_written/flash_lite", "email_sent/writer_a", 500, ["message_sent"], "100"),
+      group("message_written/flash_lite", 5000, ["conversation", "message_sent"], "1000"),
+      group("message_written/flash_lite", 5000, ["message_sent"], "1000"),
+    ];
+    const tally = new Map<string, number>();
+    for (let i = 0; i < 30; i++) {
+      const res = await request(app).get("/internal/script-pick?outcome=message_written&dynasties=message_written/haiku,message_written/flash_lite&askedBy=email_sent/writer_a").set(key);
+      expect(res.status).toBe(200);
+      expect(res.body.askedBy).toBe("email_sent/writer_a");
+      tally.set(res.body.scriptDynasty, (tally.get(res.body.scriptDynasty) ?? 0) + 1);
+    }
+    expect(tally.get("message_written/haiku") ?? 0).toBeGreaterThan(tally.get("message_written/flash_lite") ?? 0);
+    const plain = await request(app).get("/internal/script-pick?outcome=message_written&dynasties=message_written/haiku,message_written/flash_lite").set(key);
+    expect(plain.body.askedBy).toBeUndefined();
+    expect((await request(app).get("/internal/script-pick?outcome=message_written&dynasties=message_written/haiku&askedBy=nope").set(key)).status).toBe(400);
+    const ratings = await request(app).get("/internal/script-ratings").set(key);
+    expect(ratings.body.asked.map((a: { askedBy: string; level: string }) => [a.askedBy, a.level])).toEqual([["email_sent", "engine"], ["email_sent/writer_a", "script"]]);
+  });
+
+  it("ONE-WRITER-N-MODELS-1116: a merged per-model copy's history counts for its survivor; unreadable merges = 502", async () => {
+    (reach as { groups: unknown[] }).groups = [group("email_sent/old__haiku__x", 100, ["message_sent"], "40")];
+    merges = [{ absorbed: "email_sent/old__haiku__x", survivor: "message_written/haiku", askedBy: "email_sent/writer_a" }];
+    const res = await request(app).get("/internal/script-ratings").set(key);
+    expect(res.body.scripts.map((s: { scriptDynasty: string; runs: number }) => [s.scriptDynasty, s.runs])).toEqual([["message_written/haiku", 100]]);
+    expect(res.body.asked.find((a: { askedBy: string }) => a.askedBy === "email_sent/writer_a").scripts[0].runs).toBe(100);
+    mergesDown = true;
     expect((await request(app).get("/internal/script-pick?outcome=message_written&dynasties=message_written/haiku").set(key)).status).toBe(502);
   });
 });
