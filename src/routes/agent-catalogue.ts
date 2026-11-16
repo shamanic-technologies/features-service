@@ -266,6 +266,12 @@ async function computeMeasurements(): Promise<MeasurementStore> {
     spentUsd: price.spentUsd ?? null,
     historyCostPerOutcomeUsd: price.historyCostPerOutcomeUsd ?? null,
   });
+  // Which Engine decides a tactic reads the runnable scripts (ONE-WRITER-N-MODELS-1116-LEADS-ONLY); unreadable = every
+  // script tactic applies, as strict as before (logged).
+  const runnableScripts = await readRunnableScriptsForCatalogue().catch((error) => {
+    console.error("[features-service] catalogue measurements: runnable scripts unreadable, every script tactic applies:", (error as Error).message);
+    return null;
+  });
   await mapWithConcurrency(pipes, MEASUREMENT_CONCURRENCY, async (p) => {
     // A pipe cataloguing plays prices each on its best ALLOWED workflow; its default play is the pipe's own figure.
     const catalogued = plays.playsByPipe.get(p.id) ?? [];
@@ -277,7 +283,7 @@ async function computeMeasurements(): Promise<MeasurementStore> {
       const strategiesInOrder = [defaultStrategyOf(plays, p.id), ...catalogued.filter((x) => !x.isDefault).map((x) => plays.strategies.get(x.strategyId) ?? null)];
       const prices = await withTimeout(
         // Each play's strategy judges every candidate: a workflow on its workflow tactics, a script on its script ones.
-        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => excludedPipeCandidates(st, dynasties, plays))),
+        fleetPlayPrices(p.slug, p.computedLegKey, (dynasties) => strategiesInOrder.map((st) => excludedPipeCandidates(st, dynasties, plays, runnableScripts))),
         MEASUREMENT_TIMEOUT_MS,
         `pipe ${p.id}`,
       );

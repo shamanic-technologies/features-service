@@ -526,6 +526,13 @@
       "when": 1795449600000,
       "tag": "0074_script_draw_share_days",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1795536000000,
+      "tag": "0075_tactic_decided_by_fields",
+      "breakpoints": true
     }
   ]
 }
