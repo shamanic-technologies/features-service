@@ -136,6 +136,43 @@ describe("rebaseSpendChartOnLedger (LEDGER-ONLY-1107)", () => {
     expect(r.totals.outcomes).toBe(paid.units);
     expect(r.daily.map((p) => [p.cumulativeOutcomes, p.cumulativeEntered, p.cohortOutcomes, p.costPerOutcomeUsd])).toEqual([[0, 50, null, null], [2, 100, null, 200]]);
   });
+  // CAMPAIGN-CONVERSION-1116 (prod 2026-11-16, Wide Email: proactive, Target Paid client, a follow-up writer unit on
+  // start_to_paid_client beside its chain): "% to Paid client" = 0 of its 4,157 leads found, never "no entry population".
+  it("a proactive campaign whose Target is Paid client: 0% of its Lead found Units, counts served, expected beside", async () => {
+    const { rebaseSpendChartOnLedger } = await import("./spend-charts-ledger.js");
+    const { campaignChartTarget, expectedTargetFigures } = await import("./spend-chart-target.js");
+    const target = campaignChartTarget("paid_client", "paid_client", [
+      { campaignId: "src", fromStep: null, toStep: "lead_found" },
+      { campaignId: "ce", fromStep: "lead_found", toStep: "conversation" },
+      { campaignId: "team", fromStep: "conversation", toStep: "paid_client" },
+      { campaignId: "fu", fromStep: null, toStep: "paid_client" },
+    ])!;
+    expect(target.fromStep).toBe("lead_found");
+    const route = [
+      { legKey: "start_to_lead_found", channelSlug: "lead-sourcing", fromStep: null, toStep: "lead_found", ratePct: null, rateBasis: null, costPerOutcomeUsd: 0.04, costBasis: "fleet" },
+      { legKey: "lead_found_to_conversation", channelSlug: "sales-cold-email-outreach", fromStep: null, toStep: "conversation", ratePct: null, rateBasis: null, costPerOutcomeUsd: 57, costBasis: "fleet" },
+      { legKey: "conversation_to_paid_client", channelSlug: null, fromStep: "conversation", toStep: "paid_client", ratePct: 5, rateBasis: "default", costPerOutcomeUsd: 0, costBasis: null },
+    ];
+    const expected = expectedTargetFigures(route as never, target, new Map([["start_to_conversation|sales-cold-email-outreach", 0.1]]), null);
+    expect(expected).toMatchObject({ conversionBasis: "default", conversionUnavailableReason: null });
+    expect(expected.conversionRatePct).toBeCloseTo(0.005, 9);
+    const i = base({
+      producedByDay: new Map([["lead_found", new Map([["2026-11-01", 4000], ["2026-11-02", 157]])], ["conversation", new Map([["2026-11-02", 2]])]]),
+      ownCostUsd: new Map([["lead_found", 158], ["conversation", 122]]),
+      unitCosts: new Map([["lead_found", { unitCostUsd: 0.04 }], ["paid_client", { unitCostUsd: null }]]),
+      undeclaredConsumptions: new Map(),
+      today: "2026-11-02",
+    });
+    const paid = scopeOutcomeLedgerRowOf(["paid_client"], i);
+    expect(paid.units).toBe(0);
+    const targetChart = { ...chart, leg: null, target: { ...target, maturityDays: 0, learningOutcomesRequired: 10 }, expected };
+    const r = rebaseSpendChartOnLedger(targetChart as never, paid, scopeOutcomeLedgerRowOf(["lead_found"], i), 10, "campaign");
+    expect(r.conversionUnavailableReason).toBeNull();
+    expect(r.totals).toMatchObject({ entered: 4157, converted: 0, conversionRatePct: 0 });
+    expect(r.ledger.entryKeys).toEqual(["lead_found"]);
+    expect(r.daily.map((p) => [p.cumulativeEntered, p.cumulativeConverted, p.conversionRatePct])).toEqual([[4000, 0, 0], [4157, 0, 0]]);
+    expect(r.expected.conversionRatePct).not.toBeNull();
+  });
   it("an outcome the ledger lacks: every outcome figure null + the reason + the producer gap; spend unchanged", async () => {
     const { rebaseSpendChartOnLedger } = await import("./spend-charts-ledger.js");
     const r = rebaseSpendChartOnLedger(chart as never, scopeOutcomeLedgerRowOf(["paid_client"], base()), null, 10);
