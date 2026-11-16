@@ -25,7 +25,7 @@ vi.mock("./spend-charts.js", () => ({ funnelCampaignSpendCharts: (...a: unknown[
 const readPlan = vi.fn();
 vi.mock("../lib/factory-shadow-store.js", () => ({ readPlan: (...a: unknown[]) => readPlan(...a) }));
 const budget = vi.fn();
-vi.mock("../lib/funnel-campaign-budget-client.js", () => ({ fetchFunnelCampaignDailyBudgetUsd: (...a: unknown[]) => budget(...a) }));
+vi.mock("../lib/funnel-campaign-budget-client.js", () => ({ fetchFunnelCampaignCaps: (...a: unknown[]) => budget(...a) }));
 vi.mock("../middleware/auth.js", () => ({
   apiKeyAuth: (req: Record<string, unknown>, _res: unknown, next: () => void) => {
     req.orgId = "org-1";
@@ -74,7 +74,7 @@ beforeEach(() => {
     ],
   });
   readPlan.mockResolvedValue({ orgId: "org-1", brandId: "b1", offerId: "o1", status: "ok", failure: null, body: planBody(15, "f1"), computedAt: "2026-11-06T09:00:00.000Z" });
-  budget.mockResolvedValue(30);
+  budget.mockResolvedValue({ dailyBudgetUsd: 30, budget: null, volumeReached: null });
   copies.mockResolvedValue({ pipeSteps: new Map([["p-src", { fromStep: null, toStep: "lead_found" }], ["p-mail", { fromStep: "lead_found", toStep: "conversation" }]]) });
   // Each campaign's runs produced 2 positive replies (its own ledger units).
   ledgerOf.mockImplementation(async (id: string) =>
@@ -119,10 +119,10 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     expect(b.projection).toMatchObject({ planFunnelId: "f2", outcomesPerDay: 1 });
   });
 
-  it("an unreadable budget projects on the spend pace; bad pricing is a 400", async () => {
+  it("unreadable caps: no projection, the reason served (PROJECTION-CAP-1117: never a guess); bad pricing is a 400", async () => {
     budget.mockRejectedValue(new Error("billing down"));
     const res = await request(app).get("/brands/b1/campaign-targets?pricing=gross");
-    expect(res.body.targets[0].projection.spendPerDaySource).toBe("spend_pace_7d");
+    expect(res.body.targets[0].projection).toMatchObject({ outcomesPerDay: null, nextExpectedInHours: null, unavailableReason: "spend_capacity_unreadable" });
     expect((await request(app).get("/brands/b1/campaign-targets?pricing=x")).status).toBe(400);
   });
 
@@ -130,7 +130,7 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     ledgerOf.mockImplementation(async (id: string) =>
       id === "u-src" ? { byOutcome: new Map([["lead_found", new Map([[day(2), 60], [day(1), 40]])]]), daysMissing: [day(0)] } : { byOutcome: new Map(), daysMissing: [] },
     );
-    budget.mockResolvedValue(null);
+    budget.mockResolvedValue({ dailyBudgetUsd: null, budget: null, volumeReached: null });
     const res = await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c2");
     expect(res.status).toBe(200);
     const t = res.body.targets[0];
@@ -143,6 +143,27 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     expect(t.ledgerDaysMissing).toEqual([day(0)]);
     expect(t.milestones[1].projection.outcomesPerDay).toBe(t.projection.outcomesPerDay);
     expect((await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=nope")).status).toBe(404);
+  });
+
+  // PROJECTION-CAP-1117 (prod 2026-11-17, Wide Email: monthly cap reached, « next Lead found in about 2 hours »).
+  it("a cap reached for its window: nothing expected until it resets, on the row, its cards and Today's entry; a stopped campaign expects nothing", async () => {
+    const now = new Date();
+    const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+    budget.mockResolvedValue({ dailyBudgetUsd: 30, budget: { period: "monthly", amountUsd: 900, periodEnd: reset, remainingUsd: 0, reached: true }, volumeReached: null });
+    const body = (await request(app).get("/brands/b1/campaign-targets")).body;
+    const hoursToReset = (Date.parse(reset) - Date.now()) / 3_600_000;
+    const t = body.targets[0];
+    expect(t.projection).toMatchObject({ outcomesPerDay: 2, pausedReason: "budget_cap_reached", resumesAt: reset, unavailableReason: null });
+    expect(t.projection.nextExpectedInHours).toBeGreaterThan(hoursToReset);
+    expect(t.projection.daily.filter((d: { date: string }) => d.date < reset.slice(0, 10)).every((d: { expectedOutcomes: number }) => d.expectedOutcomes === 0)).toBe(true);
+    expect(t.milestones[1].projection).toMatchObject({ pausedReason: "budget_cap_reached", resumesAt: reset, nextExpectedInHours: t.projection.nextExpectedInHours });
+    expect(body.offerTargets[0].projection).toMatchObject({ pausedReason: "budget_cap_reached", resumesAt: reset, nextExpectedInHours: t.projection.nextExpectedInHours });
+    // The read billing answers is the campaign's own measured caps (its window), never the brand's stated list.
+    expect(budget.mock.calls[0]![1]).toMatchObject({ id: "c1", offerId: "o1", salesFunnelId: "f" });
+
+    const stopped = (await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c2")).body.targets[0];
+    expect(stopped.projection).toMatchObject({ outcomesPerDay: null, daily: [], nextExpectedInHours: null, unavailableReason: "campaign_stopped" });
+    expect(stopped.milestones[1].projection).toMatchObject({ nextExpectedInHours: null, unavailableReason: "campaign_stopped" });
   });
 
   // MIGRATE-1105 S5: a pipe whose Engine makes a finer outcome lands its Units under it; its milestone still counts them.

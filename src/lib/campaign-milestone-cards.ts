@@ -11,6 +11,7 @@
  * no run declared producing it) is NULL with the reason (LEDGER-ONLY-1107, owner 2026-11-07 « ERADICATION »: the campaign's
  * own people count is no basis any more). Never moves with the Plan; only `projection` reads it.
  */
+import { projectSchedule, scaleSchedule, type CapacityPausedReason, type ExpectedSchedule } from "./spend-capacity.js";
 
 export interface UnitEdge {
   campaignId: string;
@@ -100,7 +101,11 @@ export interface MilestoneCard {
   conversionToNextPct: number | null;
   conversionToNextUnavailableReason: string | null;
   projection: {
+    /** The pace WHILE the campaign spends (PROJECTION-CAP-1117). */
     outcomesPerDay: number | null;
+    /** PROJECTION-CAP-1117: why nothing is expected NOW, until `resumesAt`; null = spending. */
+    pausedReason: CapacityPausedReason | null;
+    resumesAt: string | null;
     daily: Array<{ date: string; expectedOutcomes: number; cumulativeExpectedOutcomes: number }>;
     nextExpectedAt: string | null;
     nextExpectedInHours: number | null;
@@ -126,12 +131,13 @@ export function cumulativeFromDaily(byDay: ReadonlyMap<string, number>, today: s
 }
 
 /**
- * PURE. Every milestone's card. `targetOutcomesPerDay` = the Target's projected pace (Today's projection: the plan's cost per
- * Target × the campaign's spend per day); a milestone's pace = that × its outcomes needed per Target (the plan line).
+ * PURE. Every milestone's card. `targetSchedule` = the Target's expected schedule (Today's projection: the plan's cost per
+ * Target × the campaign's spend per day, under its spend capacity, PROJECTION-CAP-1117); a milestone's = that × its outcomes
+ * needed per Target (the plan line).
  */
 export function milestoneCardsOf(input: {
   milestones: readonly MilestoneCardInput[];
-  targetOutcomesPerDay: number | null;
+  targetSchedule: ExpectedSchedule | null;
   targetProjectionUnavailableReason: string | null;
   projectionDays: number;
   now: string;
@@ -160,12 +166,11 @@ export function milestoneCardsOf(input: {
     const next = counted[i + 1];
     const conversionToNextPct = !isTarget && next && next.count !== null && c.count !== null && c.count > 0 ? round((next.count / c.count) * 100, 2) : null;
     const conversionToNextUnavailableReason = conversionToNextPct !== null ? null : isTarget ? "target" : c.count === 0 ? "no_unit_yet" : "not_counted_for_this_campaign";
-    const pace =
-      input.targetOutcomesPerDay === null ? null : isTarget ? input.targetOutcomesPerDay : m.neededPerTarget !== null ? input.targetOutcomesPerDay * m.neededPerTarget : null;
-    const projectionReason = pace !== null ? null : input.targetOutcomesPerDay === null ? input.targetProjectionUnavailableReason ?? "no_projection" : "not_on_current_plan";
-    const daily: MilestoneCard["projection"]["daily"] = [];
-    if (pace !== null) for (let k = 1; k <= input.projectionDays; k += 1) daily.push({ date: addDays(today, k), expectedOutcomes: round(pace, 4), cumulativeExpectedOutcomes: round((c.count ?? 0) + pace * k, 2) });
-    const nextExpectedInHours = pace !== null && pace > 0 ? round(24 / pace, 2) : null;
+    const ts = input.targetSchedule;
+    const schedule = ts === null ? null : isTarget ? ts : m.neededPerTarget !== null ? scaleSchedule(ts, m.neededPerTarget) : null;
+    const pace = schedule?.outcomesPerDayWhenSpending ?? null;
+    const projectionReason = schedule !== null ? null : ts === null ? input.targetProjectionUnavailableReason ?? "no_projection" : "not_on_current_plan";
+    const { daily, nextExpectedAt, nextExpectedInHours } = projectSchedule(schedule !== null && pace! > 0 ? schedule : null, c.count, input.now, input.projectionDays);
     return {
       step: m.step,
       label: m.label,
@@ -184,8 +189,10 @@ export function milestoneCardsOf(input: {
       conversionToNextUnavailableReason,
       projection: {
         outcomesPerDay: pace !== null ? round(pace, 4) : null,
+        pausedReason: schedule?.pausedReason ?? null,
+        resumesAt: schedule?.resumesAt ?? null,
         daily,
-        nextExpectedAt: nextExpectedInHours !== null ? new Date(Date.parse(input.now) + nextExpectedInHours * 3_600_000).toISOString() : null,
+        nextExpectedAt,
         nextExpectedInHours,
         unavailableReason: projectionReason,
       },

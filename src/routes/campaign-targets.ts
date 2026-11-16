@@ -16,11 +16,11 @@ import { funnelCampaignActivity } from "./sales-funnel-campaign-activity.js";
 import { funnelCampaignSpendCharts } from "./spend-charts.js";
 import { readPlan } from "../lib/factory-shadow-store.js";
 import { listOutcomeRungs } from "../lib/outcome-rungs-store.js";
-import { fetchFunnelCampaignDailyBudgetUsd } from "../lib/funnel-campaign-budget-client.js";
+import { fetchFunnelCampaignCaps } from "../lib/funnel-campaign-budget-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
-import { campaignTargetRowOf, offerTargetsOf, offerTargetFromLedger, PROJECTION_DAYS, type CampaignTargetInput, type CampaignTargetRow } from "../lib/campaign-targets.js";
+import { campaignTargetRowOf, offerTargetsOf, offerTargetFromLedger, targetScheduleOf, PROJECTION_DAYS, type CampaignTargetInput, type CampaignTargetRow } from "../lib/campaign-targets.js";
 import { milestoneChainOf, milestoneCardsOf, type MilestoneCard, type MilestoneCardInput } from "../lib/campaign-milestone-cards.js";
 import { fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
@@ -59,12 +59,13 @@ const titleOf = (key: string) => key.split("_").map((w, i) => (i === 0 ? w[0]!.t
 type TargetRowWithMilestones = CampaignTargetRow & { milestones: MilestoneCard[]; milestonesUnavailableReason: string | null; ledgerDaysMissing: string[]; ledgerOutcomeKeys: string[] };
 
 async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, string>, labels: ReadonlyMap<string, string>, now: string, brandLedger: ScopeOutcomeLedgerInput | null): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput }> {
-  const [activity, charts, stored, dailyBudgetUsd, copies, ledger] = await Promise.all([
+  const [activity, charts, stored, caps, copies, ledger] = await Promise.all([
     funnelCampaignActivity(row, brandId, headers, pricing),
     funnelCampaignSpendCharts(row, brandId, pricing, headers),
     readPlan(row.id),
-    fetchFunnelCampaignDailyBudgetUsd(brandId, row, headers).catch((err: Error) => {
-      console.error(`[features-service] campaign targets: daily budget of ${row.id} unreadable (projection on its spend pace): ${err.message}`);
+    // PROJECTION-CAP-1117: the campaign's MEASURED caps (window, remaining, reached). Unreadable = no projection, never a guess.
+    fetchFunnelCampaignCaps(brandId, row, headers).catch((err: Error) => {
+      console.error(`[features-service] campaign targets: caps of ${row.id} unreadable (projection null spend_capacity_unreadable): ${err.message}`);
       return null;
     }),
     funnelCopiesFor([row.salesFunnelId]),
@@ -146,7 +147,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     };
   });
   // The Target's own card (counted like every milestone) gives the row its past; then the projection gives every card its pace.
-  const unpaced = milestoneCardsOf({ milestones: cardInputs, targetOutcomesPerDay: null, targetProjectionUnavailableReason: null, projectionDays: PROJECTION_DAYS, now });
+  const unpaced = milestoneCardsOf({ milestones: cardInputs, targetSchedule: null, targetProjectionUnavailableReason: null, projectionDays: PROJECTION_DAYS, now });
   const targetCard = targetKey ? unpaced.find((c) => c.step === targetKey) ?? null : null;
 
   const input: CampaignTargetInput = {
@@ -170,13 +171,19 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
           unavailableReason: figures?.unavailableReason ?? plan.running?.unavailableReason ?? plan.shadowUnavailableReason ?? null,
         }
       : null,
-    dailyBudgetUsd,
+    dailyBudgetUsd: caps?.dailyBudgetUsd ?? null,
+    capacity: {
+      campaignStatus: row.status,
+      budget: caps?.budget ?? null,
+      volumeReached: caps?.volumeReached ?? null,
+      unreadableReason: caps === null ? "billing_caps_unreadable" : null,
+    },
     now,
   };
   const base = campaignTargetRowOf(input);
   const milestones = milestoneCardsOf({
     milestones: cardInputs,
-    targetOutcomesPerDay: base.projection.outcomesPerDay,
+    targetSchedule: targetScheduleOf(input, base),
     targetProjectionUnavailableReason: base.projection.unavailableReason,
     projectionDays: PROJECTION_DAYS,
     now,
