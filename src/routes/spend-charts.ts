@@ -219,19 +219,25 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
   // LEDGER-ONLY-1107-P2: every outcome / $ per outcome / conversion of the campaign's chart = the Units its units' runs
   // produced (runs-service ledger), a pipe's = its own campaign's; never the people a lead read counted.
   const basis = pricing === "gross" ? "gross" : "net";
-  const onLedger = async (chart: SpendChart, campaignIds: readonly string[], scope: "campaign" | "pipe"): Promise<LedgerSpendChart> => {
-    const ledger = await fetchCampaignSetOutcomeLedger(campaignIds, brandId, basis).catch((err: Error) => {
+  const ledgerOf = (campaignIds: readonly string[], scope: "campaign" | "pipe") =>
+    fetchCampaignSetOutcomeLedger(campaignIds, brandId, basis).catch((err: Error) => {
       console.error(`[features-service] funnel campaign spend charts: ledger of ${row.id} (${scope}) unreadable (outcomes null): ${err.message}`);
       return null;
     });
+  // TEAM-PART-ENTRY-1116: the campaign's ledger, read once: its own chart, and what its parts were handed.
+  const campaignLedger = ledgerOf(row.units.map((u) => u.campaignId), "campaign");
+  const onLedger = async (chart: SpendChart, campaignIds: readonly string[], scope: "campaign" | "pipe"): Promise<LedgerSpendChart> => {
+    const ledger = await (scope === "campaign" ? campaignLedger : ledgerOf(campaignIds, scope));
     const step = chart.outcomeStep;
     const from = chart.target ? chart.target.fromStep : chart.leg?.fromStep ?? null;
     const scopeOf = ledgerScopeOf(ledger);
+    // PART-ENTRY-1116 / TEAM-PART-ENTRY-1116: a part that made none of its entry Units counts the ones it took in, else
+    // the ones the rest of its campaign made (handed to it: the client's team closing replies has no run).
+    const handedBy = scope === "pipe" ? ledgerScopeOf(await campaignLedger) : undefined;
     return rebaseSpendChartOnLedger(
       chart,
       step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(scopeOf, step).row,
-      // PART-ENTRY-1116: a part that finds nobody counts from the Units it took in (its own ledger consumptions).
-      from === null || ledger === null ? null : ledgerEntryCountOfStep(scopeOf, from).row,
+      from === null || ledger === null ? null : ledgerEntryCountOfStep(scopeOf, from, handedBy).row,
       chart.target?.learningOutcomesRequired ?? chart.leg?.learningOutcomesRequired ?? 10,
       scope,
     );

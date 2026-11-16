@@ -54,20 +54,32 @@ export function ledgerCountOfStep(scope: LedgerScope, step: string): LedgerCount
 }
 
 /**
- * PURE (PART-ENTRY-1116). The Units of a scope's ENTRY step (where its "% to" counts from) that entered the scope: the
- * ones it made; a scope that made none of them = the ones its runs TOOK IN (first consumptions, `takenInByDay`). A cold
- * email part makes no Lead found: the sourcing part does, and the cold email part consumes them, so it entered 0 beside
- * its 2 positive replies (prod 2026-11-16, Wide Email part b93006ef). One rule for every scope: a campaign or a brand
- * that finds its own people reads what it made, exactly as before.
+ * PURE (PART-ENTRY-1116, TEAM-PART-ENTRY-1116). The Units of a scope's ENTRY step (where its "% to" counts from) that
+ * entered the scope, ONE rule for every scope, first that holds:
+ *   1. the ones it MADE (a campaign or a brand that finds its own people: as before);
+ *   2. the ones its runs TOOK IN (first consumptions, `takenInByDay`): a cold email part makes no Lead found, the
+ *      sourcing part does and it consumes them (prod 2026-11-16, Wide Email part b93006ef read entered 0 beside 2
+ *      positive replies);
+ *   3. the ones the rest of its campaign MADE, i.e. handed to it (`handedBy` = the campaign's ledger): a part whose runs
+ *      record no intake, the client's own team closing replies by hand (no run, $0), takes in what the part before it
+ *      produced (prod 2026-11-16, Wide Email part a456d7ff, Positive reply -> Paid client, read entered 0 beside the 2
+ *      positive replies part b93006ef made, so its "% to Paid client" was blank).
+ * Nothing in any = the made row (0) as before.
  */
-export function ledgerEntryCountOfStep(scope: LedgerScope, step: string): LedgerCount {
+export function ledgerEntryCountOfStep(scope: LedgerScope, step: string, handedBy?: LedgerScope): LedgerCount {
   const made = ledgerCountOfStep(scope, step);
-  const takenIn = scope.ledger?.takenInByDay;
-  if (scope.ledger === null || !takenIn || (made.units !== null && made.units > 0)) return made;
+  if (scope.ledger === null || (made.units !== null && made.units > 0)) return made;
   const keys = ledgerKeysOfStep(step);
-  if (!keys.some((k) => [...(takenIn.get(k)?.values() ?? [])].some((n) => n > 0))) return made;
-  const row = scopeOutcomeLedgerRowOf(keys, { ...scope.ledger, producedByDay: takenIn, elsewhereByDay: undefined, undeclaredConsumptions: new Map() });
-  return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason, producerGap: null, row };
+  const takenIn = scope.ledger.takenInByDay;
+  if (takenIn && keys.some((k) => [...(takenIn.get(k)?.values() ?? [])].some((n) => n > 0))) {
+    const row = scopeOutcomeLedgerRowOf(keys, { ...scope.ledger, producedByDay: takenIn, elsewhereByDay: undefined, undeclaredConsumptions: new Map() });
+    return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason, producerGap: null, row };
+  }
+  if (handedBy?.ledger) {
+    const handed = ledgerCountOfStep(handedBy, step);
+    if (handed.units !== null && handed.units > 0) return { ...handed, producerGap: null };
+  }
+  return made;
 }
 
 export interface LedgerSignalSeries {
