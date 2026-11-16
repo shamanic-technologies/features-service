@@ -5,7 +5,7 @@
  * (`/internal/research*`), regrouped and re-worded, never recomputed, so a moved figure keeps its population and basis.
  *
  * - Engine of a Research source = the catalogue's Engine outcome of that (channel x step pair): `outcome`, else its `to`
- *   step (the rule campaign-service runs: `lib/engine-favourites.ts` `pipeEngineOutcome`).
+ *   step (the rule campaign-service runs).
  * - Inside an Engine, a MEASURE = what the figures count (`counts`, the step reached) and among whom (`startsFrom`, the
  *   step people stood at; null = from nothing). Two sources of one Engine counting the same step from the same step are
  *   ONE measure (their scripts listed together); figures are never summed across sources (a list keeps each source's
@@ -414,8 +414,8 @@ const nextMonthOf = (ym: string) => {
 /**
  * PURE. One measure's Performance on scripts (RESEARCH-PERF-SCRIPTS-1116): the scripts of its Engine first (what produces
  * the outcome today, measured on the ledger, `era: scripts`), then the workflow era's rows that wrote (`era: history`, all
- * deprecated: no campaign runs a workflow since MIGRATE-1105). The combinations of the workflow era that never wrote are
- * not listed (`combinationsNeverRunNotListed`): nothing can run them. Totals and series = scripts + history, so
+ * deprecated: no campaign runs a workflow since MIGRATE-1105; the build lists only the combinations that wrote,
+ * RESEARCH-NATIVE-ENGINE-1116). Totals and series = scripts + history, so
  * Σ rows' spend = the totals.
  */
 export function withMeasureScripts(
@@ -426,6 +426,7 @@ export function withMeasureScripts(
   now: Date,
 ): Record<string, unknown> {
   const all = (body.rows as RowLike[] | undefined) ?? [];
+  // `written: false` rows only exist in a build stored before RESEARCH-NATIVE-ENGINE-1116 (served until its rebuild lands).
   const history = all
     .filter((r) => r.written !== false)
     .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
@@ -475,7 +476,6 @@ export function withMeasureScripts(
     totalsUnavailableReason,
     scriptsUnavailableReason: read.unavailableReason,
     unplacedScriptOutcomes: read.scripts?.unplacedOutcomes ?? null,
-    combinationsNeverRunNotListed: all.length - history.length,
     servedNow,
   };
 }

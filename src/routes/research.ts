@@ -42,10 +42,9 @@ import { readModelIds } from "../lib/model-ids-client.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
 import type { LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
-import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PerformanceServedNow, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
+import { deprecatedPartsOf, inFlashOrder, pipePerformance, type PipePerformance, type VersionWriter } from "../lib/research/performance.js";
 import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/research/run-cost.js";
 import { readLegWriterRanking } from "./leg-writer-ranking.js";
-import { engineFavourites, pipeEngineOutcome } from "../lib/engine-favourites.js";
 import { rankWriters } from "../lib/leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type PipeCatalogInput, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
 import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
@@ -998,7 +997,7 @@ export async function computeResearch(basis: Basis, view: ResearchView = "mature
       figuresBasis: "workflow_bars",
       rowOrder: "cost_per_outcome",
       orderView: "flash",
-      rowsCover: "all_valid_combinations",
+      rowsCover: "combinations_that_wrote",
       featureSlug: null,
       legKey: null,
       outcomeNoun: "meeting",
@@ -1048,10 +1047,9 @@ export function postWritersOf(p: Awaited<ReturnType<typeof readLegWriterRanking>
 
 type AliasStatus = ReadonlyMap<string, "active" | "deprecated"> | null;
 
-/** What can no longer run on the pipe, and every combination a run may pick today (RESEARCH-ALL-COMBOS-1023). */
+/** What can no longer run on the pipe (its rows' `deprecatedParts`). */
 function partsOf(catalog: ResearchCatalog[string], aliasStatus: AliasStatus) {
-  const deprecated = deprecatedPartsOf(catalog, aliasStatus);
-  return { deprecated, candidates: candidatePartsOf(catalog, deprecated) };
+  return { deprecated: deprecatedPartsOf(catalog, aliasStatus) };
 }
 
 /** content-generation's status per writer alias ON THIS PIPE (LLM-STATUS-PER-PIPE-1023); unreadable = null (an LLM with aliases is then never called deprecated). */
@@ -1082,7 +1080,7 @@ const noWriterPerformance = (p: OtherPipe, noun: string, nounPlural: string): Pi
   figuresBasis: "workflow_bars",
   rowOrder: "cost_per_outcome",
   orderView: "flash",
-  rowsCover: "all_valid_combinations",
+  rowsCover: "combinations_that_wrote",
   featureSlug: p.featureSlug,
   legKey: p.legKey,
   outcomeNoun: noun,
@@ -1331,7 +1329,7 @@ const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRES
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
   const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "cost_per_outcome" && p.orderView === "flash" && p.rowsCover === "all_valid_combinations" && build.file.view === view;
+  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "cost_per_outcome" && p.orderView === "flash" && p.rowsCover === "combinations_that_wrote" && build.file.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
@@ -1522,38 +1520,12 @@ export async function servedResearchCatalog(basis: Basis, view: ResearchView): P
   );
 }
 
-/**
- * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
- * ranking's first workflow x the template and LLM the Rating's favourite SCRIPT of the pipe's Engine states
- * (SCRIPT-VALUE-RATING-1113-MON, `lib/engine-favourites.ts`: a pick is always a script). A pipe whose pick cannot be read says so on its own block (logged), never fails the tab.
- */
-async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNow> {
-  const none = { workflow: null, template: null, llm: null };
-  if (!perf.featureSlug || !perf.legKey) return servedNowOf(perf, { ...none, unavailableReason: "pipe_not_read" });
-  try {
-    const outcome = await pipeEngineOutcome(perf.featureSlug, perf.legKey);
-    const [ranking, fav] = await Promise.all([readLegWorkflowRanking(perf.featureSlug, perf.legKey, 0), outcome ? engineFavourites(outcome) : Promise.resolve(null)]);
-    if (!ranking) return servedNowOf(perf, { ...none, unavailableReason: "workflow_ranking_not_computed_yet" });
-    if (!fav) return servedNowOf(perf, { ...none, unavailableReason: "served_pick_unreadable" });
-    const first = ranking.rows.find((r) => r.goesFirst) ?? null;
-    const labelOf = (key: string, part: "workflow" | "template" | "llm") => perf.rows.find((r) => r[part]?.key === key)?.[part]?.label ?? null;
-    const workflow = first ? { key: first.workflowDynastySlug, label: labelOf(first.workflowDynastySlug, "workflow") ?? first.workflowDynastyName ?? first.workflowDynastySlug } : null;
-    const template = fav.template ? { key: fav.template.key, label: labelOf(fav.template.key, "template") ?? fav.template.name } : null;
-    const llm = fav.llm ? { key: fav.llm.key, label: labelOf(fav.llm.key, "llm") ?? fav.llm.name } : null;
-    return servedNowOf(perf, { workflow, template, llm, unavailableReason: null });
-  } catch (error) {
-    console.error(`[features-service] research performance: the served combination of ${perf.pipe} could not be read:`, error);
-    return servedNowOf(perf, { ...none, unavailableReason: "served_pick_unreadable" });
-  }
-}
-
-/** The Performance tab as the Engine read `/internal/research/engines/performance` serves it (pipe-keyed route deleted) (marks + served now read live); null = not built yet. Shared by the Engine read. */
+/** The Performance tab as the Engine read `/internal/research/engines/performance` serves it (pipe-keyed route deleted) (marks read live; what runs today is the Engine read's, `withMeasureScripts`); null = not built yet. */
 export async function servedResearchPerformance(basis: Basis, view: ResearchView) {
   const build = await readResearchBuild(basis, view);
   // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
   if (!build?.performance) return null;
-  const marked = await withPerformanceMarks(build.performance);
-  const pipes = Object.fromEntries(await Promise.all(Object.entries(marked).map(async ([id, perf]) => [id, { ...perf, servedNow: await readServedNow(perf) }] as const)));
+  const pipes = await withPerformanceMarks(build.performance);
   return { computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes };
 }
 

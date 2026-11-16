@@ -8945,73 +8945,11 @@ registry.registerPath({
 
 // ── GET /internal/research[/conclusions|/studies] (LIVE-RESEARCH-1018) ───────────────────
 
-const researchPointSchema = z.object({
-  key: z.string().describe("On a bar that opens a catalogue page: the workflow dynasty slug. On a delay histogram or curve point: lead-service's bucket key (`lt_1h`, `1d_2d`...).").optional(),
-  label: z.string(),
-  value: z.number(),
-  display: z.string().describe("The value as the page prints it."),
-  note: z.string().describe("The counts behind the value."),
-  thin: z.boolean().describe("LEARNING under the maturity rule (historical field name)."),
-  partial: z.boolean().describe("On a month chart: the month the maturity cutoff falls inside (drawn dotted).").optional(),
-});
-const researchChartSchema = z.object({
-  kind: z.enum(["bars", "months"]),
-  title: z.string(),
-  lowerIsBetter: z.boolean(),
-  points: z.array(researchPointSchema),
-  cumulative: z.object({ title: z.string(), points: z.array(researchPointSchema) }).describe("On a months chart: the average since inception at the end of each month.").optional(),
-  curve: z
-    .object({ title: z.string(), points: z.array(researchPointSchema) })
-    .describe(
-      "On a distribution chart (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): the cumulative curve over the SAME buckets as `points` (one point per bucket, same order, same `key`); `value` = the % of the sample arrived by the END of that bucket (`label` \"Within 1 day\"; the last, open-ended bucket reads \"Any time\" = 100). `points` stay the histogram (% of the sample per bucket), so a bar renderer still reads the chart.",
-    )
-    .optional(),
-  compare: z
-    .object({ title: z.string(), points: z.array(researchPointSchema) })
-    .describe("A second figure for the same bars, drawn BESIDE each one (COST-ACCOUNTING-1023-P4: the ledger's cost next to the figure a reader uses today). A point pairs with the bar of the same `key`; a bar with no pair has none.")
-    .optional(),
-  note: z.string().optional(),
-});
 const researchVerdictSchema = z.object({
   kind: z.enum(["conclusion", "signal", "noise"]).describe("conclusion = the leader beats the runner-up after Bonferroni AND on the same clients in the same months; signal = crude only; noise = the rest or under 5 outcomes."),
   reason: z.string(),
 });
 const researchResultSchema = z.object({ display: z.string(), unit: z.string(), sample: z.string() });
-const researchStudySchema = registry.register(
-  "ResearchStudy",
-  z.object({
-    id: z.string().describe("Stable study id, e.g. `cold-email-website-visit-workflow-roi`."),
-    pipe: z.string().nullable().describe("The pipe (leg x channel) the study belongs to (`cold-email-positive-reply`, `cold-email-website-visit`, `meeting-booking`; one of `pipes[].id`); null on an outcome study."),
-    outcome: z.enum(["meeting", "judgment", "positive-reply"]).describe("Set exactly when `pipe` is null.").optional(),
-    topic: z.string(),
-    goal: z.enum(["roi", "rate"]),
-    question: z.string(),
-    status: z.enum(["measured", "not_enough_data"]),
-    headline: z.string(),
-    winner: z.string().nullable().describe("The label of the top bar (Learning or not)."),
-    crowned: z.boolean().describe("True only when the verdict is a conclusion."),
-    verdict: researchVerdictSchema,
-    result: researchResultSchema.nullable(),
-    charts: z.array(researchChartSchema),
-    delay: z
-      .object({
-        sampleSize: z.number().int().describe("The positive replies behind the figures."),
-        stats: z
-          .array(
-            z.object({
-              key: z.enum(["p10", "p25", "median", "p75", "p90", "average"]),
-              label: z.string().describe("In words, e.g. \"Half replied within\"."),
-              ms: z.number().describe("The delay in milliseconds, lead-service's figure."),
-              display: z.string().describe("The delay in human units: minutes under an hour, hours under a day, then days."),
-            }),
-          )
-          .describe("The tiles in order p10, p25, median, p75, p90, average."),
-      })
-      .describe("On a delay study only (TTFPR-RESEARCH-STUDY-1021, `positive-reply-delay`): lead-service's time from the first message to the first positive reply, fleet-wide since inception, with its percentiles.")
-      .optional(),
-    conclusion: z.array(z.string()),
-  }),
-);
 const researchFreshnessSchema = z
   .object({
     computedAt: z.string().describe("When the served build was computed (= the file's `computedAt`)."),
@@ -9083,235 +9021,6 @@ registry.registerPath({
     },
     503: researchNotYet,
   },
-});
-
-const researchRefSchema = z.object({
-  key: z.string(),
-  label: z.string(),
-  linked: z.boolean().describe("The referenced page exists in this pipe."),
-  version: z
-    .object({ key: z.string(), label: z.string() })
-    .nullable()
-    .describe("On a template ref (TPL-DYNASTY-1021-FS2): `key`/`label` name the template DYNASTY page; this is the version actually meant. Absent when the ref names the page itself (a dynasty, or a version on its own) and on model refs.")
-    .optional(),
-});
-const researchCatalogFigures = {
-  rank: z.number().int().nullable().describe("Its place in the study's order: cheapest cost per outcome first (`rankBasis`); null with no priced outcome yet."),
-  rankBasis: z.enum(["cost_per_outcome"]).describe("What `rank` orders on (TPL-ROI-OWN-1022): the cost per outcome, cheapest first. No Research page serves a return (ROI-CONSISTENCY-1103)."),
-  emails: z.string().describe("People reached, printed."),
-  emailsNoun: z.string(),
-  outcomes: z.string(),
-  spend: z.string(),
-  cost: z.string().nullable(),
-  rate: z.string().nullable(),
-  thin: z.boolean().describe("Learning under the maturity rule."),
-  sample: z.string(),
-  charts: z.array(researchChartSchema),
-};
-const researchTemplateStatus = z.enum(["active", "deprecated"]);
-const researchRunCost = z
-  .object({
-    runs: z.number().int().describe("Writing runs of this model on the pipe whose cost is known: the average's denominator. A run = one generation the model wrote on the pipe's campaigns (every client, workflow and template of the pipe pooled)."),
-    runsWithoutCost: z.number().int().describe("Runs on the pipe whose cost is not known (content-generation stated no completion run, runs-service did not return it, or not read yet); in no figure, never $0."),
-    averageUsd: z.number().nullable().describe("What ONE writing run costs: Σ the LLM cost of the completion that wrote each run ÷ `runs`. Money basis = billed GROSS, committed (actual + open holds), the basis of the page's spend on `basis=user`. Null with `unavailableReason`."),
-    averageDisplay: z.string().nullable().describe("`averageUsd` printed (`$0.0123`)."),
-    averageInputUsd: z.number().nullable().describe("The input-token part of `averageUsd`; CACHE IS FOLDED INTO INPUT (cached input, cache writes): `averageInputUsd + averageOutputUsd = averageUsd`."),
-    averageOutputUsd: z.number().nullable().describe("The output-token part of `averageUsd` (the completion's `...-tokens-output` cost lines)."),
-    totalUsd: z.number().describe("Σ over the priced runs = `averageUsd × runs`."),
-    totalInputUsd: z.number(),
-    totalOutputUsd: z.number(),
-    averageInputTokens: z.number().nullable().describe("Average input tokens content-generation recorded per run (priced runs that recorded tokens)."),
-    averageOutputTokens: z.number().nullable(),
-    history: z
-      .array(z.object({ day: z.string().describe("UTC day (YYYY-MM-DD) a priced run was written."), runs: z.number().int().describe("Priced runs to that day."), averageUsd: z.number().describe("CUMULATIVE average cost per run since inception to that day.") }))
-      .describe("Since inception, one point per UTC day a priced run was written, oldest first; the last point IS `averageUsd`."),
-    basis: z.literal("billed_gross_committed"),
-    cache: z.literal("folded_into_input"),
-    unavailableReason: z
-      .enum(["no_run_on_pipe", "no_run_cost_known", "not_on_vendor_basis", "run_costs_unreadable"])
-      .nullable()
-      .describe("Why the averages are null: the model wrote nothing on this pipe (Learning), none of its runs has a known cost yet, the `basis=actual` read (a run's vendor cost is not read), or our copy was unreadable this build. Null when served."),
-  })
-  .describe("MODEL-RUN-COST-1024: what ONE email-writing run with this model costs on THIS pipe (staff Research > Models), split input vs output tokens, with its since-inception curve.");
-
-const researchCatalogPipeSchema = z.object({
-  workflows: z.array(z.object({
-    key: z.string(),
-    label: z.string(),
-    icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
-    name: z.string().nullable(),
-    runnable: z.boolean().describe("A run may still pick it on this pipe (assigned active AND executable). Every workflow the leg workflow ranking lists has a page (TPL-TACTICS-ROWS-1022: runnable or not, so both reads list the same workflows), with zero figures until it sends."),
-    figures: legWorkflowFiguresSchema.nullable().describe("The CURRENT leg workflow ranking row's `figures` (gross), copied at every read: the list and this page print the same $/outcome, % conversion and $ spent. Null when the ranking lists no such row."),
-    model: researchRefSchema.nullable().describe("Same as `wroteWithMost.model` (kept for readers typed on it)."),
-    template: researchRefSchema.nullable().describe("Same as `wroteWithMost.template` (kept for readers typed on it)."),
-    wroteWithMost: z.object({ model: researchRefSchema.nullable(), template: researchRefSchema.nullable() }).describe("What most of its people's sequences were written with (null when none was written yet)."),
-    writesWithNow: z
-      .object({
-        version: z.string().describe("Its runnable version (`v8`)."),
-        template: researchRefSchema.nullable(),
-        model: researchRefSchema.nullable().describe("The real model the alias resolves to (chat-service), keyed like every model page; null when chat-service names no model for the alias."),
-        modelAlias: z.string().nullable().describe("The alias the workflow names (`pro`)."),
-      })
-      .nullable()
-      .describe("What its runnable version writes with NOW (workflow-service DAG), whether or not it sent anything. Its template and model each have a page (zero figures until used)."),
-    writesWithNowUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_runnable_version", "no_writing_step"]).nullable(),
-    wroteWith: z
-      .object({
-        model: researchRefSchema.nullable().describe("The real model behind its figures: what most of its people's sequences were written with, else the model its newest writing version's DAG names (resolved by chat-service)."),
-        modelSource: z.enum(["sequences", "workflow_definition"]).nullable(),
-        template: researchRefSchema.nullable().describe("The template behind its figures: what most of its people's sequences were written with, else its newest writing version's DAG template."),
-        templateSource: z.enum(["sequences", "workflow_definition"]).nullable(),
-        version: z.string().nullable().describe("The DAG version a part was read off (`v5`); null when every part comes from the sequences."),
-        modelAlias: z.string().nullable().describe("The alias that DAG names (`pro`), when the model part was read off it."),
-      })
-      .nullable()
-      .describe("What wrote its figures, on EVERY row, deprecated workflows included (a deprecated workflow has no `writesWithNow`). Each part links to its own page."),
-    wroteWithUnavailableReason: z.enum(["workflow_definitions_unreadable", "no_writing_step", "no_workflow_definition"]).nullable(),
-    ...researchCatalogFigures, runs: z.array(z.object({ when: z.string(), version: z.string(), status: z.string(), duration: z.string().nullable(), cost: z.string().nullable().describe("What the run's whole subtree cost as billed; null on the actual basis or when nothing was charged.") })) })),
-  templates: z
-    .array(z.object({
-      key: z.string().describe("The template dynasty's slug (`cold-reply-free-offer-blind`); a version on its own keeps its template id."),
-      icon: z.string().describe("MARKS-1022: this template dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same template serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
-      label: z.string().describe("The dynasty's name (`Blind Free Offer`); a version on its own reads its version label."),
-      hasText: z.boolean().describe("`/internal/research/templates` serves a text under `key`: the head's on a dynasty."),
-      postFigures: postFiguresSchema,
-      tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("TPL-TACTICS-ROWS-1022: the TEMPLATE tactics this dynasty follows (Jev's verdicts on its head's text, the email angle: Blind / Named / Offer angle), read live at every request, name order; the template twin of the workflow ranking rows' `tactics`. Null with `tacticsUnavailableReason`."), tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: it lacks Jev's verdict on a template tactic (unknown, never an empty list; a version no dynasty lists is never judged). `[]` with no reason = judged, follows none. `tactics_unreadable`: the tactics store could not be read this time."),
-      dynasty: z
-        .object({
-          slug: z.string(),
-          name: z.string(),
-          description: z.string().describe("content-generation-service's customer-facing one-sentence description."),
-          signature: z.string().nullable().describe("Internal signature (staff)."),
-          identity: z.string().describe("`blind` (the brand stays private) or `named`."),
-          head: z.object({ key: z.string(), label: z.string() }).nullable().describe("The version workflows write with now."),
-        })
-        .nullable()
-        .describe("The template dynasty this page is (content-generation-service `/internal/template-dynasties`, its pipe's); null on a version no dynasty of the pipe lists."),
-      standaloneReason: z
-        .enum(["no_dynasty_on_pipe", "template_dynasties_unreadable"])
-        .nullable()
-        .describe("Null on a dynasty. Why this page is one version on its own: no dynasty of the pipe lists it, or the dynasties could not be read this build."),
-      status: researchTemplateStatus.nullable().describe("The DYNASTY's status (the Active / Deprecated tabs): content-generation-service's own when served, else deprecated exactly when every version is (owner 2026-10-21). Null with `statusUnavailableReason`."),
-      statusSource: z.enum(["content_generation", "all_versions_deprecated"]).nullable().describe("`content_generation` = the dynasty status content-generation-service serves; `all_versions_deprecated` = the owner rule on the version statuses it serves."),
-      statusUnavailableReason: z.enum(["no_dynasty", "status_not_stated"]).nullable(),
-      versions: z
-        .array(z.object({ key: z.string(), label: z.string(), head: z.boolean(), hasText: z.boolean(), status: researchTemplateStatus.nullable().describe("The version's status IN this dynasty (content-generation-service `statusInDynasty`: the head its own, every older version deprecated)."), ...researchCatalogFigures }))
-        .describe("Every version of the dynasty, oldest first, each with its share of the dynasty's figures read on the DYNASTY's basis (mature or flash): their spend, people and outcomes add up to the page's exactly. `rank` is null. Empty on a version on its own."),
-      ...researchCatalogFigures,
-      workflows: z.array(z.object({ key: z.string(), label: z.string() })),
-      runs: z.array(z.object({ when: z.string(), model: researchRefSchema.nullable(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), version: z.string().nullable(), templateVersion: z.string().nullable().describe("The template version the sequence was written with."), tokens: z.string().nullable().describe("The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded.") })),
-    }))
-    .describe("One page per template DYNASTY of the pipe (TPL-DYNASTY-1021-FS2), its figures pooled over every version (every dynasty of the pipe has a page, zero figures until a version writes); a version no dynasty lists keeps its own page. The template study bars are the same buckets."),
-  models: z.array(z.object({
-    key: z.string().describe("LLM-DYNASTY-1022-FS: the chat-service LLM dynasty's slug (`gemini-flash`), one page per dynasty, every version pooled; a model chat-service places in no dynasty keeps its model key."),
-    label: z.string().describe("The dynasty's name (`Gemini Flash`); a model on its own reads its model name."),
-    dynasty: z
-      .object({ slug: z.string(), name: z.string(), provider: z.string(), capabilityTier: z.string(), headModelId: z.string().describe("What the slug runs now."), servedToday: z.boolean(), legacyAliases: z.array(z.string()) })
-      .nullable()
-      .describe("The LLM dynasty this page is (chat-service `/internal/model-dynasties`); null on a model it places in none."),
-    standaloneReason: z.enum(["no_dynasty_in_chat_service", "llm_dynasties_unreadable"]).nullable().describe("Null on a dynasty. Why this page is one model on its own."),
-    models: z
-      .array(z.object({ key: z.string().describe("The model key (`gemini-3.7-flash`)."), label: z.string(), modelIds: z.array(z.string()), head: z.boolean(), servedToday: z.boolean(), runCost: researchRunCost.describe("This version's runs only (written by one of its `modelIds`): the versions' runs partition the page's, their `totalUsd` add up to it."), ...researchCatalogFigures }))
-      .describe("Every version of the dynasty, newest first (chat-service's order), each with its share of the page's figures read on the DYNASTY's basis: their spend, people and outcomes add up to the page's. `rank` is null. Zero for a version that never wrote. On a model on its own: that model."),
-    modelIds: z.array(z.string()).describe("chat-service's concrete model ids this page names (every version of the dynasty; two ids with one display name are one model). Empty when chat-service lists none."),
-    aliases: z.array(z.string()).describe("Every alias chat-service serves this page's models under NOW (`/internal/model-ids` `aliases`: the word a workflow writes in `model`, the key content-generation-service sets a status on), sorted. Several when chat-service truly serves one model under several (`deepseek-v4.1-flash` = `deepseek-flash` AND `deepseek-pro` on 2026-10-19): a status set on one alias leaves the other untouched. Never derived from which workflows ran."),
-    formerAliases: z.array(z.string()).describe("Aliases that once named this model and now name another (a status set on them acts on that other model)."),
-    aliasesUnavailableReason: z.enum(["model_ids_unreadable", "model_not_in_chat_service", "no_alias_serves_it"]).nullable().describe("Why `aliases` is empty; null when it is not. `no_alias_serves_it` = a retired model no alias resolves to (nothing can write with it)."),
-    runCost: researchRunCost.describe("Every version of the dynasty pooled on this pipe."),
-    ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable().describe("The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded.") })) })),
-});
-
-const researchPerformanceFigureSchema = z.object({
-  value: z.number().nullable(),
-  display: z.string().nullable(),
-  basis: z.enum(["measured", "expected"]).nullable(),
-  source: z
-    .enum(["own"])
-    .nullable()
-    .describe("measured: `own`. A row never reads an estimated figure (PERF-COST-ORDER-1024)."),
-  unavailableReason: z
-    .enum(["no_outcome_on_pipe", "nobody_emailed_on_pipe", "no_outcome_yet", "nobody_emailed_yet"])
-    .nullable()
-    .describe("Totals: `*_on_pipe`. A row: `no_outcome_yet` (cost per outcome needs an outcome of its own), `nobody_emailed_yet`."),
-});
-const researchPerformanceCountSchema = z.object({ value: z.number(), display: z.string() });
-const researchPerformanceFiguresShape = {
-  costPerOutcomeUsd: researchPerformanceFigureSchema.describe("Spend ÷ outcomes, measured with >= 1 outcome of its own, else null `no_outcome_yet`."),
-  conversionRatePct: researchPerformanceFigureSchema.describe("100 × outcomes ÷ people emailed; measured whenever somebody was emailed (0% included)."),
-  outcomes: researchPerformanceCountSchema,
-  spentUsd: researchPerformanceCountSchema,
-  contacted: researchPerformanceCountSchema.describe("People emailed (a visit pipe: through our own sender)."),
-};
-const researchPerformancePipeSchema = z.object({
-  pipe: z.string().describe("A `pipes[].id` of the Research file (WA-PIPE-RESEARCH-1023: every pipe holding a workflow)."),
-  figuresBasis: z.literal("workflow_bars").describe("Each workflow's rows are read on its Workflows-tab bar's basis (mature for a mature workflow) and add up to it: the totals are that tab's sum."),
-  rowOrder: z.literal("cost_per_outcome").describe("PERF-COST-ORDER-1024 (owner 2026-10-24; supersedes PERF-LEG-ORDER-1023's pick order): active rows first, then the cost per outcome ascending, a row with no outcome standing on its $ spent instead (`sortCostUsd`), then key. Untested rows ($0 spent) stand first among the active ones: the dashboard hides them by default (`untested`)."),
-  orderView: z.literal("flash").describe("The order is read on the FLASH figures whatever `?view=` (PERF-ORDER-FLASH-1023, kept): `rank`, `sortCostUsd` and `untested` are the flash tab's, only the figures are the view's. On the mature view the figures can look out of order: expected."),
-  rowsCover: z.literal("all_valid_combinations").describe("Every technically valid combination is a row (RESEARCH-ALL-COMBOS-1023), not only those that wrote."),
-  featureSlug: z.string().nullable().describe("The pipe's channel (feature) slug: what `servedNow` is read on. Null on a pipe with no combination."),
-  legKey: z.string().nullable(),
-  servedNow: z
-    .object({
-      workflow: z.object({ key: z.string(), label: z.string() }).nullable().describe("The leg workflow ranking's first workflow (rank 1: what campaign-service runs)."),
-      template: z.object({ key: z.string(), label: z.string() }).nullable().describe("The writer pick's rank 1 template dynasty (default play): what every email of the pipe is written with."),
-      llm: z.object({ key: z.string(), label: z.string() }).nullable().describe("The writer pick's rank 1 LLM dynasty (default play)."),
-      row: z.any().nullable().describe("That combination's row (same shape as `rows[]`), on this view; null with `unavailableReason`."),
-      unavailableReason: z
-        .enum(["pipe_not_read", "workflow_ranking_not_computed_yet", "no_runnable_workflow", "writer_ranking_not_computed_yet", "no_template_picked", "no_llm_picked", "combination_not_listed", "served_pick_unreadable"])
-        .nullable(),
-    })
-    .describe("The combination the pipe runs TODAY (PERF-COST-ORDER-1024, owner 2026-10-24: « la ligne de la combinaison actuelle qui est servie en prod »), read LIVE at every request, never from the build. The pipe chooses its workflow, its template and its LLM separately (BEST-TPL-LLM-1022): only this combination is a real pick."),
-  outcomeNoun: z.string(),
-  outcomeNounPlural: z.string(),
-  rows: z
-    .array(
-      z.object({
-        key: z.string().describe("`<workflow dynasty>|<template page key or ->|<LLM dynasty or ->`."),
-        rank: z.number().int().describe("Served order (`rowOrder: cost_per_outcome`, read on the flash view)."),
-        sortCostUsd: z.number().describe("What the row stands on: its cost per outcome, else (no outcome) its $ spent; flash view."),
-        untested: z.boolean().describe("Spent nothing on the flash view (never sent, or a combination no email was written with yet): hidden by default on the dashboard."),
-        workflow: z.object({ key: z.string(), label: z.string(), name: z.string().nullable(), icon: z.string().optional(), color: z.string().optional() }).describe("`key` = the Research workflow page key (dynasty slug); its mark."),
-        template: z
-          .object({
-            key: z.string().describe("The Research template page key: the template DYNASTY slug, or a standalone version's id."),
-            label: z.string().describe("The dynasty's name (a standalone version: its label)."),
-            icon: z.string().optional(),
-            color: z.string().optional(),
-            dynasty: z.object({ key: z.string(), label: z.string(), icon: z.string().optional(), color: z.string().optional() }).nullable().describe("The dynasty ref (same key as `key`); null = a version no dynasty of the pipe lists."),
-            standaloneReason: z.enum(["no_dynasty_on_pipe"]).nullable(),
-          })
-          .nullable(),
-        llm: z.object({ key: z.string().describe("The Research model page key (LLM dynasty slug, else a model key)."), label: z.string(), provider: z.string().nullable() }).nullable(),
-        written: z.boolean().describe("False = a technically valid combination (runnable workflow x live template dynasty x LLM served under an alias, none deprecated) that never wrote an email: zero figures, `untested` (RESEARCH-ALL-COMBOS-1023)."),
-        writerSource: z.enum(["sequences", "workflow_definition"]).nullable().describe("The sequence record, else the serving workflow version's definition (its DAG, else its dynasty's newest writing version); null when never written."),
-        writerUnavailableReason: z.enum(["not_on_record"]).nullable(),
-        maturity: z.object({ isMature: z.boolean(), matureOutcomes: z.number().nullable(), outcomesRequired: z.number() }),
-        learning: z.boolean(),
-        status: z.enum(["active", "deprecated"]).describe("Deprecated as soon as one part can no longer run: workflow not runnable on the leg, template dynasty deprecated by content-generation, LLM served under no alias or only aliases content-generation deprecated."),
-        deprecatedParts: z.array(z.enum(["workflow", "template", "llm"])).describe("Which parts made it deprecated; [] when active."),
-        ...researchPerformanceFiguresShape,
-      }),
-    )
-    .describe("One row per (workflow dynasty, template dynasty, LLM dynasty) that wrote the pipe's emails, plus every technically valid combination that never wrote (`written: false`, zero figures); Σ rows = totals."),
-  totals: z.object(researchPerformanceFiguresShape).nullable(),
-  series: z
-    .object({
-      grain: z.literal("month"),
-      points: z.array(
-        z.object({
-          month: z.string(),
-          label: z.string(),
-          costPerOutcomeUsd: z.number().nullable(),
-          conversionRatePct: z.number().nullable(),
-          outcomes: z.number().describe("Cumulated."),
-          spentUsd: z.number().describe("Cumulated."),
-        }),
-      ),
-    })
-    .nullable()
-    .describe("Every month from the first to this one, cumulative: the last point IS `totals`."),
-  unpricedBilledUsd: z.number(),
-  unavailableReason: z.enum(["no_writer_recorded_on_pipe"]).nullable(),
 });
 
 registry.registerPath({
@@ -9420,7 +9129,7 @@ registry.registerPath({
   method: "get",
   path: "/internal/research/engines/performance",
   summary: "The Research Performance tab by Engine: per measure, the Engine's scripts that ran, then the history (staff, api-key)",
-  description: `${engineWordsNote} RESEARCH-PERF-SCRIPTS-1116: each measure lists FIRST its Engine's scripts that ran (\`era: scripts\`, one row per script dynasty, read live on runs-service's general ledger daily book with the per-script rule of the Engine prices: its own production + its runs that made nothing + the counted step its inputs led to at that step's own cost; \`status\` active = runnable today; \`llm\` / \`template\` = the tactics the script states, \`writerSource: script_tactics\`; \`recentRuns\` = runs of the last 30 days on Monitoring's script board; a script that ran is never \`untested\`, one with no cent on the ledger says \`spendUnavailableReason: ran_with_no_cost_on_ledger\`; on the mature view a script with no run in the mature cohort is served on its flash figures, \`basis: flash\`), THEN the history rows that wrote (\`era: history\`, each \`status: deprecated\`, \`deprecatedParts\` includes \`script\`; the history's combinations that never wrote are not listed, \`combinationsNeverRunNotListed\`). \`totals\` and \`series\` = scripts + history (Σ rows' spend = totals.spentUsd; the last point = the totals). \`servedNow\` = the Rating's favourite script of the Engine (Monitoring's board) and its row. \`unplacedScriptOutcomes\` = the counted step made by runs naming no script (before runs-service named them): on no Engine, in no figure. A measure whose history comes from several sources lists their rows and serves \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed). The ledger book unreadable or missing a past day of the scripts' era = no script row, \`scriptsUnavailableReason\`. No return on any row.`,
+  description: `${engineWordsNote} RESEARCH-PERF-SCRIPTS-1116: each measure lists FIRST its Engine's scripts that ran (\`era: scripts\`, one row per script dynasty, read live on runs-service's general ledger daily book with the per-script rule of the Engine prices: its own production + its runs that made nothing + the counted step its inputs led to at that step's own cost; \`status\` active = runnable today; \`llm\` / \`template\` = the tactics the script states, \`writerSource: script_tactics\`; \`recentRuns\` = runs of the last 30 days on Monitoring's script board; a script that ran is never \`untested\`, one with no cent on the ledger says \`spendUnavailableReason: ran_with_no_cost_on_ledger\`; on the mature view a script with no run in the mature cohort is served on its flash figures, \`basis: flash\`), THEN the history rows that wrote (\`era: history\`, each \`status: deprecated\`, \`deprecatedParts\` includes \`script\`; only the history's combinations that wrote are listed). \`totals\` and \`series\` = scripts + history (Σ rows' spend = totals.spentUsd; the last point = the totals). \`servedNow\` = the Rating's favourite script of the Engine (Monitoring's board) and its row. \`unplacedScriptOutcomes\` = the counted step made by runs naming no script (before runs-service named them): on no Engine, in no figure. A measure whose history comes from several sources lists their rows and serves \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed). The ledger book unreadable or missing a past day of the scripts' era = no script row, \`scriptsUnavailableReason\`. No return on any row.`,
   tags: ["Internal"],
   request: { query: researchEngineQuery },
   responses: {
@@ -9445,7 +9154,6 @@ registry.registerPath({
                       rowsCover: z.literal("scripts_that_ran_and_history").optional(),
                       scriptsUnavailableReason: z.enum(["ledger_book_unreadable", "ledger_book_missing_days"]).nullable().optional(),
                       unplacedScriptOutcomes: z.number().nullable().describe("The counted step made by runs naming no script; null when the scripts were not read.").optional(),
-                      combinationsNeverRunNotListed: z.number().int().optional(),
                       servedNow: z
                         .object({
                           script: z.object({ key: z.string(), label: z.string() }).nullable(),
