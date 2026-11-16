@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../db/index.js", () => ({ db: {}, sql: {} }));
 import type { SlugCell } from "./buckets.js";
-import { candidatePartsOf, deprecatedPartsOf, inFlashOrder, pipePerformance, servedNowOf, type PipePerformanceInput } from "./performance.js";
+import { deprecatedPartsOf, inFlashOrder, pipePerformance, type PipePerformanceInput } from "./performance.js";
 import { templateDynastyIndex } from "./template-dynasties.js";
 import { llmDynastyIndex } from "../llm-dynasties.js";
 import type { FleetPersonBucket } from "../fleet-positive-repliers.js";
@@ -153,16 +153,6 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     for (const r of out.rows) expect(r.sortCostUsd).toBeCloseTo(r.costPerOutcomeUsd.value ?? r.spentUsd.value, 9);
   });
 
-  it("a combination that spent nothing is untested and stands on $0, first among the active rows (the dashboard hides them by default)", () => {
-    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
-    const untested = all.rows.filter((r) => r.untested);
-    expect(untested.length).toBeGreaterThan(0);
-    expect(untested.every((r) => r.spentUsd.value === 0 && r.sortCostUsd === 0)).toBe(true);
-    expect(all.rows.slice(0, untested.length).every((r) => r.untested)).toBe(true);
-    expect(all.rows.filter((r) => !r.untested).map((r) => r.key)).toEqual(out.rows.map((r) => r.key));
-    expect(out.rows.some((r) => r.untested)).toBe(false);
-  });
-
   it("a combination with ANY deprecated part is deprecated and stands after every active one", () => {
     const dep = pipePerformance(input({ deprecated: { workflows: new Set(), templates: new Set(), llms: new Set(["claude-opus"]) } }));
     const opus = dep.rows.find((r) => r.key === "azalea|borealis|claude-opus")!;
@@ -176,42 +166,6 @@ describe("pipePerformance (RESEARCH-PERFORMANCE-1023)", () => {
     expect(out.rows.every((r) => r.status === "active" && r.deprecatedParts.length === 0)).toBe(true);
   });
 
-  it("every technically valid combination is listed and ranked, a never-written one on its parts (RESEARCH-ALL-COMBOS-1023)", () => {
-    const all = pipePerformance(input({ candidates: { workflows: ["azalea", "keel"], templates: ["aurora", "borealis"], llms: ["gemini-flash", "claude-opus"] } }));
-    // 2 x 2 x 2 candidates + keel's not-on-record row
-    expect(all.rows).toHaveLength(9);
-    const fresh = all.rows.find((r) => r.key === "azalea|aurora|claude-opus")!;
-    expect(fresh.written).toBe(false);
-    expect(fresh.writerSource).toBeNull();
-    expect(fresh.spentUsd.value).toBe(0);
-    expect(fresh.untested).toBe(true);
-    expect(fresh.costPerOutcomeUsd).toMatchObject({ value: null, basis: null, unavailableReason: "no_outcome_yet" });
-    expect(fresh.conversionRatePct).toMatchObject({ value: null, unavailableReason: "nobody_emailed_yet" });
-    expect(all.rows.find((r) => r.key === "azalea|borealis|claude-opus")!.written).toBe(true);
-    // the totals and the series never move
-    expect(all.totals).toEqual(out.totals);
-    expect(all.series).toEqual(out.series);
-  });
-
-  it("candidatePartsOf: runnable workflows, live template dynasties, LLMs served under an alias; never a deprecated part", () => {
-    const parts = candidatePartsOf(
-      {
-        workflows: [{ key: "keel", runnable: true }, { key: "old", runnable: false }],
-        templates: [
-          { key: "aurora", status: "active", dynasty: { head: "v35" } },
-          { key: "borealis", status: "deprecated", dynasty: { head: "v36" } },
-          { key: "loose-v1", status: null, dynasty: null },
-        ],
-        models: [
-          { key: "glm", aliases: ["glm-pro"], dynasty: { servedToday: true } },
-          { key: "deepseek-pro", aliases: [], dynasty: { servedToday: false } },
-          { key: "opus", aliases: ["opus"], dynasty: { servedToday: true } },
-        ],
-      },
-      { workflows: new Set(), templates: new Set(), llms: new Set(["opus"]) },
-    );
-    expect(parts).toEqual({ workflows: ["keel"], templates: ["aurora"], llms: ["glm"] });
-  });
 
   it("deprecatedPartsOf: not runnable, deprecated dynasty, an LLM served under no alias or only deprecated ones", () => {
     const parts = deprecatedPartsOf(
@@ -282,19 +236,3 @@ describe("inFlashOrder", () => {
   });
 });
 
-// PERF-COST-ORDER-1024: the combination the pipe runs today, beside the rows.
-describe("servedNowOf", () => {
-  const out = pipePerformance(input());
-  const part = (key: string, label = key) => ({ key, label });
-  it("finds the row of the served workflow x template x LLM", () => {
-    const s = servedNowOf(out, { workflow: part("azalea"), template: part("borealis"), llm: part("claude-opus"), unavailableReason: null });
-    expect(s.row?.key).toBe("azalea|borealis|claude-opus");
-    expect(s.unavailableReason).toBeNull();
-  });
-  it("names why when the combination is not listed or a part is missing", () => {
-    expect(servedNowOf(out, { workflow: part("keel"), template: part("aurora"), llm: part("claude-opus"), unavailableReason: null })).toMatchObject({ row: null, unavailableReason: "combination_not_listed" });
-    expect(servedNowOf(out, { workflow: null, template: part("aurora"), llm: part("claude-opus"), unavailableReason: null }).unavailableReason).toBe("no_runnable_workflow");
-    expect(servedNowOf(out, { workflow: part("keel"), template: null, llm: part("claude-opus"), unavailableReason: null }).unavailableReason).toBe("no_template_picked");
-    expect(servedNowOf(out, { workflow: null, template: null, llm: null, unavailableReason: "writer_ranking_not_computed_yet" }).unavailableReason).toBe("writer_ranking_not_computed_yet");
-  });
-});

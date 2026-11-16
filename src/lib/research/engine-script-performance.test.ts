@@ -88,9 +88,9 @@ describe("withMeasureScripts", () => {
   const scripts = measureScripts({ measure: MEASURE, book: BOOK, view: "flash", matureCutDay: null, keyOf, facts, now: NOW });
   const out = withMeasureScripts(m, body, { scripts, unavailableReason: null }, { script: "email_sent/dy_a", llm: { key: "glm", name: "GLM" }, template: null }, NOW) as Record<string, any>;
 
-  it("scripts first, then the history that wrote (deprecated); never-written combinations are not listed", () => {
+  it("scripts first, then the history that wrote (deprecated); a never-written row of an older stored build is not listed", () => {
     expect(out.rows.map((r: any) => `${r.rank}:${r.key}:${r.status}`)).toEqual(["1:email_sent/dy_a:active", "2:email_sent/dy_b:active", "3:w1|t|l:deprecated", "4:w2|t|l:deprecated"]);
-    expect(out.combinationsNeverRunNotListed).toBe(2);
+    expect(out.combinationsNeverRunNotListed).toBeUndefined();
     expect(out.rows.filter((r: any) => r.status === "active").every((r: any) => !r.untested)).toBe(true);
   });
 

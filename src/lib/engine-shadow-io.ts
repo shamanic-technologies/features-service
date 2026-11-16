@@ -118,7 +118,6 @@ export function engineMemos() {
             const key = `${p.featureSlug}|${pipeLegKeyOf(p.featureSlug, p.legKey)}`;
             const byWf = out.get(key) ?? new Map<string, Array<{ outcomes: number; spentUsd: number }>>();
             for (const r of p.rows) {
-              if (!r.written) continue;
               byWf.set(r.workflow.key, [...(byWf.get(r.workflow.key) ?? []), { outcomes: r.outcomes.value, spentUsd: r.spentUsd.value }]);
             }
             out.set(key, byWf);
