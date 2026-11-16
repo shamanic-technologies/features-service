@@ -39,6 +39,11 @@ export interface ScopeOutcomeLedgerInput {
   unitCosts: ReadonlyMap<string, LedgerOutcomeCost>;
   /** OUTCOME-COST-CUMUL-1109: the ledger's own production cost per outcome step (`stepTracedCostOf`). Brand ledgers only. */
   stepTracedCost?: StepTracedCost;
+  /**
+   * PART-ENTRY-1116: outcome key -> UTC day -> Units the scope TOOK IN (its runs' first consumptions of them), e.g. the
+   * Leads found a cold email part consumed from the sourcing part. Absent = not read.
+   */
+  takenInByDay?: ReadonlyMap<string, ReadonlyMap<string, number>>;
   /** outcome key -> consumptions in scope of occurrences no run declared producing (unknown provenance). */
   undeclaredConsumptions: ReadonlyMap<string, number>;
   /** outcome key -> the services that declare producing it anywhere in the fleet (empty = nobody does). */

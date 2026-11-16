@@ -13,7 +13,7 @@
  */
 import { Router } from "express";
 import { fetchBrandOutcomeLedger, fetchCampaignSetOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
-import { ledgerCountOfStep, ledgerScopeOf } from "../lib/ledger-counts.js";
+import { ledgerCountOfStep, ledgerEntryCountOfStep, ledgerScopeOf } from "../lib/ledger-counts.js";
 import { rebaseSpendChartOnLedger, type LedgerSpendChart } from "../lib/spend-charts-ledger.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import type { DownstreamHeaders } from "./revenue.js";
@@ -230,7 +230,8 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
     return rebaseSpendChartOnLedger(
       chart,
       step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(scopeOf, step).row,
-      from === null || ledger === null ? null : ledgerCountOfStep(scopeOf, from).row,
+      // PART-ENTRY-1116: a part that finds nobody counts from the Units it took in (its own ledger consumptions).
+      from === null || ledger === null ? null : ledgerEntryCountOfStep(scopeOf, from).row,
       chart.target?.learningOutcomesRequired ?? chart.leg?.learningOutcomesRequired ?? 10,
       scope,
     );
@@ -353,7 +354,7 @@ async function groupSpendChart(
   return rebaseSpendChartOnLedger(
     measured,
     step === null ? null : ledger === null ? "ledger_unreadable" : ledgerCountOfStep(ledgerScopeOf(ledger), step).row,
-    from === null || ledger === null ? null : ledgerCountOfStep(ledgerScopeOf(ledger), from).row,
+    from === null || ledger === null ? null : ledgerEntryCountOfStep(ledgerScopeOf(ledger), from).row,
     measured.target?.learningOutcomesRequired ?? measured.leg?.learningOutcomesRequired ?? 10,
   );
 }

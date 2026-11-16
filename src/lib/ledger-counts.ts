@@ -53,6 +53,23 @@ export function ledgerCountOfStep(scope: LedgerScope, step: string): LedgerCount
   return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason, producerGap: row.producerGap, row };
 }
 
+/**
+ * PURE (PART-ENTRY-1116). The Units of a scope's ENTRY step (where its "% to" counts from) that entered the scope: the
+ * ones it made; a scope that made none of them = the ones its runs TOOK IN (first consumptions, `takenInByDay`). A cold
+ * email part makes no Lead found: the sourcing part does, and the cold email part consumes them, so it entered 0 beside
+ * its 2 positive replies (prod 2026-11-16, Wide Email part b93006ef). One rule for every scope: a campaign or a brand
+ * that finds its own people reads what it made, exactly as before.
+ */
+export function ledgerEntryCountOfStep(scope: LedgerScope, step: string): LedgerCount {
+  const made = ledgerCountOfStep(scope, step);
+  const takenIn = scope.ledger?.takenInByDay;
+  if (scope.ledger === null || !takenIn || (made.units !== null && made.units > 0)) return made;
+  const keys = ledgerKeysOfStep(step);
+  if (!keys.some((k) => [...(takenIn.get(k)?.values() ?? [])].some((n) => n > 0))) return made;
+  const row = scopeOutcomeLedgerRowOf(keys, { ...scope.ledger, producedByDay: takenIn, elsewhereByDay: undefined, undeclaredConsumptions: new Map() });
+  return { units: row.units, ourUnits: row.ourUnits, otherFactoryUnits: row.otherFactoryUnits, reason: row.unitsUnavailableReason, producerGap: null, row };
+}
+
 export interface LedgerSignalSeries {
   total: number;
   daily: Array<{ date: string; count: number }>;
