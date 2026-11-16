@@ -6605,6 +6605,7 @@ const CampaignScriptRunsSchema = z.object({
 const CampaignScriptRowSchema = z.object({
   script: z.string().describe("`<outcome>/<dynasty>`: the Script dynasty (every version pooled)."),
   dynasty: z.string(),
+  name: z.string().nullable().describe("The script's short client-readable name (workflow-service, unique within its Engine); null = not named yet, or no longer runnable. Show it as the row label."),
   version: z.number().nullable().describe("The runnable version today; null = no longer runnable."),
   description: z.string().nullable(),
   shareOfDrawsPct: z.number().nullable().describe("Share of today's draws among the scripts this campaign's strategy keeps, 0..100 (they add to ~100); null = not competing (ruled out or no longer runnable)."),

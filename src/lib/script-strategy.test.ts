@@ -135,6 +135,7 @@ describe("script catalogue rows", () => {
       outcome: "lead_found",
       dynasty: "dy",
       version: 2,
+      name: null,
       code: "x",
       tactics: { serve: { acceptedEmails: ["valid"] } },
       description: "d",

@@ -55442,6 +55442,11 @@
                                 "dynasty": {
                                   "type": "string"
                                 },
+                                "name": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The script's short client-readable name (workflow-service, unique within its Engine); null = not named yet, or no longer runnable. Show it as the row label."
+                                },
                                 "version": {
                                   "type": "number",
                                   "nullable": true,
@@ -55570,6 +55575,7 @@
                               "required": [
                                 "script",
                                 "dynasty",
+                                "name",
                                 "version",
                                 "description",
                                 "shareOfDrawsPct",
@@ -55594,6 +55600,11 @@
                                 "dynasty": {
                                   "type": "string"
                                 },
+                                "name": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The script's short client-readable name (workflow-service, unique within its Engine); null = not named yet, or no longer runnable. Show it as the row label."
+                                },
                                 "version": {
                                   "type": "number",
                                   "nullable": true,
@@ -55722,6 +55733,7 @@
                               "required": [
                                 "script",
                                 "dynasty",
+                                "name",
                                 "version",
                                 "description",
                                 "shareOfDrawsPct",
@@ -55746,6 +55758,11 @@
                                 "dynasty": {
                                   "type": "string"
                                 },
+                                "name": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The script's short client-readable name (workflow-service, unique within its Engine); null = not named yet, or no longer runnable. Show it as the row label."
+                                },
                                 "version": {
                                   "type": "number",
                                   "nullable": true,
@@ -55874,6 +55891,7 @@
                               "required": [
                                 "script",
                                 "dynasty",
+                                "name",
                                 "version",
                                 "description",
                                 "shareOfDrawsPct",
