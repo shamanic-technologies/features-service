@@ -8,7 +8,8 @@
  *   1. MEASURED: the scope's own return is mature (`maturity.isMature` and a mature `roiMultiple`) → that figure.
  *   2. Else the SALES PATH MODEL (`GET /offers/:offerId/sales-paths`, `computeOfferSalesPathsModel`, the byte-same
  *      computation): ROI = lifetime revenue ÷ Σ cost per outcome × outcomes needed per paying client, each leg rate
- *      measured > stated > fleet median > industry default, each leg cost best mature workflow > fleet measured >
+ *      brand measured > stated > FLEET MEASURED > industry default (`lib/fleet-leg-rates.ts`, owner 2026-11-16,
+ *      EXPECTED-FLEET-RATE-1116: the same order on every expected figure), each leg cost best mature workflow > fleet measured >
  *      seeded default, the offer's stated lifetime revenue else the fleet median. One grade per campaign: the
  *      Sales path page and this field read the same path.
  *
@@ -31,20 +32,23 @@
  */
 import { SOURCE_LEG_KEY } from "./sourcing-origins.js";
 import { FUNNEL_LEG_KEYS, FUNNEL_LEGS, funnelLeg, storedCombinationKeyOf, storedLegKeyOf } from "./funnel-legs.js";
+import { type FleetLegRates } from "./fleet-leg-rates.js";
 import {
   DEFAULT_COST_PER_OUTCOME_USD,
   resolveLegChannelCost,
+  salesPathLegRate,
   type LegChannelPrice,
   type OfferSalesPathsBody,
   type SalesPath,
   type SalesPathCostSource,
   type SalesPathRateSource,
 } from "./offer-sales-paths.js";
-import type { EffectiveArrowRate, EffectiveRateSource } from "./effective-conversion-rates.js";
+import type { EffectiveArrowRate } from "./effective-conversion-rates.js";
 import type { OfferLifetimeRevenueSource as LifetimeRevenueSource } from "./offer-lifetime-revenue.js";
 import type { AudienceStatsEnvelope, ProjectionRatios, ServedProjectionRatios } from "./audience-stats-compute.js";
 import type { MaturityPair } from "./maturity.js";
 import type { CatalogueFunnel } from "./agent-catalogue.js";
+import { exactLegCostOf } from "./exact-leg-costs.js";
 import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 
 /** What an expected figure rests on, weakest last. */
@@ -132,6 +136,7 @@ const RATE_BASIS: Record<SalesPathRateSource, ExpectedBasis> = {
   crm_measured: "measured",
   measured_on_our_leads: "measured",
   customer_stated: "stated",
+  fleet_measured: "fleet",
   industry_default: "default",
 };
 const COST_BASIS: Record<SalesPathCostSource, ExpectedBasis> = {
@@ -226,6 +231,8 @@ export interface CombinationInputs {
   rates: readonly EffectiveArrowRate[];
   prices: ReadonlyMap<string, LegChannelPrice>;
   fleetPrices: ReadonlyMap<string, number>;
+  /** The fleet's measured conversion per (leg, channel), the rate rung after the brand's own (`lib/fleet-leg-rates.ts`). */
+  fleetRates: FleetLegRates;
 }
 
 const priced = (paths: readonly SalesPath[]): SalesPath[] => paths.filter((p) => p.roi !== null && Number.isFinite(p.roi));
@@ -273,27 +280,33 @@ export function expectedForCombination(m: OfferExpectedModel, salesFunnelId: str
   return own ?? unavailableExpectedReturn("own_sales_path_unpriced");
 }
 
-const RATE_WORD: Record<EffectiveRateSource, { basis: ExpectedBasis; source: (r: EffectiveArrowRate) => string }> = {
-  measured: { basis: "measured", source: (r) => (r.measured.basis === "crm" ? "crm_measured" : "measured_on_our_leads") },
-  manual: { basis: "stated", source: () => "customer_stated" },
-  default: { basis: "default", source: () => "industry_default" },
-};
+/** PURE: a brand leg on THE ORDER (`salesPathLegRate`: brand measured > stated > fleet measured > default), with its basis. */
+function orderedRate(r: EffectiveArrowRate | undefined, fleet: FleetLegRates, legKey: string, channelSlug: string | null) {
+  const rate = salesPathLegRate(r ?? null, fleet, legKey, channelSlug);
+  return rate ? { ...rate, basis: RATE_BASIS[rate.source] } : null;
+}
 
 /**
  * PURE: P(paying client | a person at `step`) over the BEST route of catalogue legs on the brand's rates, with the
  * weakest basis it rests on. 1 at Paid client; null when no route is rated.
  */
-function bestRouteToPaid(step: string, rates: ReadonlyMap<string, EffectiveArrowRate>, seen: ReadonlySet<string> = new Set()): { p: number; basis: ExpectedBasis } | null {
+function bestRouteToPaid(
+  step: string,
+  rates: ReadonlyMap<string, EffectiveArrowRate>,
+  fleet: FleetLegRates,
+  seen: ReadonlySet<string> = new Set(),
+): { p: number; basis: ExpectedBasis } | null {
   if (step === "paid_client") return { p: 1, basis: "measured" };
   let best: { p: number; basis: ExpectedBasis } | null = null;
   for (const leg of FUNNEL_LEGS) {
     if (leg.fromStep?.key !== step || seen.has(leg.toStep.key)) continue;
-    const r = rates.get(leg.legKey);
-    if (!r || r.effectiveRatePct === null || r.source === null) continue;
-    const rest = bestRouteToPaid(leg.toStep.key, rates, new Set([...seen, step]));
+    // No channel named on a catalogue route: the fleet rung reads the lowest rate the fleet measured on the leg.
+    const r = orderedRate(rates.get(leg.legKey), fleet, leg.legKey, null);
+    if (!r) continue;
+    const rest = bestRouteToPaid(leg.toStep.key, rates, fleet, new Set([...seen, step]));
     if (!rest) continue;
-    const p = (r.effectiveRatePct / 100) * rest.p;
-    if (!best || p > best.p) best = { p, basis: weakest([RATE_WORD[r.source].basis, rest.basis]) };
+    const p = (r.ratePct / 100) * rest.p;
+    if (!best || p > best.p) best = { p, basis: weakest([r.basis, rest.basis]) };
   }
   return best;
 }
@@ -322,9 +335,9 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
   let cost = 0;
   let costOfFirstPlatform: ExpectedCostPerOutcome | null = null;
   const route: ExpectedRouteLeg[] = [];
-  const rateOf = (legKey: string) => {
-    const r = rates.get(legKey);
-    return r && r.effectiveRatePct !== null && r.effectiveRatePct > 0 && r.source !== null ? r : null;
+  const rateOf = (legKey: string, slug: string | null) => {
+    const r = orderedRate(rates.get(legKey), inputs.fleetRates, legKey, slug);
+    return r && r.ratePct > 0 ? r : null;
   };
   for (let i = legs.length - 1; i >= 0; i -= 1) {
     const l = legs[i];
@@ -349,11 +362,11 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
       costOfFirstPlatform = { costPerOutcomeUsd: c.costPerOutcomeUsd, legKey: l.legKey, stepKey: l.def!.toStep.key, basis: COST_BASIS[c.costSource], source: c.costSource };
     }
     if (i === 0) break;
-    const r = rateOf(l.legKey);
+    const r = rateOf(l.legKey, l.slug);
     if (!r) return null;
-    assumptions.push({ input: "rate", legKey: l.legKey, basis: RATE_WORD[r.source!].basis, source: RATE_WORD[r.source!].source(r) });
-    Object.assign(routeLeg, { ratePct: r.effectiveRatePct, rateBasis: RATE_WORD[r.source!].basis });
-    needed /= r.effectiveRatePct! / 100;
+    assumptions.push({ input: "rate", legKey: l.legKey, basis: r.basis, source: r.source });
+    Object.assign(routeLeg, { ratePct: r.ratePct, rateBasis: r.basis });
+    needed /= r.ratePct / 100;
   }
   if (!(cost > 0)) return null;
 
@@ -361,7 +374,7 @@ export function priceCombination(key: string, inputs: CombinationInputs, lifetim
   const from = legs[0].def!.fromStep?.key ?? null;
   let added = ltr;
   if (from !== null && from !== "lead_found") {
-    const route = bestRouteToPaid(from, rates);
+    const route = bestRouteToPaid(from, rates, inputs.fleetRates);
     if (!route) return null;
     // The people it MOVED (its first leg's outcomes per paying client) × what each was already worth at the
     // takeover step; the ones it did not move keep their value and add nothing (catalogue `funnelEconomics`).
@@ -495,7 +508,9 @@ export function __resetExpectedReturnMemo(): void {
 // failed or never-finishing rebuild never replaces it.
 
 /** `-v1`: bump when `OfferExpectedModel` changes structure (an older stored model then reads as absent). */
-const modelCellKey = (key: string): string => `expected-model-v1:${key}`;
+// v2 (EXPECTED-FLEET-RATE-1116): the fleet's measured rate became a rung of every leg rate and rides `inputs.fleetRates`:
+// a v1 model (priced a leg the fleet measured on its default) is never served after the deploy.
+const modelCellKey = (key: string): string => `expected-model-v2:${key}`;
 
 interface StoredModel {
   offerId: string;
@@ -508,6 +523,7 @@ interface StoredModel {
     rates: EffectiveArrowRate[];
     prices: Array<[string, LegChannelPrice]>;
     fleetPrices: Array<[string, number]>;
+    fleetRates: Array<[string, number]>;
   } | null;
 }
 
@@ -525,6 +541,7 @@ export function serializeOfferExpectedModel(m: OfferExpectedModel): string {
           rates: [...m.inputs.rates],
           prices: [...m.inputs.prices],
           fleetPrices: [...m.inputs.fleetPrices],
+          fleetRates: [...m.inputs.fleetRates],
         }
       : null,
   };
@@ -550,6 +567,7 @@ export function parseStoredOfferExpectedModel(text: string): OfferExpectedModel 
             rates: s.inputs.rates,
             prices: new Map(s.inputs.prices),
             fleetPrices: new Map(s.inputs.fleetPrices),
+            fleetRates: new Map(s.inputs.fleetRates),
           },
         }
       : {}),
@@ -576,11 +594,12 @@ function restoreModel(key: string): Promise<void> {
   return p;
 }
 
-const inputsOf = (m: { lifetimeRevenue: { usd: number | null }; rates: EffectiveArrowRate[]; prices: ReadonlyMap<string, LegChannelPrice>; fleetPrices: ReadonlyMap<string, number> }): CombinationInputs => ({
+const inputsOf = (m: { lifetimeRevenue: { usd: number | null }; rates: EffectiveArrowRate[]; prices: ReadonlyMap<string, LegChannelPrice>; fleetPrices: ReadonlyMap<string, number>; fleetRates: FleetLegRates }): CombinationInputs => ({
   lifetimeRevenueUsd: m.lifetimeRevenue.usd,
   rates: m.rates,
   prices: m.prices,
   fleetPrices: m.fleetPrices,
+  fleetRates: m.fleetRates,
 });
 
 async function computeModel(identity: ExpectedIdentity, brandId: string, offerId: string): Promise<OfferExpectedModel | null> {
@@ -718,7 +737,8 @@ function catalogueRouteOf(funnel: CatalogueFunnel): ExpectedRouteLeg[] {
         toStep: pipe.toStep,
         ratePct: l.ratePct,
         rateBasis: l.rateBasis,
-        costPerOutcomeUsd: l.costPerOutcomeUsd,
+        // The unrounded cost, so the chart's cost to the Target is the one the expected ROI divides.
+        costPerOutcomeUsd: exactLegCostOf(l),
         costBasis: l.costBasis,
       },
     ];

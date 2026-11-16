@@ -5,6 +5,8 @@ vi.mock("../db/index.js", () => ({ db: { query: { features: { findFirst: vi.fn()
 // The fleet build never ends here: a read must be served from the stored copy, never wait on it.
 vi.mock("./public.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
+  // EXPECTED-FLEET-RATE-1116: the catalogue reads the fleet's measured conversions (none measured here).
+  awaitFleetLegConversionRatesFromOutcomePrices: async () => new Map(),
   fleetLegPrice: () => (fleet.fails ? Promise.reject(new Error("fleet read timed out")) : new Promise(() => {})),
 }));
 const fleet = vi.hoisted(() => ({ fails: false }));

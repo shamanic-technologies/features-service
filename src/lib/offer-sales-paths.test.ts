@@ -507,3 +507,43 @@ describe("withCampaignRois", () => {
     expect(new Set(c.map((x) => x.campaignKey)).size).toBe(c.length);
   });
 });
+
+describe("THE ORDER of a leg rate: brand measured > stated > fleet measured > default (EXPECTED-FLEET-RATE-1116)", () => {
+  const legKeys = ["start_to_conversation", "conversation_to_meeting_booked", "meeting_booked_to_meeting_attended", "meeting_attended_to_paid_client"];
+  const fleetRates = new Map([
+    // Measured by the fleet on the human leg's step pair (no channel of ours: the lowest any channel measured).
+    ["meeting_booked_to_meeting_attended|some-ai-channel", 40],
+    ["meeting_booked_to_meeting_attended|another-channel", 60],
+    // Measured on the booking leg: the brand STATED 50 %, which wins.
+    ["conversation_to_meeting_booked|pilot", 10],
+  ]);
+  const meetingPath = (rates?: Map<string, number>) =>
+    buildOfferSalesPaths({ ...base, legKeys, ...(rates ? { fleetRates: rates } : {}) }).paths.find((p) => p.entryChannelSlug === "cold-email-2")!;
+
+  it("a leg resolved on its default reads the fleet's measured rate instead; a stated one keeps its own", () => {
+    const p = meetingPath(fleetRates);
+    const [, booked, attended, closing] = p.legs;
+    expect(booked).toMatchObject({ conversionRatePct: 50, rateSource: "customer_stated" });
+    expect(booked.rateInputs!.fleetMeasuredPct).toBe(10);
+    expect(attended).toMatchObject({ conversionRatePct: 40, rateSource: "fleet_measured" });
+    expect(closing).toMatchObject({ conversionRatePct: 25, rateSource: "customer_stated" });
+    // attended 4, booked 4 / 0.40 = 10, replies 10 / 0.5 = 20 → 20 × $10 + 10 × $4 = $240.
+    expect(p.costPerPayingClientUsd).toBeCloseTo(240, 9);
+    expect(p.entryToPayingClientPct).toBeCloseTo(100 * 0.5 * 0.4 * 0.25, 9);
+  });
+
+  it("no fleet measurement: byte-same as before (the default)", () => {
+    const p = meetingPath();
+    expect(p.legs[2]).toMatchObject({ conversionRatePct: 80, rateSource: "industry_default" });
+    expect(p.legs[2].rateInputs!.fleetMeasuredPct).toBeNull();
+    expect(p.costPerPayingClientUsd).toBeCloseTo(120, 9);
+  });
+
+  it("a brand MEASURED rate wins over the fleet's", () => {
+    const measured = { ...arrow("Meeting booked", "Meeting attended", 70, "measured"), measured: { ...arrow("a", "b", 1).measured, ratePct: 70, sufficient: true, gap: null } };
+    const p = buildOfferSalesPaths({ ...base, legKeys, rates: RATES.map((r) => (r.fromStep === "Meeting booked" ? measured : r)), fleetRates }).paths.find(
+      (x) => x.entryChannelSlug === "cold-email-2",
+    )!;
+    expect(p.legs[2]).toMatchObject({ conversionRatePct: 70, rateSource: "measured_on_our_leads" });
+  });
+});

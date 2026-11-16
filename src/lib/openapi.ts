@@ -18,13 +18,13 @@ registry.register("Feature", featureResponseSchema);
 
 const expectedBasisSchema = z
   .enum(["measured", "stated", "fleet", "default"])
-  .describe("What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet median / the fleet's measured cost) < default (a seeded industry benchmark or cost). A tooltip says it in words.");
+  .describe("What an expected figure rests on, the WEAKEST of its inputs: measured (the scope's own mature evidence / a measured rate / our own workflow's mature cost) < stated (the customer stated it: a leg rate, the offer's lifetime revenue) < fleet (the fleet's measured conversion of a leg / its measured cost / the fleet median lifetime revenue) < default (a seeded industry benchmark or cost). A tooltip says it in words.");
 
 const expectedReturnRef = registry.register(
   "ExpectedReturn",
   z
     .object({
-      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate measured > stated > fleet median > industry default, each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
+      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
       basis: expectedBasisSchema.nullable(),
       assumptions: z
         .array(
@@ -32,7 +32,7 @@ const expectedReturnRef = registry.register(
             input: z.enum(["lifetime_revenue", "rate", "cost", "sales_path"]),
             legKey: z.string().nullable().describe("The leg a rate or a cost is about. Null otherwise."),
             basis: expectedBasisSchema,
-            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_median | industry_default (rate); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | default | default_entry (rate), workflow | default | benchmark | flash | pipe_history | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
+            source: z.string().describe("The producer's own word: crm_measured | measured_on_our_leads | customer_stated | fleet_measured | industry_default (rate, in that order: brand measured > stated > the fleet's measured conversion > default, EXPECTED-FLEET-RATE-1116); workflow | fleet_measured | default | benchmark (cost); on a figure read off the catalogue funnel: offer_measured | offer_stated | offer_team_measured | measured_pipe | fleet_measured | default | default_entry (rate), workflow | default | benchmark | flash | pipe_history | same_leg_fleet | same_step_fleet | own_spend (cost); offer_stated | fleet_median (lifetime_revenue); not_running (sales_path: the offer runs no funnel campaign, so the figure is the best path we would sell it)."),
           }),
         )
         .describe("Every input the model figure rests on, with its own source. Empty on a measured figure."),
@@ -59,9 +59,9 @@ const expectedConversionRef = registry.register(
   "ExpectedConversion",
   z
     .object({
-      ratePct: z.number().nullable().describe("The row's EXPECTED % Conversion, never null except on Paid client (nothing converts past it) or unavailableReason. = conversionFromRowAbove.ratePct when measured, else the brand's effective rate of the leg out of the row's step on the offer's priced paths (GET /brands/{brandId}/conversion-rates: measured > stated > fleet median > industry default; the shallowest next step); the contacted row: the entry leg's fleet conversion, else a seeded cold-email benchmark (1% positive reply, 2% website visit)."),
+      ratePct: z.number().nullable().describe("The row's EXPECTED % Conversion, never null except on Paid client (nothing converts past it) or unavailableReason. = conversionFromRowAbove.ratePct when measured, else the leg out of the row's step on the offer's priced paths, on the order of every expected figure: the brand's own measured > stated rate (GET /brands/{brandId}/conversion-rates), else the fleet's measured conversion of the leg (the lowest any channel measured), else the industry default (EXPECTED-FLEET-RATE-1116; the shallowest next step); the contacted row: the entry leg's fleet conversion, else a seeded cold-email benchmark (1% positive reply, 2% website visit)."),
       basis: expectedBasisSchema.nullable(),
-      source: z.string().nullable().describe("measured | manual | default (the effective rate's own source; median retired 2026-10-14) | fleet_measured | default_entry."),
+      source: z.string().nullable().describe("measured | manual | default (the brand's effective rate's own source; median retired 2026-10-14) | fleet_measured (the fleet's measured conversion, before any default) | default_entry."),
       toStep: z.string().nullable().describe("The step the rate leads to (the row above when measured)."),
       legKey: z.string().nullable().describe("The leg the hypothesis is read off. Null when measured."),
       unavailableReason: z.enum(["final_step", "rates_unavailable", "no_next_step"]).nullable(),
@@ -2389,16 +2389,20 @@ const salesPathLegSchema = z.object({
   fromStep: salesPathStepSchema.nullable().describe("Null on the ENTRY leg (from nothing)."),
   toStep: salesPathStepSchema,
   conversionRatePct: z.number().nullable().describe("The rate RETAINED for the leg (0..100). Null on the entry leg."),
-  rateSource: z.enum(["crm_measured", "measured_on_our_leads", "customer_stated", "fleet_median", "industry_default"]).nullable(),
+  rateSource: z
+    .enum(["crm_measured", "measured_on_our_leads", "customer_stated", "fleet_measured", "fleet_median", "industry_default"])
+    .nullable()
+    .describe("The rung that priced the leg, in order: crm_measured / measured_on_our_leads (the brand's own) > customer_stated > fleet_measured (the fleet's measured conversion of the leg on this combination's channel; on a leg the customer's team works, the lowest any channel measured; EXPECTED-FLEET-RATE-1116) > industry_default. fleet_median is retired, never served."),
   rateInputs: z
     .object({
       measured: z.object({ basis: z.enum(["our_leads", "crm"]), fromReached: z.number().nullable(), toReached: z.number().nullable().describe("Of the leads at the FROM step, those who also reached the TO step (always ≤ fromReached)."), toReachedThroughOtherLegs: z.number().nullable().describe("Leads at the TO step who were never at the FROM step (another leg, or an earlier step not recorded), so not counted in toReached. Null on the crm basis."), ratePct: z.number().nullable(), sufficient: z.boolean() }),
       customerStatedPct: z.number().nullable(),
       fleetMedian: z.object({ ratePct: z.number().nullable(), brandCount: z.number() }),
+      fleetMeasuredPct: z.number().nullable().describe("The fleet's measured conversion of the leg on this combination's channel (outcome prices); null when none measured."),
       industryDefaultPct: z.number().nullable(),
     })
     .nullable()
-    .describe("Every source the rate was resolved from (measured > customer stated > industry default). fleetMedian is RETIRED (owner 2026-10-14: no brand is priced on other clients' rates): always { ratePct: null, brandCount: 0 }, and rateSource is never fleet_median."),
+    .describe("Every source the rate was resolved from (measured > customer stated > fleet measured > industry default). fleetMedian is RETIRED (owner 2026-10-14: no brand is priced on other clients' rates): always { ratePct: null, brandCount: 0 }, and rateSource is never fleet_median."),
   workedBy: z.enum(["platform", "human"]).describe("platform: a platform channel works the leg in this combination (scope=ticked: only the MANAGED channels sales-cold-email-outreach, ai-meeting-booking, ai-instant-call; scope=catalogue: any shortlisted platform channel, see channel.managed). human: the customer's team — a your-team-* channel (scope=catalogue) or no channel at all; rate only, no cost to us, in both scopes."),
   channel: z
     .object({
@@ -8058,7 +8062,7 @@ const catalogueExpectedRow = z
       .describe("Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."),
   })
   .describe(
-    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the path's (brand measured / stated > default) > entry default. On a measured/estimated funnel it equals `costUsd`/`roi`.",
+    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`.",
   );
 const catalogueExpectedDetail = catalogueExpectedRow.extend({
   lifetimeRevenueUsd: z.number().nullable(),
@@ -8067,7 +8071,10 @@ const catalogueExpectedDetail = catalogueExpectedRow.extend({
     z.object({
       legKey: z.string(),
       ratePct: z.number().nullable().describe("Null on the entry leg (its rate prices nothing) or when unrated."),
-      rateSource: z.enum(["fleet_median", "default", "measured_pipe", "offer_measured", "offer_stated", "offer_team_measured", "default_entry"]).nullable(),
+      rateSource: z
+        .enum(["fleet_median", "default", "measured_pipe", "fleet_measured", "offer_measured", "offer_stated", "offer_team_measured", "default_entry"])
+        .nullable()
+        .describe("In order: offer_measured / offer_team_measured / offer_stated (the brand's own) > measured_pipe (basis fleet) > fleet_measured (the fleet's measured conversion of the leg on this pipe's channel, EXPECTED-FLEET-RATE-1116) > default / default_entry."),
       rateBasis: catalogueExpectedBasis.nullable(),
       outcomesNeededPerPayingClient: z.number().nullable(),
       pipeId: z.string().nullable(),

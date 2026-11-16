@@ -4,17 +4,19 @@
  *
  * ADDITIVE beside `conversionFromRowAbove` (untouched): `expectedConversionFromRowAbove` is
  *   1. MEASURED: the row's own `conversionFromRowAbove.ratePct` when it has one;
- *   2. else the HYPOTHESIS for the share of the row that goes one step further: the brand's effective rate of
- *      the leg out of the row's step on the offer's priced paths (`/brands/:id/conversion-rates`, measured >
- *      stated > fleet median > industry default; the next step is the SHALLOWEST one those paths reach, else any
- *      catalogue leg out of the step); for
+ *   2. else the HYPOTHESIS for the share of the row that goes one step further: the leg out of the row's step on the
+ *      offer's priced paths on THE ORDER of every expected figure (`lib/fleet-leg-rates.ts`, EXPECTED-FLEET-RATE-1116):
+ *      the brand's own measured > stated rate (`/brands/:id/conversion-rates`), else the fleet's measured conversion
+ *      of the leg (no channel on a ladder row: the lowest any channel measured), else the industry default; the next
+ *      step is the SHALLOWEST one those paths reach, else any catalogue leg out of the step); for
  *      the contacted row, the entry leg's fleet conversion (the best workflow's on the leg, `/public/stats/
  *      outcome-prices`), else a seeded cold-email benchmark (`DEFAULT_ENTRY_RATE_PCT`).
  * `basis` says which, in the words of `lib/expected-return.ts`. Null ONLY on Paid client (the last step: nothing
  * converts past it) and when the brand's rates could not be read (`unavailableReason`).
  */
 import type { ChannelStepKey } from "./acquisition-channels.js";
-import type { BrandEffectiveRates, EffectiveRateSource } from "./effective-conversion-rates.js";
+import type { BrandEffectiveRates } from "./effective-conversion-rates.js";
+import { expectedBrandLegRate } from "./fleet-leg-rates.js";
 import type { ExpectedBasis } from "./expected-return.js";
 import { FUNNEL_LEGS } from "./funnel-legs.js";
 import { LADDER_STEPS, type ConversionFromRowAbove } from "./offer-pipeline-explained.js";
@@ -41,7 +43,6 @@ export interface ExpectedConversion {
   unavailableReason: ExpectedConversionUnavailableReason | null;
 }
 
-const RATE_BASIS: Record<EffectiveRateSource, ExpectedBasis> = { measured: "measured", manual: "stated", default: "default" };
 
 const none = (reason: ExpectedConversionUnavailableReason): ExpectedConversion => ({
   ratePct: null,
@@ -86,9 +87,11 @@ export function expectedStepConversion(step: ChannelStepKey, measured: Conversio
   if (step === "paid_client") return none("final_step");
   if (!input.rates) return none("rates_unavailable");
   for (const leg of nextLegs(step, input.pricedFunnelKeys)) {
-    const r = input.rates.legs.find((x) => x.legKey === leg.legKey);
-    if (r && r.effectiveRatePct !== null && r.source !== null) {
-      return { ratePct: r.effectiveRatePct, basis: RATE_BASIS[r.source], source: r.source, toStep: leg.toStep.key, legKey: leg.legKey, unavailableReason: null };
+    const brand = input.rates.legs.find((x) => x.legKey === leg.legKey) ?? null;
+    const r = expectedBrandLegRate(brand, input.fleetConversions, leg.legKey, null);
+    if (r) {
+      const source = r.rung === "fleet" ? "fleet_measured" : r.rung === "measured" ? "measured" : r.rung === "stated" ? "manual" : "default";
+      return { ratePct: r.ratePct, basis: r.rung, source, toStep: leg.toStep.key, legKey: leg.legKey, unavailableReason: null };
     }
   }
   return none("no_next_step");

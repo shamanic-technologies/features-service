@@ -32,6 +32,7 @@ import { pipeLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { STEP_SIGNAL } from "./value-added.js";
 import { ACT_IS_OUTCOME_STEPS } from "./funnel-campaign-activity.js";
 import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
+import { fleetLegRatePct, pickExpectedLegRate } from "./fleet-leg-rates.js";
 import { expectedRouteOf, type ExpectedReturn } from "./expected-return.js";
 import { expectedTargetFigures, targetLegKeyOf, type ChartTarget } from "./spend-chart-target.js";
 import type { Pricing } from "./pricing.js";
@@ -228,7 +229,8 @@ function ofScope(scopeStart: string | null, converted: boolean, convertedOn: str
   return { converted: true, convertedOn };
 }
 
-/** PURE. The leg's expected conversion: an entry leg on the fleet's (else the seeded entry default), a later leg on the brand's rate. */
+/** PURE. The leg's expected conversion: an entry leg on the fleet's (else the seeded entry default), a later leg on the brand's
+ *  own measured / stated rate, else the fleet's, else the brand's default (EXPECTED-FLEET-RATE-1116). */
 export function expectedConversionOf(
   leg: ChartLeg,
   fleetConversions: ReadonlyMap<string, number>,
@@ -244,9 +246,17 @@ export function expectedConversionOf(
     if (d !== undefined) return { conversionRatePct: d, conversionBasis: "default", conversionSource: "default_entry", conversionUnavailableReason: null };
     return none("no_rate_for_leg");
   }
-  if (brandRate && brandRate.ratePct !== null && brandRate.source !== null) {
-    const basis = brandRate.source === "measured" ? "measured" : brandRate.source === "manual" ? "stated" : "default";
-    return { conversionRatePct: brandRate.ratePct, conversionBasis: basis, conversionSource: brandRate.source, conversionUnavailableReason: null };
+  // A later leg on THE ORDER (EXPECTED-FLEET-RATE-1116, `lib/fleet-leg-rates.ts`): the brand's own measured / stated
+  // rate, else the fleet's measured conversion of the leg on this chart's channel, else the brand's default.
+  const own = brandRate && (brandRate.source === "measured" || brandRate.source === "manual") ? brandRate : null;
+  const r = pickExpectedLegRate(
+    own ? { ratePct: own.ratePct, rung: own.source === "measured" ? "measured" : "stated" } : null,
+    fleetLegRatePct(fleetConversions, funnelLeg, leg.channelSlug),
+    brandRate && brandRate.source === "default" ? brandRate.ratePct : null,
+  );
+  if (r) {
+    const source = r.rung === "fleet" ? "fleet_measured" : r.rung === "measured" ? "measured" : r.rung === "stated" ? "manual" : "default";
+    return { conversionRatePct: r.ratePct, conversionBasis: r.rung, conversionSource: source, conversionUnavailableReason: null };
   }
   return none("no_rate_for_leg");
 }

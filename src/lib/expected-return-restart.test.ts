@@ -56,6 +56,7 @@ const built = {
   rates: [],
   prices: new Map([[`start_to_conversation|${COLD}`, { costPerOutcomeUsd: 175.96, workflowDynastySlug: "keel", grain: "brand", unpricedReason: null }]]),
   fleetPrices: new Map([[`start_to_conversation|${COLD}`, 41.2]]),
+  fleetRates: new Map([[`start_to_conversation|${COLD}`, 0.1]]),
 };
 
 const identity = { orgId: "f0420eb5-8f72-4f0a-a150-f473746df1e6", userId: "u", runId: "r" };
@@ -103,9 +104,19 @@ describe("expected return across a restart (LEDGER-LOAD-1107-ROI-BOOT)", () => {
     expect(Date.now() - t0).toBeLessThan(1_000);
   });
 
+  it("EXPECTED-FLEET-RATE-1116: a model stored before the fleet rung (v1 key) is never served after the deploy", async () => {
+    cells.set(`expected-model-v1:${identity.orgId}|${BRAND}|o1`, {
+      text: serializeOfferExpectedModel({ offerId: "o1", body: built.body, selected: [reply.combinationKey], lifetimeRevenueSource: "offer_stated", notRunning: false }),
+      computedAt: Date.now(),
+    });
+    computeOfferSalesPathsModel.mockReturnValue(new Promise(() => {}));
+    const e = await actual.expectedReturnForFunnelCampaign(identity, BRAND, "o1", reply.combinationKey, null, 0);
+    expect(e).toMatchObject({ roiMultiple: null, unavailableReason: "expected_model_computing" });
+  });
+
   it("a persisted build older than the 30-min stale window is still served on boot (rebuilt behind it)", async () => {
     const old = Date.now() - 3 * 60 * 60_000;
-    cells.set(`expected-model-v1:${identity.orgId}|${BRAND}|o1`, {
+    cells.set(`expected-model-v2:${identity.orgId}|${BRAND}|o1`, {
       text: serializeOfferExpectedModel({ offerId: "o1", body: built.body, selected: [reply.combinationKey], lifetimeRevenueSource: "offer_stated", notRunning: false }),
       computedAt: old,
     });
@@ -122,7 +133,7 @@ describe("expected return across a restart (LEDGER-LOAD-1107-ROI-BOOT)", () => {
   });
 
   it("the stored text round-trips the model's Maps (a jsonb Map would read back as {})", () => {
-    const m = { offerId: "o1", body: built.body, selected: ["k"], lifetimeRevenueSource: "offer_stated" as const, notRunning: false, inputs: { lifetimeRevenueUsd: 3750, rates: [], prices: built.prices, fleetPrices: built.fleetPrices } };
+    const m = { offerId: "o1", body: built.body, selected: ["k"], lifetimeRevenueSource: "offer_stated" as const, notRunning: false, inputs: { lifetimeRevenueUsd: 3750, rates: [], prices: built.prices, fleetPrices: built.fleetPrices, fleetRates: built.fleetRates } };
     const back = parseStoredOfferExpectedModel(serializeOfferExpectedModel(m));
     expect(back).toEqual(m);
     expect(back.inputs!.prices.get(`start_to_conversation|${COLD}`)!.costPerOutcomeUsd).toBe(175.96);
