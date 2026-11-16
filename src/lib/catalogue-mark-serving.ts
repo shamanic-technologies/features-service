@@ -20,11 +20,6 @@ export async function withMarks<T extends object>(family: MarkFamily, rows: read
   return rows.map((r) => withMark(r, marks.get(keyOf(r))));
 }
 
-/** A leg workflow ranking body with every row's workflow mark. */
-export async function withWorkflowRankingMarks<T extends { rows: ReadonlyArray<{ workflowDynastySlug: string }> }>(payload: T): Promise<T> {
-  return { ...payload, rows: await withMarks("workflow", payload.rows, (r) => r.workflowDynastySlug) };
-}
-
 /** A served writer ranking with every TEMPLATE row's mark (`best` is the same row, marked); LLM rows carry none. */
 export async function withTemplateRankingMarks<R extends { key: string }, T extends { templates: { rows: R[]; best: R | null } }>(served: T): Promise<T> {
   const rows = await withMarks("template", served.templates.rows, (r) => r.key);

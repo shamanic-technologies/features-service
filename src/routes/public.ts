@@ -39,7 +39,6 @@ import { legCutoffIso, legMaturity, legMaturityFigures, outcomeFigures, type Leg
 import { SCRIPTS_FIRST_DAY, bookBasisOf, dailyBookSinceDay, ledgerRegime, loadDailyLedgerBook, pipeFromKey, pipeOutcomeKey, runStartUntilOf, type LedgerBookRead } from "../lib/ledger-book.js";
 import { SCRIPT_POOL, ledgerSlugEvidence, pipeScriptCosts, pipeWorkflowCosts, type PipeWorkflowCost } from "../lib/ledger-pipe-costs.js";
 import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
-import { withWorkflowRankingMarks } from "../lib/catalogue-mark-serving.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "../lib/leg-workflow-ranking.js";
 import {
   buildFleetLegMaturity,
@@ -64,8 +63,6 @@ import { dynastyOfSlug } from "../lib/workflow-scope.js";
 import { internalPipeToStep, onDemandPipeTrigger } from "../lib/pipe-kind.js";
 import { effectiveSpendSlugs, type SpendSlugs } from "../lib/feature-scope.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "../lib/default-leg-rates.js";
-import { loadPlayCatalogue } from "../lib/plays-store.js";
-import type { PlayCatalogue } from "../lib/plays.js";
 import { getOnDemandPipeFleet } from "../lib/on-demand-pipe-fleet.js";
 import { fetchLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { getFunnel, type SalesEconomics } from "../lib/funnel-registry.js";
@@ -3987,56 +3984,6 @@ export interface LegWorkflowRankingPayload {
   rows: LegWorkflowRankingRow[];
 }
 
-/**
- * PURE. The body served for one `?pricing=` (RESEARCH-WF-FIGURES-1022): each row's `figures` on that pricing, the build's
- * net twin never served beside it. A build persisted before the figures existed is served as stored.
- */
-export function legRankingOnPricing(
-  payload: LegWorkflowRankingPayload,
-  pricing: "gross" | "net",
-  /** The tactics a dynasty's current version follows (live, never from the build), `not_judged_yet`; null = unreadable. */
-  tacticsOf?: ((dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet") | null,
-): LegWorkflowRankingPayload {
-  return {
-    ...payload,
-    pricing,
-    rows: payload.rows.map((r) => {
-      const { figuresNet, figuresByView: _byView, ...row } = r;
-      const priced = pricing === "net" && figuresNet ? { ...row, figures: figuresNet } : row;
-      if (tacticsOf === undefined) return priced;
-      if (!tacticsOf) return { ...priced, tactics: null, tacticsUnavailableReason: "tactics_unreadable" as const };
-      const t = tacticsOf(r.workflowDynastySlug);
-      return t === "not_judged_yet" ? { ...priced, tactics: null, tacticsUnavailableReason: t } : { ...priced, tactics: t, tacticsUnavailableReason: null };
-    }),
-  };
-}
-
-/**
- * PURE. The workflow tactics each dynasty's current version follows; `not_judged_yet` when that version lacks a verdict on
- * any workflow tactic (unknown is never an empty list: the page would read "None").
- */
-export function workflowTacticsFrom(c: Pick<PlayCatalogue, "tactics" | "tacticsByDynasty">): (dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet" {
-  const workflowTactics = [...c.tactics.values()].filter((t) => (t.appliesTo ?? "workflow") === "workflow");
-  return (dynasty) => {
-    const verdicts = c.tacticsByDynasty.get(dynasty);
-    if (!verdicts || workflowTactics.some((t) => !verdicts.has(t.id))) return "not_judged_yet";
-    return workflowTactics
-      .filter((t) => verdicts.get(t.id) === true)
-      .map((t) => ({ id: t.id, name: t.name }))
-      .sort((a, b) => (a.name < b.name ? -1 : 1));
-  };
-}
-
-/** The tactics each dynasty's CURRENT version follows (workflow tactics judged yes), read live off the play catalogue. */
-async function workflowTacticsOf(): Promise<((dynasty: string) => Array<{ id: string; name: string }> | "not_judged_yet") | null> {
-  try {
-    return workflowTacticsFrom(await loadPlayCatalogue());
-  } catch (error) {
-    console.error("[features-service] leg workflow ranking: tactics unreadable, rows serve none:", error);
-    return null;
-  }
-}
-
 const legRankingStore = new Map<string, { value: LegWorkflowRankingPayload; computedAt: number }>();
 const legRankingWarm = new Map<string, Promise<void>>();
 
@@ -4371,16 +4318,6 @@ export async function warmLegWorkflowRankingOnBoot(featureSlug: string, rawLegKe
 export function __resetLegWorkflowRanking(): void {
   legRankingStore.clear();
   legRankingWarm.clear();
-}
-
-/**
- * One pipe's live ranking (pricing, tactics, marks; its public route is deleted, RESEARCH-BY-ENGINE-1113-RETIRE); null = not built
- * yet. Shared by Research's Engine read (`/internal/research/engines/live-scripts`). Marks unreadable throws.
- */
-export async function servedLegWorkflowRanking(featureSlug: string, legKey: string, pricing: "gross" | "net"): Promise<LegWorkflowRankingPayload | null> {
-  const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
-  if (!stored) return null;
-  return withWorkflowRankingMarks(legRankingOnPricing(stored, pricing, await workflowTacticsOf()));
 }
 
 // ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────

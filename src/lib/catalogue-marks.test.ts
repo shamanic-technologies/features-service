@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GLYPH_COLORS, MARK_ICONS, MarkPoolExhaustedError, markCandidates, markId, nextMarks } from "./catalogue-marks.js";
 import { __resetCatalogueMarksMemory } from "./catalogue-marks-store.js";
-import { withMarks, withTemplateRankingMarks, withWorkflowRankingMarks } from "./catalogue-mark-serving.js";
+import { withMarks, withTemplateRankingMarks } from "./catalogue-mark-serving.js";
 
 // MARKS-1022 (owner 2026-10-22): every workflow dynasty and every template dynasty has its OWN icon, the same everywhere.
 describe("the mark pool", () => {
@@ -32,14 +32,14 @@ describe("the mark pool", () => {
 describe("serving the marks (suite store: the same first-sight rule in memory)", () => {
   it("two workflows on the pipe serve different icons; the same workflow serves the same mark on every read and surface", async () => {
     __resetCatalogueMarksMemory();
-    const ranking = await withWorkflowRankingMarks({ rows: [{ workflowDynastySlug: "keel" }, { workflowDynastySlug: "nobelium" }] });
-    const [keel, nobelium] = ranking.rows as unknown as Array<{ icon: string; color: string }>;
+    const ranking = await withMarks("workflow", [{ workflowDynastySlug: "keel" }, { workflowDynastySlug: "nobelium" }], (r) => r.workflowDynastySlug);
+    const [keel, nobelium] = ranking as unknown as Array<{ icon: string; color: string }>;
     expect(keel.icon).toBeTruthy();
     expect(keel.icon).not.toBe(nobelium.icon);
 
     // Read again in another order, and on the Research catalogue: the mark never moves.
-    const again = await withWorkflowRankingMarks({ rows: [{ workflowDynastySlug: "nobelium" }, { workflowDynastySlug: "keel" }] });
-    expect(again.rows[1]).toMatchObject({ icon: keel.icon, color: keel.color });
+    const again = await withMarks("workflow", [{ workflowDynastySlug: "nobelium" }, { workflowDynastySlug: "keel" }], (r) => r.workflowDynastySlug);
+    expect(again[1]).toMatchObject({ icon: keel.icon, color: keel.color });
     const [script] = await withMarks("workflow", [{ key: "keel" }], (p) => p.key);
     expect(script).toMatchObject({ icon: keel.icon, color: keel.color });
     const [t1, t2] = (await withMarks("template", [{ key: "blind-free-offer" }, { key: "named-case-study" }], (p) => p.key)) as unknown as Array<{ icon: string; color: string }>;

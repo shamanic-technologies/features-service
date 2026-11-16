@@ -8,8 +8,7 @@
  */
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { pipeLegKeyOf } from "../lib/funnel-legs.js";
-import { engineLiveScriptsOf, enginePerformanceOf, inEngineWords, type EngineHistoryEntry } from "../lib/research/by-engine.js";
+import { enginePerformanceOf, inEngineWords, type EngineHistoryEntry } from "../lib/research/by-engine.js";
 import { measureScripts, scriptKeyOf, type ScriptFacts } from "../lib/research/engine-script-performance.js";
 import { SCRIPTS_FIRST_DAY, dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, type LedgerBookRead } from "../lib/ledger-book.js";
 import { legCutoffIso } from "../lib/maturity.js";
@@ -20,7 +19,7 @@ import { llmTacticsOf, templateTacticsOf, type BoardEngine, type ScriptLlmTactic
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import type { EngineScriptsInput, MeasureScriptsRead, ResearchMeasure } from "../lib/research/by-engine.js";
 import { readResearchBuild, researchFreshnessOf, type Basis } from "./research.js";
-import { readLegWorkflowRanking, servedLegWorkflowRanking } from "./public.js";
+import { readLegWorkflowRanking } from "./public.js";
 import type { ResearchView } from "../lib/research/types.js";
 import type { EngineResearchBuild, HistorySource } from "../lib/research/engine-build.js";
 import { readLiveTemplateDynasties } from "../lib/writer-catalogue-client.js";
@@ -174,31 +173,6 @@ router.get("/internal/research/engines/performance", apiKeyOnly, async (req, res
   } catch (error) {
     console.error("[features-service] research by Engine (performance) failed:", error);
     res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-router.get("/internal/research/engines/live-scripts", apiKeyOnly, async (req, res) => {
-  const measureId = String(req.query.measure ?? "");
-  const rawPricing = req.query.pricing;
-  if (rawPricing !== undefined && rawPricing !== "gross" && rawPricing !== "net") {
-    res.status(400).json({ error: "pricing must be gross or net", reason: "pricing_unrecognised" });
-    return;
-  }
-  const pricing: "gross" | "net" = rawPricing === "net" ? "net" : "gross";
-  try {
-    const build = await readResearchBuild("user", "mature");
-    if (!build) return notYet(res);
-    const measure = build.file.engines.flatMap((e) => e.measures).find((m) => m.id === measureId);
-    if (!measure) {
-      res.status(404).json({ error: "No Research measure has this id (the `measures[].id` of /internal/research/engines).", reason: "measure_not_found" });
-      return;
-    }
-    const mine = build.historySources.filter((s) => s.measureId === measure.id);
-    const rankings = await Promise.all(mine.map((s) => servedLegWorkflowRanking(s.featureSlug, pipeLegKeyOf(s.featureSlug, s.legKey), pricing)));
-    res.json({ pricing, ...engineLiveScriptsOf(measure, rankings) });
-  } catch (error) {
-    console.error("[features-service] research by Engine (live scripts) failed:", error);
-    res.status(502).json({ error: "The live script ranking could not be read", reason: "live_scripts_unreadable" });
   }
 });
 

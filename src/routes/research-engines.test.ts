@@ -32,7 +32,6 @@ vi.mock("./research.js", async () => {
 });
 vi.mock("./public.js", () => ({
   readLegWorkflowRanking: vi.fn(async () => null),
-  servedLegWorkflowRanking: vi.fn(async () => ({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", computedAt: "t", rows: [{ rank: 1, workflowDynastySlug: "hunor" }] })),
 }));
 vi.mock("../lib/catalogue-marks-store.js", () => ({ marksFor: vi.fn(async () => new Map()) }));
 vi.mock("../lib/writer-catalogue-client.js", () => ({ readLiveTemplateDynasties: vi.fn(async () => null) }));
@@ -57,15 +56,12 @@ describe("research by Engine routes", () => {
     expect(sourceWordsLeft(res.body)).toEqual([]);
   });
 
-  it("catalogue, performance, live scripts", async () => {
+  it("catalogue, performance", async () => {
     const cat = await get("/internal/research/engines/catalog");
     expect(cat.body.engines[0].measures[0].scripts[0]).toMatchObject({ key: "hunor", tactics: { llm: null, template: null } });
     const perf = await get("/internal/research/engines/performance?view=flash");
     expect(perf.status).toBe(200);
     expect(sourceWordsLeft(perf.body)).toEqual([]);
-    const live = await get("/internal/research/engines/live-scripts?measure=email_sent/lead_found/conversation");
-    expect(live.body.rows).toEqual([{ rank: 1, scriptDynastySlug: "hunor" }]);
-    expect(sourceWordsLeft(live.body)).toEqual([]);
   });
 
   it("performance: the Engine's scripts that ran lead the measure, measured on the ledger (RESEARCH-PERF-SCRIPTS-1116)", async () => {
@@ -82,11 +78,11 @@ describe("research by Engine routes", () => {
     expect(sourceWordsLeft(perf.body)).toEqual([]);
   });
 
-  it("refuses unknown params and an unknown measure; 503 before the first build", async () => {
+  it("refuses unknown params; 503 before the first build", async () => {
     expect((await get("/internal/research/engines?view=both")).body.reason).toBe("view_unrecognised");
     expect((await get("/internal/research/engines/catalog?basis=x")).body.reason).toBe("basis_unrecognised");
-    expect((await get("/internal/research/engines/live-scripts?measure=nope")).status).toBe(404);
-    expect((await get("/internal/research/engines/live-scripts?measure=a&pricing=x")).body.reason).toBe("pricing_unrecognised");
+    // RESEARCH-NATIVE-ENGINE-1116-P3: the retired workflow ranking read is deleted, never stubbed.
+    expect((await get("/internal/research/engines/live-scripts?measure=email_sent/lead_found/conversation")).status).toBe(404);
     built = false;
     expect((await get("/internal/research/engines/performance")).status).toBe(503);
     built = true;
