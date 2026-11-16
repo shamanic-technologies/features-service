@@ -29,7 +29,7 @@ const values = outcomeValues({
   declared: new Map([["conversation", 50]]),
 });
 const runnable = [
-  { id: "1", outcome: "message_written", dynasty: "cheap", version: 3, description: "Blind email", code: "", tactics: { llm: { provider: "google", model: "flash-lite" } } },
+  { id: "1", outcome: "message_written", dynasty: "cheap", version: 3, name: "Blind email writer", description: "Blind email", code: "", tactics: { llm: { provider: "google", model: "flash-lite" } } },
   { id: "2", outcome: "message_written", dynasty: "dear", version: 1, description: "Blind email, careful", code: "", tactics: {} },
   { id: "3", outcome: "message_written", dynasty: "named", version: 2, description: "Names the brand", code: "", tactics: {} },
   { id: "4", outcome: "paid_client", dynasty: "closer", version: 1, description: "", code: "", tactics: {} },
@@ -90,6 +90,9 @@ describe("campaignEngineScripts", () => {
 
   it("serves this campaign's own runs per script, never the fleet's, and no decision score", () => {
     const cheap = mw.scripts.find((s) => s.script === "message_written/cheap")!;
+    expect(cheap.name).toBe("Blind email writer");
+    expect(mw.scripts.find((s) => s.script === "message_written/dear")!.name).toBeNull();
+    expect(mw.past[0]!.name).toBeNull();
     expect(cheap.campaign.runs).toBe(42);
     expect(cheap.campaign.lastRunDay).toBe("2026-11-12");
     expect(cheap.campaign.spentUsd).toBeCloseTo(0.084, 6);
