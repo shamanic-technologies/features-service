@@ -27,8 +27,9 @@
  * view (`inFlashOrder`, owner same day: « c'est à moi de m'habituer que ça sort sur la vue flash »). A row that spent
  * nothing on the flash view is `untested`: the dashboard hides those by default.
  *
- * Only the FIRST combination the pipe runs today is a real pick: the pipe chooses its workflow, its template and its LLM
- * separately (BEST-TPL-LLM-1022), never a combination. That one is served beside the rows at read (`servedNow`).
+ * Only the combinations that WROTE are rows (RESEARCH-NATIVE-ENGINE-1116, supersedes RESEARCH-ALL-COMBOS-1023's zero rows
+ * for every never-written combination: no campaign runs a workflow since MIGRATE-1105, so those rows were history that never
+ * happened, and the Research by Engine read dropped them already).
  *
  * A combination any part of which can no longer run (workflow not runnable, template dynasty deprecated, LLM served
  * under no alias or only deprecated ones) is DEPRECATED and stands after every active one.
@@ -81,9 +82,7 @@ export interface PerformanceRow extends PerformanceFigures {
   template: { key: string; label: string; dynasty: { key: string; label: string } | null; standaloneReason: "no_dynasty_on_pipe" | null } | null;
   /** The LLM DYNASTY (= its Research model page); `key` is a model key when chat-service places the model in none. */
   llm: { key: string; label: string; provider: string | null } | null;
-  /** False = a technically valid combination that never wrote an email yet (listed with zero figures, ranked on its parts). */
-  written: boolean;
-  /** Where the writer comes from: the sequence record, else the workflow version's definition. Null with no writer or never written. */
+  /** Where the writer comes from: the sequence record, else the workflow version's definition. Null with no writer. */
   writerSource: "sequences" | "workflow_definition" | null;
   /** Set when template and LLM are null: neither the sequences nor the workflow's definition name a writer. */
   writerUnavailableReason: "not_on_record" | null;
@@ -91,7 +90,7 @@ export interface PerformanceRow extends PerformanceFigures {
   learning: boolean;
   /** What it stands on in the order: its cost per outcome, else (no outcome) its $ spent; read on the flash view. */
   sortCostUsd: number;
-  /** Spent nothing on the flash view (never sent, or a combination no email was written with yet). */
+  /** Spent nothing on the flash view. */
   untested: boolean;
   /** Deprecated as soon as one part can no longer run (`deprecatedParts` names which); deprecated rows stand last. */
   status: "active" | "deprecated";
@@ -117,9 +116,9 @@ export interface PipePerformance {
   rowOrder: "cost_per_outcome";
   /** The order is read on the FLASH figures whatever the view (PERF-ORDER-FLASH-1023): the view moves figures, never rows. */
   orderView: "flash";
-  /** Every technically valid combination is a row, not only those that wrote (RESEARCH-ALL-COMBOS-1023). */
-  rowsCover: "all_valid_combinations";
-  /** The pipe the rows are of: what `servedNow` is read on. */
+  /** Only the combinations that wrote are rows (RESEARCH-NATIVE-ENGINE-1116). */
+  rowsCover: "combinations_that_wrote";
+  /** The pipe the rows are of. */
   featureSlug: string | null;
   legKey: string | null;
   outcomeNoun: string;
@@ -144,7 +143,7 @@ export interface PipePerformanceInput {
   pipe: ResearchPipeId;
   noun: string;
   nounPlural: string;
-  /** The pipe's feature (channel) slug; absent = `servedNow` cannot be read on it. */
+  /** The pipe's feature (channel) slug. */
   featureSlug?: string;
   legKey: string;
   cells: readonly SlugCell[];
@@ -165,11 +164,6 @@ export interface PipePerformanceInput {
   llmLabelOf: (key: string) => string;
   /** The parts that can no longer run (keys as on the rows); a combination with any of them is deprecated. */
   deprecated?: DeprecatedParts;
-  /**
-   * The parts a run may pick today (keys as on the rows): every runnable workflow x selectable template x selectable LLM is
-   * listed, a combination that never wrote with zero figures (RESEARCH-ALL-COMBOS-1023). Absent = only what wrote.
-   */
-  candidates?: { workflows: readonly string[]; templates: readonly string[]; llms: readonly string[] };
   unpricedBilledUsd: number;
   now: Date;
 }
@@ -201,26 +195,6 @@ export function deprecatedPartsOf(
         .filter((m) => (m.aliases.length === 0 ? m.aliasesUnavailableReason === "no_alias_serves_it" : aliasStatus !== null && m.aliases.every((a) => aliasStatus.get(a) === "deprecated")))
         .map((m) => m.key),
     ),
-  };
-}
-
-/**
- * PURE. The parts a run may pick today, from the pipe's catalogue (RESEARCH-ALL-COMBOS-1023): every runnable workflow,
- * every template dynasty with a head that is not deprecated, every LLM dynasty served today under at least one alias;
- * minus every deprecated part.
- */
-export function candidatePartsOf(
-  catalog: {
-    workflows: ReadonlyArray<{ key: string; runnable: boolean }>;
-    templates: ReadonlyArray<{ key: string; status: string | null; dynasty: { head: unknown } | null }>;
-    models: ReadonlyArray<{ key: string; aliases: readonly string[]; dynasty: { servedToday: boolean } | null }>;
-  },
-  deprecated: DeprecatedParts,
-): { workflows: string[]; templates: string[]; llms: string[] } {
-  return {
-    workflows: catalog.workflows.filter((w) => w.runnable && !deprecated.workflows.has(w.key)).map((w) => w.key),
-    templates: catalog.templates.filter((t) => t.dynasty !== null && t.dynasty.head != null && t.status !== "deprecated" && !deprecated.templates.has(t.key)).map((t) => t.key),
-    llms: catalog.models.filter((m) => m.dynasty !== null && m.dynasty.servedToday && m.aliases.length > 0 && !deprecated.llms.has(m.key)).map((m) => m.key),
   };
 }
 
@@ -276,39 +250,6 @@ export function inFlashOrder(shown: PipePerformance, flash: PipePerformance): Pi
   return { ...shown, rows };
 }
 
-/** One part of the combination the pipe runs today: its key as on the rows and its name. */
-export interface ServedPart {
-  key: string;
-  label: string;
-}
-
-/**
- * The combination the pipe runs TODAY (owner 2026-10-24, PERF-COST-ORDER-1024: « la ligne de la combinaison actuelle qui est
- * servie en prod »): the leg workflow ranking's rank 1 (what campaign-service runs) x the writer pick's rank 1 template and
- * rank 1 LLM (what every email of the pipe is written with, default play). `row` = that combination's row on this view.
- */
-export interface PerformanceServedNow {
-  workflow: ServedPart | null;
-  template: ServedPart | null;
-  llm: ServedPart | null;
-  row: PerformanceRow | null;
-  unavailableReason: "pipe_not_read" | "workflow_ranking_not_computed_yet" | "no_runnable_workflow" | "writer_ranking_not_computed_yet" | "no_template_picked" | "no_llm_picked" | "combination_not_listed" | "served_pick_unreadable" | null;
-}
-
-/** PURE. The served combination's block: its parts, its row when the tab lists it, else why not. */
-export function servedNowOf(
-  perf: Pick<PipePerformance, "rows">,
-  parts: { workflow: ServedPart | null; template: ServedPart | null; llm: ServedPart | null; unavailableReason: PerformanceServedNow["unavailableReason"] },
-): PerformanceServedNow {
-  const { workflow, template, llm } = parts;
-  if (parts.unavailableReason || !workflow || !template || !llm) {
-    const reason = parts.unavailableReason ?? (!workflow ? "no_runnable_workflow" : !template ? "no_template_picked" : "no_llm_picked");
-    return { workflow, template, llm, row: null, unavailableReason: reason };
-  }
-  const row = perf.rows.find((r) => r.key === `${workflow.key}|${template.key}|${llm.key}`) ?? null;
-  return { workflow, template, llm, row, unavailableReason: row ? null : "combination_not_listed" };
-}
-
 /** PURE. The order of the rows (PERF-COST-ORDER-1024): active first, then `sortCostUsd` ascending, then key. */
 export function byShownCost<T extends { status: "active" | "deprecated"; sortCostUsd: number; key: string }>(a: T, b: T): number {
   return (a.status === b.status ? 0 : a.status === "active" ? -1 : 1) || a.sortCostUsd - b.sortCostUsd || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
@@ -316,7 +257,7 @@ export function byShownCost<T extends { status: "active" | "deprecated"; sortCos
 
 /** PURE. One pipe's Performance tab. */
 export function pipePerformance(p: PipePerformanceInput): PipePerformance {
-  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "cost_per_outcome" as const, orderView: "flash" as const, rowsCover: "all_valid_combinations" as const, featureSlug: p.featureSlug ?? null, legKey: p.legKey, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
+  const base = { pipe: p.pipe, figuresBasis: "workflow_bars" as const, rowOrder: "cost_per_outcome" as const, orderView: "flash" as const, rowsCover: "combinations_that_wrote" as const, featureSlug: p.featureSlug ?? null, legKey: p.legKey, outcomeNoun: p.noun, outcomeNounPlural: p.nounPlural, unpricedBilledUsd: p.unpricedBilledUsd };
   if (!p.persons.some((b) => b.generation)) return { ...base, rows: [], totals: null, series: null, unavailableReason: "no_writer_recorded_on_pipe" };
   const dyn = p.templateDynasties ?? NO_TEMPLATE_DYNASTIES;
   const llmDyn = p.llmDynasties ?? NO_LLM_DYNASTIES;
@@ -349,7 +290,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
   // Each workflow's rows on its bar's basis, scaled onto its bar (one figure per pipe, both tabs).
   const lastMonth = p.now.toISOString().slice(0, 7);
   const outcomesRequired = legMaturity(p.legKey).outcomesRequired;
-  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null; candidate?: true };
+  type Draft = { key: string; e: NonNullable<ReturnType<typeof byCombo.get>>; acc: Acc; months: Map<string, Acc>; isMature: boolean; matureOutcomes: number | null };
   const drafts: Draft[] = [];
   const combosOf = new Map<string, string[]>();
   for (const [key, e] of byCombo) combosOf.set(e.dynasty, [...(combosOf.get(e.dynasty) ?? []), key]);
@@ -409,21 +350,6 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
       }
     }
   }
-
-  // Every technically valid combination is listed (owner 2026-10-23, RESEARCH-ALL-COMBOS-1023, « je veux dans cette table
-  // toutes les combinaisons valides techniquement et que tu ranks tout »): one that never wrote gets a zero row. It adds
-  // nothing to the totals or the series.
-  const written = new Set(drafts.map((d) => d.key));
-  const c = p.candidates;
-  if (c)
-    for (const w of c.workflows)
-      for (const t of c.templates)
-        for (const l of c.llms) {
-          const key = `${w}|${t}|${l}`;
-          if (written.has(key)) continue;
-          written.add(key);
-          drafts.push({ key, e: { dynasty: w, tpl: t, llm: l, sources: new Set(), cells: [] }, acc: zero(), months: new Map(), isMature: false, matureOutcomes: null, candidate: true });
-        }
 
   // The series: every month from the first to this one, cumulative; its last point IS the totals (the cards).
   const monthly = new Map<string, Acc>();
@@ -497,8 +423,7 @@ export function pipePerformance(p: PipePerformanceInput): PipePerformance {
                 standaloneReason: standalone ? ("no_dynasty_on_pipe" as const) : null,
               },
         llm: e.llm === NONE ? null : { key: e.llm, label: p.llmLabelOf(e.llm), provider: llmDynasty?.provider || null },
-        written: !d.candidate,
-        writerSource: d.candidate || (e.tpl === NONE && e.llm === NONE) ? null : e.sources.has(FROM_SEQ) ? ("sequences" as const) : ("workflow_definition" as const),
+        writerSource: e.tpl === NONE && e.llm === NONE ? null : e.sources.has(FROM_SEQ) ? ("sequences" as const) : ("workflow_definition" as const),
         writerUnavailableReason: e.tpl === NONE && e.llm === NONE ? ("not_on_record" as const) : null,
         maturity: { isMature: d.isMature, matureOutcomes: d.matureOutcomes, outcomesRequired },
         learning: !d.isMature,
