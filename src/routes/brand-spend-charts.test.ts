@@ -14,7 +14,7 @@ vi.mock("./agent-catalogue.js", () => ({
     pathOf: () => null,
   })),
 }));
-vi.mock("./public.js", () => ({ fleetLegConversionRatesFromOutcomePrices: () => new Map() }));
+vi.mock("./public.js", () => ({ fleetLegConversionRatesFromOutcomePrices: () => new Map(), awaitFleetLegConversionRatesFromOutcomePrices: async () => new Map() }));
 vi.mock("../lib/effective-conversion-rates.js", () => ({ getBrandEffectiveRates: vi.fn(async () => ({ legs: [] })) }));
 vi.mock("../lib/spend-charts-io.js", async (orig) => ({
   ...(await orig<typeof import("../lib/spend-charts-io.js")>()),

@@ -3885,6 +3885,19 @@ export function fleetLegConversionRatesFromOutcomePrices(): Map<string, number> 
   return out;
 }
 
+/**
+ * `fleetLegConversionRatesFromOutcomePrices`, but a read that finds the store EMPTY (boot) first restores the persisted
+ * build, else awaits the in-flight one (`awaitWarmStore`), never answering "nothing measured" (FLEET-CONVERSION-BOOT-1116,
+ * prod 2026-11-16: a spend-charts read 90 s after a restart served the Wide Email cold email part's expected conversion
+ * at the 1 % seeded default beside the fleet's measured 0.10 %, and its Gold cell kept serving it). Still empty after
+ * `waitMs` = `StoreNotComputedError`.
+ */
+export async function awaitFleetLegConversionRatesFromOutcomePrices(waitMs: number = FLEET_LEG_COSTS_BOOT_WAIT_MS): Promise<Map<string, number>> {
+  await restoreOutcomePrices();
+  await awaitWarmStore(() => outcomePricesStore?.value ?? null, warmOutcomePrices, waitMs, "fleet leg conversions (outcome prices)");
+  return fleetLegConversionRatesFromOutcomePrices();
+}
+
 /** How long a sales-paths read waits on the first outcome-prices build after boot (~2.5 min in prod,
  *  2026-10-03) before failing visibly. Under Caddy's 310 s read timeout. */
 export const FLEET_LEG_COSTS_BOOT_WAIT_MS = 200_000;

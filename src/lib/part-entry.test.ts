@@ -121,12 +121,12 @@ describe("PART-ENTRY-1116: an offer / brand counts from its earliest entry, neve
 
 describe("PART-ENTRY-1116: the fix retires every cell computed before it", () => {
   it("the three spend-charts routes and campaign-targets state this ship's compute rule", () => {
-    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"]).toBe("team-part-entry-1116");
+    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"]).toBe("fleet-conversion-boot-1116");
     for (const path of [
       "/offers/{offerId}/spend-charts",
       "/brands/{brandId}/spend-charts",
     ])
-      expect(ROUTE_COMPUTE_RULES[path]).toBe("part-entry-1116");
+      expect(ROUTE_COMPUTE_RULES[path]).toBe("fleet-conversion-boot-1116");
     expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("campaign-conversion-1116");
   });
 });
