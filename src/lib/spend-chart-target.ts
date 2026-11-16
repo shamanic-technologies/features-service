@@ -10,8 +10,10 @@
  *
  *   - Target = campaign-service's `target`, else the last step of the funnel the campaign runs.
  *   - Entry (the step % to Target counts from) = the first milestone of the campaign's own units chain to its Target
- *     (`milestoneChainOf`: Lead found on a proactive funnel); a chain that IS the Target counts from the step its unit
- *     takes people over at (a reactive campaign's trigger step), from Start nobody (`no_entry_population`).
+ *     (`milestoneChainOf`: Lead found on a proactive funnel), a unit jumping Start -> Target left out of the walk
+ *     (CAMPAIGN-CONVERSION-1116); a chain that IS the Target counts from the step its unit takes people over at (a
+ *     reactive campaign's trigger step), from Start nobody (`no_entry_population`). A group's entry is read among the
+ *     members that have one, at the lowest rung of the lead-state ladder (PART-ENTRY-1116: its earliest entry).
  *   - EXPECTED, read off the priced route of the scope's expected model (`expectedRouteOf`):
  *       cost from the route's start to the Target: C(to) = C(from) / y + c along the route (y = the leg's rate,
  *       c = one outcome of the leg; the customer's own team costs $0), C(route start) = 0;
@@ -19,6 +21,7 @@
  *       first leg) = the fleet's measured conversion of that channel x leg, else the seeded entry default.
  */
 import { milestoneChainOf } from "./campaign-milestone-cards.js";
+import { leadStateOf, leadStateRankOf } from "./lead-states.js";
 import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
 import { pipeLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import type { ChannelStepKey } from "./acquisition-channels.js";
@@ -54,6 +57,8 @@ export interface TargetUnitEdge {
 export function campaignChartTarget(stated: string | null | undefined, funnelLastStep: string | null, units: readonly TargetUnitEdge[]): ChartTarget | null {
   const step = stated ?? funnelLastStep;
   if (!step) return null;
+  // CAMPAIGN-CONVERSION-1116: a unit jumping Start -> Target (a follow-up writer) is left out of the walk, so a proactive
+  // campaign beside one still counts from Lead found; one with only such units has nobody to convert.
   const chain = milestoneChainOf(units, step);
   const first = chain[0]?.step ?? null;
   // A chain that IS the Target (a reactive campaign whose unit lands on it): it counts from the step its people were
@@ -81,7 +86,17 @@ export function groupChartTarget(members: ReadonlyArray<{ target: ChartTarget | 
   const step = pick(stated.map((m) => ({ key: m.target.step, createdAt: m.createdAt })), (k) => k);
   if (step === null) return null;
   const same = stated.filter((m) => m.target.step === step);
-  const fromStep = pick(same.map((m) => ({ key: m.target.fromStep, createdAt: m.createdAt })), (k) => k ?? "");
+  // CAMPAIGN-CONVERSION-1116: a member with nobody to convert never voids the group's conversion: its entry is read
+  // among the members that have one (null only when none has).
+  // PART-ENTRY-1116: the group counts from its EARLIEST entry, the people it took in first: the members' entry at the
+  // lowest rung of the lead-state ladder (a step on no state, Lead found, comes before any). Never which campaign is
+  // newer (Wide Email from Lead found beside the newer Reply Booking from Meeting booked: the offer read from Meeting
+  // booked). Same rung = the entry most members count from, ties the most recent.
+  const entering = same.filter((m) => m.target.fromStep !== null);
+  const rungOf = (step: string | null) => (step === null ? Number.POSITIVE_INFINITY : (leadStateRankOf(leadStateOf(step)) ?? 0));
+  const earliest = Math.min(...entering.map((m) => rungOf(m.target.fromStep)));
+  const first = entering.filter((m) => rungOf(m.target.fromStep) === earliest);
+  const fromStep = pick((first.length > 0 ? first : same).map((m) => ({ key: m.target.fromStep, createdAt: m.createdAt })), (k) => k ?? "");
   return { step, fromStep, source: same.some((m) => m.target.source === "campaign_target") ? "campaign_target" : "funnel_last_step" };
 }
 

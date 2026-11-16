@@ -22,8 +22,18 @@ export interface UnitEdge {
  * PURE. The milestones from Start to the Target along the campaign's units: the shortest chain of units from a unit leaving
  * Start (or a step no unit produces: a trigger head) to the Target; no chain reaches it = the longest walk from the head, then
  * the Target appended. Each milestone names the units landing on it on the chain.
+ *
+ * CAMPAIGN-CONVERSION-1116 (prod 2026-11-16, Wide Email): a unit landing on the Target straight from Start (a script serving
+ * people the campaign already took in, e.g. a follow-up writer on `start_to_paid_client`) is no chain of its own: the walk
+ * reads the campaign's OTHER units (Lead found -> Positive reply -> Paid client), and that unit lands on the Target's card
+ * beside them. The shortest walk picked it alone: one Paid client card, and a chart "% to Paid client" with nobody entered
+ * over 4,157 leads found. A campaign whose every unit jumps Start -> Target keeps that one-step chain.
  */
-export function milestoneChainOf(units: readonly UnitEdge[], target: string | null): Array<{ step: string; unitCampaignIds: string[] }> {
+export function milestoneChainOf(allUnits: readonly UnitEdge[], target: string | null): Array<{ step: string; unitCampaignIds: string[] }> {
+  const fromStart = (u: UnitEdge) => u.fromStep === null || u.fromStep === "start";
+  const jumps = (u: UnitEdge) => target !== null && fromStart(u) && u.toStep === target;
+  const walking = allUnits.filter((u) => !jumps(u));
+  const units = walking.length > 0 ? walking : allUnits;
   const produced = new Set(units.map((u) => u.toStep));
   const heads = units.filter((u) => u.fromStep === null || u.fromStep === "start" || !produced.has(u.fromStep));
   // Breadth-first over steps, from every head: the first time the Target is reached is the shortest chain.
@@ -46,7 +56,9 @@ export function milestoneChainOf(units: readonly UnitEdge[], target: string | nu
   return steps.map((step, i) => {
     const from = i === 0 ? null : steps[i - 1]!;
     const landing = units.filter((u) => u.toStep === step && (i === 0 ? u.fromStep === null || u.fromStep === "start" || !produced.has(u.fromStep) : u.fromStep === from));
-    return { step, unitCampaignIds: landing.map((u) => u.campaignId) };
+    // The units jumping Start -> Target land on the Target's card (left out of the walk only).
+    const jumping = units === walking && step === target ? allUnits.filter(jumps) : [];
+    return { step, unitCampaignIds: [...landing, ...jumping].map((u) => u.campaignId) };
   });
 }
 

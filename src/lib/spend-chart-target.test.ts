@@ -111,6 +111,34 @@ describe("which Target a chart counts", () => {
     expect(campaignChartTarget("conversation", "paid_client", units)).toEqual(REPLY);
     expect(campaignChartTarget(null, null, units)).toBeNull();
   });
+  // CAMPAIGN-CONVERSION-1116 (prod 2026-11-16, Wide Email): a proactive campaign whose Target is Paid client also runs a
+  // follow-up writer on `start_to_paid_client`. The shortest chain was that one unit, so the chart served "no entry
+  // population" over 4,157 leads found. Its people taken in are its Lead found Units.
+  it("a proactive campaign with a Start -> Target unit beside its chain counts from Lead found", () => {
+    const withFollowUp = [...units, { campaignId: "fu", fromStep: null, toStep: "paid_client" }];
+    expect(campaignChartTarget("paid_client", "paid_client", withFollowUp)).toEqual(PAID);
+    // Same with the stored "start" spelling, and whatever order the units come in.
+    expect(campaignChartTarget("paid_client", null, [{ campaignId: "fu", fromStep: "start", toStep: "paid_client" }, ...units].reverse())).toEqual({ ...PAID, source: "campaign_target" });
+    // Its chain to the Target missing a link still counts from its first milestone.
+    expect(campaignChartTarget("paid_client", null, [units[0]!, { campaignId: "fu", fromStep: null, toStep: "paid_client" }])?.fromStep).toBe("lead_found");
+    // Only a Start -> Target unit: nobody taken in.
+    expect(campaignChartTarget("paid_client", null, [{ campaignId: "fu", fromStep: null, toStep: "paid_client" }])?.fromStep).toBeNull();
+  });
+  it("a reactive campaign keeps its own entry (Reply Booking: from Meeting booked)", () => {
+    const reactive = [
+      { campaignId: "book", fromStep: "conversation", toStep: "meeting_booked" },
+      { campaignId: "attend", fromStep: "meeting_booked", toStep: "meeting_attended" },
+      { campaignId: "close", fromStep: "meeting_attended", toStep: "paid_client" },
+    ];
+    expect(campaignChartTarget("paid_client", null, reactive)?.fromStep).toBe("meeting_booked");
+    // A reactive unit landing on the Target from its trigger step: counted from that step (unchanged).
+    expect(campaignChartTarget("paid_client", null, [{ campaignId: "x", fromStep: "conversation", toStep: "paid_client" }])?.fromStep).toBe("conversation");
+  });
+  it("a group: a member with nobody to convert never voids the group's entry", () => {
+    const none: ChartTarget = { ...PAID, fromStep: null };
+    expect(groupChartTarget([{ target: PAID, createdAt: "2026-10-01" }, { target: none, createdAt: "2026-11-01" }])?.fromStep).toBe("lead_found");
+    expect(groupChartTarget([{ target: none, createdAt: "2026-11-01" }])?.fromStep).toBeNull();
+  });
   it("a group: the Target most campaigns state, ties to the most recent", () => {
     expect(groupChartTarget([{ target: PAID, createdAt: "2026-10-01" }, { target: REPLY, createdAt: "2026-11-01" }])?.step).toBe("conversation");
     expect(groupChartTarget([{ target: PAID, createdAt: "2026-10-01" }, { target: PAID, createdAt: "2026-10-02" }, { target: REPLY, createdAt: "2026-11-01" }])?.step).toBe("paid_client");
