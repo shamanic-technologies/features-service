@@ -637,6 +637,12 @@ export const tactics = pgTable("tactics", {
    * `template` (a template DYNASTY, judged on its head's text) or `llm` (a writer model alias, judged on the model).
    */
   appliesTo: text("applies_to").notNull().default("workflow"),
+  /**
+   * The script tactics fields this tactic is about (migration 0075, ONE-WRITER-N-MODELS-1116-LEADS-ONLY): a strategy
+   * naming it narrows the scripts of an Engine only when one of the Engine's runnable scripts STATES one of these fields
+   * (the matter is that Engine's decision). Null = applies on every Engine.
+   */
+  decidedByFields: text("decided_by_fields").array(),
 });
 
 export const strategies = pgTable("strategies", {

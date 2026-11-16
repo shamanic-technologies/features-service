@@ -8,6 +8,7 @@
  * plan computation it used. A figure that cannot be served is null with a reason, never a guess.
  */
 import { roiMultipleOf } from "./roi-multiple.js";
+import { capacityUnavailableReason, expectedScheduleOf, projectSchedule, sumSchedules, type ExpectedSchedule, type SpendCapacityInput, type CapacityPausedReason } from "./spend-capacity.js";
 
 export interface TargetDayCount {
   /** UTC day, YYYY-MM-DD. */
@@ -36,6 +37,8 @@ export interface CampaignTargetInput {
   plan: { computedAt: string; funnelId: string | null; costPerTargetUsd: number | null; basis: string | null; unavailableReason: string | null } | null;
   /** What the customer lets the campaign spend per day (billing caps); null = none stated. */
   dailyBudgetUsd: number | null;
+  /** PROJECTION-CAP-1117: what the campaign can really spend (its status, its caps' windows): `lib/spend-capacity.ts`. */
+  capacity: SpendCapacityInput;
   /** NOW (ISO) and TODAY (UTC day): the clock of the projection. */
   now: string;
 }
@@ -72,7 +75,11 @@ export interface CampaignTargetRow {
     costPerTargetBasis: string | null;
     spendPerDayUsd: number | null;
     spendPerDaySource: "daily_budget" | "spend_pace_7d" | null;
+    /** The pace WHILE the campaign spends (PROJECTION-CAP-1117: a reached cap makes `daily` 0 until `resumesAt`, never this). */
     outcomesPerDay: number | null;
+    /** PROJECTION-CAP-1117: why nothing is expected NOW, until `resumesAt` (the cap's next window); null = spending. */
+    pausedReason: CapacityPausedReason | null;
+    resumesAt: string | null;
     /** The next PROJECTION_DAYS UTC days after today: expected Target outcomes that day + the cumulative from today's count. */
     daily: Array<{ date: string; expectedOutcomes: number; cumulativeExpectedOutcomes: number }>;
     nextExpectedAt: string | null;
@@ -91,18 +98,17 @@ const addDays = (day: string, n: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/** PURE: the next PROJECTION_DAYS days at `outcomesPerDay` from today's count, and when the next one is due. */
-function paceOf(outcomesPerDay: number | null, outcomesToDate: number | null, now: string) {
-  const today = now.slice(0, 10);
-  const daily: CampaignTargetRow["projection"]["daily"] = [];
-  if (outcomesPerDay !== null) {
-    for (let k = 1; k <= PROJECTION_DAYS; k += 1) {
-      daily.push({ date: addDays(today, k), expectedOutcomes: round(outcomesPerDay, 4), cumulativeExpectedOutcomes: round((outcomesToDate ?? 0) + outcomesPerDay * k, 2) });
-    }
-  }
-  const nextExpectedInHours = outcomesPerDay !== null ? round(24 / outcomesPerDay, 2) : null;
-  const nextExpectedAt = nextExpectedInHours !== null ? new Date(Date.parse(now) + nextExpectedInHours * 3_600_000).toISOString() : null;
-  return { daily, nextExpectedAt, nextExpectedInHours };
+/**
+ * PROJECTION-CAP-1117: an entry's schedule (its campaigns' summed), kept beside the served object so the ledger re-base
+ * (`offerTargetFromLedger`) re-paces from the same schedule. Never serialised.
+ */
+const entrySchedules = new WeakMap<object, ExpectedSchedule | null>();
+
+/** PURE: a campaign row's expected schedule (its full pace under its spend capacity); null = no projection. */
+export function targetScheduleOf(i: CampaignTargetInput, row: CampaignTargetRow): ExpectedSchedule | null {
+  const p = row.projection;
+  if (p.unavailableReason !== null || p.spendPerDayUsd === null || p.costPerTargetUsd === null || p.costPerTargetUsd <= 0) return null;
+  return expectedScheduleOf(p.spendPerDayUsd / p.costPerTargetUsd, p.spendPerDayUsd, i.capacity, i.now);
 }
 
 /** PURE: one campaign's Target row. */
@@ -146,10 +152,14 @@ export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
   const spendPerDaySource: "daily_budget" | "spend_pace_7d" | null = i.dailyBudgetUsd !== null && i.dailyBudgetUsd > 0 ? "daily_budget" : pace > 0 ? "spend_pace_7d" : null;
   const spendPerDayUsd = spendPerDaySource === "daily_budget" ? i.dailyBudgetUsd : spendPerDaySource === "spend_pace_7d" ? round(pace, 4) : null;
   const costPerTarget = plan?.costPerTargetUsd ?? null;
+  // PROJECTION-CAP-1117: a campaign that can spend nothing for good (stopped, one-off cap spent) expects nothing.
+  const capacityReason = capacityUnavailableReason(i.capacity);
   const projectionReason =
     i.target === null
       ? "campaign_states_no_target"
-      : plan === null
+      : capacityReason !== null
+        ? capacityReason
+        : plan === null
         ? "plan_not_computed_yet"
         : costPerTarget === null || costPerTarget <= 0
           ? plan.unavailableReason ?? "plan_prices_no_target"
@@ -157,7 +167,8 @@ export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
             ? "no_daily_budget_and_no_recent_spend"
             : null;
   const outcomesPerDay = projectionReason === null ? spendPerDayUsd! / costPerTarget! : null;
-  const { daily, nextExpectedAt, nextExpectedInHours } = paceOf(outcomesPerDay, outcomesToDate, i.now);
+  const schedule = outcomesPerDay !== null ? expectedScheduleOf(outcomesPerDay, spendPerDayUsd!, i.capacity, i.now) : null;
+  const { daily, nextExpectedAt, nextExpectedInHours } = projectSchedule(schedule, outcomesToDate, i.now, PROJECTION_DAYS);
 
   return {
     salesFunnelCampaignId: i.salesFunnelCampaignId,
@@ -180,6 +191,8 @@ export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
       spendPerDayUsd,
       spendPerDaySource,
       outcomesPerDay: outcomesPerDay !== null ? round(outcomesPerDay, 4) : null,
+      pausedReason: schedule?.pausedReason ?? null,
+      resumesAt: schedule?.resumesAt ?? null,
       daily,
       nextExpectedAt,
       nextExpectedInHours,
@@ -241,7 +254,7 @@ function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
   if (group.length === 1) {
     // Picked field by field: the route's rows carry more (milestones) than an entry serves.
     const r = group[0]!.row;
-    return {
+    const entry: OfferTargetEntry = {
       offerId: r.offerId,
       target: r.target,
       salesFunnelCampaignIds: ids,
@@ -255,6 +268,8 @@ function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
       pastUnavailableReason: r.pastUnavailableReason,
       projection: { ...r.projection, unprojectedCampaignIds: r.projection.outcomesPerDay === null ? ids : [] },
     };
+    entrySchedules.set(entry, targetScheduleOf(group[0]!.input, r));
+    return entry;
   }
   const first = group[0]!;
   const now = first.input.now;
@@ -290,13 +305,14 @@ function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
   const projected = group.filter((m) => m.row.projection.outcomesPerDay !== null && m.row.projection.spendPerDayUsd !== null && (m.row.projection.costPerTargetUsd ?? 0) > 0);
   const spendPerDay = projected.reduce((a, m) => a + m.row.projection.spendPerDayUsd!, 0);
   const outcomesPerDay = projected.length > 0 ? projected.reduce((a, m) => a + m.row.projection.spendPerDayUsd! / m.row.projection.costPerTargetUsd!, 0) : null;
-  const pace = paceOf(outcomesPerDay, measured.outcomesToDate, now);
+  const schedule = sumSchedules(projected.map((m) => targetScheduleOf(m.input, m.row)).filter((x): x is ExpectedSchedule => x !== null));
+  const pace = projectSchedule(schedule, measured.outcomesToDate, now, PROJECTION_DAYS);
   const planDates = group.map((m) => m.row.projection.planComputedAt).filter((d): d is string => d !== null).sort();
   const scope = projected.length > 0 ? projected : group;
   const sources = scope.map((m) => m.row.projection.spendPerDaySource);
   const bases = scope.map((m) => m.row.projection.costPerTargetBasis);
 
-  return {
+  const entry: OfferTargetEntry = {
     offerId: first.row.offerId,
     target: first.row.target,
     salesFunnelCampaignIds: ids,
@@ -316,11 +332,15 @@ function mergeGroup(group: readonly OfferTargetMember[]): OfferTargetEntry {
       spendPerDayUsd: projected.length > 0 ? round(spendPerDay, 4) : null,
       spendPerDaySource: projected.length === 0 ? null : sameOrNull(sources) ?? "mixed",
       outcomesPerDay: outcomesPerDay !== null ? round(outcomesPerDay, 4) : null,
+      pausedReason: schedule?.pausedReason ?? null,
+      resumesAt: schedule?.resumesAt ?? null,
       ...pace,
       unavailableReason: outcomesPerDay !== null ? null : first.row.projection.unavailableReason,
       unprojectedCampaignIds: group.filter((m) => !projected.includes(m)).map((m) => m.row.salesFunnelCampaignId),
     },
   };
+  entrySchedules.set(entry, schedule);
+  return entry;
 }
 
 /**
@@ -364,7 +384,7 @@ export function offerTargetFromLedger(
       measuredReturn: { roiMultiple: null, valueUsd: null, spentUsd: null, unavailableReason: reason },
       past: [],
       pastUnavailableReason: reason,
-      projection: { ...entry.projection, ...paceOf(entry.projection.outcomesPerDay, null, now) },
+      projection: { ...entry.projection, ...projectSchedule(entrySchedules.get(entry) ?? null, null, now, PROJECTION_DAYS) },
       ledger: null,
     };
   }
@@ -392,7 +412,7 @@ export function offerTargetFromLedger(
     measuredReturn,
     past: row.past.map((p) => ({ date: p.date, outcomes: p.units, cumulativeOutcomes: p.cumulativeUnits })),
     pastUnavailableReason: units === null ? row.unitsUnavailableReason : null,
-    projection: { ...entry.projection, ...paceOf(entry.projection.outcomesPerDay, units, now) },
+    projection: { ...entry.projection, ...projectSchedule(entrySchedules.get(entry) ?? null, units, now, PROJECTION_DAYS) },
     ledger: { scope: "brand", outcomeKeys: row.outcomeKeys, costPerUnitBasis: row.costPerUnitBasis, producerGap: row.producerGap, ourUnits: ours, otherFactoryUnits: row.otherFactoryUnits, ledgerDaysMissing: row.ledgerDaysMissing },
   };
 }

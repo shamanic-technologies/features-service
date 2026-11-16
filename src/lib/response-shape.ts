@@ -89,7 +89,8 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   "/brands/{brandId}/offers": "roi-rounding-1116",
   "/brands/{brandId}/revenue": "roi-rounding-1116",
   // CAMPAIGN-CONVERSION-1116: the Milestones chain leaves a unit jumping Start -> Target out of the walk.
-  "/brands/{brandId}/campaign-targets": "roi-rounding-1116",
+  // PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (a reached cap expects nothing until its reset).
+  "/brands/{brandId}/campaign-targets": "projection-cap-1117",
   "/features/{featureSlug}/revenue": "roi-rounding-1116",
   "/features/{featureSlug}/stats": "roi-rounding-1116",
   // EXPECTED-FLEET-RATE-1116: the sales paths' leg rates and the catalogue-priced figures read the fleet rung too.

@@ -6,11 +6,12 @@
  * dynasty is kept when every REQUIRED tactic is judged yes on it and every EXCLUDED one judged no. Verdicts are Jev's,
  * judged on each runnable version (its description, its tactics data and its code; `lib/tactic-judgments.ts`), stored
  * in `writer_tactic_verdicts` (subject kind `script`, key `<outcome>/<dynasty>`), the previous version's verdict serving
- * until the new one is judged. A script NOT judged on a named tactic is never kept. No strategy (or one naming no script
+ * until the new one is judged. A script NOT judged on a named tactic is never kept. A tactic about a matter the Engine's
+ * scripts do not decide (`strategyOnEngine`, ONE-WRITER-N-MODELS-1116-LEADS-ONLY) narrows nothing on that Engine. No strategy (or one naming no script
  * tactic) keeps every script of the Engine. A play the campaign's pipe does not catalogue keeps none (never a silent
  * widen). No order is served: workflow-service's Rating picks among the kept dynasties.
  */
-import { excludedDynasties, strategyOnSubject, strategyVerdict, tacticNameOf, workflowStrategyOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
+import { excludedDynasties, strategyOnEngine, strategyOnSubject, strategyVerdict, tacticNameOf, workflowStrategyOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
 import { scriptDynastyKey, scriptWorksPipe, type RunnableScript } from "./script-catalogue-client.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
 
@@ -35,15 +36,23 @@ export interface ScriptsKept {
  * catalogue: every script ruled out.
  */
 export function scriptsKeptByStrategy(scripts: readonly RunnableScript[], strategy: Strategy | null, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, playUnknown: string | null = null): ScriptsKept {
-  const st = strategy ? strategyOnSubject(strategy, "script", c.tactics) : null;
-  const scriptTacticIds = st ? [...st.requiresTacticIds, ...st.excludesTacticIds] : [];
+  // One reading per Engine: a tactic about a matter its scripts do not decide drops out there (`strategyOnEngine`).
+  const onEngine = new Map<string, Strategy>();
+  const stOf = (outcome: string): Strategy | null => {
+    if (!strategy) return null;
+    if (!onEngine.has(outcome)) onEngine.set(outcome, strategyOnEngine(strategy, scripts.filter((x) => x.outcome === outcome), c.tactics));
+    return onEngine.get(outcome)!;
+  };
+  for (const s of scripts) stOf(s.outcome);
+  const scriptTacticIds = [...new Set([...onEngine.values()].flatMap((st) => [...st.requiresTacticIds, ...st.excludesTacticIds]))];
   const nameOf = tacticNameOf(c as PlayCatalogue);
   const rows: ScriptKept[] = [...scripts]
     .sort((a, b) => (a.dynasty < b.dynasty ? -1 : a.dynasty > b.dynasty ? 1 : 0))
     .map((s) => {
       const base = { dynasty: s.dynasty, scriptId: s.id, version: s.version };
       if (playUnknown) return { ...base, kept: false, reason: `the play "${playUnknown}" is not catalogued on this campaign's pipe` };
-      if (!st || scriptTacticIds.length === 0) return { ...base, kept: true, reason: null };
+      const st = stOf(s.outcome);
+      if (!st || st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return { ...base, kept: true, reason: null };
       const v = strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("script", scriptDynastyKey(s))), nameOf, "script");
       return { ...base, kept: v.allowed, reason: v.reason };
     });
@@ -84,16 +93,23 @@ export function scriptsOnPipeOf(
  * (`scriptsKeptByStrategy`): every required tactic judged yes on it, every excluded one judged no; a strategy naming no
  * script tactic keeps every script. Keys naming neither (the unnamed pool) are left to the caller.
  */
-export function excludedPipeCandidates(strategy: Strategy | null, keys: Iterable<string>, c: Pick<PlayCatalogue, "tactics" | "tacticsByDynasty" | "tacticsByWriter">): Set<string> {
+export function excludedPipeCandidates(
+  strategy: Strategy | null,
+  keys: Iterable<string>,
+  c: Pick<PlayCatalogue, "tactics" | "tacticsByDynasty" | "tacticsByWriter">,
+  /** Every runnable script (`strategyOnEngine`); null = unread, every script tactic applies (as strict as before). */
+  runnable: readonly RunnableScript[] | null = null,
+): Set<string> {
   const all = [...keys];
   const out = new Set<string>();
   if (!strategy) return out;
   const nameOf = tacticNameOf(c as PlayCatalogue);
   const workflows = all.filter((k) => !k.includes("/"));
   for (const k of excludedDynasties(workflowStrategyOf(c, strategy), workflows, c.tacticsByDynasty, nameOf).keys()) out.add(k);
-  const st = strategyOnSubject(strategy, "script", c.tactics);
-  if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return out;
   for (const k of all.filter((x) => x.includes("/"))) {
+    const outcome = k.slice(0, k.indexOf("/"));
+    const st = runnable ? strategyOnEngine(strategy, runnable.filter((x) => x.outcome === outcome), c.tactics) : strategyOnSubject(strategy, "script", c.tactics);
+    if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) continue;
     if (!strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("script", k)), nameOf, "script").allowed) out.add(k);
   }
   return out;

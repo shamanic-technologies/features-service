@@ -128,6 +128,7 @@ describe("PART-ENTRY-1116: the fix retires every cell computed before it", () =>
       "/brands/{brandId}/spend-charts",
     ])
       expect(ROUTE_COMPUTE_RULES[path]).toBe("roi-rounding-1116");
-    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("roi-rounding-1116");
+    // PROJECTION-CAP-1117 retires campaign-targets' cells again.
+    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("projection-cap-1117");
   });
 });

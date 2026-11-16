@@ -54,6 +54,7 @@ const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
   updatedAt: r.updatedAt?.toISOString() ?? null,
   clientLine: r.clientLine,
   appliesTo: ((TACTIC_SUBJECTS as readonly string[]).includes(r.appliesTo) ? r.appliesTo : "workflow") as TacticSubject,
+  decidedByFields: r.decidedByFields ?? null,
 });
 const writerVerdictOf = (r: typeof writerTacticVerdicts.$inferSelect): WriterTacticVerdictRow => ({
   subjectKind: r.subjectKind === "llm" || r.subjectKind === "script" ? r.subjectKind : "template",
