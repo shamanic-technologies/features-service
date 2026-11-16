@@ -480,31 +480,38 @@ export function withMeasureScripts(
   };
 }
 
-/** PURE. The Performance tab by Engine: per measure, its rows (scripts, then the history), totals, series, served now. */
-export function enginePerformanceOf(
-  pipes: Readonly<Record<string, PerfLike>>,
-  sources: readonly EngineSource[],
-  stepName: (key: string) => string,
-  scripts?: EngineScriptsInput,
-  now: Date = new Date(),
-): Record<string, unknown> {
-  const engines = enginesOf(sources, stepName).map((e) => ({
+/** One measure of the stored Performance tab: the measure + its HISTORY body (the workflow era's rows that wrote, built once). */
+export type MeasureHistory = ResearchMeasure & Record<string, unknown>;
+export interface EngineHistoryEntry extends Omit<ResearchEngineEntry, "measures"> {
+  measures: MeasureHistory[];
+}
+
+/**
+ * PURE, run ONCE per build (RESEARCH-NATIVE-ENGINE-1116-P2). Per Engine measure, its HISTORY body: the workflow era's
+ * rows of the population(s) it measured, in the framework's words. Two populations of one measure that both measured
+ * are listed, never summed (`several_sources_not_summed`); none = `no_source_measured`.
+ */
+export function engineHistoryOf(perfBySource: Readonly<Record<string, PerfLike>>, sources: readonly EngineSource[], stepName: (key: string) => string): EngineHistoryEntry[] {
+  return enginesOf(sources, stepName).map((e) => ({
     ...e,
     measures: e.measures.map((m) => {
-      const perfs = sources.filter((s) => measureIdOf(s.engine, s.startsFrom, s.counts) === m.id).flatMap((s) => (pipes[s.sourceId] ? [pipes[s.sourceId]!] : []));
+      const perfs = sources.filter((s) => measureIdOf(s.engine, s.startsFrom, s.counts) === m.id).flatMap((s) => (perfBySource[s.sourceId] ? [perfBySource[s.sourceId]!] : []));
       const filled = perfs.filter((p) => p.rows.length > 0 || p.totals !== null);
       const base = filled[0] ?? perfs[0] ?? null;
       const body: Record<string, unknown> = !base
         ? { rows: [], totals: null, series: null, totalsUnavailableReason: "no_source_measured" }
         : filled.length <= 1
           ? { ...(inEngineWords(base) as unknown as Record<string, unknown>), totalsUnavailableReason: null }
-          : // Several sources measured the same thing on different campaigns: their rows are listed, never summed.
+          : // Several populations measured the same thing on different campaigns: their rows are listed, never summed.
             { ...(inEngineWords(base) as unknown as Record<string, unknown>), rows: filled.flatMap((p) => inEngineWords(p.rows)), totals: null, series: null, totalsUnavailableReason: "several_sources_not_summed" };
-      if (!scripts) return { ...m, ...body };
-      return withMeasureScripts(m, body, scripts.of(m), scripts.favourite(m.engine), now);
+      return { ...m, ...body };
     }),
   }));
-  return { engines };
+}
+
+/** PURE, at read. The Performance tab by Engine: each stored measure's history led by its Engine's scripts read now. */
+export function enginePerformanceOf(history: readonly EngineHistoryEntry[], scripts: EngineScriptsInput, now: Date = new Date()): Record<string, unknown> {
+  return { engines: history.map((e) => ({ ...e, measures: e.measures.map((m) => withMeasureScripts(m, m, scripts.of(m), scripts.favourite(m.engine), now)) })) };
 }
 
 // ── Live script ranking ─────────────────────────────────────────────────────────────────────────────────────────────

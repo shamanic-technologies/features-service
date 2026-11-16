@@ -108,24 +108,21 @@ export function engineMemos() {
         const flat = (m: Map<string, Map<string, DayCounts>>) => new Map([...m].map(([k, v]) => [k, [...v.values()].sort((a, b) => (a.day < b.day ? -1 : 1))]));
         return { fleet: flat(fleet), byBrand: new Map([...byBrand].map(([b, m]) => [b, flat(m)])), byCampaign: flat(byCampaign), maturityDays: legMaturity(p.computedLegKey).durationDays };
       }),
-    /** Per pipe (`<channel>|<computed leg>`), per workflow dynasty, its template x LLM rows (Research Performance, flash). */
+    /** Per pipe (`<channel>|<computed leg>`), per workflow dynasty, its template x LLM rows (Research history, flash build). */
     subPicks: () =>
       (perf ??= readResearchBuild("user", "flash")
         .then((b) => {
           const out = new Map<string, Map<string, Array<{ outcomes: number; spentUsd: number }>>>();
-          for (const p of Object.values(b?.performance ?? {})) {
-            if (!p.featureSlug || !p.legKey) continue;
-            const key = `${p.featureSlug}|${pipeLegKeyOf(p.featureSlug, p.legKey)}`;
+          for (const s of b?.historySources ?? []) {
+            const key = `${s.featureSlug}|${pipeLegKeyOf(s.featureSlug, s.legKey)}`;
             const byWf = out.get(key) ?? new Map<string, Array<{ outcomes: number; spentUsd: number }>>();
-            for (const r of p.rows) {
-              byWf.set(r.workflow.key, [...(byWf.get(r.workflow.key) ?? []), { outcomes: r.outcomes.value, spentUsd: r.spentUsd.value }]);
-            }
+            for (const [wf, rows] of Object.entries(s.workflowRows)) byWf.set(wf, [...(byWf.get(wf) ?? []), ...rows]);
             out.set(key, byWf);
           }
           return out;
         })
         .catch((error) => {
-          console.error("[features-service] engine shadow: Research Performance unreadable, every uplift reads 1 this pass:", error);
+          console.error("[features-service] engine shadow: Research history unreadable, every uplift reads 1 this pass:", error);
           return new Map();
         })),
     uplift: async (p: CataloguePipe, dynasty: string) => upliftOf((await self.subPicks()).get(`${p.channelSlug}|${pipeLegKeyOf(p.channelSlug, p.computedLegKey)}`)?.get(dynasty) ?? []),

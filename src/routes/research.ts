@@ -34,8 +34,7 @@ import { buildSlugCells, type DatedSpendRow } from "../lib/research/slug-cells.j
 import { assembleResearch, MEETING_BOOKING_PIPE, POSITIVE_REPLY_PIPE, ruleNote, termsOf, WEBSITE_VISIT_PIPE, workflowBuckets, type ColdEmailPipeInput } from "../lib/research/assemble.js";
 import { generationBuckets, generationStudies, type ModelName } from "../lib/research/generations.js";
 import { templateDynastyIndex, type TemplateDynastyIndex } from "../lib/research/template-dynasties.js";
-import { readLiveTemplateDynasties, readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
-import { withLiveTemplateStatus } from "../lib/research/live-template-status.js";
+import { readTemplateDynasties, readTemplateTexts, readWriterModelAliases } from "../lib/writer-catalogue-client.js";
 import { servedLegKeyOf } from "../lib/funnel-legs.js";
 import { dynastyLastWriters, dynastyWriters, versionWriters, type DynastyWriter, type WriterReason } from "../lib/research/writers.js";
 import { readModelIds } from "../lib/model-ids-client.js";
@@ -47,11 +46,10 @@ import type { GenerationCostInput, RunCostUnavailableReason } from "../lib/resea
 import { readLegWriterRanking } from "./leg-writer-ranking.js";
 import { rankWriters } from "../lib/leg-writer-ranking.js";
 import { pipeCatalog, withWorkflowFigures, type CatalogTemplate, type GenerationRun, type PipeCatalogInput, type ResearchCatalog, type WorkflowRun } from "../lib/research/catalog.js";
-import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
-import { withPerformanceMarks, withResearchCatalogMarks } from "../lib/catalogue-mark-serving.js";
 import type { ResearchBucket } from "../lib/research/studies.js";
 import type { FleetPersonBucket } from "../lib/fleet-positive-repliers.js";
-import { researchConclusions, researchMeasuredStudies } from "../lib/research/conclusions.js";
+import { ENGINE_BUILD_SHAPE, engineResearchBuildOf, type EngineResearchBuild, type PopulationBuild } from "../lib/research/engine-build.js";
+import { engineSourcesOf, stepNameOf } from "../lib/research/engine-sources.js";
 import type { ResearchFile, ResearchPipeId, ResearchStudy, ResearchView } from "../lib/research/types.js";
 import { fetchFleetLegSlugEvidence, readLegWorkflowRanking, readOutcomePricesMeetingBooked } from "./public.js";
 import { bestMeetingPipePick } from "../lib/fleet-indexes.js";
@@ -1280,8 +1278,8 @@ export interface ResearchBuild {
 type BuildKey = `${Basis}:${ResearchView}`;
 const keyOf = (basis: Basis, view: ResearchView): BuildKey => `${basis}:${view}`;
 const store = new Map<BuildKey, { value: StoredBuild; computedAt: number }>();
-/** A build as stored; a copy persisted before the catalogue existed holds the file alone (`catalog` null until the next build). */
-type StoredBuild = { file: ResearchFile; catalog: ResearchCatalog | null; texts: Record<string, string> | null; performance?: ResearchPerformance | null };
+/** A build as stored: keyed by Engine (RESEARCH-NATIVE-ENGINE-1116-P2, `lib/research/engine-build.ts`). */
+type StoredBuild = EngineResearchBuild;
 const warming = new Map<BuildKey, Promise<void>>();
 const failedAt = new Map<BuildKey, number>();
 const RETRY_AFTER_FAILURE_MS = 10 * 60_000;
@@ -1303,11 +1301,11 @@ class RefresherRestartingError extends Error {}
  * runs here; with one supervised but down (an OOM restart) it waits for it: a Research build on the serving event
  * loop held a core for minutes and slowed every page (BOX-OVERLOAD-1026).
  */
-async function buildResearch(basis: Basis, view: ResearchView): Promise<ResearchBuild> {
+async function buildResearch(basis: Basis, view: ResearchView): Promise<EngineResearchBuild> {
   const base = refresherBaseUrl();
   if (!base) {
     if (refresherRestarting()) throw new RefresherRestartingError(`refresher restarting: research ${basis}/${view} waits for it`);
-    return computeResearchShared(basis, view);
+    return computeEngineResearch(basis, view);
   }
   let res: Response;
   try {
@@ -1315,7 +1313,7 @@ async function buildResearch(basis: Basis, view: ResearchView): Promise<Research
   } catch (error) {
     throw new RefresherRestartingError(`refresher unreachable for research ${basis}/${view}, waiting for it: ${(error as Error).message}`);
   }
-  if (res.ok) return (await res.json()) as ResearchBuild;
+  if (res.ok) return (await res.json()) as EngineResearchBuild;
   // The refresher ran the build and it failed: never run it again on the serving loop (the retry is in 10 min).
   throw new Error(`refresher answered ${res.status} for research ${basis}: ${(await res.text()).slice(0, 300)}`);
 }
@@ -1324,12 +1322,12 @@ async function buildResearch(basis: Basis, view: ResearchView): Promise<Research
 const freshMsOf = (basis: Basis) => (basis === "actual" ? 6 * 60 * 60_000 : FRESH_MS);
 
 /**
- * A build this code still serves as is: one stored before the Performance tab's current rules (RESEARCH-PERFORMANCE-1023,
- * `figuresBasis: workflow_bars`, rows in `rowOrder: cost_per_outcome` since PERF-COST-ORDER-1024) is rebuilt at once, never served for the 6 hours the vendor-cost twin stays fresh.
+ * A build this code still serves as is: an Engine build of this shape, on the asked view. A copy stored by the
+ * per-population build (re-keyed at read, `convertedFromStoredCopy`) or of another shape is rebuilt at once, never served
+ * for the 6 hours the vendor-cost twin stays fresh.
  */
 export function isCurrentBuild(build: StoredBuild, view: ResearchView = "mature"): boolean {
-  const p = build.performance?.[POSITIVE_REPLY_PIPE];
-  return p?.figuresBasis === "workflow_bars" && p.rowOrder === "cost_per_outcome" && p.orderView === "flash" && p.rowsCover === "combinations_that_wrote" && build.file.view === view;
+  return build.shape === ENGINE_BUILD_SHAPE && !build.convertedFromStoredCopy && build.view === view;
 }
 
 export function warmResearch(basis: Basis, view: ResearchView = "mature"): Promise<void> {
@@ -1386,8 +1384,9 @@ export function researchFreshness(computedAtIso: string, refreshEveryMs: number,
   return { computedAt: computedAtIso, refreshEveryMinutes, staleAfterMinutes, ageMinutes, stale: ageMinutes > staleAfterMinutes, rebuilding };
 }
 
-const freshnessOf = (file: ResearchFile, basis: Basis, view: ResearchView): ResearchFreshness =>
-  researchFreshness(file.computedAt, freshMsOf(basis), Date.now(), warming.has(keyOf(basis, view)));
+/** The served build's freshness, computed at read. */
+export const researchFreshnessOf = (build: Pick<StoredBuild, "computedAt">, basis: Basis, view: ResearchView): ResearchFreshness =>
+  researchFreshness(build.computedAt, freshMsOf(basis), Date.now(), warming.has(keyOf(basis, view)));
 
 /**
  * Rebuilt on a CLOCK, never only on a read (RESEARCH-STALE-1024): every 5 minutes the billed basis, both views, one after
@@ -1414,18 +1413,26 @@ export function startResearchRefreshLoop(): void {
   setInterval(tick, LOOP_EVERY_MS).unref();
 }
 
+/**
+ * A stored copy as this code serves it. A copy stored by the per-population build (before RESEARCH-NATIVE-ENGINE-1116-P2)
+ * is re-keyed by Engine ONCE here (one catalogue read), served until the first Engine build lands, never a 503 meanwhile.
+ */
+async function storedBuildOf(text: string): Promise<StoredBuild> {
+  const raw = JSON.parse(text) as StoredBuild | PopulationBuild;
+  if ("shape" in raw && raw.shape === ENGINE_BUILD_SHAPE) return raw;
+  const old = raw as PopulationBuild;
+  return { ...engineResearchBuildOf(old, await engineSourcesOf(old.file.pipes), stepNameOf), convertedFromStoredCopy: true };
+}
+
 /** The last build (the persisted copy on a fresh process); kicks a rebuild when stale. Null = never built. */
 export async function readResearchBuild(basis: Basis, view: ResearchView = "mature"): Promise<StoredBuild | null> {
   const key = keyOf(basis, view);
   if (!store.has(key)) {
-    // The mature view's first build after MATURITY-VIEW-1023 has no copy of its own yet: serve the copy stored before the
-    // views (`research:<basis>`, rebuilt behind as not current) rather than a 503 while builds time out under load.
-    const stored = (await loadFleetCell(cellKey(basis, view))) ?? (view === "mature" ? await loadFleetCell(`research:${basis}`) : null);
+    const stored = await loadFleetCell(cellKey(basis, view));
     if (stored && !store.has(key)) {
       try {
-        const raw = JSON.parse(stored.text) as ResearchBuild | ResearchFile;
-        const value: StoredBuild = "file" in raw ? raw : { file: raw, catalog: null, texts: null };
-        store.set(key, { value, computedAt: stored.computedAt });
+        const value = await storedBuildOf(stored.text);
+        if (!store.has(key)) store.set(key, { value, computedAt: stored.computedAt });
       } catch (error) {
         console.error(`[features-service] research ${key}: persisted copy unreadable, rebuilding:`, error);
       }
@@ -1433,11 +1440,6 @@ export async function readResearchBuild(basis: Basis, view: ResearchView = "matu
   }
   void warmResearch(basis, view);
   return store.get(key)?.value ?? null;
-}
-
-/** The last file (see {@link readResearchBuild}). */
-export async function readResearch(basis: Basis, view: ResearchView = "mature"): Promise<ResearchFile | null> {
-  return (await readResearchBuild(basis, view))?.file ?? null;
 }
 
 /** Test seam. */
@@ -1462,9 +1464,9 @@ router.get("/internal/research/conclusions", apiKeyOnly, async (req, res) => {
   const view = viewOf(req.query.view);
   if (!view) return badView(res);
   try {
-    const file = await readResearch("user", view);
-    if (!file) return notYet(res);
-    res.json(researchConclusions(file));
+    const build = await readResearchBuild("user", view);
+    if (!build?.conclusions) return notYet(res);
+    res.json(build.conclusions);
   } catch (error) {
     console.error("[features-service] research conclusions failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -1475,65 +1477,14 @@ router.get("/internal/research/studies", apiKeyOnly, async (req, res) => {
   const view = viewOf(req.query.view);
   if (!view) return badView(res);
   try {
-    const file = await readResearch("user", view);
-    if (!file) return notYet(res);
-    res.json(researchMeasuredStudies(file));
+    const build = await readResearchBuild("user", view);
+    if (!build?.measuredStudies) return notYet(res);
+    res.json(build.measuredStudies);
   } catch (error) {
     console.error("[features-service] research studies failed:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
-/** The catalogue as the Engine read `/internal/research/engines/catalog` serves it (the pipe-keyed route is deleted, RESEARCH-BY-ENGINE-1113-RETIRE) (every live overlay applied); null = not built yet. Shared by the Engine read. */
-export async function servedResearchCatalog(basis: Basis, view: ResearchView): Promise<ResearchCatalog | null> {
-  const build = await readResearchBuild(basis, view);
-  if (!build?.catalog) return null;
-  // ONE figure per workflow (RESEARCH-WF-FIGURES-1022): each page takes the CURRENT ranking row's figures, the ones the
-  // Workflows list prints, never the ranking its build held (up to 15 min older).
-  const studied = new Set<string>(STUDIED_PIPES.map((x) => x.id));
-  const others = build.file.pipes.filter((x) => !studied.has(x.id) && build.catalog?.[x.id]);
-  const catalogued = build.file.pipes.filter((x) => build.catalog?.[x.id]);
-  const [replyRanking, visitRanking, tacticsOf, otherRankings, liveDynasties] = await Promise.all([
-    readLegWorkflowRanking(COLD_EMAIL, REPLY_LEG, 0),
-    readLegWorkflowRanking(COLD_EMAIL, VISIT_LEG, 0),
-    readTemplateTactics(),
-    // Every other pipe's pages take its current ranking rows too (WA-PIPE-RESEARCH-1023); unreadable = the build's.
-    Promise.all(others.map((x) => readLegWorkflowRanking(x.channel, x.leg, 0).catch(() => null))),
-    // Each pipe's template statuses as content-generation states them now (TPL-STATUS-LIVE-1023); unreadable = the build's.
-    Promise.all(catalogued.map((x) => readLiveTemplateDynasties(x.channel, x.leg))),
-  ]);
-  const liveOf = new Map(catalogued.map((x, i) => [x.id, liveDynasties[i]!]));
-  // Each template page's tactics, read live like the workflow rows' (TPL-TACTICS-ROWS-1022), and its status (TPL-STATUS-LIVE-1023).
-  const withTactics = <P extends { templates: CatalogTemplate[] }>(id: string, p: P): P => ({
-    ...p,
-    templates: withTemplateTactics(withLiveTemplateStatus(p.templates, liveOf.get(id) ?? null), tacticsOf),
-  });
-  return withResearchCatalogMarks(
-    Object.fromEntries(
-      Object.entries({
-        ...build.catalog,
-        ...Object.fromEntries(others.map((x, i) => [x.id, withWorkflowFigures(build.catalog![x.id]!, otherRankings[i]?.rows ?? null, view)])),
-        [POSITIVE_REPLY_PIPE]: withWorkflowFigures(build.catalog[POSITIVE_REPLY_PIPE], replyRanking?.rows ?? null, view),
-        [WEBSITE_VISIT_PIPE]: withWorkflowFigures(build.catalog[WEBSITE_VISIT_PIPE], visitRanking?.rows ?? null, view),
-      }).map(([id, p]) => [id, withTactics(id, p)]),
-    ) as ResearchCatalog,
-  );
-}
-
-/** The Performance tab as the Engine read `/internal/research/engines/performance` serves it (pipe-keyed route deleted) (marks read live; what runs today is the Engine read's, `withMeasureScripts`); null = not built yet. */
-export async function servedResearchPerformance(basis: Basis, view: ResearchView) {
-  const build = await readResearchBuild(basis, view);
-  // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
-  if (!build?.performance) return null;
-  const pipes = await withPerformanceMarks(build.performance);
-  return { computedAt: build.file.computedAt, freshness: freshnessOf(build.file, basis, view), costBasis: build.file.costBasis, view, pipes };
-}
-
-/** The file as `/internal/research` serves it, with its freshness; null = not built yet. Shared by the Engine read. */
-export async function servedResearchFile(basis: Basis, view: ResearchView) {
-  const file = await readResearch(basis, view);
-  return file ? { ...file, freshness: freshnessOf(file, basis, view) } : null;
-}
 
 router.get("/internal/research/templates", apiKeyOnly, async (_req, res) => {
   try {
@@ -1545,6 +1496,15 @@ router.get("/internal/research/templates", apiKeyOnly, async (_req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+/**
+ * The Engine build (RESEARCH-NATIVE-ENGINE-1116-P2): the per-population compute, each population placed on its Engine
+ * measure ONCE (`engineResearchBuildOf`, one catalogue read per build).
+ */
+export async function computeEngineResearch(basis: Basis, view: ResearchView): Promise<EngineResearchBuild> {
+  const raw = await computeResearchShared(basis, view);
+  return engineResearchBuildOf(raw, await engineSourcesOf(raw.file.pipes), stepNameOf);
+}
 
 /**
  * One compute per (basis, view) at a time on this process (BOX-DB-LOAD-1027-FEATURES): the server's ask gives up after
@@ -1571,7 +1531,7 @@ router.get("/internal/research/compute", apiKeyOnly, async (req, res) => {
   try {
     const view = viewOf(req.query.view);
     if (!view) return badView(res);
-    res.json(await computeResearchShared(basis, view));
+    res.json(await computeEngineResearch(basis, view));
   } catch (error) {
     console.error(`[features-service] research compute (${basis}) failed:`, error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Internal server error" });

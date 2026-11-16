@@ -1,24 +1,15 @@
 /**
  * RESEARCH BY ENGINE AND SCRIPT (owner 2026-11-13, RESEARCH-BY-ENGINE-1113): the staff Research reads keyed by Engine
- * (outcome) and script dynasty, never by pipe. Additive twins of `/internal/research`, `/catalog`, `/performance` and the
- * live ranking (the stored fleet leg workflow ranking), built off the SAME served bodies (`lib/research/by-engine.ts`, pure),
- * so every figure keeps its population and basis. The pipe-keyed catalogue / performance / ranking routes are deleted
- * (RESEARCH-BY-ENGINE-1113-RETIRE, 2026-11-16): these are the only Research reads by source.
+ * (outcome) and script dynasty, never by pipe. Since RESEARCH-NATIVE-ENGINE-1116-P2 the build is STORED by Engine
+ * (`lib/research/engine-build.ts`: every history population placed on its Engine measure once per build); these reads
+ * serve it with the overlays read live: the freshness, the history script pages' figures (leg workflow ranking,
+ * RESEARCH-WF-FIGURES-1022), the template pages' status and tactics (TPL-STATUS-LIVE-1023, TPL-TACTICS-ROWS-1022), the
+ * marks, and the Engine's scripts on the ledger (RESEARCH-PERF-SCRIPTS-1116). No catalogue read and no re-wording per request.
  */
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { pipeLegKeyOf } from "../lib/funnel-legs.js";
-import { CHANNEL_STEPS } from "../lib/acquisition-channels.js";
-import {
-  engineCatalogOf,
-  engineFileOf,
-  engineLiveScriptsOf,
-  enginePerformanceOf,
-  enginesOf,
-  measureIdOf,
-  type EngineSource,
-} from "../lib/research/by-engine.js";
+import { engineLiveScriptsOf, enginePerformanceOf, inEngineWords, type EngineHistoryEntry } from "../lib/research/by-engine.js";
 import { measureScripts, scriptKeyOf, type ScriptFacts } from "../lib/research/engine-script-performance.js";
 import { SCRIPTS_FIRST_DAY, dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, type LedgerBookRead } from "../lib/ledger-book.js";
 import { legCutoffIso } from "../lib/maturity.js";
@@ -28,30 +19,19 @@ import { SCRIPT_ENGINES_CELL, favouritesOfBoard, writingTactic } from "../lib/en
 import { llmTacticsOf, templateTacticsOf, type BoardEngine, type ScriptLlmTactic, type ScriptTemplateTactic } from "../lib/script-engine-board.js";
 import { llmDynastyIndex, readLlmDynastiesSoft, type LlmDynastyIndex } from "../lib/llm-dynasties.js";
 import type { EngineScriptsInput, MeasureScriptsRead, ResearchMeasure } from "../lib/research/by-engine.js";
-import { readResearch, servedResearchCatalog, servedResearchFile, servedResearchPerformance, type Basis } from "./research.js";
-import { servedLegWorkflowRanking } from "./public.js";
+import { readResearchBuild, researchFreshnessOf, type Basis } from "./research.js";
+import { readLegWorkflowRanking, servedLegWorkflowRanking } from "./public.js";
 import type { ResearchView } from "../lib/research/types.js";
+import type { EngineResearchBuild, HistorySource } from "../lib/research/engine-build.js";
+import { readLiveTemplateDynasties } from "../lib/writer-catalogue-client.js";
+import { withLiveTemplateStatus } from "../lib/research/live-template-status.js";
+import { readTemplateTactics, withTemplateTactics } from "../lib/template-tactics.js";
+import { marksFor } from "../lib/catalogue-marks-store.js";
+import { withMark } from "../lib/catalogue-mark-serving.js";
+import type { CatalogTemplate } from "../lib/research/catalog.js";
+import type { LegWorkflowFigures } from "../lib/leg-workflow-figures.js";
 
 const router = Router();
-
-/** An outcome's name: its catalogue step's label, else the key spelled out (`email_sent` -> "Email sent"). */
-export function stepNameOf(key: string): string {
-  const label = (CHANNEL_STEPS as Record<string, { label?: string } | undefined>)[key]?.label;
-  return label ?? key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
-}
-
-/** Each Research source on its Engine, from the catalogue (`outcome ?? to`, the rule campaign-service runs). */
-export async function researchEngineSources(pipes: ReadonlyArray<{ id: string; channel: string; leg: string }>): Promise<Array<EngineSource & { channel: string; leg: string }>> {
-  const catalogue = await loadChannelCatalogue({ publishedOnly: false });
-  return pipes.flatMap((p) => {
-    const t = catalogue.channels.find((c) => c.slug === p.channel)?.stepTransitions.find((x) => pipeLegKeyOf(p.channel, x.legKey) === pipeLegKeyOf(p.channel, p.leg));
-    if (!t) {
-      console.error(`[features-service] research by Engine: source ${p.id} is in no catalogue entry, left out (named in notCarried)`);
-      return [];
-    }
-    return [{ sourceId: p.id, engine: t.outcome ?? t.to.key, startsFrom: t.from?.key ?? null, counts: t.to.key, channel: p.channel, leg: p.leg }];
-  });
-}
 
 const viewOf = (raw: unknown): ResearchView | null => (raw === undefined || raw === "" || raw === "mature" ? "mature" : raw === "flash" ? "flash" : null);
 const basisOf = (raw: unknown): Basis | null => (raw === undefined || raw === "" || raw === "user" || raw === "billed" ? "user" : raw === "actual" ? "actual" : null);
@@ -77,9 +57,9 @@ router.get("/internal/research/engines", apiKeyOnly, async (req, res) => {
   const p = readParams(req, res);
   if (!p) return;
   try {
-    const file = await servedResearchFile(p.basis, p.view);
-    if (!file) return notYet(res);
-    res.json(engineFileOf(file, await researchEngineSources(file.pipes), stepNameOf));
+    const build = await readResearchBuild(p.basis, p.view);
+    if (!build) return notYet(res);
+    res.json({ ...build.file, freshness: researchFreshnessOf(build, p.basis, p.view) });
   } catch (error) {
     console.error("[features-service] research by Engine (file) failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -90,9 +70,9 @@ router.get("/internal/research/engines/catalog", apiKeyOnly, async (req, res) =>
   const p = readParams(req, res);
   if (!p) return;
   try {
-    const [file, catalog] = await Promise.all([readResearch(p.basis, p.view), servedResearchCatalog(p.basis, p.view)]);
-    if (!file || !catalog) return notYet(res);
-    res.json({ computedAt: file.computedAt, costBasis: file.costBasis, view: p.view, ...engineCatalogOf(catalog, await researchEngineSources(file.pipes), stepNameOf) });
+    const build = await readResearchBuild(p.basis, p.view);
+    if (!build?.catalog) return notYet(res);
+    res.json({ computedAt: build.computedAt, costBasis: build.costBasis, view: p.view, ...(await servedEngineCatalog(build, p.view)) });
   } catch (error) {
     console.error("[features-service] research by Engine (catalogue) failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -185,11 +165,12 @@ router.get("/internal/research/engines/performance", apiKeyOnly, async (req, res
   const p = readParams(req, res);
   if (!p) return;
   try {
-    const [file, perf] = await Promise.all([readResearch(p.basis, p.view), servedResearchPerformance(p.basis, p.view)]);
-    if (!file || !perf) return notYet(res);
-    const { pipes, ...head } = perf;
+    const build = await readResearchBuild(p.basis, p.view);
+    // A copy stored before the Performance tab existed holds none: not computed yet until the next build.
+    if (!build?.performance) return notYet(res);
     const now = new Date();
-    res.json({ ...head, ...enginePerformanceOf(pipes, await researchEngineSources(file.pipes), stepNameOf, await readEngineScripts(p.basis, p.view, now), now) });
+    const [history, scripts] = await Promise.all([withHistoryMarks(build.performance), readEngineScripts(p.basis, p.view, now)]);
+    res.json({ computedAt: build.computedAt, freshness: researchFreshnessOf(build, p.basis, p.view), costBasis: build.costBasis, view: p.view, ...enginePerformanceOf(history, scripts, now) });
   } catch (error) {
     console.error("[features-service] research by Engine (performance) failed:", error);
     res.status(500).json({ error: "Internal server error" });
@@ -205,23 +186,99 @@ router.get("/internal/research/engines/live-scripts", apiKeyOnly, async (req, re
   }
   const pricing: "gross" | "net" = rawPricing === "net" ? "net" : "gross";
   try {
-    const file = await readResearch("user", "mature");
-    if (!file) return notYet(res);
-    const sources = await researchEngineSources(file.pipes);
-    const measure = enginesOf(sources, stepNameOf)
-      .flatMap((e) => e.measures)
-      .find((m) => m.id === measureId);
+    const build = await readResearchBuild("user", "mature");
+    if (!build) return notYet(res);
+    const measure = build.file.engines.flatMap((e) => e.measures).find((m) => m.id === measureId);
     if (!measure) {
       res.status(404).json({ error: "No Research measure has this id (the `measures[].id` of /internal/research/engines).", reason: "measure_not_found" });
       return;
     }
-    const mine = sources.filter((s) => measureIdOf(s.engine, s.startsFrom, s.counts) === measure.id);
-    const rankings = await Promise.all(mine.map((s) => servedLegWorkflowRanking(s.channel, pipeLegKeyOf(s.channel, s.leg), pricing)));
+    const mine = build.historySources.filter((s) => s.measureId === measure.id);
+    const rankings = await Promise.all(mine.map((s) => servedLegWorkflowRanking(s.featureSlug, pipeLegKeyOf(s.featureSlug, s.legKey), pricing)));
     res.json({ pricing, ...engineLiveScriptsOf(measure, rankings) });
   } catch (error) {
     console.error("[features-service] research by Engine (live scripts) failed:", error);
     res.status(502).json({ error: "The live script ranking could not be read", reason: "live_scripts_unreadable" });
   }
 });
+
+// ── live overlays ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+type Page = Record<string, unknown> & { key: string };
+type RankingRow = { workflowDynastySlug: string; figures?: LegWorkflowFigures; figuresByView?: { mature: LegWorkflowFigures; flash: LegWorkflowFigures } };
+
+/** The history populations of each measure, in build order (the first one's page is the one a measure serves). */
+const sourcesByMeasure = (build: EngineResearchBuild): Map<string, HistorySource[]> => {
+  const out = new Map<string, HistorySource[]>();
+  for (const s of build.historySources) out.set(s.measureId, [...(out.get(s.measureId) ?? []), s]);
+  return out;
+};
+
+/**
+ * The stored catalogue with what moves between builds, read now: each history script page takes its CURRENT leg workflow
+ * ranking row's figures on the view (RESEARCH-WF-FIGURES-1022: one figure per workflow), each template page
+ * content-generation's current status (TPL-STATUS-LIVE-1023) and its tactics (TPL-TACTICS-ROWS-1022), then the marks.
+ * A ranking or a template list that cannot be read leaves the build's page (logged by its reader).
+ */
+async function servedEngineCatalog(build: EngineResearchBuild, view: ResearchView): Promise<Record<string, unknown>> {
+  const catalog = build.catalog!;
+  const sources = sourcesByMeasure(build);
+  const all = build.historySources;
+  const [rankings, lives, tacticsOf] = await Promise.all([
+    Promise.all(all.map((s) => readLegWorkflowRanking(s.featureSlug, s.legKey, 0).catch((): null => null))),
+    Promise.all(all.map((s) => readLiveTemplateDynasties(s.featureSlug, s.legKey))),
+    readTemplateTactics(),
+  ]);
+  const rankingOf = new Map(all.map((s, i) => [s, rankings[i]?.rows as RankingRow[] | undefined]));
+  const liveOf = new Map(all.map((s, i) => [s, lives[i]!]));
+  const engines = catalog.engines.map((e) => ({
+    ...e,
+    measures: e.measures.map((m) => {
+      const mine = sources.get(m.id) ?? [];
+      const figures = new Map<string, LegWorkflowFigures>();
+      for (const s of mine)
+        for (const r of rankingOf.get(s) ?? []) {
+          const f = r.figuresByView?.[view];
+          if (f && !figures.has(r.workflowDynastySlug)) figures.set(r.workflowDynastySlug, f);
+        }
+      const scripts = m.scripts.map((p) => (figures.has(p.key) ? { ...p, figures: inEngineWords(figures.get(p.key)!) } : p));
+      // the first population listing a dynasty states its status (applied last)
+      let templates = m.templates as unknown as CatalogTemplate[];
+      for (const s of [...mine].reverse()) templates = withLiveTemplateStatus(templates, liveOf.get(s) ?? null);
+      return { ...m, scripts, templates: inEngineWords(withTemplateTactics(templates, tacticsOf)) as unknown as Page[] };
+    }),
+  }));
+  const pages = engines.flatMap((e) => e.measures);
+  const [wf, tpl] = await Promise.all([marksFor("workflow", pages.flatMap((m) => m.scripts.map((p) => p.key))), marksFor("template", pages.flatMap((m) => m.templates.map((p) => p.key)))]);
+  return {
+    engines: engines.map((e) => ({
+      ...e,
+      measures: e.measures.map((m) => ({ ...m, scripts: m.scripts.map((p) => withMark(p, wf.get(p.key))), templates: m.templates.map((p) => withMark(p, tpl.get(p.key))) })),
+    })),
+    notCarried: catalog.notCarried,
+  };
+}
+
+interface HistoryRowLike {
+  script: { key: string };
+  template: { key: string; dynasty: { key: string } | null } | null;
+}
+
+/** Each history row's script mark and its template page's mark (also on its dynasty ref); LLM rows carry none. */
+async function withHistoryMarks(history: readonly EngineHistoryEntry[]): Promise<EngineHistoryEntry[]> {
+  const rows = history.flatMap((e) => e.measures.flatMap((m) => (m.rows as HistoryRowLike[] | undefined) ?? []));
+  const [wf, tpl] = await Promise.all([marksFor("workflow", rows.map((r) => r.script.key)), marksFor("template", rows.flatMap((r) => (r.template ? [r.template.key] : [])))]);
+  return history.map((e) => ({
+    ...e,
+    measures: e.measures.map((m) => ({
+      ...m,
+      rows: ((m.rows as HistoryRowLike[] | undefined) ?? []).map((r) => ({
+        ...r,
+        script: withMark(r.script, wf.get(r.script.key)),
+        template: r.template ? { ...withMark(r.template, tpl.get(r.template.key)), dynasty: r.template.dynasty ? withMark(r.template.dynasty, tpl.get(r.template.dynasty.key)) : null } : null,
+      })),
+    })),
+  }));
+}
 
 export default router;

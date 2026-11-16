@@ -32,46 +32,6 @@ export async function withTemplateRankingMarks<R extends { key: string }, T exte
   return { ...served, templates: { ...served.templates, rows, best } };
 }
 
-/** The Research catalogue with every workflow page's and template page's mark (keyed on the page `key` = the dynasty slug). */
-export async function withResearchCatalogMarks<W extends { key: string }, P extends { key: string }, T extends Record<string, { workflows: W[]; templates: P[] }>>(catalog: T): Promise<T> {
-  const pipes = Object.values(catalog);
-  const [wf, tpl] = await Promise.all([marksFor("workflow", pipes.flatMap((p) => p.workflows.map((w) => w.key))), marksFor("template", pipes.flatMap((p) => p.templates.map((t) => t.key)))]);
-  return Object.fromEntries(
-    Object.entries(catalog).map(([id, p]) => [id, { ...p, workflows: p.workflows.map((w) => withMark(w, wf.get(w.key))), templates: p.templates.map((t) => withMark(t, tpl.get(t.key))) }]),
-  ) as T;
-}
-
-/**
- * The Research Performance tab (RESEARCH-PERFORMANCE-1023) with each row's workflow mark (on `workflow`) and its template
- * page's mark (on `template` and its `dynasty` ref); LLM rows carry none (the dashboard's logos).
- */
-export async function withPerformanceMarks<
-  R extends { workflow: { key: string }; template: { key: string; dynasty: { key: string } | null } | null },
-  T extends Record<string, { rows: R[] }>,
->(pipes: T): Promise<T> {
-  const all = Object.values(pipes).flatMap((p) => p.rows);
-  const [wf, tpl] = await Promise.all([
-    marksFor("workflow", all.map((r) => r.workflow.key)),
-    marksFor("template", all.flatMap((r) => (r.template ? [r.template.key] : []))),
-  ]);
-  return Object.fromEntries(
-    Object.entries(pipes).map(([id, p]) => [
-      id,
-      {
-        ...p,
-        rows: p.rows.map((r) => ({
-          ...r,
-          workflow: withMark(r.workflow, wf.get(r.workflow.key)),
-          // the template page's mark (its key: the dynasty slug, or a standalone version's id), also on its dynasty ref
-          template: r.template
-            ? { ...withMark(r.template, tpl.get(r.template.key)), dynasty: r.template.dynasty ? withMark(r.template.dynasty, tpl.get(r.template.dynasty.key)) : null }
-            : null,
-        })),
-      },
-    ]),
-  ) as T;
-}
-
 /**
  * SCRIPT-MARKS-1103 (owner 2026-11-03, « Tu utilises les icônes Workflow pour les objets scripts, c'est normal ? »): every
  * workflow (script) an Engine read names carries its dynasty's served mark, the same `icon` + `color` Research shows for it.
