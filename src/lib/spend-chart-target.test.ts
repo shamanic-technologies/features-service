@@ -56,8 +56,15 @@ describe("expected Target figures off the model's route", () => {
     ];
     expect(expectedTargetFigures(route, REPLY, FLEET, null).costPerOutcomeUsd).toBeCloseTo(0.02 / 0.01 + 50, 9);
     expect(expectedTargetFigures(route, PAID, FLEET, null).costPerOutcomeUsd).toBeCloseTo(52 / 0.05, 9);
-    // The route states the entry leg's rate: it is read, not the fleet's.
-    expect(expectedTargetFigures(route, PAID, FLEET, null).conversionRatePct).toBeCloseTo(0.05, 9);
+    // FLEET-ENTRY-ROUTE-1116: the route's entry rate is only a default (Wide Email: industry 1 %): the fleet's measured
+    // 0.8 % wins, 0.8 % x 5 % = 0.04 %. A measured fleet rate never loses to a default.
+    expect(expectedTargetFigures(route, PAID, FLEET, null)).toMatchObject({ conversionBasis: "fleet", conversionSource: "expected_route_fleet_entry" });
+    expect(expectedTargetFigures(route, PAID, FLEET, null).conversionRatePct).toBeCloseTo(0.04, 9);
+    // No fleet rate: the route's default is kept.
+    expect(expectedTargetFigures(route, PAID, new Map(), null).conversionRatePct).toBeCloseTo(0.05, 9);
+    // The brand's own measured (or stated) entry rate is better than the fleet's: it is read.
+    const own = [route[0]!, { ...route[1]!, ratePct: 2, rateBasis: "measured" as const }, route[2]!];
+    expect(expectedTargetFigures(own, PAID, FLEET, null).conversionRatePct).toBeCloseTo(0.1, 9);
   });
 
   it("never a figure off another step: no route, a Target off the route, an unpriced leg each say why", () => {

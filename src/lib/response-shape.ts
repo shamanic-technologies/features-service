@@ -68,10 +68,11 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // PART-ENTRY-1116: a part counts from the Units it took in; a group from its earliest entry. Both fixes retire here.
   // TEAM-PART-ENTRY-1116: a part with no intake of its own counts the entry Units the rest of its campaign made.
   // FLEET-CONVERSION-BOOT-1116: the fleet's measured conversion awaited at boot (a cell froze the 1 % default).
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "fleet-conversion-boot-1116",
+  // FLEET-ENTRY-ROUTE-1116: a Target chart's entry leg on the fleet's measured rate over the route's default.
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "fleet-entry-route-1116",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
-  "/offers/{offerId}/spend-charts": "fleet-conversion-boot-1116",
-  "/brands/{brandId}/spend-charts": "fleet-conversion-boot-1116",
+  "/offers/{offerId}/spend-charts": "fleet-entry-route-1116",
+  "/brands/{brandId}/spend-charts": "fleet-entry-route-1116",
   "/brands/{brandId}/sales-funnel-campaigns": "ledger-negative-days-1110",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
