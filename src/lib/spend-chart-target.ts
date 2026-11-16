@@ -168,11 +168,14 @@ export function expectedTargetFigures(
       const l = route[i]!;
       let rate = l.ratePct;
       let basis = l.rateBasis as Basis | null;
-      if (rate === null && i === start) {
+      // FLEET-ENTRY-ROUTE-1116: the entry leg on the fleet's MEASURED rate whenever the route holds no better than a
+      // default for it: a measured fleet rate never loses to a default (prod 2026-11-16, Wide Email: the route carried
+      // the brand's industry default 1 % on the cold email leg, so the campaign read 0.05 % beside its part's 0.10 %).
+      if (i === start && (rate === null || basis === null || basis === "default")) {
         // The key every spend chart reads the fleet's entry conversion on (`expectedConversionOf`).
         const fleet = l.channelSlug ? fleetConversions.get(`${storedLegKeyOf(pipeLegKeyOf(l.channelSlug, l.legKey))}|${l.channelSlug}`) : undefined;
         if (fleet !== undefined) [rate, basis, source] = [fleet, "fleet", "expected_route_fleet_entry"];
-        else {
+        else if (rate === null) {
           const d = DEFAULT_ENTRY_RATE_PCT[l.toStep as ChannelStepKey];
           if (d !== undefined) [rate, basis, source] = [d, "default", "expected_route_default_entry"];
         }
