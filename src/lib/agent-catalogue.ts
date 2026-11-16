@@ -111,6 +111,7 @@ import type { PublicChannel } from "./channel-catalogue.js";
 import { DEFAULT_ENTRY_RATE_PCT, defaultLegRatePct } from "./default-leg-rates.js";
 import { NO_FLEET_LEG_RATES, fleetLegRatePct, type FleetLegRates } from "./fleet-leg-rates.js";
 import { noteExactLegCost } from "./exact-leg-costs.js";
+import { roiMultipleOf } from "./roi-multiple.js";
 import type { ExpectedBasis } from "./expected-return.js";
 import { FUNNEL_LEGS, legacyFunnelIdAliasOf, pipeLegKeyOf, servedLegKeyOf, storedLegKeyOf } from "./funnel-legs.js";
 import { DEFAULT_COST_PER_OUTCOME_USD, combinationKeyOf } from "./offer-sales-paths.js";
@@ -622,7 +623,7 @@ function pipeEconomicsOf(
     return {
       status: "measured",
       costUsd: round2(measurement.costPerOutcomeUsd),
-      roi: value == null ? null : round2(value / measurement.costPerOutcomeUsd),
+      roi: value == null ? null : roiMultipleOf(value, measurement.costPerOutcomeUsd),
       reason: null,
       estimates: value == null ? [] : [...STEP_VALUE_ESTIMATES],
     };
@@ -824,7 +825,7 @@ export function expectedFunnelEconomics(
   const basis = weakest([ltrBasis, ...out.slice(1).map((l) => l.rateBasis), ...out.map((l) => l.costBasis)]);
   return {
     costUsd: round2(cost),
-    roi: added === null ? null : round2(added / cost),
+    roi: added === null ? null : roiMultipleOf(added, cost),
     basis,
     unavailableReason: added === null ? "takeover_step_unvalued" : null,
     lifetimeRevenueUsd,
@@ -1155,7 +1156,7 @@ export function funnelEconomics(
   return {
     status: costEstimated ? "estimated" : "measured",
     costUsd: round2(cost),
-    roi: added === null ? null : round2(added / cost),
+    roi: added === null ? null : roiMultipleOf(added, cost),
     reason: null,
     estimates: [...estimates, "lifetime_revenue"],
   };
@@ -1431,7 +1432,7 @@ export function stepEconomics(model: CatalogueModel, key: string): Economics {
   const cost = cheapest.measurement!.costPerOutcomeUsd!;
   // The value the cheapest producing pipe ADDS (`lib/value-added.ts`), as its own roi reads.
   const added = valueAddedTo((s) => model.steps.get(s)?.valueUsd ?? null, cheapest.fromStep, key);
-  const roi = step?.valueUsd == null || added === null ? null : round2(added / cost);
+  const roi = step?.valueUsd == null || added === null ? null : roiMultipleOf(added, cost);
   return { status: "measured", costUsd: round2(cost), roi, reason: null, estimates: roi === null ? [] : [...STEP_VALUE_ESTIMATES] };
 }
 

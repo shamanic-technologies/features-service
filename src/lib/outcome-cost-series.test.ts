@@ -234,6 +234,6 @@ describe("leadStepAccounting (OUTCOME-ACCOUNTING-1107): a lead outcome's report 
       targetSpendUsd: 1000,
     });
     expect(r.costPerUnit.actualUnavailableReason).toBe("not_made_by_our_campaigns");
-    expect(r.returns).toMatchObject({ isCampaignTarget: true, measured: { targetUnits: 1, roiMultiple: 3 }, expected: { costFromStartUsd: 180, roiMultiple: 16.67 } });
+    expect(r.returns).toMatchObject({ isCampaignTarget: true, measured: { targetUnits: 1, roiMultiple: 3 }, expected: { costFromStartUsd: 180, roiMultiple: 16.6667 } }); // ROI-ROUNDING-1116: 6 significant digits
   });
 });
