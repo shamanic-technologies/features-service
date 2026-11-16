@@ -50,6 +50,8 @@ export interface CampaignScriptRow {
   /** `<outcome>/<dynasty>`, the key the Rating and the strategies use. */
   script: string;
   dynasty: string;
+  /** The script's short client-readable name (workflow-service); null = not named yet, or no longer runnable. */
+  name: string | null;
   version: number | null;
   description: string | null;
   /** Share of today's draws among the scripts this campaign's strategy keeps, 0..100; null = not competing. */
@@ -173,6 +175,7 @@ export function campaignEngineScripts(input: {
       return {
         script: key,
         dynasty: s.dynasty,
+        name: s.name ?? null,
         version: s.version,
         description: s.description || null,
         shareOfDrawsPct: share,
@@ -199,6 +202,7 @@ export function campaignEngineScripts(input: {
         (k): CampaignScriptRow => ({
           script: k,
           dynasty: nameOfKey(k),
+          name: null,
           version: null,
           description: null,
           shareOfDrawsPct: null,

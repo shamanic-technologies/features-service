@@ -13,6 +13,8 @@ export interface RunnableScript {
   outcome: string;
   dynasty: string;
   version: number;
+  /** The short client-readable name workflow-service gives the dynasty (CAMPAIGN-SCRIPTS-1113-NAMES); null = not named yet. */
+  name?: string | null;
   description: string;
   tactics: Record<string, unknown>;
   code: string;
@@ -34,6 +36,7 @@ export function parseRunnableScript(r: Record<string, unknown>): RunnableScript 
     outcome: r.outcome,
     dynasty: r.dynasty,
     version: r.version,
+    name: typeof r.name === "string" && r.name.trim() !== "" ? r.name : null,
     description: typeof r.description === "string" ? r.description : "",
     tactics: r.tactics && typeof r.tactics === "object" && !Array.isArray(r.tactics) ? (r.tactics as Record<string, unknown>) : {},
     code: r.code,
