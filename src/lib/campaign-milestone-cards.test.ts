@@ -22,6 +22,28 @@ describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", ()
     expect(milestoneChainOf(units.slice(0, 1), "signup").map((m) => m.step)).toEqual(["threads_post_published", "signup"]);
   });
 
+  // CAMPAIGN-CONVERSION-1116 (prod 2026-11-16, Wide Email): a follow-up writer on start_to_paid_client beside the chain.
+  it("a unit jumping Start -> Target is no chain of its own: the walk reads the others, it lands on the Target's card", () => {
+    const units = [
+      { campaignId: "fu", fromStep: null, toStep: "paid_client" },
+      { campaignId: "src", fromStep: null, toStep: "lead_found" },
+      { campaignId: "ce", fromStep: "lead_found", toStep: "conversation" },
+      { campaignId: "team", fromStep: "conversation", toStep: "paid_client" },
+    ];
+    expect(milestoneChainOf(units, "paid_client")).toEqual([
+      { step: "lead_found", unitCampaignIds: ["src"] },
+      { step: "conversation", unitCampaignIds: ["ce"] },
+      { step: "paid_client", unitCampaignIds: ["team", "fu"] },
+    ]);
+    // A chain missing a link: the walk, then the Target, its jumping unit on it.
+    expect(milestoneChainOf(units.slice(0, 2), "paid_client")).toEqual([
+      { step: "lead_found", unitCampaignIds: ["src"] },
+      { step: "paid_client", unitCampaignIds: ["fu"] },
+    ]);
+    // Only jumping units: the one-step chain (unchanged).
+    expect(milestoneChainOf(units.slice(0, 1), "paid_client")).toEqual([{ step: "paid_client", unitCampaignIds: ["fu"] }]);
+  });
+
   it("counts the Units the runs produced (posts), per day; $ per Unit, % to next, projection off the Target's pace", () => {
     const ms: MilestoneCardInput[] = [
       { step: "threads_post_published", label: "Threads post published", lifecycleRung: "none", ledgerByDay: new Map([["2026-11-04", 2], ["2026-11-06", 3]]), ledgerUnavailableReason: null, ownSpendUsd: 21.31, spendUpToUsd: 21.31, neededPerTarget: 10 },
