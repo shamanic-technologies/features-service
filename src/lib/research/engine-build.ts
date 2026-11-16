@@ -8,8 +8,7 @@
  *
  * PURE. The only population keys kept are in `historySources`, NEVER served: each names the producers' own keys
  * (feature slug + step pair) that three live readers ask with:
- * - the leg workflow ranking (`readLegWorkflowRanking`): each history script page's figures, read live (RESEARCH-WF-FIGURES-1022),
- *   and `/internal/research/engines/live-scripts`;
+ * - the leg workflow ranking (`readLegWorkflowRanking`): each history script page's figures, read live (RESEARCH-WF-FIGURES-1022);
  * - content-generation's template dynasties (`readLiveTemplateDynasties`): each template page's status, read live (TPL-STATUS-LIVE-1023);
  * - the engine shadow's uplift (`lib/engine-shadow-io.ts` `subPicks`): each history script's rows (`workflowRows`).
  */

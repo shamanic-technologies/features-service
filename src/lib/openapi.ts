@@ -6289,56 +6289,6 @@ const meetingPopulationSchema = z
     brandsLeftOut: z.number().int().describe("Brands with people in scope left out because they report no meeting."),
   });
 
-// ── Leg workflow ranking row (read by the Engine live-scripts route) ───────────────────────────────────
-
-const workflowFigureSchema = z.object({
-  value: z.number().nullable(),
-  basis: z.enum(["measured", "expected"]).nullable().describe("`expected` = the workflow has not measured it yet (Learning): render it marked expected. Null only with `unavailableReason`."),
-  source: z
-    .enum(["workflow", "pipe_pooled", "leg_default"])
-    .nullable()
-    .describe("measured: `workflow`. expected: `pipe_pooled` (every workflow listed on the pipe pooled, lifetime: Σ spend ÷ Σ outcomes, Σ outcomes ÷ Σ contacted), `leg_default` (conversion: no outcome on the pipe yet, the leg's seeded rate)."),
-  expectedValue: z.number().nullable().describe("What the pipe expects of a workflow (the expected figure), served beside a measured value too."),
-  unavailableReason: z.enum(["no_outcome_on_pipe", "no_conversion_on_pipe", "net_not_measured_on_pipe"]).nullable(),
-});
-const legWorkflowFiguresSchema = z
-  .object({
-    pricing: z.enum(["gross", "net"]),
-    half: z.enum(["mature", "flash"]).describe("The half $/outcome, % conversion and $ spent are read on (the row's `basis`)."),
-    costPerOutcomeUsd: workflowFigureSchema.describe("Spend on `pricing` ÷ outcomes, on `half`. Measured once the half holds an outcome."),
-    conversionRatePct: workflowFigureSchema.describe("Outcomes ÷ people contacted (%), on `half`. Measured once the half holds an outcome or the workflow is mature (a mature 0% is a fact)."),
-    spentUsd: z.object({ value: z.number().nullable(), basis: z.enum(["measured"]).nullable(), unavailableReason: z.enum(["net_not_measured_on_pipe"]).nullable() }).describe("Spend on `pricing`, on `half`. Always measured."),
-    outcomes: z.number(),
-    contacted: z.number(),
-  })
-  .describe("RESEARCH-WF-FIGURES-1022: THE three figures the Workflows list and the workflow page print, one per workflow (the catalogue's workflow page copies this object). A % conversion is never blank. A workflow serves no return (ROI-CONSISTENCY-1103).");
-
-const legWorkflowRankingRowSchema = z.object({
-  rank: z.number().int().describe("1-based, total, no gaps. The leg order campaign-service receives on the leg-keyed `workflow-projection` (ONE computation), here on the fleet evidence: selectable rows first, then the rest in the same order. Within each: LEARNING workflows whose explore price (fleet spend on the leg ÷ max(outcomes, 1): $0 for one never run) is below the best MATURE price, cheapest first; the mature ones cheapest first (the first holds the money); then the other learning ones, cheapest explore price first. Slug ties."),
-  workflowDynastySlug: z.string(),
-  workflowDynastyName: z.string().nullable(),
-  assignment: z.enum(["active", "deprecated", "unassigned"]).describe("The owner's assignment on the leg. An unassigned workflow that never spent on the leg is not listed."),
-  executable: z.boolean().describe("TRUE ⟺ workflow-service runs a version of this dynasty (one version active on both of its status axes). FALSE = every version is retired: a run asked of it is refused, whatever the assignment says."),
-  selectable: z.boolean().describe("TRUE ⟺ `assignment` is active AND `executable`: the only rows a run may pick, rank, recommend or copy as a candidate."),
-  isMature: z.boolean().nullable().describe("The workflow's verdict on the fleet of the leg. Null when the mature cut could not be made."),
-  basis: z.enum(["mature", "flash"]).describe("The half the figures are read on: mature when the workflow is mature, else flash."),
-  costPerOutcomeUsd: z.number().nullable().describe("Observed on `basis`: spend ÷ outcomes. Null at 0 outcomes, never a spend floor."),
-  conversionRatePct: z.number().nullable(),
-  outcomes: z.number(),
-  contacted: z.number(),
-  spentUsd: z.number(),
-  goesFirst: z.boolean().describe("Rank 1, when selectable."),
-  moneyGoesHere: z.boolean().describe("The best mature workflow. At most one row."),
-  explorePriceUsd: z.number().nullable().describe("The price the order reads for a LEARNING row: fleet spend on the leg ÷ max(outcomes, 1); $0 for a workflow never run. Compared to the best mature price (`moneyGoesHere` row's `costPerOutcomeUsd`): below it the row sits above it. Null on a mature row (ordered on its mature `costPerOutcomeUsd`)."),
-  place: z.enum(["explore", "money", "mature", "proven_worse", "cannot_run"]).describe("Why the row stands where it does. `explore`: learning, explore price below the best mature price (or nothing is mature yet), tried first. `money`: the best mature workflow. `mature`: another mature workflow, cheapest first. `proven_worse`: learning, its spend already reached the best mature price with no outcome to beat it. `cannot_run`: a run may never pick it (`selectable` false: deprecated or unassigned on the leg, or `executable` false: workflow-service runs no version of it)."),
-  figures: legWorkflowFiguresSchema.describe("On the read's `pricing`. Absent only on a copy built before RESEARCH-WF-FIGURES-1022 (≤15 min after the deploy).").optional(),
-  lastRunAt: z.string().nullable().describe("When a run of this workflow (any version) last started on the pipe, every org (ISO). Null = never ran on it, or `lastRunUnavailableReason`. Absent on a copy built before it shipped.").optional(),
-  lastRunUnavailableReason: z.enum(["never_ran", "run_time_not_served", "not_read_on_pipe"]).nullable().describe("Set whenever `lastRunAt` is null. `never_ran`: no spend and nobody contacted on the pipe. `run_time_not_served`: it ran but the run-time read states no date. `not_read_on_pipe`: an internal or on-demand pipe states no run time per workflow yet.").optional(),
-  tactics: z.array(z.object({ id: z.string(), name: z.string() })).nullable().describe("The tactics its CURRENT version follows (Jev's workflow-tactic verdicts, read live at every request, name order). Null with `tacticsUnavailableReason`.").optional(),
-  tacticsUnavailableReason: z.enum(["tactics_unreadable", "not_judged_yet"]).nullable().describe("`not_judged_yet`: its current version lacks Jev's verdict on a workflow tactic (unknown, never an empty list). `[]` with no reason = judged, follows none. The email angle (blind / named / offer) is a TEMPLATE tactic since RESEARCH-WF-FIGURES-1022, so it is never listed here.").optional(),
-  icon: z.string().describe("MARKS-1022: this workflow dynasty's OWN icon, a Phosphor icon name (`lighthouse`), from the fixed pool `GET /public/catalogue/mark-icons` lists; given on first sight, never moved, unique with `color` per family: the same workflow serves the same mark on every read (leg rankings, Research catalogue, agent catalogue)."), color: z.string().describe("MARKS-1022: its colour (`#RRGGBB`), from the catalogue glyph colours."),
-});
-
 // THREADS-IDEAS-AB: what a writer row's posts led to (LOCKED shape, the dashboard codes against it).
 const postFiguresSchema = z
   .object({ posts: z.number(), views: z.number(), engagements: z.number(), visits: z.number(), signups: z.number(), spentUsd: z.number(), costPerSignupUsd: z.number().nullable() })
@@ -9172,43 +9122,6 @@ registry.registerPath({
       },
     },
     400: researchEngineBadParam,
-    503: researchNotYet,
-  },
-});
-
-registry.registerPath({
-  method: "get",
-  path: "/internal/research/engines/live-scripts",
-  summary: "The live script ranking of one Research measure (staff, api-key)",
-  description: `${engineWordsNote} Built off the stored fleet leg workflow ranking (its public route is deleted): the same rows (rank, figures, tactics, marks, place), \`scriptDynastySlug\` / \`scriptDynastyName\` for the old workflow fields. Several measured sources = rows listed, \`orderUnavailableReason: several_sources_ranked_apart\`.`,
-  tags: ["Internal"],
-  request: {
-    query: z.object({
-      measure: z.string().describe("A `measures[].id` of /internal/research/engines."),
-      pricing: z.enum(["gross", "net"]).describe("Default gross.").optional(),
-    }),
-  },
-  responses: {
-    200: {
-      description: "The measure's live script ranking",
-      content: {
-        "application/json": {
-          schema: z
-            .object({
-              pricing: z.enum(["gross", "net"]),
-              engine: z.string(),
-              measure: researchMeasureSchema,
-              computedAt: z.string().nullable(),
-              rows: z.array(z.object({ rank: z.number().int(), scriptDynastySlug: z.string(), scriptDynastyName: z.string().nullable().optional() }).passthrough()),
-              orderUnavailableReason: z.enum(["ranking_not_computed_yet", "several_sources_ranked_apart"]).nullable(),
-            })
-            .passthrough(),
-        },
-      },
-    },
-    400: { description: "`pricing_unrecognised`", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "`measure_not_found`", content: { "application/json": { schema: errorResponse } } },
-    502: { description: "`live_scripts_unreadable`", content: { "application/json": { schema: errorResponse } } },
     503: researchNotYet,
   },
 });

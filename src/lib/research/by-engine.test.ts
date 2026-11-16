@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   engineCatalogOf,
   engineFileOf,
-  engineLiveScriptsOf,
   engineHistoryOf,
   enginePerformanceOf,
   enginesOf,
@@ -164,17 +163,5 @@ describe("performance", () => {
     const served = enginePerformanceOf(out.engines, { of: () => ({ scripts: null, unavailableReason: "ledger_book_unreadable" }), favourite: () => undefined }) as Record<string, any>;
     expect(served.engines[0].measures[0].rows[0]).toMatchObject({ key: "hunor|blind|opus", era: "history", status: "deprecated" });
     expect(sourceWordsLeft(served)).toEqual([]);
-  });
-});
-
-describe("live scripts", () => {
-  it("the source's ranking rows, in the framework's words", () => {
-    const measure = enginesOf(SOURCES, name)[0]!.measures[0]!;
-    const ranking = { featureSlug: "s", legKey: "l", computedAt: "t", rows: [{ rank: 1, workflowDynastySlug: "hunor", workflowDynastyName: "Hunor", figures: { costPerOutcomeUsd: { source: "pipe_pooled" } } }] };
-    const out = engineLiveScriptsOf(measure, [ranking]) as Record<string, any>;
-    expect(sourceWordsLeft(out)).toEqual([]);
-    expect(out.rows[0]).toEqual({ rank: 1, scriptDynastySlug: "hunor", scriptDynastyName: "Hunor", figures: { costPerOutcomeUsd: { source: "engine_pooled" } } });
-    expect(out.orderUnavailableReason).toBeNull();
-    expect(engineLiveScriptsOf(measure, [null]).orderUnavailableReason).toBe("ranking_not_computed_yet");
   });
 });
