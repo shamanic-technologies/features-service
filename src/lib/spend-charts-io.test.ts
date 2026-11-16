@@ -81,6 +81,15 @@ describe("spend charts: who enters and converts on a leg (one rule, every channe
     expect(fallback.conversionBasis).toBe("default");
   });
 
+  it("EXPECTED-FLEET-RATE-1116: a later leg reads the brand's own rate, else the fleet's measured one, else the default", () => {
+    const booking = { channelSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", fromStep: "conversation", toStep: "meeting_booked" };
+    const fleet = new Map([["conversation_to_meeting_booked|ai-meeting-booking", 12]]);
+    expect(expectedConversionOf(booking, fleet, { ratePct: 30, source: "default" })).toMatchObject({ conversionRatePct: 12, conversionBasis: "fleet", conversionSource: "fleet_measured" });
+    expect(expectedConversionOf(booking, fleet, { ratePct: 45, source: "manual" })).toMatchObject({ conversionRatePct: 45, conversionBasis: "stated" });
+    expect(expectedConversionOf(booking, fleet, { ratePct: 8, source: "measured" })).toMatchObject({ conversionRatePct: 8, conversionBasis: "measured" });
+    expect(expectedConversionOf(booking, new Map(), { ratePct: 30, source: "default" })).toMatchObject({ conversionRatePct: 30, conversionBasis: "default" });
+  });
+
   it("expected cost per outcome only when the model prices THIS chart's step", () => {
     const expected = {
       roiMultiple: 3,

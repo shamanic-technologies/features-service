@@ -67,6 +67,7 @@ const sp = {
   rates: [{ legKey: "conversation_to_paid_client", catalogueFromStep: "conversation", catalogueToStep: "paid_client", effectiveRatePct: 4, source: "manual", measured: { basis: "our_leads" } }],
   prices: new Map(),
   fleetPrices: new Map(),
+  fleetRates: new Map(),
 };
 
 const id = { orgId: "org-1", userId: "u", runId: "r" };
@@ -97,6 +98,58 @@ describe("a funnel campaign the offer's model cannot price reads the catalogue f
     expect(catalogueModel).toHaveBeenCalledWith(expect.objectContaining({ lifetimeRevenueUsd: 2000, lifetimeRevenueSource: "offer_stated" }));
     expect(catalogueModel.mock.calls[0][0].rates.get("conversation>paid_client")).toEqual({ ratePct: 4, source: "offer_stated" });
     expect(e.assumptions).toContainEqual({ input: "rate", legKey: expect.stringContaining("conversation_to_paid_client"), basis: "stated", source: "offer_stated" });
+  });
+
+  // EXPECTED-FLEET-RATE-1116 (owner 2026-11-16, « go with A »): prod Wide Email priced Lead found -> Positive reply on the
+  // 1 % default ($ / Paid client $1,140, ROI 66x) while its "% to Paid client" read the fleet's measured 0.10 %.
+  it("prices its Lead found -> Positive reply leg on the fleet's MEASURED rate, never the default (basis fleet)", async () => {
+    const FLEET = 0.1023;
+    catalogueModel.mockImplementation(async (offer: { lifetimeRevenueUsd: number; rates: CatalogueInputs["offerRates"] }) =>
+      buildCatalogueModel(
+        catalogueInputs({
+          lifetimeRevenueUsd: offer.lifetimeRevenueUsd,
+          offerRates: offer.rates,
+          fleetLegRates: new Map([["start_to_conversation|sales-cold-email-outreach", FLEET]]),
+        }),
+      ),
+    );
+    const e = await er.expectedReturnForFunnelCampaign(id, "b1", "o1", WIDE, null, 25_000);
+    const rate = e.assumptions.find((a) => a.input === "rate" && a.legKey!.includes("_to_conversation"));
+    expect(rate).toMatchObject({ basis: "fleet", source: "fleet_measured" });
+    // 25 positive replies per client (4 % closing, stated) at $50, and 25 / 0.1023 % leads found at $0.60.
+    const replies = 1 / 0.04;
+    const cost = 50 * replies + 0.6 * (replies / (FLEET / 100));
+    expect(e.roiMultiple!).toBeCloseTo(2000 / cost, 2);
+    // The route the spend chart prices the Target on carries the same rate: one rate for one step on one page.
+    expect(er.expectedRouteOf(e)!.find((l) => l.toStep === "conversation")).toMatchObject({ ratePct: FLEET, rateBasis: "fleet" });
+    expect(e.basis).toBe("default"); // the cold email cost is still the seeded default ($50): the weakest input.
+  });
+
+  it("the spend chart's $ / Paid client off the route is the cost the expected ROI divides, sub-cent costs included", async () => {
+    const { expectedTargetFigures } = await import("./spend-chart-target.js");
+    catalogueModel.mockImplementation(async (offer: { lifetimeRevenueUsd: number; rates: CatalogueInputs["offerRates"] }) => {
+      const base = catalogueInputs({ lifetimeRevenueUsd: offer.lifetimeRevenueUsd, offerRates: offer.rates, fleetLegRates: new Map([["start_to_conversation|sales-cold-email-outreach", 0.1023]]) });
+      const plays = new Map(base.plays);
+      const sourcing = plays.get("lead-sourcing|start_to_lead_found")!;
+      // $0.067 per lead found: served $0.07 on the wire, ~19,550 of them per paying client.
+      plays.set("lead-sourcing|start_to_lead_found", { ...sourcing, others: sourcing.others.map((o) => ({ ...o, measurement: mature(0.067, 100) })) });
+      return buildCatalogueModel({ ...base, plays });
+    });
+    const e = await er.expectedReturnForFunnelCampaign(id, "b1", "o1", WIDE, null, 25_000);
+    const chart = expectedTargetFigures(er.expectedRouteOf(e), { step: "paid_client", fromStep: "lead_found", source: "campaign_target" }, new Map(), null);
+    // The served ROI is rounded to the cent (0.69x): within 1 %. On the served $0.07 the chart read 2.1 % above it.
+    expect(Math.abs(chart.costPerOutcomeUsd! - 2000 / e.roiMultiple!) / chart.costPerOutcomeUsd!).toBeLessThan(0.01);
+    const leads = 25 / (0.1023 / 100);
+    expect(chart.costPerOutcomeUsd!).toBeCloseTo(0.067 * leads + 50 * 25, 6);
+  });
+
+  it("a brand's own stated rate still wins over the fleet's (the order: measured > stated > fleet > default)", async () => {
+    offerModel.mockResolvedValue({ ...sp, rates: [...sp.rates, { legKey: "start_to_conversation", catalogueFromStep: "lead_found", catalogueToStep: "conversation", effectiveRatePct: 3, source: "manual", measured: { basis: "our_leads" } }] });
+    catalogueModel.mockImplementation(async (offer: { lifetimeRevenueUsd: number; rates: CatalogueInputs["offerRates"] }) =>
+      buildCatalogueModel(catalogueInputs({ lifetimeRevenueUsd: offer.lifetimeRevenueUsd, offerRates: offer.rates, fleetLegRates: new Map([["start_to_conversation|sales-cold-email-outreach", 0.1023]]) })),
+    );
+    const e = await er.expectedReturnForFunnelCampaign(id, "b1", "o1", WIDE, null, 25_000);
+    expect(e.assumptions.find((a) => a.input === "rate" && a.legKey!.includes("_to_conversation"))).toMatchObject({ basis: "stated", source: "offer_stated" });
   });
 
   it("a table read never waits: computing first, the figure on the next read", async () => {

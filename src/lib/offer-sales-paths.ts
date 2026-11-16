@@ -14,7 +14,9 @@
  *
  *     rate(Li)            the leg's EFFECTIVE conversion rate (i ≥ 2), 0..100 — the brand's own
  *                         resolution (`lib/effective-conversion-rates.ts`: CRM-measured / measured on our
- *                         leads > the customer's own value > fleet median > industry default). An entry
+ *                         leads > the customer's own value), else the FLEET's measured conversion of the
+ *                         leg on this combination's channel, else the industry default (THE ORDER of every
+ *                         expected figure, `lib/fleet-leg-rates.ts`, EXPECTED-FLEET-RATE-1116). An entry
  *                         leg has no rate (nobody was on the path before it).
  *     needed(paid_client) = 1
  *     needed(s(i-1))      = needed(s(i)) ÷ (rate(Li) / 100)      — outcomes of each step per paying client
@@ -90,6 +92,7 @@ import type { ChannelStepDefWire } from "./channel-catalogue.js";
 import { CHANNEL_STEPS, isProactiveTransition, type ChannelStepKey } from "./acquisition-channels.js";
 import { funnelLeg } from "./funnel-legs.js";
 import { legPairKey, type EffectiveArrowRate } from "./effective-conversion-rates.js";
+import { NO_FLEET_LEG_RATES, expectedBrandLegRate, fleetLegRatePct, type FleetLegRates } from "./fleet-leg-rates.js";
 import {
   SALES_PATH_CATALOGUE_CHANNEL_SLUGS,
   SALES_PATH_COST_BENCHMARKS,
@@ -104,6 +107,9 @@ export type SalesPathRateSource =
   | "measured_on_our_leads"
   /** The value the customer stated for the leg. */
   | "customer_stated"
+  /** The fleet's measured conversion of the leg on this combination's channel (EXPECTED-FLEET-RATE-1116), when the brand
+   *  has no measured or stated rate of its own: before the industry default. */
+  | "fleet_measured"
   /** The seeded industry benchmark for the leg. */
   | "industry_default";
 
@@ -221,6 +227,8 @@ export interface SalesPathLeg {
     customerStatedPct: number | null;
     /** RETIRED (owner 2026-10-14): always `{ ratePct: null, brandCount: 0 }`, kept for readers that parse it. */
     fleetMedian: { ratePct: null; brandCount: 0 };
+    /** The fleet's measured conversion of the leg on this combination's channel (null = none measured). */
+    fleetMeasuredPct: number | null;
     industryDefaultPct: number | null;
   } | null;
   /** `platform`: a platform channel works this leg in this combination. `human`: the customer's team does
@@ -396,17 +404,28 @@ export function outcomesForCreditOn(path: SalesPath | null, legKey: string, cred
 
 const stepWire = (key: keyof typeof CHANNEL_STEPS): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
 
-function rateSourceOf(arrow: EffectiveArrowRate): SalesPathRateSource | null {
-  switch (arrow.source) {
-    case "measured":
-      return arrow.measured.basis === "crm" ? "crm_measured" : "measured_on_our_leads";
-    case "manual":
-      return "customer_stated";
-    case "default":
-      return "industry_default";
-    default:
-      return null;
-  }
+/** PURE: the leg's rate on THE ORDER (brand measured > stated > fleet measured > default, `lib/fleet-leg-rates.ts`), in
+ *  the sales path's words. Null on an entry leg (no arrow) or when no rung holds a rate. */
+export function salesPathLegRate(
+  arrow: EffectiveArrowRate | null,
+  fleet: FleetLegRates,
+  legKey: string,
+  channelSlug: string | null,
+): { ratePct: number; source: SalesPathRateSource } | null {
+  if (!arrow) return null;
+  const r = expectedBrandLegRate(arrow, fleet, legKey, channelSlug);
+  if (!r) return null;
+  const source: SalesPathRateSource =
+    r.rung === "measured"
+      ? arrow.measured.basis === "crm"
+        ? "crm_measured"
+        : "measured_on_our_leads"
+      : r.rung === "stated"
+        ? "customer_stated"
+        : r.rung === "fleet"
+          ? "fleet_measured"
+          : "industry_default";
+  return { ratePct: r.ratePct, source };
 }
 
 /** PURE: every chain of `legKeys` from an entry leg to `paid_client`, visiting no step twice. */
@@ -458,6 +477,9 @@ export interface BuildOfferSalesPathsInput {
   prices: ReadonlyMap<string, LegChannelPrice>;
   /** `${legKey}|${channelSlug}` → the channel's MEASURED fleet cost per outcome on the leg (real spend only). */
   fleetPrices?: ReadonlyMap<string, number>;
+  /** `${legKey}|${channelSlug}` → the fleet's MEASURED conversion of the leg (outcome prices), the rate rung after the
+   *  brand's own (`lib/fleet-leg-rates.ts`). Absent = none measured. */
+  fleetRates?: FleetLegRates;
   /** The channels the platform manages (default `MANAGED_CHANNEL_SLUGS`). */
   managedChannelSlugs?: ReadonlySet<string>;
   /** The last rung of the cost cascade (default `DEFAULT_COST_PER_OUTCOME_USD`). */
@@ -554,29 +576,15 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
   const arrows = new Map(input.rates.map((a) => [legPairKey(a.fromStep, a.toStep), a]));
   const managed = input.managedChannelSlugs ?? MANAGED_CHANNEL_SLUGS;
   const fleetPrices = input.fleetPrices ?? new Map<string, number>();
+  const fleetRates = input.fleetRates ?? NO_FLEET_LEG_RATES;
   const defaultCosts = input.defaultCosts ?? DEFAULT_COST_PER_OUTCOME_USD;
   const ltr = input.lifetimeRevenueUsd;
 
   const paths = chains.flatMap((legKeys): Array<Omit<SalesPath, "rank">> => {
     const defs = legKeys.map((k) => funnelLeg(k)!);
-    // Walk backward from the paying client: outcomes needed at each leg's step.
-    const needed: Array<number | null> = new Array(defs.length).fill(null);
-    let zeroRate = false;
-    let n: number | null = 1;
-    const legRates: Array<EffectiveArrowRate | null> = defs.map((d) =>
+    const legArrows: Array<EffectiveArrowRate | null> = defs.map((d) =>
       d.fromStep ? (arrows.get(`${d.fromStep.key}>${d.toStep.key}`) ?? null) : null,
     );
-    for (let i = defs.length - 1; i >= 0; i--) {
-      needed[i] = n;
-      if (i === 0) break;
-      const rate = legRates[i]?.effectiveRatePct ?? null;
-      if (n === null || rate === null || rate <= 0) {
-        if (rate !== null && rate <= 0) zeroRate = true;
-        n = null;
-      } else {
-        n = n / (rate / 100);
-      }
-    }
 
     // Per leg: every candidate channel (priced by the cascade), and the cheapest of them.
     const legCandidates = defs.map((d) => {
@@ -627,11 +635,32 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
     // One combination per pick of a candidate on every platform leg (a human leg has the one option: null).
     const picks = cartesian(legCandidates.map((lc) => (lc ? lc.candidates : [null])));
     return picks.map((pick): Omit<SalesPath, "rank"> => {
+      // Each leg's rate on THE ORDER, its fleet rung read on the channel this combination works it on (none on the
+      // customer's team: the lowest the fleet measured on the leg).
+      const legRates = defs.map((d, i) =>
+        salesPathLegRate(legArrows[i], fleetRates, d.legKey, pick[i] && pick[i]!.operatedBy === "platform" ? pick[i]!.slug : null),
+      );
+      // Walk backward from the paying client: outcomes needed at each leg's step.
+      const needed: Array<number | null> = new Array(defs.length).fill(null);
+      let zeroRate = false;
+      let n: number | null = 1;
+      for (let i = defs.length - 1; i >= 0; i--) {
+        needed[i] = n;
+        if (i === 0) break;
+        const rate = legRates[i]?.ratePct ?? null;
+        if (n === null || rate === null || rate <= 0) {
+          if (rate !== null && rate <= 0) zeroRate = true;
+          n = null;
+        } else {
+          n = n / (rate / 100);
+        }
+      }
       let costUnavailable = false;
       let anyCosted = false;
       let total = 0;
       const legs: SalesPathLeg[] = defs.map((d, i) => {
-        const arrow = legRates[i];
+        const arrow = legArrows[i];
+        const rate = legRates[i];
         const lc = legCandidates[i];
         const picked = pick[i];
         let channel: SalesPathLeg["channel"] = null;
@@ -671,8 +700,8 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
             : null,
           fromStep: d.fromStep ? stepWire(d.fromStep.key) : null,
           toStep: stepWire(d.toStep.key),
-          conversionRatePct: arrow?.effectiveRatePct ?? null,
-          rateSource: arrow ? rateSourceOf(arrow) : null,
+          conversionRatePct: rate?.ratePct ?? null,
+          rateSource: rate?.source ?? null,
           rateInputs: arrow
             ? {
                 measured: {
@@ -685,6 +714,7 @@ export function buildOfferSalesPaths(input: BuildOfferSalesPathsInput): OfferSal
                 },
                 customerStatedPct: arrow.manualRatePct,
                 fleetMedian: arrow.median,
+                fleetMeasuredPct: fleetLegRatePct(fleetRates, d.legKey, picked && picked.operatedBy === "platform" ? picked.slug : null),
                 industryDefaultPct: arrow.defaultRatePct,
               }
             : null,

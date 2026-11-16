@@ -101,6 +101,8 @@ export interface OfferSalesPathsModel {
   rates: EffectiveArrowRate[];
   prices: ReadonlyMap<string, LegChannelPrice>;
   fleetPrices: ReadonlyMap<string, number>;
+  /** The fleet's measured conversion per (leg, channel) (`lib/fleet-leg-rates.ts`). */
+  fleetRates: ReadonlyMap<string, number>;
 }
 
 /**
@@ -201,6 +203,9 @@ export async function computeOfferSalesPathsModel(args: {
   // build takes; this read awaits that build, and fails VISIBLY (503) past the bound — never prices a
   // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
   const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices(...(fleetWaitMs === undefined ? [] : [fleetWaitMs]));
+  // The fleet's measured conversion per (leg, channel), from the build just awaited (EXPECTED-FLEET-RATE-1116: the rate
+  // rung after the brand's own, before the default).
+  const fleetRates = (await import("./public.js")).fleetLegConversionRatesFromOutcomePrices();
 
   const body = buildOfferSalesPaths({
     offerId,
@@ -213,10 +218,11 @@ export async function computeOfferSalesPathsModel(args: {
     channels,
     prices,
     fleetPrices,
+    fleetRates,
     scope,
     catalogueChannelSlugs,
   });
-  return { body, selectedPaths, published, lifetimeRevenue, rates: rates.legs, prices, fleetPrices };
+  return { body, selectedPaths, published, lifetimeRevenue, rates: rates.legs, prices, fleetPrices, fleetRates };
 }
 
 /** A short, order-stable digest of a JSON value (a cell key part). */

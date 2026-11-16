@@ -6,6 +6,8 @@ import {
   expectedForCampaign,
   expectedForCombination,
   pricedCombinationKeyOf,
+  priceCombination,
+  expectedRouteOf,
   expectedForOffer,
   withAudienceExpectedReturns,
   withMeasuredReturn,
@@ -156,6 +158,7 @@ describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-
     ] as never,
     prices: new Map(),
     fleetPrices: new Map([["conversation_to_meeting_booked|ai-meeting-booking", 2]]),
+    fleetRates: new Map(),
   };
 
   it("an unlisted reactive funnel reads its own legs and the value it ADDS, never the offer's best path", () => {
@@ -174,6 +177,26 @@ describe("a funnel campaign is priced on ITS OWN path (EXPECTED-ROI-1011 follow-
     const e = expectedForCombination(m, "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client");
     expect(e.roiMultiple).toBeCloseTo(1000 / (40 / 0.05), 6);
     expect(e.basis).toBe("fleet");
+  });
+
+  it("EXPECTED-FLEET-RATE-1116: a leg resolved on its default is priced on the fleet's measured rate, a stated one keeps its own", () => {
+    const KEY = "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+    const fleetRates = new Map([
+      ["meeting_booked_to_meeting_attended|ai-meeting-booking", 50],
+      ["meeting_attended_to_paid_client|ai-meeting-booking", 90],
+    ]);
+    const before = priceCombination(KEY, inputs, "offer_stated")!;
+    const after = priceCombination(KEY, { ...inputs, fleetRates }, "offer_stated")!;
+    // The team-worked legs name no channel: the lowest rate the fleet measured on each (here, the only one).
+    expect(after.assumptions).toContainEqual({ input: "rate", legKey: "meeting_booked_to_meeting_attended", basis: "fleet", source: "fleet_measured" });
+    expect(after.assumptions).toContainEqual({ input: "rate", legKey: "meeting_attended_to_paid_client", basis: "fleet", source: "fleet_measured" });
+    expect(expectedRouteOf(after)!.find((l) => l.legKey === "meeting_booked_to_meeting_attended")).toMatchObject({ ratePct: 50, rateBasis: "fleet" });
+    // needed: 1 / (0.5 × 0.9) = 2.222 meetings at $2; each was worth $1000 × max(5% stated, 45% via meetings × 30% booking).
+    expect(after.roiMultiple).toBeCloseTo((1000 - (1 / 0.45) * 1000 * Math.max(0.05, 0.3 * 0.45)) / ((1 / 0.45) * 2), 2);
+    expect(after.roiMultiple).not.toBeCloseTo(before.roiMultiple!, 2);
+    // The stated closing rate out of Positive reply (5 %) is the brand's own: no fleet figure replaces it.
+    const stated = priceCombination("lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client", { ...inputs, fleetRates: new Map([["conversation_to_paid_client|sales-cold-email-outreach", 1]]), fleetPrices: new Map([["start_to_conversation|sales-cold-email-outreach", 40]]) }, "offer_stated")!;
+    expect(stated.assumptions).toContainEqual({ input: "rate", legKey: "conversation_to_paid_client", basis: "stated", source: "customer_stated" });
   });
 
   it("unpriceable (no LTR) is null with a reason, never the offer's figure", () => {

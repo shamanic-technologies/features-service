@@ -282,7 +282,7 @@ export function lineFigures(model: CatalogueModel, legs: readonly FunnelLeg[], t
   const basis: ExpectedBasis = target === "paid_client" ? ltrBasis : "default";
   // A Target with no value (a step after Paid client: Client Satisfied, owner 2026-10-27, never a made-up share of a
   // client's value) still has a cost per Target; its ROI stays null (`target_unvalued`) and lines rank on cost.
-  const e = expectedFunnelEconomics(path, legs, targetValue ?? 1, basis, targetValue === null ? 0 : takeoverValueOf(model, chain[0]?.fromStep ?? null));
+  const e = expectedFunnelEconomics(path, legs, targetValue ?? 1, basis, targetValue === null ? 0 : takeoverValueOf(model, chain[0]?.fromStep ?? null), model.fleetLegRates);
   return {
     costPerTargetUsd: e.costUsd,
     roi: targetValue === null ? null : e.roi,

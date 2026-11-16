@@ -116,7 +116,7 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import { awaitWarmStore, StoreNotComputedError } from "../lib/await-warm-store.js";
 import { pipeLegKeyOf, servedCombinationKeyOf, servedLegKeyOf, storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { listLegAssignments, listRunnableLegAssignments } from "../lib/workflow-leg-assignments.js";
-import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking } from "./public.js";
+import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWorkflowRanking, awaitFleetLegConversionRatesFromOutcomePrices } from "./public.js";
 import type { PipeLegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
@@ -463,7 +463,7 @@ const offerEcho = (o: OfferContext | null) =>
 async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates"> | null = null): Promise<Loaded> {
   await installPersistedFigures();
   void warmCatalogueMeasurements();
-  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels, scripts, outcomeRungs] = await Promise.all([
+  const [measurements, all, pub, declaredSteps, names, triggers, assignments, playCatalogue, chains, statedFunnels, scripts, outcomeRungs, fleetLegRates] = await Promise.all([
     awaitWarmStore(() => measurementStore?.value ?? null, warmCatalogueMeasurements, MEASUREMENTS_BOOT_WAIT_MS, "catalogue economics"),
     loadChannelCatalogue({ publishedOnly: false }),
     loadChannelCatalogue({ publishedOnly: true }),
@@ -479,6 +479,9 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     // MIGRATE-1105 S0b: a pipe (or a play) runs on the scripts of its Engine stating its channel, workflow or none.
     readRunnableScriptsForCatalogue(),
     listOutcomeRungs(),
+    // The fleet's measured conversion per (leg, channel), the expected rate rung after the brand's own
+    // (EXPECTED-FLEET-RATE-1116); awaited at boot like the spend charts' (never a default for a young process).
+    awaitFleetLegConversionRatesFromOutcomePrices(MEASUREMENTS_BOOT_WAIT_MS),
   ]);
   const workflowPipeKeys = new Set(assignments.filter((a) => a.state === "active").map((a) => `${a.featureSlug}|${pipeLegKeyOf(a.featureSlug, a.legKey)}`));
   const { lifetimeRevenue: ltr } = await fleetMediansFor(measurements.fleet);
@@ -494,6 +497,7 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
     lifetimeRevenueUsd: offer ? offer.lifetimeRevenueUsd : ltr.usd,
     lifetimeRevenueBasis: offer?.lifetimeRevenueSource === "offer_stated" ? "stated" : "fleet",
     ...(offer ? { offerRates: offer.rates } : {}),
+    fleetLegRates,
     triggers,
     plays: playInputsOf(playCatalogue, assignments, measurements.byPlay, scripts, pipeEngineOf(all.channels)),
     retiredPlays: playCatalogue.retiredByPipe,
