@@ -9419,8 +9419,8 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/internal/research/engines/performance",
-  summary: "The Research Performance tab by Engine: per measure, every script x template x LLM row (staff, api-key)",
-  description: `${engineWordsNote} Built off the Performance tab the deleted pipe-keyed /internal/research/performance served: each row's \`script\` part = the old \`workflow\` part (\`deprecatedParts\` says \`script\`), \`servedNow.script\` likewise. A measure with ONE measured source serves its rows, totals and series as served; several measured sources list their rows and serve \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed).`,
+  summary: "The Research Performance tab by Engine: per measure, the Engine's scripts that ran, then the history (staff, api-key)",
+  description: `${engineWordsNote} RESEARCH-PERF-SCRIPTS-1116: each measure lists FIRST its Engine's scripts that ran (\`era: scripts\`, one row per script dynasty, read live on runs-service's general ledger daily book with the per-script rule of the Engine prices: its own production + its runs that made nothing + the counted step its inputs led to at that step's own cost; \`status\` active = runnable today; \`llm\` / \`template\` = the tactics the script states, \`writerSource: script_tactics\`; \`recentRuns\` = runs of the last 30 days on Monitoring's script board; a script that ran is never \`untested\`, one with no cent on the ledger says \`spendUnavailableReason: ran_with_no_cost_on_ledger\`; on the mature view a script with no run in the mature cohort is served on its flash figures, \`basis: flash\`), THEN the history rows that wrote (\`era: history\`, each \`status: deprecated\`, \`deprecatedParts\` includes \`script\`; the history's combinations that never wrote are not listed, \`combinationsNeverRunNotListed\`). \`totals\` and \`series\` = scripts + history (Σ rows' spend = totals.spentUsd; the last point = the totals). \`servedNow\` = the Rating's favourite script of the Engine (Monitoring's board) and its row. \`unplacedScriptOutcomes\` = the counted step made by runs naming no script (before runs-service named them): on no Engine, in no figure. A measure whose history comes from several sources lists their rows and serves \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed). The ledger book unreadable or missing a past day of the scripts' era = no script row, \`scriptsUnavailableReason\`. No return on any row.`,
   tags: ["Internal"],
   request: { query: researchEngineQuery },
   responses: {
@@ -9442,6 +9442,18 @@ registry.registerPath({
                       totals: z.object({}).passthrough().nullable(),
                       series: z.object({}).passthrough().nullable(),
                       totalsUnavailableReason: z.enum(["no_source_measured", "several_sources_not_summed"]).nullable(),
+                      rowsCover: z.literal("scripts_that_ran_and_history").optional(),
+                      scriptsUnavailableReason: z.enum(["ledger_book_unreadable", "ledger_book_missing_days"]).nullable().optional(),
+                      unplacedScriptOutcomes: z.number().nullable().describe("The counted step made by runs naming no script; null when the scripts were not read.").optional(),
+                      combinationsNeverRunNotListed: z.number().int().optional(),
+                      servedNow: z
+                        .object({
+                          script: z.object({ key: z.string(), label: z.string() }).nullable(),
+                          row: z.object({ key: z.string() }).passthrough().nullable(),
+                          unavailableReason: z.enum(["served_pick_unreadable", "no_runnable_script", "combination_not_listed"]).nullable(),
+                        })
+                        .passthrough()
+                        .optional(),
                     })
                     .passthrough(),
                 ),
