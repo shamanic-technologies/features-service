@@ -77,3 +77,16 @@ export async function readHeldEngines(campaignIds: readonly string[], now = Date
     lastAnsweredAt: r.answeredAt.toISOString(),
   }));
 }
+
+/**
+ * CAMPAIGN-SCRIPTS-1113: the Engines the runner ever asked a strategy for, per pipe campaign (any answer, held or not):
+ * an Engine the campaign USES. FAIL-LOUD (throws).
+ */
+export async function readAskedEngines(campaignIds: readonly string[]): Promise<string[]> {
+  if (campaignIds.length === 0) return [];
+  const rows = await db
+    .selectDistinct({ outcome: campaignEngineAnswers.outcome })
+    .from(campaignEngineAnswers)
+    .where(inArray(campaignEngineAnswers.campaignId, [...campaignIds]));
+  return rows.map((r) => r.outcome).sort();
+}

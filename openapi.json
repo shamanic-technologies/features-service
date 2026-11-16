@@ -55194,7 +55194,7 @@
     "/brands/{brandId}/sales-funnel-campaigns/{id}/engine-scripts": {
       "get": {
         "summary": "A campaign's Engines in scripts: what competes, today's draws, its own runs (org-scoped)",
-        "description": "CAMPAIGN-SCRIPTS-1113. From the campaign's Target down, at each Engine it uses (its Target's, those its brief keeps a strategy on, those its runs ran): the scripts its strategy keeps and what it rules out in words, today's share of draws among the kept ones (the Rating's own draw, for this campaign's candidates only; shares add to ~100), this campaign's own runs of each (runs, what they reached, cost per run, last day), and the script the draws pick most now. No decision score is served. 503 `script_rating_not_built_yet` while the Rating's first build runs (every 15 min).",
+        "description": "CAMPAIGN-SCRIPTS-1113. From the campaign's Target down, at each Engine it uses (its Target's, those the Engine runner asked a strategy for, those its runs ran; a stored strategy alone lists none): the scripts its strategy keeps and what it rules out in words, today's share of draws among the kept ones (the Rating's own draw, for this campaign's candidates only; shares add to ~100), this campaign's own runs of each (runs, what they reached, cost per run, last day), and the script the draws pick most now. No decision score is served. 503 `script_rating_not_built_yet` while the Rating's first build runs (every 15 min).",
         "tags": [
           "Sales funnel campaigns"
         ],

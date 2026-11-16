@@ -52,10 +52,11 @@ const campaign = [
   g("message_written/gone", "2026-10-01", 7, [], 0.07),
 ];
 const labelOf = (o: string) => o.replace(/_/g, " ");
-const run = (stored: Array<{ outcome: string; strategyId: string | null }>, target: string | null = "paid_client") =>
+const run = (stored: Array<{ outcome: string; strategyId: string | null }>, target: string | null = "paid_client", asked: string[] = ["message_written"]) =>
   campaignEngineScripts({
     target,
     stored: stored.map((s) => ({ ...s, campaignId: "c1" })),
+    asked,
     runnable,
     catalogue,
     fleetRatings: scriptRatings({ groups: fleet, values }),
@@ -114,9 +115,28 @@ describe("campaignEngineScripts", () => {
     expect(open.ruledOut).toEqual([]);
   });
 
-  it("leaves out an Engine with no script and no run of this campaign (a verdict on an outcome its scripts left)", () => {
-    const out = run([{ outcome: "message_written", strategyId: "blind-only" }, { outcome: "conversation", strategyId: null }]);
+  it("leaves out an Engine asked but with no script and no run of this campaign (an outcome its scripts left)", () => {
+    const out = run([{ outcome: "message_written", strategyId: "blind-only" }, { outcome: "conversation", strategyId: null }], "paid_client", ["message_written", "conversation"]);
     expect(out.map((e) => e.outcome)).toEqual(["paid_client", "message_written"]);
+  });
+
+  it("lists only the Engines the campaign uses: a stored verdict alone lists nothing (prod 65dc0617)", () => {
+    const carriedOnly = run([{ outcome: "paid_client", strategyId: null }, { outcome: "message_written", strategyId: "blind-only" }], "paid_client", []);
+    // message_written still listed: the campaign's own runs ran it.
+    expect(carriedOnly.map((e) => e.outcome)).toEqual(["paid_client", "message_written"]);
+    const noRuns = campaignEngineScripts({
+      target: "paid_client",
+      stored: [{ outcome: "message_written", strategyId: "blind-only", campaignId: "c1" }],
+      asked: [],
+      runnable,
+      catalogue,
+      fleetRatings: scriptRatings({ groups: fleet, values }),
+      values,
+      campaignGroups: [],
+      labelOf,
+      rng: seededRng("c1|build"),
+    });
+    expect(noRuns.map((e) => e.outcome)).toEqual(["paid_client"]);
   });
 
   it("the same build reads the same shares on every read", () => {
