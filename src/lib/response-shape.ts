@@ -66,7 +66,8 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // CAMPAIGN-CONVERSION-1116 (a unit jumping Start -> Target left out of the entry walk) shipped WITHOUT a bump: prod
   // 2026-11-16 13:07 UTC the Wide Email chart still served a cell computed before its deploy (`no_entry_population`).
   // PART-ENTRY-1116: a part counts from the Units it took in; a group from its earliest entry. Both fixes retire here.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "part-entry-1116",
+  // TEAM-PART-ENTRY-1116: a part with no intake of its own counts the entry Units the rest of its campaign made.
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "team-part-entry-1116",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
   "/offers/{offerId}/spend-charts": "part-entry-1116",
   "/brands/{brandId}/spend-charts": "part-entry-1116",
