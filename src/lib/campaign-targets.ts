@@ -7,6 +7,7 @@
  * PROJECTION reads the current Plan (the factory pass's stored plan line: its expected cost per Target) and says which
  * plan computation it used. A figure that cannot be served is null with a reason, never a guess.
  */
+import { roiMultipleOf } from "./roi-multiple.js";
 
 export interface TargetDayCount {
   /** UTC day, YYYY-MM-DD. */
@@ -136,7 +137,7 @@ export function campaignTargetRowOf(i: CampaignTargetInput): CampaignTargetRow {
           ? { roiMultiple: null, valueUsd, spentUsd: null, unavailableReason: "spend_unreadable" }
           : spent <= 0
             ? { roiMultiple: null, valueUsd, spentUsd: spent, unavailableReason: "nothing_spent_yet" }
-            : { roiMultiple: round(valueUsd! / spent, 2), valueUsd, spentUsd: spent, unavailableReason: null };
+            : { roiMultiple: roiMultipleOf(valueUsd!, spent), valueUsd, spentUsd: spent, unavailableReason: null };
 
   // ── The projection: the current Plan's cost per Target × what the campaign spends per day ──
   const plan = i.plan;
@@ -380,7 +381,7 @@ export function offerTargetFromLedger(
         ? { roiMultiple: null, valueUsd: null, spentUsd: spent, unavailableReason: targetValueUnavailableReason ?? "target_has_no_value" }
         : spent === null || spent <= 0
           ? { roiMultiple: null, valueUsd, spentUsd: spent, unavailableReason: ours === 0 ? (units !== null && units > 0 ? "no_target_outcome_of_ours_yet" : "no_target_outcome_yet") : "unit_cost_not_in_ledger" }
-          : { roiMultiple: round(valueUsd! / spent, 2), valueUsd, spentUsd: spent, unavailableReason: null };
+          : { roiMultiple: roiMultipleOf(valueUsd!, spent), valueUsd, spentUsd: spent, unavailableReason: null };
   return {
     ...entry,
     outcomesToDate: units,

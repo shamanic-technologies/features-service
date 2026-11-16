@@ -83,7 +83,7 @@ describe("the shadow plan (proactive: from Start to the Target)", () => {
     // The running funnel names itself whole (what campaign-service runs); the comparison is on the line to the Target.
     expect(p.running).toMatchObject({ reachesTarget: true, funnelId: PROACTIVE_RUNNING, lineId: "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach" });
     if (!p.running.reachesTarget) throw new Error("unreachable");
-    expect(p.running.figures).toMatchObject({ costPerTargetUsd: 90, roi: 1.67, targetValueUsd: 150 });
+    expect(p.running.figures).toMatchObject({ costPerTargetUsd: 90, roi: 1.66667, targetValueUsd: 150 }); // ROI-ROUNDING-1116: 6 significant digits
     // Shadow: Apollo Cold Filters finds the 100 leads at $0.20: $60, 2.5x.
     expect(p.shadow?.lineId).toBe("start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach");
     // The plan names a CATALOGUE funnel campaign-service can run (past the Target to Paid client).
