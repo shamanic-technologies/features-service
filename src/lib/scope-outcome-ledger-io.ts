@@ -27,7 +27,7 @@ interface WireCost {
 interface WireByDay {
   daysMissing?: string[];
   produced?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number; cost?: WireCost }>;
-  consumed?: Array<{ dimensions?: Record<string, string | null>; unknownProvenance?: string }>;
+  consumed?: Array<{ dimensions?: Record<string, string | null>; consumptions?: string; reuses?: string; unknownProvenance?: string }>;
   producedElsewhere?: Array<{ dimensions?: Record<string, string | null>; occurrences?: number }>;
 }
 
@@ -52,11 +52,27 @@ export function parseScopeLedgerByDay(body: WireByDay, basis: LedgerBasis) {
     ownCostUsd.set(key, (ownCostUsd.get(key) ?? 0) + usd(g.cost, basis));
   }
   const undeclaredConsumptions = new Map<string, number>();
+  // PART-ENTRY-1116: the Units the scope TOOK IN per outcome per day = its first consumptions of them (a reuse is a Unit
+  // already taken in). A consumption is split over the consuming run's outcomes (weights summing to 1), so the parts of
+  // one consumption are summed back across consuming keys before rounding.
+  const takenInRaw = new Map<string, Map<string, number>>();
   for (const g of body.consumed ?? []) {
     const key = g.dimensions?.consumedOutcomeKey;
     if (!key) throw new Error("[features-service] scope outcome ledger: a consumed group names no consumedOutcomeKey");
     const n = Number(g.unknownProvenance ?? 0);
     if (n > 0) undeclaredConsumptions.set(key, (undeclaredConsumptions.get(key) ?? 0) + n);
+    const day = g.dimensions?.day;
+    const first = Number(g.consumptions ?? 0) - Number(g.reuses ?? 0);
+    if (day && first > 0) {
+      const days = takenInRaw.get(key) ?? takenInRaw.set(key, new Map()).get(key)!;
+      days.set(day, (days.get(day) ?? 0) + first);
+    }
+  }
+  const takenInByDay = new Map<string, Map<string, number>>();
+  for (const [k, days] of takenInRaw) {
+    const out = new Map<string, number>();
+    for (const [d, n] of days) if (Math.round(n) > 0) out.set(d, Math.round(n));
+    if (out.size > 0) takenInByDay.set(k, out);
   }
   // LEDGER-OTHER-FACTORY-1107: another factory's Units (no run, no cost). A group with no day (a non-day groupBy) is no Unit of a day.
   const elsewhereByDay = new Map<string, Map<string, Map<OtherFactory, number>>>();
@@ -70,7 +86,7 @@ export function parseScopeLedgerByDay(body: WireByDay, basis: LedgerBasis) {
     const byFactory = days.get(day) ?? days.set(day, new Map()).get(day)!;
     byFactory.set(factory, (byFactory.get(factory) ?? 0) + (g.occurrences ?? 0));
   }
-  return { producedByDay, ownCostUsd, undeclaredConsumptions, elsewhereByDay, daysMissing: [...(body.daysMissing ?? [])].sort() };
+  return { producedByDay, ownCostUsd, undeclaredConsumptions, takenInByDay, elsewhereByDay, daysMissing: [...(body.daysMissing ?? [])].sort() };
 }
 
 /** PURE. Fleet performers body as outcome -> services declaring it. */
@@ -207,6 +223,7 @@ export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string
   const producedByDay = new Map<string, Map<string, number>>();
   const ownCostUsd = new Map<string, number>();
   const undeclaredConsumptions = new Map<string, number>();
+  const takenInByDay = new Map<string, Map<string, number>>();
   const elsewhereByDay = new Map<string, Map<string, Map<OtherFactory, number>>>();
   const daysMissing = new Set<string>();
   for (const p of parts) {
@@ -224,12 +241,17 @@ export async function fetchCampaignSetOutcomeLedger(campaignIds: readonly string
     }
     for (const [k, c] of p.ownCostUsd) ownCostUsd.set(k, (ownCostUsd.get(k) ?? 0) + c);
     for (const [k, n] of p.undeclaredConsumptions) undeclaredConsumptions.set(k, (undeclaredConsumptions.get(k) ?? 0) + n);
+    for (const [k, days] of p.takenInByDay) {
+      const into = takenInByDay.get(k) ?? takenInByDay.set(k, new Map()).get(k)!;
+      for (const [d, n] of days) into.set(d, (into.get(d) ?? 0) + n);
+    }
     for (const d of p.daysMissing) daysMissing.add(d);
   }
   return {
     producedByDay,
     ownCostUsd,
     undeclaredConsumptions,
+    takenInByDay,
     elsewhereByDay,
     unitCosts: brand.unitCosts,
     fleetProducers: brand.fleetProducers,

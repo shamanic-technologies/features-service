@@ -63,10 +63,13 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // LEDGER-ONLY-1107-P2: every count / $ per outcome / conversion re-based on the cost-accounting ledger (supersedes
   // several-campaign-people-1106 on the routes it named). LEDGER-OTHER-FACTORY-1107: counts add another factory's Units,
   // money divides ours only.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "ledger-negative-days-1110",
+  // CAMPAIGN-CONVERSION-1116 (a unit jumping Start -> Target left out of the entry walk) shipped WITHOUT a bump: prod
+  // 2026-11-16 13:07 UTC the Wide Email chart still served a cell computed before its deploy (`no_entry_population`).
+  // PART-ENTRY-1116: a part counts from the Units it took in; a group from its earliest entry. Both fixes retire here.
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "part-entry-1116",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
-  "/offers/{offerId}/spend-charts": "ledger-negative-days-1110",
-  "/brands/{brandId}/spend-charts": "ledger-negative-days-1110",
+  "/offers/{offerId}/spend-charts": "part-entry-1116",
+  "/brands/{brandId}/spend-charts": "part-entry-1116",
   "/brands/{brandId}/sales-funnel-campaigns": "ledger-negative-days-1110",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
@@ -78,7 +81,8 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   "/offers/{offerId}/revenue": "ledger-negative-days-1110",
   "/brands/{brandId}/offers": "ledger-negative-days-1110",
   "/brands/{brandId}/revenue": "ledger-negative-days-1110",
-  "/brands/{brandId}/campaign-targets": "ledger-negative-days-1110",
+  // CAMPAIGN-CONVERSION-1116: the Milestones chain leaves a unit jumping Start -> Target out of the walk.
+  "/brands/{brandId}/campaign-targets": "campaign-conversion-1116",
   "/features/{featureSlug}/revenue": "ledger-negative-days-1110",
   "/features/{featureSlug}/stats": "ledger-negative-days-1110",
 };
