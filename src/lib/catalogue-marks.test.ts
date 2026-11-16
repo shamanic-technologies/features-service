@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GLYPH_COLORS, MARK_ICONS, MarkPoolExhaustedError, markCandidates, markId, nextMarks } from "./catalogue-marks.js";
 import { __resetCatalogueMarksMemory } from "./catalogue-marks-store.js";
-import { withResearchCatalogMarks, withTemplateRankingMarks, withWorkflowRankingMarks } from "./catalogue-mark-serving.js";
+import { withMarks, withTemplateRankingMarks, withWorkflowRankingMarks } from "./catalogue-mark-serving.js";
 
 // MARKS-1022 (owner 2026-10-22): every workflow dynasty and every template dynasty has its OWN icon, the same everywhere.
 describe("the mark pool", () => {
@@ -40,9 +40,9 @@ describe("serving the marks (suite store: the same first-sight rule in memory)",
     // Read again in another order, and on the Research catalogue: the mark never moves.
     const again = await withWorkflowRankingMarks({ rows: [{ workflowDynastySlug: "nobelium" }, { workflowDynastySlug: "keel" }] });
     expect(again.rows[1]).toMatchObject({ icon: keel.icon, color: keel.color });
-    const catalog = await withResearchCatalogMarks({ pipe: { workflows: [{ key: "keel" }], templates: [{ key: "blind-free-offer" }, { key: "named-case-study" }] } });
-    expect(catalog.pipe.workflows[0]).toMatchObject({ icon: keel.icon, color: keel.color });
-    const [t1, t2] = catalog.pipe.templates as unknown as Array<{ icon: string; color: string }>;
+    const [script] = await withMarks("workflow", [{ key: "keel" }], (p) => p.key);
+    expect(script).toMatchObject({ icon: keel.icon, color: keel.color });
+    const [t1, t2] = (await withMarks("template", [{ key: "blind-free-offer" }, { key: "named-case-study" }], (p) => p.key)) as unknown as Array<{ icon: string; color: string }>;
     expect(t1.icon).not.toBe(t2.icon);
 
     // The writer ranking's template rows read the same template marks; `best` is the marked row.

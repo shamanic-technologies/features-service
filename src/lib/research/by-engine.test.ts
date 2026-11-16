@@ -3,6 +3,7 @@ import {
   engineCatalogOf,
   engineFileOf,
   engineLiveScriptsOf,
+  engineHistoryOf,
   enginePerformanceOf,
   enginesOf,
   enumInEngineWords,
@@ -143,16 +144,14 @@ describe("catalogue", () => {
 describe("performance", () => {
   const perf = (rows: unknown[], totals: unknown) => ({ pipe: "x", featureSlug: "s", legKey: "l", figuresBasis: "workflow_bars", rows, totals, series: totals ? { points: [] } : null, unavailableReason: null, servedNow: { workflow: null, unavailableReason: "pipe_not_read" } });
   it("one source measured: its rows, totals and series as served; several: rows listed, totals not summed", () => {
-    const out = enginePerformanceOf(
-      {
+    const out = {
+      engines: engineHistoryOf({
         "cold-email-positive-reply": perf([{ key: "hunor|blind|opus", workflow: { key: "hunor" }, deprecatedParts: ["workflow"] }], { spentUsd: { value: 3 } }),
         "email-sending|start_to_conversation": perf([], null),
         "feedback-request-cold-email-outreach|lead_found_to_conversation": perf([{ key: "a" }], { spentUsd: { value: 1 } }),
         "cold-whatsapp-outreach|lead_found_to_conversation": perf([{ key: "b" }], { spentUsd: { value: 2 } }),
-      },
-      SOURCES,
-      name,
-    ) as Record<string, any>;
+      }, SOURCES, name),
+    } as Record<string, any>;
     expect(sourceWordsLeft(out)).toEqual([]);
     const m0 = out.engines[0].measures[0];
     expect(m0).toMatchObject({ figuresBasis: "script_bars", totals: { spentUsd: { value: 3 } }, totalsUnavailableReason: null, servedNow: { script: null, unavailableReason: "engine_not_read" } });
@@ -161,6 +160,10 @@ describe("performance", () => {
     const conv = out.engines[1].measures[0];
     expect(conv).toMatchObject({ totals: null, series: null, totalsUnavailableReason: "several_sources_not_summed" });
     expect(conv.rows.map((r: { key: string }) => r.key)).toEqual(["a", "b"]);
+    // at read, the stored history is led by the Engine's scripts (none read here): history rows, era stated
+    const served = enginePerformanceOf(out.engines, { of: () => ({ scripts: null, unavailableReason: "ledger_book_unreadable" }), favourite: () => undefined }) as Record<string, any>;
+    expect(served.engines[0].measures[0].rows[0]).toMatchObject({ key: "hunor|blind|opus", era: "history", status: "deprecated" });
+    expect(sourceWordsLeft(served)).toEqual([]);
   });
 });
 
