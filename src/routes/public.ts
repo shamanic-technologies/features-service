@@ -13,7 +13,7 @@ import { responseShapeFingerprint } from "../lib/response-shape.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { features, type Feature } from "../db/schema.js";
-import { listDeclaredChannels, listTriggerCatalogue, loadChannelCatalogue, loadRetiredChannels, type RetiredChannel } from "../lib/channel-declarations-store.js";
+import { listTriggerCatalogue, loadChannelCatalogue, loadRetiredChannels, type RetiredChannel } from "../lib/channel-declarations-store.js";
 import { triggerOutcomeKeyOf, triggerTypeOf, type TriggerType } from "../lib/outcome-vocabulary.js";
 import { IncludeInlineQueryError, includeInlineOf, isEntryDoor, TRIGGER_ALIASES, triggerCallable } from "../lib/channel-triggers.js";
 import { isTriggerCoded } from "../lib/channel-declarations.js";
@@ -123,7 +123,7 @@ import { computeFeatureRevenue, type DownstreamHeaders } from "./revenue.js";
 import { fetchDeclaredFunnelsSoft, priceOnDeclaredFunnel } from "./revenue.js";
 import { distinctChannelFunnels } from "./offer-economics.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
-import { FUNNEL_LEG_KEYS, funnelLeg, OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf } from "../lib/funnel-legs.js";
+import { funnelLeg, OUTBOUND_LEG_KEY_CORRESPONDENCE, pipeLegKeyOf } from "../lib/funnel-legs.js";
 import { resolvePipeLegKey } from "../lib/unpriced-pipes.js";
 import { withChannelType } from "../lib/channel-types.js";
 import { fetchFleetLegCampaigns, type FleetLegCampaign } from "../lib/fleet-leg-campaigns.js";
@@ -3961,7 +3961,7 @@ router.get("/public/stats/outcome-prices", async (_req, res) => {
   res.json(outcomePricesStore?.value ?? notComputedYet());
 });
 
-// ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
+// ── The fleet leg workflow ranking (stored per pipe; route deleted) ───────────────────────────────────
 //
 // Every workflow on ONE leg, ranked at the FLEET grain, for a research surface that names no org, brand,
 // offer, campaign or audience (`lib/leg-workflow-ranking.ts` states the owner's order rule). Built off the
@@ -4374,7 +4374,7 @@ export function __resetLegWorkflowRanking(): void {
 }
 
 /**
- * One pipe's live ranking as `/public/stats/leg-workflow-ranking` serves it (pricing, tactics, marks); null = not built
+ * One pipe's live ranking (pricing, tactics, marks; its public route is deleted, RESEARCH-BY-ENGINE-1113-RETIRE); null = not built
  * yet. Shared by Research's Engine read (`/internal/research/engines/live-scripts`). Marks unreadable throws.
  */
 export async function servedLegWorkflowRanking(featureSlug: string, legKey: string, pricing: "gross" | "net"): Promise<LegWorkflowRankingPayload | null> {
@@ -4382,61 +4382,6 @@ export async function servedLegWorkflowRanking(featureSlug: string, legKey: stri
   if (!stored) return null;
   return withWorkflowRankingMarks(legRankingOnPricing(stored, pricing, await workflowTacticsOf()));
 }
-
-router.get("/public/stats/leg-workflow-ranking", async (req, res) => {
-  const featureSlug = req.query.featureSlug as string | undefined;
-  // Every pipe's leg, sourcing (`start_to_lead_found`) included: one resolver, no special case (RANKING-SOURCE-LEG-1014).
-  const legKey = await resolvePipeLegKey(featureSlug, String(req.query.leg ?? ""));
-  if (!featureSlug || !legKey) {
-    res.status(400).json({ error: `featureSlug and leg are required; leg must be one of: ${FUNNEL_LEG_KEYS.join(", ")}, or a leg of the channel's own` });
-    return;
-  }
-  const rawPricing = req.query.pricing;
-  if (rawPricing !== undefined && rawPricing !== "gross" && rawPricing !== "net") {
-    res.status(400).json({ error: "pricing_unrecognised", detail: "pricing must be gross or net" });
-    return;
-  }
-  const pricing: "gross" | "net" = rawPricing === "net" ? "net" : "gross";
-  try {
-    // A channel is a seeded feature row OR a declared channel (WA-PIPE-RESEARCH-1023: social-post, email-sending and
-    // ai-lead-proposal are declared, so their pipes 404'd while the ranking itself builds like any other pipe's).
-    const feature = await db.query.features.findFirst({ where: eq(features.slug, featureSlug) });
-    if (!feature && !(await listDeclaredChannels()).some((c) => c.slug === featureSlug)) {
-      res.status(404).json({ error: "Feature not found" });
-      return;
-    }
-  } catch (error) {
-    console.error("[features-service] leg workflow ranking: feature lookup failed:", error);
-    res.status(500).json({ error: "Internal server error" });
-    return;
-  }
-  // The last build, the persisted copy included (a fresh process served an empty ranking for minutes after every
-  // deploy while the stored copy sat in the cell store); kicks a rebuild when stale, never waits on it.
-  const stored = await readLegWorkflowRanking(featureSlug, legKey, 0);
-  if (stored) {
-    const served = legRankingOnPricing(stored, pricing, await workflowTacticsOf());
-    try {
-      // Each workflow's own icon + colour (MARKS-1022), given on first sight in rank order, the same on every read.
-      res.json(await withWorkflowRankingMarks(served));
-    } catch (error) {
-      console.error("[features-service] leg workflow ranking: workflow marks unreadable:", error);
-      res.status(502).json({ error: "workflow marks unreadable", reason: "marks_unreadable" });
-    }
-    return;
-  }
-  const rule = legMaturity(legKey);
-  const empty: LegWorkflowRankingPayload = {
-    featureSlug,
-    legKey,
-    grain: "fleet",
-    costBasis: "incurred",
-    computedAt: null,
-    maturity: { durationDays: rule.durationDays, outcomesRequired: rule.outcomesRequired, cutoffIso: null, measured: false },
-    pricing,
-    rows: [],
-  };
-  res.json(empty);
-});
 
 // ── GET /public/stats/best-model-cost-per-outcome-trend ──────────────────────
 

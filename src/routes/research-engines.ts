@@ -1,8 +1,9 @@
 /**
  * RESEARCH BY ENGINE AND SCRIPT (owner 2026-11-13, RESEARCH-BY-ENGINE-1113): the staff Research reads keyed by Engine
  * (outcome) and script dynasty, never by pipe. Additive twins of `/internal/research`, `/catalog`, `/performance` and the
- * live ranking (`/public/stats/leg-workflow-ranking`), built off the SAME served bodies (`lib/research/by-engine.ts`, pure),
- * so every figure keeps its population and basis. The per-source reads stay until the dashboard stops reading them.
+ * live ranking (the stored fleet leg workflow ranking), built off the SAME served bodies (`lib/research/by-engine.ts`, pure),
+ * so every figure keeps its population and basis. The pipe-keyed catalogue / performance / ranking routes are deleted
+ * (RESEARCH-BY-ENGINE-1113-RETIRE, 2026-11-16): these are the only Research reads by source.
  */
 import { Router } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";

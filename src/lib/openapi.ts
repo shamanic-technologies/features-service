@@ -6289,7 +6289,7 @@ const meetingPopulationSchema = z
     brandsLeftOut: z.number().int().describe("Brands with people in scope left out because they report no meeting."),
   });
 
-// ── GET /public/stats/leg-workflow-ranking ───────────────────────────────────
+// ── Leg workflow ranking row (read by the Engine live-scripts route) ───────────────────────────────────
 
 const workflowFigureSchema = z.object({
   value: z.number().nullable(),
@@ -6670,52 +6670,6 @@ registry.registerPath({
     200: { description: "The pick", content: { "application/json": { schema: z.object({ outcome: z.string(), scriptDynasty: z.string().nullable(), basis: z.enum(["value_per_dollar", "value_only", "cost_only", "no_candidate"]), candidates: z.array(z.object({ scriptDynasty: z.string(), runs: z.number(), score: z.number().nullable() })), builtAt: z.string() }) } } },
     400: { description: "script_pick_unrecognised" },
     502: { description: "script_rating_unreadable" },
-  },
-});
-
-registry.registerPath({
-  method: "get",
-  path: "/public/stats/leg-workflow-ranking",
-  summary: "Every workflow on one leg, ranked at the fleet grain (public, no auth)",
-  description:
-    "Fleet grain: every org's campaigns performing the leg, no identity. The figures are the per-workflow fleet leg figures /public/stats/outcome-prices picks its winner from (incurred basis). Built off the request path (boot warm + a warm kicked by a read past 15 min); before the first build `computedAt` is null and `rows` is empty.",
-  tags: ["Public"],
-  request: {
-    query: z.object({
-      featureSlug: z.string().describe("Feature slug (required)."),
-      leg: z.string().describe("Any pipe's leg key (required): a funnel leg (e.g. start_to_conversation, an outbound channel's lead_found_to_*) or a leg of the channel's own no funnel walks, e.g. the sourcing leg start_to_lead_found (ranked on Lead found). A word naming no leg of the channel = 400."),
-      pricing: z.enum(["gross", "net"]).describe("The pricing of every row's `figures` (default gross). `net` = what the orgs paid. The legacy row fields stay on the incurred basis. Anything else = 400 `pricing_unrecognised`.").optional(),
-    }),
-  },
-  responses: {
-    200: {
-      description: "The ranking",
-      content: {
-        "application/json": {
-          schema: z.object({
-            featureSlug: z.string(),
-            legKey: z.string(),
-            grain: z.literal("fleet"),
-            costBasis: z.literal("incurred"),
-            computedAt: z.string().nullable(),
-            maturity: z.object({
-              durationDays: z.number(),
-              outcomesRequired: z.number(),
-              cutoffIso: z.string().nullable(),
-              measured: z.boolean(),
-            }),
-            meetingPopulation: meetingPopulationSchema
-              .nullable()
-              .describe("On a pipe landing on a meeting step: who the figures were measured on (the brands that report meetings; the others are left out of spend, people and outcomes alike). Null on any other pipe. Absent only on a copy built before this field shipped.")
-              .optional(),
-            pricing: z.enum(["gross", "net"]).describe("The pricing of every row's `figures`.").optional(),
-            rows: z.array(legWorkflowRankingRowSchema),
-          }),
-        },
-      },
-    },
-    400: { description: "Missing or unknown featureSlug / leg, or `pricing_unrecognised`", content: { "application/json": { schema: errorResponse } } },
-    404: { description: "Feature not found", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
@@ -9070,62 +9024,6 @@ const researchFreshnessSchema = z
   .describe(
     "RESEARCH-STALE-1024 (2026-10-24): how old the served build is, computed at READ time, never stored. The billed basis is rebuilt on a clock (every 5 min, each view past 15 min); a build that fails keeps the previous one, so a served copy can grow old: `stale` says so.",
   );
-const researchFileSchema = registry.register(
-  "ResearchFile",
-  z.object({
-    generatedAt: z.string(),
-    computedAt: z.string(),
-    freshness: researchFreshnessSchema,
-    allOrgs: z.literal(true),
-    view: z.enum(["mature", "flash"]).describe("The half every figure of this file is read on (MATURITY-VIEW-1023, `?view=`); absent on a build stored before it.").optional(),
-    costBasis: z.enum(["user", "actual"]).describe("`user` = what clients were billed (incurred, list price), the leg workflow ranking's basis. `actual` = what the vendors charged us (staff only)."),
-    unpricedBilledUsd: z.number().describe("Actual basis only: billed spend no vendor cost prices, left out of every figure (whole workflow versions)."),
-    window: z.object({ from: z.string(), to: z.string() }).describe("First and last month with evidence (`YYYY-MM`)."),
-    readOn: z.string(),
-    volume: z
-      .object({
-        emails: z.number().int().describe("Every email sent on the two cold email legs since inception (our copy of instantly-service's outreach facts)."),
-        orgs: z.number().int().describe("Clients those emails were sent for."),
-        workflows: z.number().int().describe("Workflows with people on either leg."),
-        linkedEmails: z.number().int().describe("Emails our own sender sent on the website-visit leg (the only ones a visit can come from)."),
-        byMonth: z.array(z.object({ label: z.string(), emails: z.number().int() })),
-      })
-      .describe("The page-wide counts. Absent when they could not be read this build, never 0.")
-      .optional(),
-    maturation: z.object({
-      rule: z.literal("run_start"),
-      days: z.number(),
-      cutoff: z.string(),
-      windowEnd: z.string(),
-      legs: z.object({
-        reply: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
-        visit: z.object({ durationDays: z.number(), outcomesRequired: z.number(), cutoff: z.string() }),
-      }),
-      excludedEmails: z.number().int().describe("Emails of sequences first written on or after their leg's cutoff: too young to count yet.").optional(),
-      noRunStart: z.number().int().describe("People no serve record dates: counted in the mature cohort, in no month.").optional(),
-      note: z.string(),
-    }),
-    pipes: z
-      .array(z.object({ id: z.string(), channel: z.string(), leg: z.string(), outcome: z.string(), description: z.string() }))
-      .describe(
-        "The three studied pipes (`cold-email-positive-reply`, `cold-email-website-visit`, `meeting-booking`), then every other pipe of the published channel catalogue holding a workflow assignment (WA-PIPE-RESEARCH-1023), in catalogue order, `id` = its catalogue pipe id `<channel slug>|<leg, served spelling>` (e.g. `cold-whatsapp-outreach|start_to_signup`), `outcome` = its leg's `to` step label. An other pipe carries no study: its Workflows / Templates / Models / Performance tabs are `/internal/research/catalog[id]` and `/internal/research/performance` `pipes[id]` (empty lists = Learning, nothing measured yet).",
-      ),
-    outcomes: z.array(
-      z.object({
-        id: z.string(),
-        outcome: z.string(),
-        step: z.string().describe("The lead STATE the section is (RESEARCH-STATE-SECTIONS-1025: `lead_interested` on `positive-reply`, `meeting_booked` on `meeting`, `meeting_attended`, `paid_client`, `lead_visited`); absent on a section that is no step (`judgment`).").optional(),
-        pipes: z.array(z.string()).describe("The page's pipes whose leg's to-step puts a lead in the state (a signup / form / booking call pipe lands on Lead interested).").optional(),
-        leadTrack: z.enum(["crm_lifecycle", "website_visits"]).describe("RESEARCH-LEAD-TRACK-1025 (owner's words, « CRM Lifecycle et Website visits »): the lead track the page groups the section under, never summed across: `crm_lifecycle` (Lead interested < Meeting booked < Meeting attended < Paid client), `website_visits` (Lead visited). Absent on `judgment`. Replaced `family` + `familyLabel` (removed once the dashboard read it).").optional(),
-        leadTrackLabel: z.string().describe("The lead track in the page's words: `CRM lifecycle` | `Website visits` (the group title).").optional(),
-        description: z.string(),
-        population: z.string(),
-      }),
-    ),
-    studies: z.array(researchStudySchema),
-    unavailable: z.array(z.object({ id: z.string(), reason: z.string() })).describe("Every study id the page shows that this service does not answer yet, with what it waits for."),
-  }),
-);
 const researchFactSchema = z.object({ statement: z.string(), sample: z.string().nullable() });
 const researchViewParam = z
   .enum(["mature", "flash"])
@@ -9134,21 +9032,6 @@ const researchViewParam = z
   )
   .optional();
 const researchNotYet = { description: "`research_not_computed_yet`: the first build after this deploy is running.", content: { "application/json": { schema: errorResponse } } };
-
-registry.registerPath({
-  method: "get",
-  path: "/internal/research",
-  summary: "The staff Research studies, live (staff, api-key)",
-  description:
-    "Every Research study the staff Research page shows, computed from live production evidence off the request path (rebuilt on a clock every 15 min; the persisted last build is served meanwhile, its age stated in `freshness`). A workflow study's bars ARE the rows of `/public/stats/leg-workflow-ranking` (same evidence, same maturity rule); every other study regroups the same per-version evidence. Fleet-wide, no identity. `basis=actual` reveals our margin: staff only.",
-  tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).describe("Default `user` (billed).").optional(), view: researchViewParam }) },
-  responses: {
-    200: { description: "The research file", content: { "application/json": { schema: researchFileSchema } } },
-    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
-    503: researchNotYet,
-  },
-});
 
 registry.registerPath({
   method: "get",
@@ -9338,20 +9221,6 @@ const researchCatalogPipeSchema = z.object({
     ...researchCatalogFigures, workflows: z.array(z.object({ key: z.string(), label: z.string() })), runs: z.array(z.object({ when: z.string(), workflow: z.object({ key: z.string(), label: z.string() }).nullable(), template: researchRefSchema.nullable(), version: z.string().nullable(), tokens: z.string().nullable().describe("The tokens content-generation recorded for this generation (`12,345 in / 210 out`); null when not recorded.") })) })),
 });
 
-registry.registerPath({
-  method: "get",
-  path: "/internal/research/catalog",
-  summary: "The Research catalogue: one page per workflow, template and model, per pipe (staff, api-key)",
-  description: "Byte-compatible with the dashboard's ResearchCatalog. Every page's figures are the bars of the studies (same buckets), its month curves, and its last runs (workflows: runs-service execute-workflow runs; templates/models: content-generation's sequences, `tokens` = the tokens it recorded, null when not recorded). Every model page and version carries `runCost` (MODEL-RUN-COST-1024): what one writing run costs on the pipe. Same build cadence as /internal/research.",
-  tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
-  responses: {
-    200: { description: "The catalogue per pipe", content: { "application/json": { schema: z.record(z.string(), researchCatalogPipeSchema) } } },
-    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
-    503: researchNotYet,
-  },
-});
-
 const researchPerformanceFigureSchema = z.object({
   value: z.number().nullable(),
   display: z.string().nullable(),
@@ -9447,24 +9316,6 @@ const researchPerformancePipeSchema = z.object({
 
 registry.registerPath({
   method: "get",
-  path: "/internal/research/performance",
-  summary: "The Research Performance tab: every workflow x template x LLM combination of each pipe, its totals and since-inception series (staff, api-key)",
-  description:
-    "RESEARCH-PERFORMANCE-1023. Per Research pipe, fleet-wide (no org or brand named), the combinations that actually sent its emails (each person's template and LLM from content-generation's record, under the workflow that served them), each version's evidence shared on its people like the catalogue's template and model bars, so the rows partition the pipe. Since inception, on the billed basis (vendor cost on `basis=actual`). Same build cadence as /internal/research.",
-  tags: ["Internal"],
-  request: { query: z.object({ basis: z.enum(["user", "actual"]).optional(), view: researchViewParam }) },
-  responses: {
-    200: {
-      description: "The Performance tab per pipe",
-      content: { "application/json": { schema: z.object({ computedAt: z.string(), freshness: researchFreshnessSchema, costBasis: z.enum(["user", "actual"]), view: z.enum(["mature", "flash"]).describe("The half every figure is read on (MATURITY-VIEW-1023)."), pipes: z.record(z.string(), researchPerformancePipeSchema) }) } },
-    },
-    400: { description: "`basis_unrecognised` / `view_unrecognised`", content: { "application/json": { schema: errorResponse } } },
-    503: researchNotYet,
-  },
-});
-
-registry.registerPath({
-  method: "get",
   path: "/internal/research/templates",
   summary: "The text of every template the Research catalogue lists (staff, api-key)",
   description: "Template id -> its prompt text, as content-generation-service stores it (a versioned id never changes).",
@@ -9532,7 +9383,7 @@ registry.registerPath({
   method: "get",
   path: "/internal/research/engines/catalog",
   summary: "The Research catalogue by Engine: per measure, its script, template and LLM pages (staff, api-key)",
-  description: `${engineWordsNote} Twin of /internal/research/catalog. Each script page = the old workflow page byte for byte (figures read live off the current ranking), plus \`tactics {llm, template}\`: the LLM and template it wrote with (\`wroteWith\`), else writes with now. Template and LLM pages keep their own performance tables (\`scripts\` lists the scripts using them).`,
+  description: `${engineWordsNote} Built off the catalogue the deleted pipe-keyed /internal/research/catalog served. Each script page = the old workflow page byte for byte (figures read live off the current ranking), plus \`tactics {llm, template}\`: the LLM and template it wrote with (\`wroteWith\`), else writes with now. Template and LLM pages keep their own performance tables (\`scripts\` lists the scripts using them).`,
   tags: ["Internal"],
   request: { query: researchEngineQuery },
   responses: {
@@ -9569,7 +9420,7 @@ registry.registerPath({
   method: "get",
   path: "/internal/research/engines/performance",
   summary: "The Research Performance tab by Engine: per measure, every script x template x LLM row (staff, api-key)",
-  description: `${engineWordsNote} Twin of /internal/research/performance: each row's \`script\` part = the old \`workflow\` part (\`deprecatedParts\` says \`script\`), \`servedNow.script\` likewise. A measure with ONE measured source serves its rows, totals and series as served; several measured sources list their rows and serve \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed).`,
+  description: `${engineWordsNote} Built off the Performance tab the deleted pipe-keyed /internal/research/performance served: each row's \`script\` part = the old \`workflow\` part (\`deprecatedParts\` says \`script\`), \`servedNow.script\` likewise. A measure with ONE measured source serves its rows, totals and series as served; several measured sources list their rows and serve \`totals: null\` + \`totalsUnavailableReason: several_sources_not_summed\` (never summed).`,
   tags: ["Internal"],
   request: { query: researchEngineQuery },
   responses: {
@@ -9609,7 +9460,7 @@ registry.registerPath({
   method: "get",
   path: "/internal/research/engines/live-scripts",
   summary: "The live script ranking of one Research measure (staff, api-key)",
-  description: `${engineWordsNote} Twin of /public/stats/leg-workflow-ranking for the Research page: the same rows (rank, figures, tactics, marks, place), \`scriptDynastySlug\` / \`scriptDynastyName\` for the old workflow fields. Several measured sources = rows listed, \`orderUnavailableReason: several_sources_ranked_apart\`.`,
+  description: `${engineWordsNote} Built off the stored fleet leg workflow ranking (its public route is deleted): the same rows (rank, figures, tactics, marks, place), \`scriptDynastySlug\` / \`scriptDynastyName\` for the old workflow fields. Several measured sources = rows listed, \`orderUnavailableReason: several_sources_ranked_apart\`.`,
   tags: ["Internal"],
   request: {
     query: z.object({

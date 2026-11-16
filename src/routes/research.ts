@@ -1460,24 +1460,6 @@ const basisOf = (raw: unknown): Basis | null => (raw === undefined || raw === ""
 const notYet = (res: import("express").Response) =>
   res.status(503).json({ error: "The research studies have not been computed yet: the first build after this deploy is running.", reason: "research_not_computed_yet" });
 
-router.get("/internal/research", apiKeyOnly, async (req, res) => {
-  const basis = basisOf(req.query.basis);
-  if (!basis) {
-    res.status(400).json({ error: "basis must be user (billed, default) or actual", reason: "basis_unrecognised" });
-    return;
-  }
-  try {
-    const view = viewOf(req.query.view);
-    if (!view) return badView(res);
-    const file = await readResearch(basis, view);
-    if (!file) return notYet(res);
-    res.json({ ...file, freshness: freshnessOf(file, basis, view) });
-  } catch (error) {
-    console.error("[features-service] research read failed:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 router.get("/internal/research/conclusions", apiKeyOnly, async (req, res) => {
   const view = viewOf(req.query.view);
   if (!view) return badView(res);
@@ -1504,7 +1486,7 @@ router.get("/internal/research/studies", apiKeyOnly, async (req, res) => {
   }
 });
 
-/** The catalogue as `/internal/research/catalog` serves it (every live overlay applied); null = not built yet. Shared by the Engine read. */
+/** The catalogue as the Engine read `/internal/research/engines/catalog` serves it (the pipe-keyed route is deleted, RESEARCH-BY-ENGINE-1113-RETIRE) (every live overlay applied); null = not built yet. Shared by the Engine read. */
 export async function servedResearchCatalog(basis: Basis, view: ResearchView): Promise<ResearchCatalog | null> {
   const build = await readResearchBuild(basis, view);
   if (!build?.catalog) return null;
@@ -1540,24 +1522,6 @@ export async function servedResearchCatalog(basis: Basis, view: ResearchView): P
   );
 }
 
-router.get("/internal/research/catalog", apiKeyOnly, async (req, res) => {
-  const basis = basisOf(req.query.basis);
-  if (!basis) {
-    res.status(400).json({ error: "basis must be user (billed, default) or actual", reason: "basis_unrecognised" });
-    return;
-  }
-  const view = viewOf(req.query.view);
-  if (!view) return badView(res);
-  try {
-    const catalog = await servedResearchCatalog(basis, view);
-    if (!catalog) return notYet(res);
-    res.json(catalog);
-  } catch (error) {
-    console.error("[features-service] research catalogue read failed:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 /**
  * The combination the pipe runs TODAY, read LIVE at every Performance read (PERF-COST-ORDER-1024): the leg workflow
  * ranking's first workflow x the template and LLM the Rating's favourite SCRIPT of the pipe's Engine states
@@ -1583,7 +1547,7 @@ async function readServedNow(perf: PipePerformance): Promise<PerformanceServedNo
   }
 }
 
-/** The Performance tab as `/internal/research/performance` serves it (marks + served now read live); null = not built yet. Shared by the Engine read. */
+/** The Performance tab as the Engine read `/internal/research/engines/performance` serves it (pipe-keyed route deleted) (marks + served now read live); null = not built yet. Shared by the Engine read. */
 export async function servedResearchPerformance(basis: Basis, view: ResearchView) {
   const build = await readResearchBuild(basis, view);
   // A copy persisted before the Performance tab existed holds none: not computed yet until the next build.
@@ -1598,24 +1562,6 @@ export async function servedResearchFile(basis: Basis, view: ResearchView) {
   const file = await readResearch(basis, view);
   return file ? { ...file, freshness: freshnessOf(file, basis, view) } : null;
 }
-
-router.get("/internal/research/performance", apiKeyOnly, async (req, res) => {
-  const basis = basisOf(req.query.basis);
-  if (!basis) {
-    res.status(400).json({ error: "basis must be user (billed, default) or actual", reason: "basis_unrecognised" });
-    return;
-  }
-  try {
-    const view = viewOf(req.query.view);
-    if (!view) return badView(res);
-    const served = await servedResearchPerformance(basis, view);
-    if (!served) return notYet(res);
-    res.json(served);
-  } catch (error) {
-    console.error("[features-service] research performance read failed:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 router.get("/internal/research/templates", apiKeyOnly, async (_req, res) => {
   try {
