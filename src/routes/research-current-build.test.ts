@@ -1,36 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 import { isCurrentBuild } from "./research.js";
+import { ENGINE_BUILD_SHAPE } from "../lib/research/engine-build.js";
 
-// RESEARCH-PERFORMANCE-1023: a build stored before the Performance tab's current rules is rebuilt at once.
+// RESEARCH-NATIVE-ENGINE-1116-P2: the build is stored by Engine; any other copy is rebuilt at once.
 describe("isCurrentBuild", () => {
-  const file = {} as never;
-  it("a build without the Performance tab, or on its first rules, is not current", () => {
-    expect(isCurrentBuild({ file, catalog: null, texts: null })).toBe(false);
-    expect(isCurrentBuild({ file, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "since_inception" } } as never })).toBe(false);
-    // RESEARCH-PICK-ORDER-1023: rows sorted by ROI (no `rowOrder`) are rebuilt in the pick order
-    expect(isCurrentBuild({ file, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars" } } as never })).toBe(false);
-    // RESEARCH-COMBO-ESTIMATE-1023: rows in the nested pick order are rebuilt on each combination's estimate
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "pick_order" } } as never })).toBe(false);
-    // RESEARCH-ALL-COMBOS-1023: a build listing only the combinations that wrote is rebuilt with every valid one
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost" } } as never })).toBe(false);
-    // PERF-LEG-ORDER-1023: rows on the estimate are rebuilt in the pipe's pick order
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never })).toBe(false);
-    // PERF-ORDER-FLASH-1023: rows ordered on the view's figures are rebuilt in the flash order
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "leg_order", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never })).toBe(false);
-    // PRIOR-PART-EFFECTS-1023: priors read as the geometric mean of each part are rebuilt on the pipe's model
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "estimated_cost", rowsCover: "all_valid_combinations" } } as never })).toBe(false);
-    // PERF-COST-ORDER-1024: rows in the pick order with estimates are rebuilt on the cost the table shows
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "leg_order", orderView: "flash", rowsCover: "all_valid_combinations", estimateModel: "part_effects" } } as never })).toBe(false);
+  const build = (over: Record<string, unknown>) => ({ shape: ENGINE_BUILD_SHAPE, view: "mature", ...over }) as never;
+  it("an Engine build on the asked view is current", () => {
+    expect(isCurrentBuild(build({}))).toBe(true);
+    expect(isCurrentBuild(build({ view: "flash" }), "flash")).toBe(true);
   });
-  it("a build on the workflow-bar rules, read on the asked view, is current (MATURITY-VIEW-1023)", () => {
-    // RESEARCH-NATIVE-ENGINE-1116: a build listing every never-written combination is rebuilt with the ones that wrote only
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "cost_per_outcome", orderView: "flash", rowsCover: "all_valid_combinations" } } as never })).toBe(false);
-    const perf = { "cold-email-positive-reply": { figuresBasis: "workflow_bars", rowOrder: "cost_per_outcome", orderView: "flash", rowsCover: "combinations_that_wrote" } } as never;
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: perf })).toBe(true);
-    expect(isCurrentBuild({ file: { view: "flash" } as never, catalog: null, texts: null, performance: perf }, "flash")).toBe(true);
-    // a mixed build (stored before the views) or the other view is rebuilt
-    expect(isCurrentBuild({ file, catalog: null, texts: null, performance: perf })).toBe(false);
-    expect(isCurrentBuild({ file: { view: "mature" } as never, catalog: null, texts: null, performance: perf }, "flash")).toBe(false);
+  it("a per-population copy re-keyed at read, another shape, or the other view is rebuilt", () => {
+    expect(isCurrentBuild(build({ convertedFromStoredCopy: true }))).toBe(false);
+    expect(isCurrentBuild(build({ shape: "engine-v0" }))).toBe(false);
+    expect(isCurrentBuild({ file: { view: "mature" }, catalog: null, texts: null } as never)).toBe(false);
+    expect(isCurrentBuild(build({}), "flash")).toBe(false);
   });
 });

@@ -10,20 +10,33 @@ const FILE = {
   unavailable: [],
 };
 let built = true;
-vi.mock("./research.js", () => ({
-  readResearch: vi.fn(async () => (built ? FILE : null)),
-  servedResearchFile: vi.fn(async () => (built ? { ...FILE, freshness: { stale: false } } : null)),
-  servedResearchCatalog: vi.fn(async () => (built ? { "cold-email-positive-reply": { workflows: [{ key: "hunor", label: "Hunor", wroteWith: null, writesWithNow: null }], templates: [], models: [] } } : null)),
-  servedResearchPerformance: vi.fn(async () => (built ? { computedAt: "t", costBasis: "user", view: "mature", pipes: { "cold-email-positive-reply": { pipe: "x", rows: [], totals: null, series: null } } } : null)),
-}));
+vi.mock("./research.js", async () => {
+  const { engineResearchBuildOf } = await import("../lib/research/engine-build.js");
+  const name = (k: string) => k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, " ");
+  const sources = [{ sourceId: "cold-email-positive-reply", engine: "email_sent", startsFrom: "lead_found", counts: "conversation", channel: "sales-cold-email-outreach", leg: "lead_found_to_conversation" }];
+  let BUILD: ReturnType<typeof engineResearchBuildOf> | null = null;
+  const make = () => engineResearchBuildOf(
+    {
+      file: { ...FILE, costBasis: "actual" } as never,
+      catalog: { "cold-email-positive-reply": { workflows: [{ key: "hunor", label: "Hunor", wroteWith: null, writesWithNow: null }], templates: [], models: [] } } as never,
+      texts: null,
+      performance: { "cold-email-positive-reply": { pipe: "x", rows: [], totals: null, series: null } } as never,
+    },
+    sources,
+    name,
+  );
+  return {
+    readResearchBuild: vi.fn(async () => (built ? (BUILD ??= make()) : null)),
+    researchFreshnessOf: vi.fn(() => ({ stale: false })),
+  };
+});
 vi.mock("./public.js", () => ({
+  readLegWorkflowRanking: vi.fn(async () => null),
   servedLegWorkflowRanking: vi.fn(async () => ({ featureSlug: "sales-cold-email-outreach", legKey: "lead_found_to_conversation", computedAt: "t", rows: [{ rank: 1, workflowDynastySlug: "hunor" }] })),
 }));
-vi.mock("../lib/channel-declarations-store.js", () => ({
-  loadChannelCatalogue: vi.fn(async () => ({
-    channels: [{ slug: "sales-cold-email-outreach", stepTransitions: [{ legKey: "lead_found_to_conversation", from: { key: "lead_found" }, to: { key: "conversation" }, outcome: "email_sent" }] }],
-  })),
-}));
+vi.mock("../lib/catalogue-marks-store.js", () => ({ marksFor: vi.fn(async () => new Map()) }));
+vi.mock("../lib/writer-catalogue-client.js", () => ({ readLiveTemplateDynasties: vi.fn(async () => null) }));
+vi.mock("../lib/template-tactics.js", () => ({ readTemplateTactics: vi.fn(async () => null), withTemplateTactics: (rows: unknown[]) => rows }));
 
 import express from "express";
 import request from "supertest";

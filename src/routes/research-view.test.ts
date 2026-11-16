@@ -17,19 +17,32 @@ describe("research ?view=", () => {
   }
 });
 
-// The mature view's first read after the deploy serves the copy stored before the views, never a 503 while builds run.
-describe("research view fallback", () => {
-  it("the mature view falls back to the legacy stored copy; the flash view does not", async () => {
+// RESEARCH-NATIVE-ENGINE-1116-P2: a copy stored by the per-population build keeps serving (re-keyed by Engine once),
+// rebuilt behind; never a 503 while the first Engine build runs.
+describe("research stored per-population copy", () => {
+  it("is served re-keyed by Engine and is not current", async () => {
     vi.resetModules();
-    const legacy = JSON.stringify({ file: { computedAt: "2026-10-23T11:00:00Z", costBasis: "user" }, catalog: null, texts: null });
+    const old = JSON.stringify({
+      file: { view: "mature", computedAt: "2026-11-16T08:57:00Z", costBasis: "user", pipes: [{ id: "cold-email-positive-reply", channel: "sales-cold-email-outreach", leg: "lead_found_to_conversation" }], outcomes: [], studies: [], unavailable: [] },
+      catalog: null,
+      texts: null,
+    });
     vi.doMock("../db/index.js", () => ({ db: {}, sql: {} }));
     vi.doMock("../lib/fleet-cell-store.js", () => ({
-      loadFleetCell: vi.fn(async (k: string) => (k === "research:user" ? { text: legacy, computedAt: 1 } : null)),
+      loadFleetCell: vi.fn(async (k: string) => (k === "research:user:mature" ? { text: old, computedAt: 1 } : null)),
       storeFleetCell: vi.fn(async () => undefined),
+    }));
+    vi.doMock("../lib/channel-declarations-store.js", async (orig) => ({
+      ...(await orig<object>()),
+      loadChannelCatalogue: vi.fn(async () => ({ channels: [{ slug: "sales-cold-email-outreach", stepTransitions: [{ legKey: "lead_found_to_conversation", from: { key: "lead_found" }, to: { key: "conversation" }, outcome: "email_sent" }] }] })),
     }));
     const m = await import("./research.js");
     const warm = vi.spyOn(m, "warmResearch").mockResolvedValue(undefined);
-    expect((await m.readResearchBuild("user", "mature"))?.file.computedAt).toBe("2026-10-23T11:00:00Z");
+    const b = (await m.readResearchBuild("user", "mature"))!;
+    expect(b.computedAt).toBe("2026-11-16T08:57:00Z");
+    expect(b.file.engines[0]!.measures[0]!.id).toBe("email_sent/lead_found/conversation");
+    expect(b.historySources).toMatchObject([{ measureId: "email_sent/lead_found/conversation", featureSlug: "sales-cold-email-outreach" }]);
+    expect(m.isCurrentBuild(b, "mature")).toBe(false);
     expect(await m.readResearchBuild("user", "flash")).toBeNull();
     warm.mockRestore();
   });
