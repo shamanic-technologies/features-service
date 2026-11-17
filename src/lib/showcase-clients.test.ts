@@ -17,6 +17,9 @@ import {
   walkComplete,
   type ShowcaseCandidate,
   furthestRungReached,
+  isOurBrandDomain,
+  meetingsBookedByBrandOf,
+  withMeetingFactCandidates,
 } from "./showcase-clients.js";
 
 const DOC = "brand-doc";
@@ -194,5 +197,49 @@ describe("isStaffOnlyBrand (staff orgs never named on the homepage)", () => {
     expect(isStaffOnlyBrand([[], null])).toBe(false);
     // GrowthAgency.dev shape: one staff member and members with no email on record stay a client.
     expect(isStaffOnlyBrand([["", "kevin.lourd@gmail.com", ""]])).toBe(false);
+  });
+});
+
+describe("SHOWCASE-MEETINGS-1117: meetings = every stated meeting, our own brand never named", () => {
+  it("a CRM-sourced meeting counts, as do tracker and hand statements, one per person", () => {
+    const m = meetingsBookedByBrandOf({
+      attributedMeetings: [
+        { conversionEventId: "1", brandId: DOC, event: "meeting_booked", source: "crm", leadId: "l1", email: "a@x.com" },
+        { conversionEventId: "2", brandId: DOC, event: "meeting_booked", source: "crm", leadId: "l2", email: "b@x.com" },
+        { conversionEventId: "3", brandId: DOC, event: "meeting_attended", source: "crm", leadId: "l1", email: "a@x.com" },
+        { conversionEventId: "4", brandId: LAB, event: "meeting_booked", source: "tracker", leadId: null, email: "Q@x.com" },
+        { conversionEventId: "5", brandId: LAB, event: "meeting_booked", source: "tracker", leadId: null, email: "q@x.com" },
+        { conversionEventId: "6", brandId: LAB, event: "meeting_booked", source: "manual", leadId: null, email: null },
+      ],
+    });
+    expect(m.get(DOC)).toBe(2);
+    expect(m.get(LAB)).toBe(2);
+    expect(m.has(SHOCK)).toBe(false);
+  });
+
+  it("an unreadable body throws, never reads as zero meetings", () => {
+    expect(() => meetingsBookedByBrandOf({})).toThrow(/attributedMeetings/);
+    expect(() => meetingsBookedByBrandOf({ attributedMeetings: [{ event: "meeting_booked" }] })).toThrow(/brandId/);
+  });
+
+  it("prod 2026-11-17 replay: Doc Dinners 172 meetings, Legistai by meetings, then Shockwave 10 positive replies", () => {
+    // Snapshot rows as stored that day (meetings 0 everywhere; Doc Dinners summed over its two channels).
+    const snapshot = [
+      { brandId: DOC, outcomeCount: null, meetingsBooked: 0, positiveReplies: 76 },
+      { brandId: SHOCK, outcomeCount: null, meetingsBooked: 0, positiveReplies: 10 },
+      { brandId: OBRA, outcomeCount: 0, meetingsBooked: 1, positiveReplies: 7 },
+      { brandId: LAB, outcomeCount: null, meetingsBooked: 0, positiveReplies: 1 },
+    ];
+    const facts = new Map([[DOC, 172], [LAB, 14]]);
+    const picks = pickShowcaseClients(withMeetingFactCandidates(buildShowcaseCandidates([snapshot]), facts));
+    expect(picks.recentlyStarted.brandIds).toEqual([DOC, LAB, SHOCK]);
+  });
+
+  it("our own brand is recognised by its recorded domain, never a client's", () => {
+    expect(isOurBrandDomain("distribute.you")).toBe(true);
+    expect(isOurBrandDomain("https://www.Distribute.you/")).toBe(true);
+    expect(isOurBrandDomain("docdinners.com")).toBe(false);
+    expect(isOurBrandDomain("distribute.you.example.com")).toBe(false);
+    expect(isOurBrandDomain(null)).toBe(false);
   });
 });
