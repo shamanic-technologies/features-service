@@ -311,6 +311,8 @@ export interface LinkedToRow {
   toKey: string;
   campaignIds: readonly string[];
   brandId: string | null;
+  /** The `from` Units the links tie these `to` Units to: the campaign(s) and brand each one carries (distinct). */
+  sources: ReadonlyArray<{ campaignIds: readonly string[]; brandId: string | null }>;
   units: number;
 }
 
@@ -325,8 +327,16 @@ export interface UnitCostStat {
 export interface TransitionStat {
   /** `from` Units of the scope's sales funnel campaigns. */
   fromUnits: number;
-  /** `to` Units of the scope's sales funnel campaigns: COUNTED, whether or not a stored link ties them to a `from` Unit. */
+  /**
+   * `to` Units of the scope's sales funnel campaigns: COUNTED, whether or not a stored link ties them to a `from` Unit,
+   * less `foreignToUnits`.
+   */
   toUnits: number;
+  /**
+   * `to` Units of the scope that the links tie ONLY to `from` Units outside it (a campaign writing to leads another
+   * campaign of the brand found): made from another scope's `from` Units, so in no yield of this one.
+   */
+  foreignToUnits: number;
   /** Of `toUnits`, those a stored link (or a walk of links) ties to a `from` Unit. */
   linkedToUnits: number;
   /** linkedToUnits ÷ toUnits; null without a `to` Unit. Low = producers declare the `to` Unit without the Unit it consumed. */
@@ -352,7 +362,7 @@ export interface SilverStatRow {
 }
 
 /** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
-export const SILVER_RULE = "2026-11-17.5-funnel-campaigns";
+export const SILVER_RULE = "2026-11-17.6-foreign-sources";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -433,18 +443,26 @@ export function buildSilverStats(input: {
     if (d) delays.set(k, d);
   }
   // `to` Units a link ties to a `from` Unit, per scope and transition (same basis as the counts: Units a campaign carries).
+  // UNIT-LINK-LEFTOVERS-1117: a link also says when a `to` Unit was made from a `from` Unit of ANOTHER scope (prod: a
+  // campaign 10 days old sent 1,087 first messages, 981 of them to leads the brand's earlier campaigns had found: 9.6
+  // messages per lead found on its own 113). A missing link is no evidence; a link naming only outside `from` Units is:
+  // those `to` Units are in no yield of this scope.
   const linked = new Map<string, number>();
+  const foreign = new Map<string, number>();
   for (const r of input.linkedTo)
     for (const s of inFunnel(r.campaignIds) ? scopesOf(r.campaignIds, r.brandId) : []) {
+      const [scope, scopeId] = s.split("\u0000") as [SilverScope, string];
+      const own = r.sources.some((src) => (scope === "campaign" ? funnels(src.campaignIds).includes(scopeId) : inFunnel(src.campaignIds) && (scope === "fleet" || src.brandId === scopeId)));
       const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
-      linked.set(k, (linked.get(k) ?? 0) + r.units);
+      const into = own ? linked : foreign;
+      into.set(k, (into.get(k) ?? 0) + r.units);
     }
 
   // 4. Each transition the fleet measured, at every scope holding its `from` Units.
   const transitions = new Set([...pairs.keys()].filter((k) => k.startsWith("fleet\u0000")).map((k) => k.split("\u0000").slice(2).join("\u0000")));
   for (const t of transitions) {
     const [fromKey, toKey] = t.split("\u0000") as [string, string];
-    const evidence: Array<{ scope: SilverScope; scopeId: string; fromUnits: number; toUnits: number; linkedToUnits: number; exposure: number; censoredBy: SilverScope | null }> = [];
+    const evidence: Array<{ scope: SilverScope; scopeId: string; fromUnits: number; toUnits: number; foreignToUnits: number; linkedToUnits: number; exposure: number; censoredBy: SilverScope | null }> = [];
     for (const [k, days] of fromDays) {
       const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
       if (outcomeKey !== fromKey) continue;
@@ -458,8 +476,10 @@ export function buildSilverStats(input: {
       const fromUnits = [...days.values()].reduce((a, n) => a + n, 0);
       const exposure = pick ? [...days].reduce((a, [day, n]) => a + n * delayCdfAt(pick[1]!.cdf, hoursBetweenDays(day, today)), 0) : fromUnits;
       // The yield's count: the scope's own `to` Units (never the links: a missing link is not a missing Unit).
-      const toUnits = [...(fromDays.get(`${scope}\u0000${scopeId}\u0000${toKey}`)?.values() ?? [])].reduce((a, n) => a + n, 0);
-      evidence.push({ scope, scopeId, fromUnits, toUnits, linkedToUnits: linked.get(`${scope}\u0000${scopeId}\u0000${t}`) ?? 0, exposure, censoredBy: pick ? pick[0] : null });
+      const counted = [...(fromDays.get(`${scope}\u0000${scopeId}\u0000${toKey}`)?.values() ?? [])].reduce((a, n) => a + n, 0);
+      const foreignToUnits = Math.min(counted, foreign.get(`${scope}\u0000${scopeId}\u0000${t}`) ?? 0);
+      const toUnits = counted - foreignToUnits;
+      evidence.push({ scope, scopeId, fromUnits, toUnits, foreignToUnits, linkedToUnits: linked.get(`${scope}\u0000${scopeId}\u0000${t}`) ?? 0, exposure, censoredBy: pick ? pick[0] : null });
     }
     const prior = fitGammaPrior(evidence.filter((e) => e.scope === "campaign"), evidence.find((e) => e.scope === "fleet"));
     for (const e of evidence) {
@@ -471,7 +491,7 @@ export function buildSilverStats(input: {
         fromKey,
         toKey,
         sampleSize: e.fromUnits,
-        body: { kind: "transition", stat: { fromUnits: e.fromUnits, toUnits: e.toUnits, linkedToUnits: e.linkedToUnits, linkCoverage: e.toUnits > 0 ? e.linkedToUnits / e.toUnits : null, exposure: e.exposure, censoredBy: e.censoredBy, yield: est, prior, delay: delays.get(`${e.scope}\u0000${e.scopeId}\u0000${t}`) ?? null } },
+        body: { kind: "transition", stat: { fromUnits: e.fromUnits, toUnits: e.toUnits, foreignToUnits: e.foreignToUnits, linkedToUnits: e.linkedToUnits, linkCoverage: e.toUnits > 0 ? e.linkedToUnits / e.toUnits : null, exposure: e.exposure, censoredBy: e.censoredBy, yield: est, prior, delay: delays.get(`${e.scope}\u0000${e.scopeId}\u0000${t}`) ?? null } },
       });
     }
   }
