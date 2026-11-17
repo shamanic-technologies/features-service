@@ -42,6 +42,8 @@
  */
 import type { BrandSnapshotRow } from "./fleet-return-store.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
+import type { ShowcaseBrandFunnels } from "./showcase-funnels.js";
+import { funnelLeg } from "./funnel-legs.js";
 
 /** How many clients the group names: the homepage shows three. */
 export const SHOWCASE_GROUP_SIZE = 3;
@@ -83,6 +85,77 @@ export function isStaffOnlyOrg(memberEmails: readonly string[] | null): boolean 
 export function isStaffOnlyBrand(orgMemberLists: ReadonlyArray<readonly string[] | null>): boolean {
   const voting = orgMemberLists.filter((m): m is readonly string[] => m !== null && m.length > 0);
   return voting.length > 0 && voting.every((m) => isStaffOnlyOrg(m));
+}
+
+/**
+ * PURE: is a brand OURS, the platform's own (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « ne mets pas distribute »)? Its
+ * recorded domain (brand-service) is the staff domain, the same rule that makes an address staff. Our own org holds a
+ * member with no email on record, so `isStaffOnlyBrand` never caught it: Distribute.you stood third on the hero.
+ */
+export function isOurBrandDomain(domain: string | null | undefined): boolean {
+  if (!domain) return false;
+  const host = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+  return host.length > 0 && isStaffEmail(`x@${host}`);
+}
+
+/**
+ * PURE: every MEETING BOOKED a brand's people stated, any source (the client's CRM, the meeting tracker, a hand
+ * statement), as DISTINCT people per brand, read off lead-service's `GET /internal/meeting-attribution`
+ * `attributedMeetings[]` (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « prends les plus gros chiffres. 172 meetings »).
+ * A person = the lead it was matched to, else its address, else the fact itself. Withdrawn facts are not served by
+ * lead-service. Before, the hero read the meetings off a cold email channel's engine pass, which only sees the people
+ * that channel's campaigns served: Doc Dinners' 172 CRM meetings read 0. FAIL-LOUD on a malformed body (a count we
+ * could not read never stands in as 0).
+ */
+export function meetingsBookedByBrandOf(body: unknown): Map<string, number> {
+  const rows = (body as { attributedMeetings?: unknown })?.attributedMeetings;
+  if (!Array.isArray(rows)) throw new Error("[features-service] showcase: lead-service meeting-attribution serves no attributedMeetings");
+  const people = new Map<string, Set<string>>();
+  for (const r of rows as Array<Record<string, unknown>>) {
+    if (typeof r.brandId !== "string" || typeof r.event !== "string") {
+      throw new Error("[features-service] showcase: a meeting-attribution row names no brandId or event");
+    }
+    if (r.event !== "meeting_booked") continue;
+    const who =
+      typeof r.leadId === "string" && r.leadId ? `lead:${r.leadId}`
+      : typeof r.email === "string" && r.email.trim() ? `email:${r.email.trim().toLowerCase()}`
+      : `fact:${String(r.conversionEventId)}`;
+    (people.get(r.brandId) ?? people.set(r.brandId, new Set()).get(r.brandId)!).add(who);
+  }
+  return new Map([...people].map(([brandId, s]) => [brandId, s.size]));
+}
+
+/** PURE: the candidates with their meetings booked = the brand's stated meeting facts (absent = 0, the read succeeded). */
+export function withMeetingFactCandidates(candidates: readonly ShowcaseCandidate[], meetings: ReadonlyMap<string, number>): ShowcaseCandidate[] {
+  return candidates.map((c) => ({ ...c, meetingsBooked: meetings.get(c.brandId) ?? 0 }));
+}
+
+/**
+ * PURE: one walked brand with its meetings booked = its stated meeting facts, on its hero counts AND on every chain rung
+ * landing on Meeting booked (so the card, the chain and the pick state ONE figure). A rung's cost is recomputed on the
+ * same committed spend; a rung whose money is withheld stays null.
+ */
+export function withMeetingFacts<W extends { entry: ShowcaseBrandFunnels; heroCounts: { meetingsBooked: number | null; committedSpentCents: number | null } | null }>(
+  walked: W,
+  meetings: number,
+): W {
+  if (!walked.entry.measured) return walked;
+  const spent = walked.heroCounts?.committedSpentCents ?? null;
+  const cost = (prior: number | null): number | null =>
+    prior === null || spent === null || spent <= 0 || meetings <= 0 ? null : spent / 100 / meetings;
+  return {
+    ...walked,
+    heroCounts: walked.heroCounts ? { ...walked.heroCounts, meetingsBooked: meetings } : walked.heroCounts,
+    entry: {
+      ...walked.entry,
+      funnels: walked.entry.funnels.map((f) => ({
+        ...f,
+        steps: f.steps.map((s) =>
+          funnelLeg(s.key)?.toStep.key === "meeting_booked" ? { ...s, peopleReached: meetings, costPerReachUsd: cost(s.costPerReachUsd) } : s,
+        ),
+      })),
+    },
+  };
 }
 
 /** One walked candidate's two hero counts. Null = could not count (never qualifies on that count). */
