@@ -54,17 +54,19 @@ function workflowRow(base: IndexRow, slug: string, f: { spentUsd: number; outcom
 }
 
 describe("cold email indexes on the email_sent Engine's scripts (PUBLIC-INDEXES-NULL-1117)", () => {
-  it("INDEX-VISITS-1117: prod 2026-11-17, a stand-in under the noise bar is not a price: null not_measured, what it rests on kept", () => {
+  it("INDEX-VISITS-1117 + INDEX-HISTORY-1117: prod 2026-11-17, a stand-in under the noise bar is never a measured price: an expected figure, labelled", () => {
     const cut = matureCutDayOn(LEG_REPLY, "2026-11-17");
     expect(cut).toBe("2026-10-26");
     const reply = scriptIndexRows("conversation", LEG_REPLY, books, keyOf, runnable, cut);
     const visit = scriptIndexRows("website_visit", LEG_VISIT, books, keyOf, runnable, matureCutDayOn(LEG_VISIT, "2026-11-17"));
     const points = new Map(computeFleetIndexPoints({ websiteVisitRows: visit.vendor, positiveReplyRows: reply.vendor, meetingPipe: null, bestAvailableStandsIn: true }).map((p) => [p.indexSlug, p]));
-    // was $280 per website visit and 0.014% off ONE visit on 7,288 emails
-    expect(points.get("cold-email-cost-per-click")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_measured", outcomes: 1, contacted: 7288, workflowDynastySlug: SENDER, inputs: { pick: "below_noise_bar", outcomesRequired: 10 } });
-    expect(points.get("cold-email-click-rate")).toMatchObject({ value: null, unavailableReason: "not_measured", outcomes: 1 });
-    expect(points.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, unavailableReason: "not_measured", outcomes: 5, contacted: 7288 });
-    expect(points.get("cold-email-positive-reply-rate")).toMatchObject({ value: null, unavailableReason: "not_measured" });
+    // was $280 per website visit and 0.014% off ONE visit on 7,288 emails, served as a measured price; INDEX-HISTORY-1117:
+    // the same data now reads as an EXPECTED figure (labelled), never as a measured price, never blank
+    expect(points.get("cold-email-cost-per-click")).toMatchObject({ status: "noise", unavailableReason: null, outcomes: 1, contacted: 7288, workflowDynastySlug: SENDER, inputs: expect.objectContaining({ valueKind: "expected", pick: "expected_below_noise_bar", outcomesRequired: 10 }) });
+    expect(points.get("cold-email-click-rate")).toMatchObject({ unavailableReason: null, outcomes: 1, inputs: expect.objectContaining({ valueKind: "expected" }) });
+    expect(points.get("cold-email-click-rate")!.value).toBeCloseTo((1 / 7288) * 100, 10);
+    expect(points.get("cold-email-cost-per-positive-reply")).toMatchObject({ unavailableReason: null, outcomes: 5, contacted: 7288, inputs: expect.objectContaining({ valueKind: "expected" }) });
+    expect(points.get("cold-email-positive-reply-rate")).toMatchObject({ unavailableReason: null, inputs: expect.objectContaining({ valueKind: "expected" }) });
   });
 
   it("regression: no pipe, no leg assignment, no workflow → the indexes still read the script that sends, once it clears the noise bar", () => {
@@ -143,7 +145,10 @@ describe("every era counts on a cold email index (INDEX-HISTORY-1117)", () => {
     const s = scripts();
     const base = s.billed[0]!;
     const h: IndexRowsBoth = { billed: [workflowRow(base, "cheap-two", { spentUsd: 2, outcomes: 2, contacted: 100 })], vendor: [workflowRow(base, "cheap-two", { spentUsd: 1, outcomes: 2, contacted: 100 })] };
-    expect(pointsOf(indexRowsWithHistory(s, h), "vendor").get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, unavailableReason: "not_measured", workflowDynastySlug: SENDER, outcomes: 5 });
+    const p = pointsOf(indexRowsWithHistory(s, h), "vendor").get("cold-email-cost-per-positive-reply")!;
+    // nothing proven: an EXPECTED figure, the script's own cost per person ÷ the leg's measured rate (5 + 2 replies)
+    expect(p).toMatchObject({ workflowDynastySlug: SENDER, outcomes: 5, inputs: expect.objectContaining({ valueKind: "expected", legOutcomes: 7 }) });
+    expect(p.workflowDynastySlug).not.toBe("cheap-two");
   });
 
   it("the cheapest proven row wins, any era: a proven script under Ballad's price takes the index back", () => {
