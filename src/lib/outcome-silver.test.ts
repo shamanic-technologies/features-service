@@ -9,11 +9,14 @@ import {
   delayCdfAt,
   delayDistributionOf,
   distributionOf,
+  DELAY_EDGES_HOURS,
+  EXACT_DELAY_MAX_PAIRS,
   fitGammaPrior,
   gammaP,
   gammaQuantile,
   rateEstimateOf,
   FLEET_SCOPE_ID,
+  type PairBinRow,
   type SilverStatRow,
   type TransitionStat,
   type UnitCostStat,
@@ -111,9 +114,14 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     ],
     pairBins: [
       // F1: 20 beta Units came 48-72 h after an alpha Unit (alpha in u1, beta in u2: same funnel campaign).
-      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 20, sumHours: 1200 },
+      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 20, sumHours: 1200, samplesHours: null },
       // F3: 30 pairs at 24-36 h.
-      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u4"], brandId: "B2", bin: 11, pairs: 30, sumHours: 900 },
+      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u4"], brandId: "B2", bin: 11, pairs: 30, sumHours: 900, samplesHours: null },
+    ],
+    // Every beta Unit of F1 is tied by a link; 24 of F3's 30.
+    linkedTo: [
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["u2"], brandId: "B1", units: 20 },
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["u4"], brandId: "B2", units: 24 },
     ],
   });
   const row = (scope: string, scopeId: string, fromKey: string, toKey: string) => stats.find((r) => r.scope === scope && r.scopeId === scopeId && r.fromKey === fromKey && r.toKey === toKey) as SilverStatRow | undefined;
@@ -165,23 +173,75 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     expect(transition("brand", "B1")).toMatchObject({ fromUnits: 500, toUnits: 20 });
   });
 
-  it("a campaign's pair is what became of ITS from-Unit, wherever the to-Unit was declared (even under no campaign)", () => {
+  it("UNIT-LINKS-CONSUME-1117-FIX: the yield is counted on UNITS; a missing link never lowers it, the coverage says how much is tied", () => {
+    // Prod 2026-11-17: a campaign made 4,157 `from` Units and 3,737 `to` Units, of which the ledger's links tie 2,495.
     const s = buildSilverStats({
       today,
       funnelOf,
-      unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 10 }],
-      unitCosts: [],
-      pairBins: [
-        { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 5, pairs: 4, sumHours: 14 },
-        { fromKey: "alpha", toKey: "beta", fromCampaignIds: [], brandId: "B1", bin: 5, pairs: 2, sumHours: 7 },
+      unitDays: [
+        { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 4157 },
+        { outcomeKey: "beta", campaignIds: ["u1"], brandId: "B1", day: "2026-01-03", units: 3737 },
+        // Units no campaign carries: in no yield, on either side (nothing ties them to a funnel).
+        { outcomeKey: "alpha", campaignIds: [], brandId: "B1", day: "2026-01-01", units: 1000 },
+        { outcomeKey: "beta", campaignIds: [], brandId: "B1", day: "2026-01-03", units: 500 },
       ],
+      unitCosts: [],
+      pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 12, pairs: 2495, sumHours: 2495 * 40, samplesHours: null }],
+      linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u1"], brandId: "B1", units: 2495 }],
     });
     const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
-    expect(t("campaign", "F1").toUnits).toBe(4);
-    expect(t("brand", "B1").toUnits).toBe(6);
-    expect(t("fleet", FLEET_SCOPE_ID).toUnits).toBe(6);
-    // The prior's mean is the FLEET's pooled rate (6 over 10), not the campaigns' alone (4 over 10): Units tagged on no campaign count.
-    expect(t("fleet", FLEET_SCOPE_ID).prior.shape / t("fleet", FLEET_SCOPE_ID).prior.rate).toBeCloseTo(0.6, 9);
+    const f1 = t("campaign", "F1");
+    expect(f1).toMatchObject({ fromUnits: 4157, toUnits: 3737, linkedToUnits: 2495 });
+    expect(f1.linkCoverage).toBeCloseTo(2495 / 3737, 12);
+    // The yield is the counts' (0.90), not the links' (0.60).
+    expect(f1.yield.mean).toBeGreaterThan(0.89);
+    expect(f1.yield.mean).toBeLessThan(0.91);
+    // The delay still comes from the linked pairs.
+    expect(f1.delay!.n).toBe(2495);
+    for (const [scope, id] of [["brand", "B1"], ["fleet", FLEET_SCOPE_ID]] as const) expect(t(scope, id)).toMatchObject({ fromUnits: 4157, toUnits: 3737, linkedToUnits: 2495 });
+    expect(t("fleet", FLEET_SCOPE_ID).prior.shape / t("fleet", FLEET_SCOPE_ID).prior.rate).toBeCloseTo(3737 / t("fleet", FLEET_SCOPE_ID).exposure, 9);
+    // No `to` Unit at all: the coverage is unknown, never 0 or 1.
+    const none = buildSilverStats({ today, funnelOf, unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "alpha", campaignIds: ["u3"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "beta", campaignIds: ["u3"], brandId: "B1", day: "2026-01-02", units: 1 }], unitCosts: [], pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u3"], brandId: "B1", bin: 5, pairs: 1, sumHours: 3.5, samplesHours: [3.5] }], linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u3"], brandId: "B1", units: 1 }] });
+    expect((none.find((r) => r.scope === "campaign" && r.scopeId === "F1" && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat).toMatchObject({ toUnits: 0, linkedToUnits: 0, linkCoverage: null });
+  });
+
+  it("UNIT-LINKS-CONSUME-1117-FIX: on a small sample the served quantiles are EXACT (n = 1, 2, 4), above the threshold they are read off the bins", () => {
+    const binsOf = (hours: number[]) => {
+      const m = new Map<number, number>();
+      for (const h of hours) {
+        const bin = DELAY_EDGES_HOURS.filter((e) => e <= h).length;
+        m.set(bin, (m.get(bin) ?? 0) + 1);
+      }
+      return m;
+    };
+    const dist = (hours: number[], samples: number[] | null) => delayDistributionOf(binsOf(hours), hours.reduce((a, h) => a + h, 0), samples)!;
+    // n = 1: every quantile is the pair's own delay.
+    expect(dist([5], [5])).toMatchObject({ n: 1, meanHours: 5, medianHours: 5, p10Hours: 5, p90Hours: 5 });
+    // n = 2: the median is the middle of the two.
+    const two = dist([2, 10], [10, 2]);
+    expect(two.medianHours).toBe(6);
+    expect(two.p10Hours).toBeCloseTo(2.8, 9);
+    expect(two.p90Hours).toBeCloseTo(9.2, 9);
+    // n = 4 (prod 2026-11-17, four pairs: the bins read 36 h = 1.5 d where the pairs' median is 50.33 h = 2.097 d).
+    const four = [30, 34, 66.66, 70];
+    expect(dist(four, null).medianHours).toBe(36);
+    expect(dist(four, four).medianHours).toBeCloseTo(50.33, 9);
+    expect(dist(four, four).p25Hours).toBeCloseTo(33, 9);
+    expect(dist(four, four).cdf).toEqual(dist(four, null).cdf); // the curve stays the bins'
+    // Samples that do not cover every pair are not a sample of the whole: the bins answer.
+    expect(dist(four, [30, 34]).medianHours).toBe(36);
+    // A scope pools its groups' samples; one group too large to carry them (or more than the threshold in all) ends the exact read.
+    const build = (rows: PairBinRow[]) => {
+      const out = buildSilverStats({ today, funnelOf, unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 500 }], unitCosts: [], pairBins: rows, linkedTo: [] });
+      return (out.find((r) => r.scope === "fleet" && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat.delay!;
+    };
+    const row = (campaign: string, hours: number[], withSamples = true): PairBinRow[] => [...binsOf(hours)].map(([bin, pairs]) => ({ fromKey: "alpha", toKey: "beta", fromCampaignIds: [campaign], brandId: "B1", bin, pairs, sumHours: hours.filter((h) => DELAY_EDGES_HOURS.filter((e) => e <= h).length === bin).reduce((a, h) => a + h, 0), samplesHours: withSamples ? hours.filter((h) => DELAY_EDGES_HOURS.filter((e) => e <= h).length === bin) : null }));
+    expect(build([...row("u1", [30, 34]), ...row("u3", [66.66, 70])]).medianHours).toBeCloseTo(50.33, 9);
+    expect(build([...row("u1", [30, 34]), ...row("u3", [66.66, 70], false)]).medianHours).toBe(36);
+    expect(EXACT_DELAY_MAX_PAIRS).toBe(200);
+    const many = Array.from({ length: 201 }, () => 25);
+    expect(build(row("u1", many)).medianHours).toBe(30); // 201 pairs: the middle of the bin [24 h, 36 h)
+    expect(build(row("u1", many.slice(0, 200))).medianHours).toBe(25); // 200 pairs: the pairs' own
   });
 });
 
@@ -232,21 +292,24 @@ describe("UNIT-LINKS-CONSUME-1117: pairs, delays and campaigns come from the led
         { outcomeKey: "beta", campaignIds: ["u1"], brandId: "B1", day: "2026-01-05", units: 4 },
         { outcomeKey: "beta", campaignIds: ["u1", "u3"], brandId: "B1", day: "2026-01-06", units: 1 },
         { outcomeKey: "beta", campaignIds: [], brandId: "B1", day: "2026-01-06", units: 2 },
+        { outcomeKey: "gamma", campaignIds: ["u1"], brandId: "B1", day: "2026-01-07", units: 2 },
+        { outcomeKey: "gamma", campaignIds: ["u1", "u3"], brandId: "B1", day: "2026-01-07", units: 1 },
       ],
       unitCosts: [],
       pairBins: [
-        { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 5, sumHours: 300 },
-        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1"], brandId: "B1", bin: 11, pairs: 2, sumHours: 60 },
-        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1", "u3"], brandId: "B1", bin: 11, pairs: 1, sumHours: 30 },
+        { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 5, sumHours: 300, samplesHours: null },
+        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1"], brandId: "B1", bin: 11, pairs: 2, sumHours: 60, samplesHours: null },
+        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1", "u3"], brandId: "B1", bin: 11, pairs: 1, sumHours: 30, samplesHours: null },
       ],
+      linkedTo: [],
     });
     const t = (scope: string, id: string, fromKey: string, toKey: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === fromKey && r.toKey === toKey)?.body as { stat: TransitionStat } | undefined)?.stat;
     // The late beta Units are `from` Units of the campaign they carry: F1 holds 5 of them, F2 the one it shares.
     expect(t("campaign", "F1", "beta", "gamma")).toMatchObject({ fromUnits: 5, toUnits: 3 });
     expect(t("campaign", "F2", "beta", "gamma")).toMatchObject({ fromUnits: 1, toUnits: 1 });
-    // Counted once in the brand and the fleet, the Units no campaign carries included.
-    expect(t("brand", "B1", "beta", "gamma")).toMatchObject({ fromUnits: 7, toUnits: 3 });
-    expect(t("fleet", FLEET_SCOPE_ID, "beta", "gamma")).toMatchObject({ fromUnits: 7, toUnits: 3 });
+    // Counted once in the brand and the fleet (the Unit two campaigns carry is one Unit); the Units no campaign carries are in no yield.
+    expect(t("brand", "B1", "beta", "gamma")).toMatchObject({ fromUnits: 5, toUnits: 3 });
+    expect(t("fleet", FLEET_SCOPE_ID, "beta", "gamma")).toMatchObject({ fromUnits: 5, toUnits: 3 });
     // The delay is the linked pairs' own.
     expect(t("campaign", "F1", "beta", "gamma")!.delay).toMatchObject({ n: 3, meanHours: 30 });
     expect(t("campaign", "F1", "alpha", "beta")).toMatchObject({ fromUnits: 50, toUnits: 5 });

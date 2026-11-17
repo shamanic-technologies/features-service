@@ -44,7 +44,7 @@ const transition = (scope: string, scopeId: string, fromKey: string, toKey: stri
   toKey,
   sampleSize: fromUnits,
   computedAt: "x",
-  body: { kind: "transition", stat: { fromUnits, toUnits, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs === 0 ? null : { n: pairs, meanHours: 30, medianHours: 24, p10Hours: 2, p25Hours: 8, p75Hours: 48, p90Hours: 72, cdf: [{ hours: 96, share: 1 }] } } },
+  body: { kind: "transition", stat: { fromUnits, toUnits, linkedToUnits: pairs, linkCoverage: toUnits > 0 ? pairs / toUnits : null, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs === 0 ? null : { n: pairs, meanHours: 30, medianHours: 24, p10Hours: 2, p25Hours: 8, p75Hours: 48, p90Hours: 72, cdf: [{ hours: 96, share: 1 }] } } },
 });
 
 describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () => {
