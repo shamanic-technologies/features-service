@@ -216,6 +216,13 @@ interface Fixture {
   snapshot?: SnapshotRow[] | null;
   /** brand ids whose org has ONLY staff members (a staff test org). Every other org has a client. */
   staffOrgBrands?: string[];
+  /**
+   * lead-service's meeting facts (`/internal/meeting-attribution`) beyond each brand's stated `meeting_booked` leads:
+   * meetings a client stated on people its cold email never served (a CRM import, the tracker). Default none.
+   */
+  extraMeetingFacts?: Record<string, Array<{ leadId?: string | null; email?: string | null; source: string }>>;
+  /** brand ids whose brand-service record states OUR domain (distribute.you). */
+  ourBrands?: string[];
 }
 
 /** One stored row of the persisted fleet snapshot — what the pick has to work with. */
@@ -266,8 +273,26 @@ function mockFetch(fixture: Fixture): void {
         brands: (q.get("ids") ?? "")
           .split(",")
           .filter(Boolean)
-          .map((id) => ({ id, name: `name-${id}`, domain: `${id}.com` })),
+          .map((id) => ({ id, name: `name-${id}`, domain: (fixture.ourBrands ?? []).includes(id) ? "www.distribute.you" : `${id}.com` })),
       });
+    }
+
+    // lead-service's meeting facts: every brand's stated meeting_booked leads, plus the extra facts of the case.
+    if (path.endsWith("/internal/meeting-attribution")) {
+      const attributedMeetings: Array<Record<string, unknown>> = [];
+      let n = 0;
+      for (const [brandId, b] of Object.entries(fixture.brands)) {
+        for (const leadId of b.stated?.meeting_booked ?? []) {
+          attributedMeetings.push({ conversionEventId: `ce-${n++}`, brandId, event: "meeting_booked", source: "manual", leadId: `${brandId}-${leadId}`, email: emailOf(brandId, leadId) });
+        }
+        for (const leadId of b.stated?.meeting_attended ?? []) {
+          attributedMeetings.push({ conversionEventId: `ce-${n++}`, brandId, event: "meeting_attended", source: "manual", leadId: `${brandId}-${leadId}`, email: emailOf(brandId, leadId) });
+        }
+      }
+      for (const [brandId, facts] of Object.entries(fixture.extraMeetingFacts ?? {})) {
+        for (const f of facts) attributedMeetings.push({ conversionEventId: `ce-${n++}`, brandId, event: "meeting_booked", source: f.source, leadId: f.leadId ?? null, email: f.email ?? null });
+      }
+      return json({ scope: "fleet", byBrand: [], attributedMeetings });
     }
 
     if (path.endsWith("/campaigns")) {
@@ -912,6 +937,47 @@ describe("the hero row on a wider fleet", () => {
     expect(recent.map((b) => b.brand.id)).toEqual([P5, P6, OLDEST]);
     const count = (b: (typeof recent)[number], key: string) => b.outcomes.find((o) => o.key === key)?.peopleReached;
     expect(recent.map((b) => [count(b, "meeting_booked"), count(b, "conversation")])).toEqual([[2, 5], [1, 6], [0, 9]]);
+  });
+
+  it("counts EVERY meeting the client stated, any source, on people its cold email never served (SHOWCASE-MEETINGS-1117)", async () => {
+    // Prod 2026-11-17: Doc Dinners' 172 CRM meetings read 0 (the engine pass sees only the people its campaigns
+    // served) and the row ranked on positive replies alone. A CRM meeting, a tracker meeting and a hand statement all
+    // count, one per person (the same address twice is one person).
+    mockFetch({
+      ...FIXTURE,
+      brands: { ...FIXTURE.brands, [P5]: { funnelKey: CONVERSATION, leads: replies(P5, 5), stated: { meeting_booked: ["r0"] } } },
+      extraMeetingFacts: {
+        [P5]: [
+          { leadId: "crm-lead-1", email: "a@x.com", source: "crm" },
+          { leadId: "crm-lead-2", email: "b@x.com", source: "crm" },
+          { leadId: "crm-lead-3", email: "c@x.com", source: "crm" },
+        ],
+        [P6]: [
+          { leadId: null, email: "T@Y.com", source: "tracker" },
+          { leadId: null, email: "t@y.com", source: "tracker" },
+        ],
+      },
+    });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    expect(res.status).toBe(200);
+    const recent = res.body.groups.recentlyStarted.brands as Array<{ brand: { id: string }; outcomes: Array<{ key: string; peopleReached: number | null }> }>;
+    const count = (b: (typeof recent)[number], key: string) => b.outcomes.find((o) => o.key === key)?.peopleReached;
+    expect(recent.map((b) => b.brand.id)).toEqual([P5, P6, OLDEST]);
+    expect(recent.map((b) => count(b, "meeting_booked"))).toEqual([4, 1, 0]);
+    // The chain the funnel read serves states the same figure on its Meeting booked rung.
+    const funnels = (await request(app).get("/public/stats/showcase-funnels")).body.groups.recentlyStarted.brands as Array<{
+      brand: { id: string };
+      funnels: Array<{ steps: Array<{ key: string; peopleReached: number | null }> }>;
+    }>;
+    const rung = funnels[0].funnels.flatMap((f) => f.steps).find((st) => st.key.endsWith("_to_meeting_booked"));
+    expect(rung?.peopleReached).toBe(4);
+  });
+
+  it("never names OUR OWN brand, whatever its figures (SHOWCASE-MEETINGS-1117: « ne mets pas distribute »)", async () => {
+    mockFetch({ ...FIXTURE, ourBrands: [P7], extraMeetingFacts: { [P7]: [{ leadId: "m1", email: "m1@x.com", source: "crm" }] } });
+    const recent = (await get()).groups.recentlyStarted;
+    expect(recent.brands.map((b) => b.brand.id)).not.toContain(P7);
+    expect(recent.brands).toHaveLength(3);
   });
 
   it("a client whose read fails is replaced by the next biggest: the row stays at 3", async () => {
