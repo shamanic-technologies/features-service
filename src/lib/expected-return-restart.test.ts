@@ -114,9 +114,19 @@ describe("expected return across a restart (LEDGER-LOAD-1107-ROI-BOOT)", () => {
     expect(e).toMatchObject({ roiMultiple: null, unavailableReason: "expected_model_computing" });
   });
 
+  it("MEASURED-BEFORE-DEFAULT-1117: a model stored before the catalogue's measured cost rung (v2 key) is never served after the deploy", async () => {
+    cells.set(`expected-model-v2:${identity.orgId}|${BRAND}|o1`, {
+      text: serializeOfferExpectedModel({ offerId: "o1", body: built.body, selected: [reply.combinationKey], lifetimeRevenueSource: "offer_stated", notRunning: false }),
+      computedAt: Date.now(),
+    });
+    computeOfferSalesPathsModel.mockReturnValue(new Promise(() => {}));
+    const e = await actual.expectedReturnForFunnelCampaign(identity, BRAND, "o1", reply.combinationKey, null, 0);
+    expect(e).toMatchObject({ roiMultiple: null, unavailableReason: "expected_model_computing" });
+  });
+
   it("a persisted build older than the 30-min stale window is still served on boot (rebuilt behind it)", async () => {
     const old = Date.now() - 3 * 60 * 60_000;
-    cells.set(`expected-model-v2:${identity.orgId}|${BRAND}|o1`, {
+    cells.set(`expected-model-v3:${identity.orgId}|${BRAND}|o1`, {
       text: serializeOfferExpectedModel({ offerId: "o1", body: built.body, selected: [reply.combinationKey], lifetimeRevenueSource: "offer_stated", notRunning: false }),
       computedAt: old,
     });

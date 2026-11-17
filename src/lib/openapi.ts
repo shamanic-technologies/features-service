@@ -24,7 +24,7 @@ const expectedReturnRef = registry.register(
   "ExpectedReturn",
   z
     .object({
-      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
+      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured (outcome prices, else the catalogue's measured cost of the leg) > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
       basis: expectedBasisSchema.nullable(),
       assumptions: z
         .array(
@@ -4371,7 +4371,7 @@ const lifecycleCardSchema = z.object({
   valueUsd: z.number().nullable().describe("What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."),
   zeroValueReason: z.enum(["ruled_out", "step_not_priced", "not_ours", "expired", "cannot_convert", "not_sent", "won_counted_on_ledger"]).nullable().describe("Why the card reads exactly 0: `won_counted_on_ledger` (Paid client: the won value is the ledger's Units x LTR on the rung, LEDGER-ONLY-1107-P2),  `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."),
   valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."),
-  entryRateSource: z.enum(["measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
+  entryRateSource: z.enum(["measured", "fleet_measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `fleet_measured` = none measured for it, the fleet's measured cold-email entry rate per signal (outcome prices), the seeded benchmark for a signal the fleet never measured (MEASURED-BEFORE-DEFAULT-1117); `default_entry` = nothing measured anywhere, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
 });
 const offerDealsLifecycleResponseSchema = z.object({
   offerId: z.string(),
@@ -8062,7 +8062,7 @@ const catalogueExpectedRow = z
       .describe("Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."),
   })
   .describe(
-    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`.",
+    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`.",
   );
 const catalogueExpectedDetail = catalogueExpectedRow.extend({
   lifetimeRevenueUsd: z.number().nullable(),

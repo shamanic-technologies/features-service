@@ -341,3 +341,12 @@ vi.mock("./lib/ledger-audience-stats.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   withLedgerAudienceStats: vi.fn(<T>(b: T) => b),
 }));
+
+/**
+ * Suite-wide default: the fleet's measured contacted entry rates (lib/fleet-contacted-entry-rates.ts) read the
+ * outcome-prices build, which no route fixture answers. None measured here, so a route suite keeps the seeded entry
+ * benchmark its fixture was written against (MEASURED-BEFORE-DEFAULT-1117). Its rung is pinned in contacted-value.test.ts.
+ */
+vi.mock("./lib/fleet-contacted-entry-rates.js", () => ({
+  readFleetContactedEntryRates: vi.fn(async () => ({})),
+}));

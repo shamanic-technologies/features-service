@@ -753,22 +753,33 @@ export interface ContactedPricing {
    * lead carries nothing.
    */
   defaultEntryRatePct?: Readonly<Record<string, number>>;
+  /**
+   * The FLEET's measured entry rate per engine signal (outcome prices, cold email), for a lead whose group has no
+   * measured rate: it beats the seeded benchmark signal by signal (MEASURED-BEFORE-DEFAULT-1117, owner 2026-11-17: a
+   * measured figure always beats a default). Absent / empty ⇒ the benchmark alone.
+   */
+  fleetEntryRatePct?: Readonly<Record<string, number>>;
   /** ISO instant: a last send strictly before this has expired. */
   lastSentOnOrAfter: string;
 }
 
 /**
  * The entry rates a contacted lead is priced on, and where they come from: its (campaign × workflow) group's
- * measured rates, else the seeded default (`defaultEntryRatePct`), else none. The ONE lookup every reader of
+ * measured rates, else the fleet's measured rate per signal over the seeded default (`fleetEntryRatePct`, then
+ * `defaultEntryRatePct`; MEASURED-BEFORE-DEFAULT-1117), else none. The ONE lookup every reader of
  * `ContactedPricing` makes, so the pipeline, the Deals board and the explained pipeline cannot disagree.
  */
 export function contactedEntryRatesOf(
   person: Pick<EnginePerson, "campaignId" | "workflowSlug">,
   pricing: ContactedPricing,
-): { rates: Readonly<Record<string, number>>; source: "measured" | "default_entry" } | null {
+): { rates: Readonly<Record<string, number>>; source: "measured" | "fleet_measured" | "default_entry" } | null {
   const key = contactedGroupKey(person.campaignId, person.workflowSlug);
   const measured = key === null ? undefined : pricing.entryRatePctByGroup[key];
   if (measured) return { rates: measured, source: "measured" };
+  // The fleet's measured rate of a signal beats its seeded benchmark (MEASURED-BEFORE-DEFAULT-1117); a signal the fleet
+  // never measured keeps the benchmark.
+  const fleet = Object.entries(pricing.fleetEntryRatePct ?? {}).filter(([, r]) => Number.isFinite(r) && r > 0);
+  if (fleet.length > 0) return { rates: { ...(pricing.defaultEntryRatePct ?? {}), ...Object.fromEntries(fleet) }, source: "fleet_measured" };
   return pricing.defaultEntryRatePct ? { rates: pricing.defaultEntryRatePct, source: "default_entry" } : null;
 }
 

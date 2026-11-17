@@ -153,7 +153,7 @@
           "roiMultiple": {
             "type": "number",
             "nullable": true,
-            "description": "The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."
+            "description": "The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured (outcome prices, else the catalogue's measured cost of the leg) > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."
           },
           "basis": {
             "type": "string",
@@ -28647,10 +28647,11 @@
                         "nullable": true,
                         "enum": [
                           "measured",
+                          "fleet_measured",
                           "default_entry",
                           null
                         ],
-                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
+                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `fleet_measured` = none measured for it, the fleet's measured cold-email entry rate per signal (outcome prices), the seeded benchmark for a signal the fleet never measured (MEASURED-BEFORE-DEFAULT-1117); `default_entry` = nothing measured anywhere, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
                       }
                     },
                     "required": [
@@ -29083,10 +29084,11 @@
                         "nullable": true,
                         "enum": [
                           "measured",
+                          "fleet_measured",
                           "default_entry",
                           null
                         ],
-                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
+                        "description": "Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `fleet_measured` = none measured for it, the fleet's measured cold-email entry rate per signal (outcome prices), the seeded benchmark for a signal the fleet never measured (MEASURED-BEFORE-DEFAULT-1117); `default_entry` = nothing measured anywhere, the seeded cold-email entry benchmark (1% positive reply, 2% click)."
                       }
                     },
                     "required": [
@@ -67180,7 +67182,7 @@
                               "basis",
                               "unavailableReason"
                             ],
-                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
                           },
                           "runnable": {
                             "type": "boolean",
@@ -67941,7 +67943,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -68475,7 +68477,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -69070,7 +69072,7 @@
                         "lifetimeRevenueBasis",
                         "legs"
                       ],
-                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
+                      "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
                     },
                     "costUnit": {
                       "type": "string",
@@ -73919,7 +73921,7 @@
                               "basis",
                               "unavailableReason"
                             ],
-                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
+                            "description": "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`."
                           },
                           "runnable": {
                             "type": "boolean",

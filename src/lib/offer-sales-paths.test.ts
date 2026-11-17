@@ -11,6 +11,7 @@ import {
   platformChannelsForLeg,
   priceKey,
   resolveLegChannelCost,
+  mergeFleetLegCosts,
   type LegChannelPrice,
   type SalesPathChannelInput,
   withCampaignRois,
@@ -362,6 +363,27 @@ describe("the managed-channel rule (owner 2026-09-29)", () => {
     expect(call.costSource).toBe("default");
     expect(call.costPerOutcomeUsd).toBe(DEFAULT_COST_PER_OUTCOME_USD.get(priceKey("conversation_to_booking_call", "ai-instant-call")));
     expect(viaCall.legs.find((l) => l.legKey === "booking_call_to_meeting_booked")!.workedBy).toBe("human");
+  });
+});
+
+describe("MEASURED-BEFORE-DEFAULT-1117: the fleet rung carries every measured cost before the default", () => {
+  const replyKey = priceKey("start_to_conversation", "sales-cold-email-outreach");
+  const visitKey = priceKey("start_to_website_visit", "sales-cold-email-outreach");
+
+  it("outcome prices first, else the catalogue's measured cost; a default never rides the rung", () => {
+    const merged = mergeFleetLegCosts(new Map([[replyKey, 103.76]]), new Map([[replyKey, 183.35], [visitKey, 17.51], ["x|y", 0]]));
+    expect(merged.get(replyKey)).toBe(103.76);
+    expect(merged.get(visitKey)).toBe(17.51);
+    expect(merged.has("x|y")).toBe(false);
+  });
+
+  it("a leg the outcome prices do not price takes the catalogue's measured cost, never its seeded default", () => {
+    const merged = mergeFleetLegCosts(new Map(), new Map([[visitKey, 17.51]]));
+    expect(resolveLegChannelCost(undefined, merged.get(visitKey), DEFAULT_COST_PER_OUTCOME_USD.get(visitKey))).toEqual({ costPerOutcomeUsd: 17.51, costSource: "fleet_measured" });
+    // Wide Email (prod 2026-11-17): the cold email positive reply on the fleet's measured $103.76, never the $50 default.
+    expect(resolveLegChannelCost(undefined, mergeFleetLegCosts(new Map([[replyKey, 103.76]]), new Map()).get(replyKey), DEFAULT_COST_PER_OUTCOME_USD.get(replyKey))).toEqual({ costPerOutcomeUsd: 103.76, costSource: "fleet_measured" });
+    // Nothing measured anywhere: the default, last.
+    expect(resolveLegChannelCost(undefined, mergeFleetLegCosts(new Map(), new Map()).get(visitKey), DEFAULT_COST_PER_OUTCOME_USD.get(visitKey))).toEqual({ costPerOutcomeUsd: 5, costSource: "default" });
   });
 });
 
