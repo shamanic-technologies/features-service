@@ -18,7 +18,8 @@ import {
   type ShowcaseCandidate,
   furthestRungReached,
   isOurBrandDomain,
-  meetingsBookedByBrandOf,
+  meetingsBookedByBrandOfLedger,
+  showcaseMeetingsLedgerPath,
   withMeetingFactCandidates,
 } from "./showcase-clients.js";
 
@@ -201,28 +202,68 @@ describe("isStaffOnlyBrand (staff orgs never named on the homepage)", () => {
 });
 
 describe("SHOWCASE-MEETINGS-1117: meetings = every stated meeting, our own brand never named", () => {
-  it("a CRM-sourced meeting counts, as do tracker and hand statements, one per person", () => {
-    const m = meetingsBookedByBrandOf({
-      attributedMeetings: [
-        { conversionEventId: "1", brandId: DOC, event: "meeting_booked", source: "crm", leadId: "l1", email: "a@x.com" },
-        { conversionEventId: "2", brandId: DOC, event: "meeting_booked", source: "crm", leadId: "l2", email: "b@x.com" },
-        { conversionEventId: "3", brandId: DOC, event: "meeting_attended", source: "crm", leadId: "l1", email: "a@x.com" },
-        { conversionEventId: "4", brandId: LAB, event: "meeting_booked", source: "tracker", leadId: null, email: "Q@x.com" },
-        { conversionEventId: "5", brandId: LAB, event: "meeting_booked", source: "tracker", leadId: null, email: "q@x.com" },
-        { conversionEventId: "6", brandId: LAB, event: "meeting_booked", source: "manual", leadId: null, email: null },
-      ],
-    });
-    expect(m.get(DOC)).toBe(2);
+  const TODAY = "2026-11-17";
+  const ours = (brandId: string | null, day: string, n: number) => ({ dimensions: { outcomeKey: "meeting_booked", brandId, day }, occurrences: n });
+  const theirs = (factory: string, brandId: string | null, day: string, n: number) => ({ dimensions: { factory, outcomeKey: "meeting_booked", brandId, day }, occurrences: n });
+
+  it("SHOWCASE-LEDGER-1117: one fleet ledger read, meeting Units per brand per day", () => {
+    expect(showcaseMeetingsLedgerPath()).toBe("/internal/stats/outcome-costs?groupBy=outcomeKey,brandId,day&outcomeKey=meeting_booked");
+  });
+
+  it("SHOWCASE-LEDGER-1117: meetings = the brand's ledger Units, ours + another factory's, the dashboard's own count", () => {
+    const m = meetingsBookedByBrandOfLedger(
+      {
+        produced: [ours(DOC, "2026-10-01", 2), ours(DOC, "2026-10-02", 1), ours(null, "2026-10-01", 9)],
+        producedElsewhere: [theirs("another_factory", DOC, "2025-01-01", 4), theirs("no_proof", LAB, "2026-10-06", 2)],
+      },
+      TODAY,
+    );
+    expect(m.get(DOC)).toBe(7);
     expect(m.get(LAB)).toBe(2);
+    // A Unit with no brand names no client.
+    expect([...m.keys()].sort()).toEqual([DOC, LAB].sort());
+  });
+
+  it("SHOWCASE-LEDGER-1117: a meeting IMPLIED by a later stated sale is a Unit, counted (Doc Dinners 172 stated + 1 = 173)", () => {
+    // Prod 2026-11-17: Doc Dinners stated 172 meetings; one client stated a sale with no meeting, and lead-service implies
+    // the meeting (a funnel is a chain, LEAD-STATES-1024); its ledger serves it as another factory's Unit on the sale day.
+    const m = meetingsBookedByBrandOfLedger(
+      {
+        produced: [ours(DOC, "2026-10-01", 10)],
+        producedElsewhere: [theirs("another_factory", DOC, "2024-08-24", 162), theirs("another_factory", DOC, "2026-05-12", 1)],
+      },
+      TODAY,
+    );
+    expect(m.get(DOC)).toBe(173);
+  });
+
+  it("SHOWCASE-LEDGER-1117: a withdrawn Unit never counts (the ledger's negative day, netted per factory, never below 0)", () => {
+    const m = meetingsBookedByBrandOfLedger(
+      {
+        produced: [ours(DOC, "2026-10-01", 3), ours(DOC, "2026-10-05", -1)],
+        producedElsewhere: [theirs("another_factory", DOC, "2026-01-01", 2), theirs("another_factory", DOC, "2026-02-01", -5), theirs("no_proof", SHOCK, "2026-01-01", -1)],
+      },
+      TODAY,
+    );
+    expect(m.get(DOC)).toBe(2);
     expect(m.has(SHOCK)).toBe(false);
   });
 
-  it("an unreadable body throws, never reads as zero meetings", () => {
-    expect(() => meetingsBookedByBrandOf({})).toThrow(/attributedMeetings/);
-    expect(() => meetingsBookedByBrandOf({ attributedMeetings: [{ event: "meeting_booked" }] })).toThrow(/brandId/);
+  it("SHOWCASE-LEDGER-1117: another outcome key in the body is never a meeting", () => {
+    const m = meetingsBookedByBrandOfLedger(
+      { produced: [{ dimensions: { outcomeKey: "lead_interested", brandId: DOC, day: "2026-10-01" }, occurrences: 5 }], producedElsewhere: [] },
+      TODAY,
+    );
+    expect(m.size).toBe(0);
   });
 
-  it("prod 2026-11-17 replay: Doc Dinners 172 meetings, Legistai by meetings, then Shockwave 10 positive replies", () => {
+  it("SHOWCASE-LEDGER-1117: an unreadable body throws, never reads as zero meetings", () => {
+    expect(() => meetingsBookedByBrandOfLedger({}, TODAY)).toThrow(/produced/);
+    expect(() => meetingsBookedByBrandOfLedger({ produced: [{ dimensions: { brandId: DOC } }], producedElsewhere: [] }, TODAY)).toThrow(/outcomeKey or day/);
+    expect(() => meetingsBookedByBrandOfLedger({ produced: [], producedElsewhere: [theirs("mystery", DOC, "2026-01-01", 1)] }, TODAY)).toThrow(/unknown factory/);
+  });
+
+  it("prod 2026-11-17 replay (ledger): Doc Dinners 173 meetings, Shockwave 5 (implied by its 5 sales), then positive replies", () => {
     // Snapshot rows as stored that day (meetings 0 everywhere; Doc Dinners summed over its two channels).
     const snapshot = [
       { brandId: DOC, outcomeCount: null, meetingsBooked: 0, positiveReplies: 76 },
@@ -230,9 +271,10 @@ describe("SHOWCASE-MEETINGS-1117: meetings = every stated meeting, our own brand
       { brandId: OBRA, outcomeCount: 0, meetingsBooked: 1, positiveReplies: 7 },
       { brandId: LAB, outcomeCount: null, meetingsBooked: 0, positiveReplies: 1 },
     ];
-    const facts = new Map([[DOC, 172], [LAB, 14]]);
-    const picks = pickShowcaseClients(withMeetingFactCandidates(buildShowcaseCandidates([snapshot]), facts));
-    expect(picks.recentlyStarted.brandIds).toEqual([DOC, LAB, SHOCK]);
+    // Legistai's 14 tracker meetings are matched to no lead (no lead state, no ledger Unit): its dashboard reads 0, so does the hero.
+    const ledger = new Map([[DOC, 173], [SHOCK, 5]]);
+    const picks = pickShowcaseClients(withMeetingFactCandidates(buildShowcaseCandidates([snapshot]), ledger));
+    expect(picks.recentlyStarted.brandIds).toEqual([DOC, SHOCK, OBRA]);
   });
 
   it("our own brand is recognised by its recorded domain, never a client's", () => {
