@@ -83217,6 +83217,15 @@
                             "medianInDays": {
                               "type": "number",
                               "nullable": true
+                            },
+                            "expectedOneByDate": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The day the EXPECTED count of Targets made from now reaches one: the mean pace (what cost per Target ÷ budget says, delays included). Earlier than `medianDate` when the yields are poorly known (a few lucky cases pull the mean); null = later than `searchDays`."
+                            },
+                            "expectedOneInDays": {
+                              "type": "number",
+                              "nullable": true
                             }
                           },
                           "required": [
@@ -83225,7 +83234,9 @@
                             "medianDate",
                             "earlyDate",
                             "lateDate",
-                            "medianInDays"
+                            "medianInDays",
+                            "expectedOneByDate",
+                            "expectedOneInDays"
                           ]
                         }
                       },
@@ -83277,6 +83288,15 @@
                               "medianInDays": {
                                 "type": "number",
                                 "nullable": true
+                              },
+                              "expectedOneByDate": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The day the EXPECTED count of Targets made from now reaches one: the mean pace (what cost per Target ÷ budget says, delays included). Earlier than `medianDate` when the yields are poorly known (a few lucky cases pull the mean); null = later than `searchDays`."
+                              },
+                              "expectedOneInDays": {
+                                "type": "number",
+                                "nullable": true
                               }
                             },
                             "required": [
@@ -83285,7 +83305,9 @@
                               "medianDate",
                               "earlyDate",
                               "lateDate",
-                              "medianInDays"
+                              "medianInDays",
+                              "expectedOneByDate",
+                              "expectedOneInDays"
                             ]
                           },
                           "targetCumulativeUnits": {

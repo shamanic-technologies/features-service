@@ -98,7 +98,7 @@ describe("forecastOf (the projection)", () => {
     expect(a!.unitsPerTarget!.median).toBeCloseTo(10, 1);
     expect(a!.expectedRevenuePerUnitUsd!.median).toBeCloseTo(50, 0);
     expect(b!.expectedRevenuePerUnitUsd!.median).toBe(500);
-    expect(f.nextTarget).toMatchObject({ shareWithinSearch: 1, medianInDays: 0, medianDate: "2026-06-01" });
+    expect(f.nextTarget).toMatchObject({ shareWithinSearch: 1, medianInDays: 0, medianDate: "2026-06-01", expectedOneInDays: 0, expectedOneByDate: "2026-06-01" });
   });
 
   it("Units already produced keep maturing along the delay curve, with no spend at all", () => {
@@ -121,6 +121,11 @@ describe("forecastOf (the projection)", () => {
     expect(f.nextTarget.shareWithinSearch).toBeLessThan(0.75);
     expect(f.nextTarget.earlyDate).not.toBeNull();
     expect(f.nextTarget.lateDate).toBeNull(); // later than the search in the slow case: said, never a made-up date
+    // The mean pace: 1 Unit a day x 0.2% = one Target expected every 500 days, past the 365 searched here.
+    expect(f.nextTarget.expectedOneInDays).toBeNull();
+    const longer = forecastOf(base({ spendUsd: Array.from({ length: 900 }, () => 1), yields: [sure(0.002)], searchDays: 800 }));
+    expect(longer.nextTarget.expectedOneInDays).toBe(499); // segments 0..499 = 500 days of $1
+    expect(longer.nextTarget.expectedOneByDate).toBe("2027-10-13");
     expect(f.outcomes[1]!.cumulativeUnits.median[29]).toBe(0);
     expect(f.outcomes[1]!.cumulativeUnits.expected[29]!).toBeGreaterThan(0);
   });
