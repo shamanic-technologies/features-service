@@ -23,7 +23,12 @@ import {
 } from "../lib/fleet-indexes.js";
 import { lastRecordedTodayAt, readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
-import { vendorLegPrice, vendorPooled, vendorRankingRows, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
+import { vendorLegPrice, vendorPooled, vendorRankingRows, type IndexRow, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
+import { dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
+import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
+import { scriptKeyOf } from "../lib/research/engine-script-performance.js";
+import { scriptIndexRows } from "../lib/script-index-rows.js";
+import { legCutoffIso } from "../lib/maturity.js";
 import { PUBLIC_COST_BASIS_TEXT, VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
 import { meetingBookedPrice } from "../lib/outcome-prices.js";
 import { fetchPublicCosts } from "../lib/public-stats-clients.js";
@@ -172,15 +177,54 @@ function computationLegKey(servedLeg: string): string {
   return leg;
 }
 
+/**
+ * The cold email indexes' rows today (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`): the `email_sent` Engine's
+ * scripts on the daily ledger book, billed and vendor. Null (logged) when the book or the script catalogue cannot be read,
+ * or when a PAST day of the scripts' era is missing from the book (the rule of `pipeScriptFigures`): their indexes then
+ * record nothing this tick, never a null pretending to be a measure.
+ */
+export async function readScriptIndexRows(now = new Date()): Promise<ScriptIndexRowsNow | null> {
+  try {
+    const since = dailyBookSinceDay(now.getTime());
+    const [gross, vendor, unpriced, runnableScripts] = await Promise.all([
+      loadDailyLedgerBook("gross", since),
+      loadDailyLedgerBook("vendor", since),
+      loadDailyLedgerBook("unpricedGross", since),
+      readRunnableScriptsForCatalogue(),
+    ]);
+    const today = now.toISOString().slice(0, 10);
+    for (const read of [gross, vendor, unpriced]) {
+      const stale = new Set(read.staleDays ?? []);
+      const late = (read.missingDays ?? []).filter((d) => d >= SCRIPTS_FIRST_DAY && d < today && !stale.has(d));
+      if (late.length > 0) {
+        console.error(`[features-service] fleet indexes: the daily ledger book misses ${late.length} day(s) of the scripts' era (${late.slice(0, 5).join(",")}), cold email indexes not recorded this tick`);
+        return null;
+      }
+    }
+    const runnable = new Set(runnableScripts.map(scriptDynastyKey));
+    const keyOf = scriptKeyOf([...runnable]);
+    const books = { gross: gross.book, vendor: vendor.book, unpriced: unpriced.book };
+    const rowsOf = (counts: string, servedLeg: string) => {
+      const legKey = computationLegKey(servedLeg);
+      const cutoffIso = legCutoffIso(legKey, now);
+      return scriptIndexRows(counts, legKey, books, keyOf, runnable, cutoffIso ? runStartUntilOf(cutoffIso) : null);
+    };
+    return { visit: rowsOf("website_visit", SCEO_WEBSITE_VISIT_LEG), reply: rowsOf("conversation", SCEO_POSITIVE_REPLY_LEG) };
+  } catch (error) {
+    console.error("[features-service] fleet indexes: the cold email Engine's scripts are unreadable, their indexes not recorded this tick:", error);
+    return null;
+  }
+}
+
+export interface ScriptIndexRowsNow {
+  visit: { billed: IndexRow[]; vendor: IndexRow[] };
+  reply: { billed: IndexRow[]; vendor: IndexRow[] };
+}
+
 /** One recording: read every input, write today's point of each index whose inputs were readable. */
 export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
-  // The ranking is keyed on the leg's COMPUTATION spelling (the route resolves it the same way): asked with the served
-  // outbound spelling, maturity read the leg as unknown (0 days, no cutoff) and no workflow was mature (2026-10-18).
-  const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
-  const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
-  const [visit, reply, mbRanking, mbFleet, brandEngagement] = await Promise.all([
-    readLegWorkflowRanking(SCEO_FEATURE_SLUG, visitLeg, RANKING_WAIT_MS),
-    readLegWorkflowRanking(SCEO_FEATURE_SLUG, replyLeg, RANKING_WAIT_MS),
+  const [scripts, mbRanking, mbFleet, brandEngagement] = await Promise.all([
+    readScriptIndexRows(now),
     // The meeting chain's second pipe: Positive reply -> Meeting booked (AI Meeting Booking), its own workflows.
     readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS),
     getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked").catch((error): MeetingLegFleet | null => {
@@ -193,17 +237,16 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   const meetingLedger = await (await import("./research.js")).readLedgerMeetingCost();
   // While the ledger is not a price, the index serves the outcome prices' meeting price, labelled expected (MEETING-INDEX-EXPECTED-1025).
   const meetingExpected = await readExpectedMeetingPrice();
-  if (!visit) console.warn("[features-service] fleet indexes: website-visit ranking unreadable, its indexes not recorded this tick");
-  if (!reply) console.warn("[features-service] fleet indexes: positive-reply ranking unreadable, its indexes not recorded this tick");
   const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
   if (!meetingPipe) console.warn("[features-service] fleet indexes: meeting pipe unreadable, meeting indexes not recorded this tick");
   const points = computeFleetIndexPoints({
-    websiteVisitRows: visit?.computedAt ? visit.rows : null,
-    positiveReplyRows: reply?.computedAt ? reply.rows : null,
+    websiteVisitRows: scripts?.visit.billed ?? null,
+    positiveReplyRows: scripts?.reply.billed ?? null,
     meetingPipe,
     brandEngagement,
     meetingLedger,
     meetingExpected,
+    bestAvailableStandsIn: true,
   });
   // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
   if (meetingPipe && mbFleet) points.push(...meetingResearchPoints(bestMeetingPipePick(meetingPipe), mbFleet.byOrg));
@@ -212,7 +255,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   // The PUBLIC twin (PUBLIC-VENDOR-COST-1031): the same picks, every money value at real vendor cost. Its own failure
   // records nothing on the vendor basis this tick (logged); the billed series above stands.
   try {
-    const vendorPoints = await vendorIndexPoints({ visit, reply, mbRanking, mbFleet, meetingExpected });
+    const vendorPoints = await vendorIndexPoints({ scripts, mbRanking, mbFleet, meetingExpected });
     await recordFleetIndexPoints(vendorPoints, now, "vendor");
     console.log(`[features-service] fleet indexes: recorded ${vendorPoints.length} vendor-cost point(s)`);
   } catch (error) {
@@ -221,7 +264,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   return points.length;
 }
 
-type Ranking = Awaited<ReturnType<typeof readLegWorkflowRanking>>;
+export type Ranking = Awaited<ReturnType<typeof readLegWorkflowRanking>>;
 
 /** One pipe's per-dynasty spend on the vendor basis and its unpriced twin, the billed figures' own population. */
 async function pipeVendorTwin(featureSlug: string, legKey: string): Promise<PipeVendorTwin> {
@@ -231,30 +274,32 @@ async function pipeVendorTwin(featureSlug: string, legKey: string): Promise<Pipe
   return { vendor: new Map(vendor.byDynasty), unpriced: new Map(unpriced.byDynasty) };
 }
 
+/** The AI Meeting Booking pipe with its money at real vendor cost: the billed ranking's rows and pool, spend swapped. */
+export async function vendorMeetingPipe(mbRanking: NonNullable<Ranking>, mbFleet: MeetingLegFleet): Promise<{ pipe: MeetingPipeEvidence; twin: PipeVendorTwin }> {
+  const twin = await pipeVendorTwin(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY);
+  const vendor = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, mbFleet, "vendor");
+  const unpriced = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, mbFleet, "vendorUnpriced");
+  return {
+    pipe: { rows: vendorRankingRows(mbRanking.rows, twin), pooled: vendorPooled(mbFleet.pooled, vendor.pooledByDynasty, unpriced.pooledByDynasty) },
+    twin,
+  };
+}
+
 /**
  * Today's point of every index on the VENDOR basis: the billed ranking's picks (`lib/fleet-index-vendor.ts`), each money
  * value read on the vendor basis of the same rows. An input that cannot be read records nothing for its indexes.
  */
 async function vendorIndexPoints(billed: {
-  visit: Ranking;
-  reply: Ranking;
+  scripts: ScriptIndexRowsNow | null;
   mbRanking: Ranking;
   mbFleet: MeetingLegFleet | null;
   meetingExpected: ExpectedMeetingPrice | null;
 }): Promise<FleetIndexPoint[]> {
-  const visitRows = billed.visit?.computedAt ? vendorRankingRows(billed.visit.rows, await pipeVendorTwin(SCEO_FEATURE_SLUG, billed.visit.legKey)) : null;
-  const replyRows = billed.reply?.computedAt ? vendorRankingRows(billed.reply.rows, await pipeVendorTwin(SCEO_FEATURE_SLUG, billed.reply.legKey)) : null;
-  let meetingPipe: MeetingPipeEvidence | null = null;
-  let meetingTwin: PipeVendorTwin | null = null;
-  if (billed.mbRanking?.computedAt && billed.mbFleet) {
-    meetingTwin = await pipeVendorTwin(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY);
-    const vendor = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, billed.mbFleet, "vendor");
-    const unpriced = await internalPipeSpendOn(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, billed.mbFleet, "vendorUnpriced");
-    meetingPipe = {
-      rows: vendorRankingRows(billed.mbRanking.rows, meetingTwin),
-      pooled: vendorPooled(billed.mbFleet.pooled, vendor.pooledByDynasty, unpriced.pooledByDynasty),
-    };
-  }
+  const visitRows = billed.scripts?.visit.vendor ?? null;
+  const replyRows = billed.scripts?.reply.vendor ?? null;
+  const vendorMeeting = billed.mbRanking?.computedAt && billed.mbFleet ? await vendorMeetingPipe(billed.mbRanking, billed.mbFleet) : null;
+  const meetingPipe = vendorMeeting?.pipe ?? null;
+  const meetingTwin = vendorMeeting?.twin ?? null;
   const [brandEngagement, meetingExpected] = await Promise.all([
     readVendorBrandEngagement(),
     meetingTwin ? readVendorExpectedMeetingPrice(meetingTwin) : Promise.resolve(null),
@@ -268,6 +313,7 @@ async function vendorIndexPoints(billed: {
     // vendor twin reads the vendor book through the same gate.
     meetingLedger: await (await import("./research.js")).readLedgerMeetingCost("vendor"),
     meetingExpected,
+    bestAvailableStandsIn: true,
   });
 }
 
