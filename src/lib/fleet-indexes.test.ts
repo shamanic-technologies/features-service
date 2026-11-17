@@ -62,16 +62,28 @@ describe("fleet indexes", () => {
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null, bestAvailableStandsIn: true }));
     // The workflow era's recomputed history keeps its rule: mature or nothing.
     expect(byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null })).get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, unavailableReason: "no_mature_workflow" });
+    // INDEX-VISITS-1117: 5 replies is under the noise bar (10): not a price, said with what it rests on
     expect(p.get("cold-email-cost-per-positive-reply")).toMatchObject({
-      value: 53.2,
+      value: null,
       status: "noise",
       outcomes: 5,
       contacted: 7288,
       workflowDynastySlug: "email_sent/dy_cold_email_signed_sender_client_brand",
+      unavailableReason: "not_measured",
+      inputs: expect.objectContaining({ pick: "below_noise_bar", outcomesRequired: 10 }),
+    });
+    expect(p.get("cold-email-positive-reply-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_measured" });
+    // at the bar the best available stands in, status noise
+    const ten = rows.map((r) => (r.workflowDynastySlug === "email_sent/dy_cold_email_signed_sender_client_brand" ? { ...r, outcomes: 10 } : r));
+    const q = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: ten, meetingPipe: null, bestAvailableStandsIn: true }));
+    expect(q.get("cold-email-cost-per-positive-reply")).toMatchObject({
+      value: 53.2,
+      status: "noise",
+      outcomes: 10,
       unavailableReason: null,
       inputs: expect.objectContaining({ pick: "best_available_learning", basis: "flash" }),
     });
-    expect(p.get("cold-email-positive-reply-rate")).toMatchObject({ value: 0.0686, status: "noise" });
+    expect(q.get("cold-email-positive-reply-rate")).toMatchObject({ value: 0.0686, status: "noise" });
   });
 
   it("an index reads empty only when nothing runnable measured the outcome: a TRUE reason, never no_mature_workflow", () => {
@@ -80,7 +92,7 @@ describe("fleet indexes", () => {
     const a = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: retiredOnly, meetingPipe: null, bestAvailableStandsIn: true }));
     const b = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: noOutcome, meetingPipe: null, bestAvailableStandsIn: true }));
     expect(a.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "nothing_runnable_on_pipe" });
-    expect(b.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "no_runnable_script_with_outcome" });
+    expect(b.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_measured" });
   });
 
   const mbRow = (over: Partial<LegWorkflowRankingRow>) =>
