@@ -10540,6 +10540,8 @@ const ForecastNextTargetSchema = z.object({
   earlyDate: z.string().nullable().describe("1 draw in 10 makes it by this day; null = later than `searchDays`."),
   lateDate: z.string().nullable().describe("9 draws in 10 make it by this day; null = later than `searchDays` in the slow case (say « more than 3 years », never a date)."),
   medianInDays: z.number().nullable(),
+  expectedOneByDate: z.string().nullable().describe("The day the EXPECTED count of Targets made from now reaches one: the mean pace (what cost per Target ÷ budget says, delays included). Earlier than `medianDate` when the yields are poorly known (a few lucky cases pull the mean); null = later than `searchDays`."),
+  expectedOneInDays: z.number().nullable(),
 });
 const ForecastSourceSchema = z.enum(["campaign", "brand", "fleet", "plan", "default"]).describe("Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default.");
 const ForecastOutputSchema = z.object({

@@ -241,6 +241,12 @@ export interface ForecastOutput {
     earlyDate: string | null;
     lateDate: string | null;
     medianInDays: number | null;
+    /**
+     * The day the EXPECTED count of Targets made from now reaches one (the mean pace: what a cost per Target ÷ the budget
+     * says, delays included). Earlier than the median date when the yields are poorly known: a few lucky cases pull the mean.
+     */
+    expectedOneByDate: string | null;
+    expectedOneInDays: number | null;
   };
 }
 
@@ -338,6 +344,7 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
   const mean: Float64Array[] = i.milestones.map(() => new Float64Array(S));
   const perTarget: Float64Array[] = i.milestones.map(() => new Float64Array(i.draws));
   const firstTarget = new Float64Array(i.draws).fill(Infinity);
+  const targetMean = new Float64Array(T);
   const toDate = i.milestones.map((m) => m.unitsByDay.reduce((a, d) => a + d.units, 0));
   const y = new Float64Array(Math.max(K - 1, 0));
   for (let r = 0; r < i.draws; r++) {
@@ -370,6 +377,7 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
           cum[k]![t - 1]![r] = toDate[k]! + made;
           mean[k]![t - 1]! += (toDate[k]! + expectedMade) / i.draws;
         }
+        if (isTarget) targetMean[t]! += expectedMade / i.draws;
         if (isTarget && made >= 1 && firstTarget[r] === Infinity) firstTarget[r] = t;
       }
     }
@@ -402,6 +410,8 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
     return Number.isFinite(v) ? v : null;
   };
   const dateOf = (t: number | null) => (t === null ? null : dayAfter(today, t));
+  const oneAt = targetMean.findIndex((v) => v >= 1);
+  const expectedOneInDays = oneAt < 0 ? null : oneAt;
   return {
     days,
     outcomes: i.milestones.map((m, k) => ({
@@ -422,6 +432,8 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
       earlyDate: dateOf(dayAt(0.1)),
       lateDate: dateOf(dayAt(0.9)),
       medianInDays: dayAt(0.5),
+      expectedOneByDate: dateOf(expectedOneInDays),
+      expectedOneInDays,
     },
   };
 }
