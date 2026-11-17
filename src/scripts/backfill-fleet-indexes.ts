@@ -289,9 +289,6 @@ main()
     process.exit(1);
   });
 
-/** The first day no workflow could run any more on the cold email legs (prod: the indexes recorded null from it). */
-const SCRIPTS_ERA_FIRST_INDEX_DAY = "2026-11-09";
-
 /** The meeting pipe's counts and spend, as the meeting indexes record them (`inputs`), to prove it did not move. */
 function meetingPipeKey(inputs: unknown): string {
   const i = (inputs ?? {}) as Record<string, unknown>;
@@ -301,6 +298,9 @@ function meetingPipeKey(inputs: unknown): string {
 
 /** PUBLIC-INDEXES-NULL-1117: the cold email indexes of the scripts' era, as of each day, on the Engine's scripts. */
 async function scriptsEraHistory(now: Date, apply: boolean): Promise<void> {
+  // The first day no workflow could run any more on the cold email legs (prod: the indexes recorded null from it). Inside
+  // the function: `main()` runs at module load, before a module-level const below it is initialised.
+  const SCRIPTS_ERA_FIRST_INDEX_DAY = "2026-11-09";
   const today = now.toISOString().slice(0, 10);
   const days = dayRange(SCRIPTS_ERA_FIRST_INDEX_DAY, addDays(today, -1));
   const since = dailyBookSinceDay(now.getTime());
