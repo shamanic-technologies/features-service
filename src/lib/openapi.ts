@@ -10468,7 +10468,7 @@ const OutcomeRateEstimateSchema = z.object({
   rate: z.number(),
 });
 const OutcomeDelayDistributionSchema = z.object({
-  n: z.number().describe("Pairs measured: a `to` Unit and a `from` Unit the ledger's stored links tie (directly or through a walk of links); the delay is the one the links state."),
+  n: z.number().describe("Pairs measured: a `to` Unit and a `from` Unit the ledger's stored links tie (directly or through a walk of links); the delay is the one the links state. Up to 200 pairs the quantiles are exact (computed on the pairs' own delays), above they are read off bins."),
   meanHours: z.number(),
   medianHours: z.number(),
   p10Hours: z.number(),
@@ -10480,8 +10480,10 @@ const OutcomeDelayDistributionSchema = z.object({
 const OutcomeTransitionStatSchema = z.object({
   fromKey: z.string(),
   toKey: z.string(),
-  fromUnits: z.number().describe("Units of `fromKey` in the scope. At campaign scope a Unit counts for the campaign(s) it carries: its own run's, else those of the Units it came from (a Unit declared late on a run naming no campaign)."),
-  toUnits: z.number().describe("Units of `toKey` the ledger's stored links tie to a `fromKey` Unit of the scope (directly or through a walk of links): what became of the scope's `from` Units, wherever the `to` Unit was declared."),
+  fromUnits: z.number().describe("Units of `fromKey` in the scope that a campaign carries (its own run's campaign, else those of the Units it came from: a Unit declared late on a run naming no campaign). A brand and the fleet pool their campaigns."),
+  toUnits: z.number().describe("Units of `toKey` in the scope that a campaign carries: COUNTED (the yield's count), whether or not a stored link ties them to a `fromKey` Unit. A missing link is not a missing Unit."),
+  linkedToUnits: z.number().describe("Of `toUnits`, those a stored link (or a walk of links) of the ledger ties to a `fromKey` Unit."),
+  linkCoverage: z.number().nullable().describe("linkedToUnits / toUnits; null without a `to` Unit. Low = producers declare the `to` Unit without the Unit it consumed: the delay rests on the linked share only."),
   exposure: z.number().describe("Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."),
   censoredBy: z.enum(["campaign", "brand", "fleet"]).nullable().describe("Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."),
   yield: OutcomeRateEstimateSchema,
@@ -10629,7 +10631,7 @@ registry.registerPath({
                     p10: z.number().nullable(),
                     p90: z.number().nullable(),
                     thinnerScopes: z.array(z.enum(["campaign", "brand"])).describe("Finer scopes that hold a sample too thin to stand alone (it only nudges the estimate): say it."),
-                    evidence: z.array(z.object({ scope: z.enum(["campaign", "brand", "fleet"]), fromUnits: z.number(), toUnits: z.number(), exposure: z.number(), delayPairs: z.number() })).describe("What each scope measured on this transition (sample sizes)."),
+                    evidence: z.array(z.object({ scope: z.enum(["campaign", "brand", "fleet"]), fromUnits: z.number(), toUnits: z.number().describe("Units of the next milestone COUNTED in the scope: the yield's count, whether or not a stored link ties them."), linkedToUnits: z.number().describe("Of toUnits, those a stored link of the ledger ties to a Unit of this milestone."), linkCoverage: z.number().nullable().describe("linkedToUnits / toUnits; null without a `to` Unit. A thin coverage means the delay rests on few of the Units; the yield does not depend on it."), exposure: z.number(), delayPairs: z.number() })).describe("What each scope measured on this transition (sample sizes, and how much of it the ledger's links tie)."),
                   }),
                   delay: z.object({
                     source: ForecastSourceSchema,

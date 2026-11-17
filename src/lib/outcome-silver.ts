@@ -11,6 +11,15 @@
  *     estimator `lib/outcome-estimates.ts` applies to positive replies only).
  *  3. DELAY of a transition: the delay the ledger STATES on the link between the two Units (`delaySeconds`).
  *
+ * UNIT-LINKS-CONSUME-1117-FIX: the YIELD is counted on UNITS, never on links. `to` Units ÷ the censored exposure of the
+ * `from` Units, both over the Units of the scope that a campaign carries (a campaign's own counts: the ones its page
+ * prints; a brand and the fleet pool their campaigns). A stored link says WHICH Unit a Unit came from: where producers
+ * declare no consumption the link is missing, the Unit still happened, so a yield counted on links reads low by exactly
+ * the missing links (prod 2026-11-17: 0.62 for a campaign whose counts give 0.90). The links give the delay curve, the
+ * campaign a late Unit is credited to, and which transitions exist; `linkedToUnits` / `linkCoverage` say how much of the
+ * `to` Units they tie, so a thin coverage is visible. A Unit no campaign carries is in no yield (nothing ties it to a
+ * funnel: a served fact of the ledger, never filled here).
+ *
  * UNIT-LINKS-CONSUME-1117: a PAIR is a link the ledger stores (the Unit a Unit came from, subject equivalences followed),
  * or a walk of such links (A -> B -> C pairs A with C, the delays added). Nothing is paired here by subject and date. A
  * Unit counts for the campaign(s) it CARRIES as the ledger serves them: its own run's, else those of the Units it came
@@ -86,12 +95,29 @@ export interface DelayDistribution {
   cdf: Array<{ hours: number; share: number }>;
 }
 
-/** PURE. A transition's delay distribution from its binned pairs (quantiles interpolated inside the bin; the mean is exact). */
-export function delayDistributionOf(bins: ReadonlyMap<number, number>, sumHours: number): DelayDistribution | null {
+/** Up to this many pairs the quantiles of a delay are EXACT (computed on the pairs' own delays); above, read off the bins. */
+export const EXACT_DELAY_MAX_PAIRS = 200;
+
+/** PURE. The q-quantile of sorted values, linear between the two nearest (the usual continuous quantile: the median of two values is their middle). */
+export function exactQuantile(sorted: readonly number[], q: number): number {
+  const i = (sorted.length - 1) * q;
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (i - lo);
+}
+
+/**
+ * PURE. A transition's delay distribution. `samplesHours` = every pair's own delay, given while the sample is small
+ * (`EXACT_DELAY_MAX_PAIRS`): the quantiles are then EXACT (a binned median of 4 pairs read 1.5 d where the pairs say 2.1).
+ * Without it the quantiles are interpolated inside the bins. The mean is exact either way; the curve is the bins'.
+ */
+export function delayDistributionOf(bins: ReadonlyMap<number, number>, sumHours: number, samplesHours?: readonly number[] | null): DelayDistribution | null {
   const rows = [...bins].filter(([, n]) => n > 0).sort((a, b) => a[0] - b[0]);
   const n = rows.reduce((a, [, c]) => a + c, 0);
   if (n <= 0) return null;
+  const exact = samplesHours && samplesHours.length === n && n <= EXACT_DELAY_MAX_PAIRS ? [...samplesHours].sort((a, b) => a - b) : null;
   const quantile = (q: number): number => {
+    if (exact) return exactQuantile(exact, q);
     let acc = 0;
     for (const [bin, c] of rows) {
       if (acc + c >= q * n - 1e-9) {
@@ -276,6 +302,16 @@ export interface PairBinRow {
   bin: number;
   pairs: number;
   sumHours: number;
+  /** Each pair's own delay in hours, served while the group is small (`EXACT_DELAY_MAX_PAIRS`); null above. */
+  samplesHours: readonly number[] | null;
+}
+/** `to` Units of a transition that a stored link (or a walk of links) ties to a `from` Unit, each once, by the campaign(s) and brand the `to` Unit carries (SQL group). */
+export interface LinkedToRow {
+  fromKey: string;
+  toKey: string;
+  campaignIds: readonly string[];
+  brandId: string | null;
+  units: number;
 }
 
 export interface UnitCostStat {
@@ -287,9 +323,14 @@ export interface UnitCostStat {
 }
 
 export interface TransitionStat {
+  /** `from` Units of the scope that a campaign carries. */
   fromUnits: number;
-  /** `to` Units linked to a `from` Unit of the scope (the ledger's stored links, walked; the `to` Unit may be declared under no campaign). */
+  /** `to` Units of the scope that a campaign carries: COUNTED, whether or not a stored link ties them to a `from` Unit. */
   toUnits: number;
+  /** Of `toUnits`, those a stored link (or a walk of links) ties to a `from` Unit. */
+  linkedToUnits: number;
+  /** linkedToUnits ÷ toUnits; null without a `to` Unit. Low = producers declare the `to` Unit without the Unit it consumed. */
+  linkCoverage: number | null;
   /** Σ over `from` Units of the share of their `to` Units already due at their age (= fromUnits when no delay is measured). */
   exposure: number;
   /** Whose delay curve censored the exposure; null = none measured anywhere (exposure = fromUnits). */
@@ -311,7 +352,7 @@ export interface SilverStatRow {
 }
 
 /** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
-export const SILVER_RULE = "2026-11-17.3-unit-links";
+export const SILVER_RULE = "2026-11-17.4-yield-on-units";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -326,6 +367,7 @@ export function buildSilverStats(input: {
   unitDays: readonly UnitDayRow[];
   unitCosts: readonly UnitCostRow[];
   pairBins: readonly PairBinRow[];
+  linkedTo: readonly LinkedToRow[];
   funnelOf: (unitCampaignId: string) => string | null;
   today: string;
 }): SilverStatRow[] {
@@ -358,10 +400,10 @@ export function buildSilverStats(input: {
     if (d) rows.push({ scope, scopeId, fromKey: "", toKey: outcomeKey, sampleSize: d.n, body: { kind: "unit_cost", stat: { units: d.n, costUsd: d, meanGrossCostUsd: c.gross / 100 / d.n } } });
   }
 
-  // 2. `from` Units per scope, outcome and day.
+  // 2. Units per scope, outcome and day, over the Units a campaign carries (the basis of every yield, both sides).
   const fromDays = new Map<string, Map<string, number>>();
   for (const r of input.unitDays)
-    for (const s of scopesOf(r.campaignIds, r.brandId)) {
+    for (const s of r.campaignIds.length === 0 ? [] : scopesOf(r.campaignIds, r.brandId)) {
       const k = `${s}\u0000${r.outcomeKey}`;
       const days = fromDays.get(k) ?? fromDays.set(k, new Map()).get(k)!;
       days.set(r.day, (days.get(r.day) ?? 0) + r.units);
@@ -369,26 +411,36 @@ export function buildSilverStats(input: {
 
   // 3. Pairs per scope and transition. A scope's pair = what became of ITS `from` Unit (the campaigns and the brand that
   // Unit carries: the very basis its `from` Units are counted on), wherever the `to` Unit was declared.
-  const pairs = new Map<string, { bins: Map<number, number>; sumHours: number }>();
+  // The pairs give the DELAY (and which transitions exist), never the yield's count.
+  const pairs = new Map<string, { bins: Map<number, number>; sumHours: number; samples: number[] | null }>();
   for (const r of input.pairBins) {
     for (const s of scopesOf(r.fromCampaignIds, r.brandId)) {
       const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
-      const p = pairs.get(k) ?? pairs.set(k, { bins: new Map(), sumHours: 0 }).get(k)!;
+      const p = pairs.get(k) ?? pairs.set(k, { bins: new Map(), sumHours: 0, samples: [] }).get(k)!;
       p.bins.set(r.bin, (p.bins.get(r.bin) ?? 0) + r.pairs);
       p.sumHours += r.sumHours;
+      // Every pair's own delay while the scope's sample is small; a group served without them, or too many, ends it.
+      if (p.samples !== null) p.samples = r.samplesHours === null || p.samples.length + r.samplesHours.length > EXACT_DELAY_MAX_PAIRS ? null : p.samples.concat(r.samplesHours);
     }
   }
   const delays = new Map<string, DelayDistribution>();
   for (const [k, p] of pairs) {
-    const d = delayDistributionOf(p.bins, p.sumHours);
+    const d = delayDistributionOf(p.bins, p.sumHours, p.samples);
     if (d) delays.set(k, d);
   }
+  // `to` Units a link ties to a `from` Unit, per scope and transition (same basis as the counts: Units a campaign carries).
+  const linked = new Map<string, number>();
+  for (const r of input.linkedTo)
+    for (const s of r.campaignIds.length === 0 ? [] : scopesOf(r.campaignIds, r.brandId)) {
+      const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
+      linked.set(k, (linked.get(k) ?? 0) + r.units);
+    }
 
   // 4. Each transition the fleet measured, at every scope holding its `from` Units.
   const transitions = new Set([...pairs.keys()].filter((k) => k.startsWith("fleet\u0000")).map((k) => k.split("\u0000").slice(2).join("\u0000")));
   for (const t of transitions) {
     const [fromKey, toKey] = t.split("\u0000") as [string, string];
-    const evidence: Array<{ scope: SilverScope; scopeId: string; fromUnits: number; toUnits: number; exposure: number; censoredBy: SilverScope | null }> = [];
+    const evidence: Array<{ scope: SilverScope; scopeId: string; fromUnits: number; toUnits: number; linkedToUnits: number; exposure: number; censoredBy: SilverScope | null }> = [];
     for (const [k, days] of fromDays) {
       const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
       if (outcomeKey !== fromKey) continue;
@@ -401,8 +453,9 @@ export function buildSilverStats(input: {
       const pick = ladder.find(([, d]) => d !== undefined && d.n >= MIN_DELAY_PAIRS) ?? ladder.filter(([, d]) => d !== undefined).sort((a, b) => b[1]!.n - a[1]!.n)[0];
       const fromUnits = [...days.values()].reduce((a, n) => a + n, 0);
       const exposure = pick ? [...days].reduce((a, [day, n]) => a + n * delayCdfAt(pick[1]!.cdf, hoursBetweenDays(day, today)), 0) : fromUnits;
-      const p = pairs.get(`${scope}\u0000${scopeId}\u0000${t}`);
-      evidence.push({ scope, scopeId, fromUnits, toUnits: p ? [...p.bins.values()].reduce((a, n) => a + n, 0) : 0, exposure, censoredBy: pick ? pick[0] : null });
+      // The yield's count: the scope's own `to` Units (never the links: a missing link is not a missing Unit).
+      const toUnits = [...(fromDays.get(`${scope}\u0000${scopeId}\u0000${toKey}`)?.values() ?? [])].reduce((a, n) => a + n, 0);
+      evidence.push({ scope, scopeId, fromUnits, toUnits, linkedToUnits: linked.get(`${scope}\u0000${scopeId}\u0000${t}`) ?? 0, exposure, censoredBy: pick ? pick[0] : null });
     }
     const prior = fitGammaPrior(evidence.filter((e) => e.scope === "campaign"), evidence.find((e) => e.scope === "fleet"));
     for (const e of evidence) {
@@ -414,7 +467,7 @@ export function buildSilverStats(input: {
         fromKey,
         toKey,
         sampleSize: e.fromUnits,
-        body: { kind: "transition", stat: { fromUnits: e.fromUnits, toUnits: e.toUnits, exposure: e.exposure, censoredBy: e.censoredBy, yield: est, prior, delay: delays.get(`${e.scope}\u0000${e.scopeId}\u0000${t}`) ?? null } },
+        body: { kind: "transition", stat: { fromUnits: e.fromUnits, toUnits: e.toUnits, linkedToUnits: e.linkedToUnits, linkCoverage: e.toUnits > 0 ? e.linkedToUnits / e.toUnits : null, exposure: e.exposure, censoredBy: e.censoredBy, yield: est, prior, delay: delays.get(`${e.scope}\u0000${e.scopeId}\u0000${t}`) ?? null } },
       });
     }
   }

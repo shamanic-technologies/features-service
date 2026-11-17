@@ -28,7 +28,11 @@ export type HypothesisSource = "campaign" | "brand" | "fleet" | "plan" | "defaul
 export interface ScopeEvidence {
   scope: "campaign" | "brand" | "fleet";
   fromUnits: number;
+  /** Units of the next milestone COUNTED in the scope (the yield's count), whether or not a stored link ties them. */
   toUnits: number;
+  /** Of them, those a stored link ties to a Unit of this milestone, and the share: a thin coverage is visible here. */
+  linkedToUnits: number;
+  linkCoverage: number | null;
   exposure: number;
   delayPairs: number;
 }
@@ -52,7 +56,7 @@ export interface TransitionStats {
 const evidenceOf = (s: TransitionStats): ScopeEvidence[] =>
   (["campaign", "brand", "fleet"] as const).flatMap((scope) => {
     const t = s[scope];
-    return t ? [{ scope, fromUnits: t.fromUnits, toUnits: t.toUnits, exposure: t.exposure, delayPairs: t.delay?.n ?? 0 }] : [];
+    return t ? [{ scope, fromUnits: t.fromUnits, toUnits: t.toUnits, linkedToUnits: t.linkedToUnits, linkCoverage: t.linkCoverage, exposure: t.exposure, delayPairs: t.delay?.n ?? 0 }] : [];
   });
 
 /**

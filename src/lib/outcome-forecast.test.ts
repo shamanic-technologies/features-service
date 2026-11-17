@@ -5,7 +5,7 @@ import type { SpendCapacityInput } from "./spend-capacity.js";
 
 const prior = { shape: 0.5, rate: 500 };
 const delayOf = (n: number, hours = 48): DelayDistribution => ({ n, meanHours: hours, medianHours: hours, p10Hours: hours / 2, p25Hours: hours / 2, p75Hours: hours * 2, p90Hours: hours * 2, cdf: [{ hours: hours * 2, share: 1 }] });
-const stat = (fromUnits: number, toUnits: number, pairs = 0): TransitionStat => ({ fromUnits, toUnits, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs > 0 ? delayOf(pairs) : null });
+const stat = (fromUnits: number, toUnits: number, pairs = 0): TransitionStat => ({ fromUnits, toUnits, linkedToUnits: pairs, linkCoverage: toUnits > 0 ? pairs / toUnits : null, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs > 0 ? delayOf(pairs) : null });
 
 describe("chooseYield (campaign measured > brand measured > fleet measured > plan > default)", () => {
   it("the campaign's own yield when its exposure outweighs the fleet prior", () => {
@@ -19,6 +19,11 @@ describe("chooseYield (campaign measured > brand measured > fleet measured > pla
   it("campaign and brand both thin: the fleet prior, nudged by the campaign's own thin evidence", () => {
     expect(chooseYield({ campaign: stat(2, 0), brand: stat(40, 1), fleet: stat(90000, 200) }, 0.05, { fromUnits: 2, toUnits: 0 })).toMatchObject({ source: "fleet", shape: 0.5, rate: 502, thinnerScopes: ["campaign", "brand"] });
     expect(chooseYield({ campaign: null, brand: null, fleet: stat(90000, 200) }, 0.05, { fromUnits: 0, toUnits: 0 })).toMatchObject({ source: "fleet", thinnerScopes: [] });
+    // UNIT-LINKS-CONSUME-1117-FIX: each scope's evidence says how much of its counted Units the ledger's links tie.
+    expect(chooseYield({ campaign: stat(3000, 2700, 1800), brand: null, fleet: stat(90000, 200, 150) }, null, { fromUnits: 3000, toUnits: 2700 })!.evidence).toEqual([
+      { scope: "campaign", fromUnits: 3000, toUnits: 2700, linkedToUnits: 1800, linkCoverage: 1800 / 2700, exposure: 3000, delayPairs: 1800 },
+      { scope: "fleet", fromUnits: 90000, toUnits: 200, linkedToUnits: 150, linkCoverage: 0.75, exposure: 90000, delayPairs: 150 },
+    ]);
   });
   it("never measured anywhere: the plan line's rate, then the campaign's own counts, then nothing", () => {
     const none = { campaign: null, brand: null, fleet: null };
