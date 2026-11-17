@@ -18,6 +18,8 @@ const ranking = vi.hoisted(() => ({
   }),
   // MEETING-INDEX-EXPECTED-1025: no expected meeting price unless a test says otherwise.
   readOutcomePricesMeetingBooked: vi.fn(async (): Promise<unknown> => null),
+  // INDEX-HISTORY-1117: the cold email pipes' workflow rows at vendor cost (no vendor figure unless a test says otherwise).
+  fleetPipeFigures: vi.fn(async (): Promise<unknown> => ({ byDynasty: [] })),
 }));
 vi.mock("./public.js", () => ranking);
 const meeting = vi.hoisted(() => ({ getInternalPipeFleet: vi.fn() }));
@@ -165,8 +167,8 @@ describe("recording", () => {
     const n = await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
     // 6 cold email indexes + 2 meeting Research points; the client indexes' inputs are unreadable here.
     expect(n).toBe(8);
-    // The cold email legs' rankings are no longer read: only the meeting pipe's.
-    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1])).toEqual(["conversation_to_meeting_booked"]);
+    // INDEX-HISTORY-1117: the cold email pipes' workflow history is read beside the scripts (none holds a workflow here).
+    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
     expect(bySlug.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: 10, status: "noise", outcomes: 10, contacted: 1000, workflowDynastySlug: "email_sent/dy_cold_email", unavailableReason: null, inputs: { pick: "best_available_learning" } });
@@ -185,6 +187,25 @@ describe("recording", () => {
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
     // two clients: $13.33 and no meeting (the most expensive) -> the median client has no meeting
     expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
+  });
+
+  it("INDEX-HISTORY-1117: a retired workflow's proven history counts: Ballad's 47 positive replies price the index, its vendor money on the public series", async () => {
+    book.loadDailyLedgerBook.mockImplementation(async () => scriptsBook());
+    const ballad = rankingRow({ workflowDynastySlug: "sales-cold-email-outreach-ballad", workflowDynastyName: "Ballad", selectable: false, executable: false, moneyGoesHere: false, place: "cannot_run", spentUsd: 7121.26, outcomes: 47, contacted: 20811, costPerOutcomeUsd: 7121.26 / 47, conversionRatePct: (100 * 47) / 20811 });
+    ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) => ({ computedAt: "2026-11-17T12:00:00Z", legKey: leg, rows: leg === "start_to_conversation" ? [ballad] : [] }));
+    const half = (spentUsd: number) => ({ flash: { spentUsd, contacted: 20811, outcomes: 47 }, mature: { spentUsd, contacted: 20811, outcomes: 47 } });
+    ranking.fleetPipeFigures.mockImplementation(async (...args: unknown[]) => ({ byDynasty: args[1] === "start_to_conversation" && args[2] === "vendor" ? [["sales-cold-email-outreach-ballad", half(2731.64)]] : [] }));
+    meeting.getInternalPipeFleet.mockRejectedValue(new Error("lead-service down"));
+    await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
+    const billed = new Map(store.recordFleetIndexPoints.mock.calls[0][0].map((p: { indexSlug: string }) => [p.indexSlug, p]));
+    // the script's 10 replies are younger than the 21-day cut (not proven yet): Ballad, proven, prices the index
+    expect(billed.get("cold-email-cost-per-positive-reply")).toMatchObject({ workflowDynastySlug: "sales-cold-email-outreach-ballad", value: 7121.26 / 47, outcomes: 47, status: "robust", inputs: expect.objectContaining({ pick: "best_proven", runsToday: "no" }) });
+    expect((billed.get("cold-email-positive-reply-rate") as { value: number }).value).toBeCloseTo((100 * 47) / 20811, 10);
+    // the visit leg holds no workflow: the script stands in, as before
+    expect(billed.get("cold-email-cost-per-click")).toMatchObject({ workflowDynastySlug: "email_sent/dy_cold_email", inputs: expect.objectContaining({ pick: "best_available_learning" }) });
+    const vendor = new Map(store.recordFleetIndexPoints.mock.calls[1][0].map((p: { indexSlug: string }) => [p.indexSlug, p]));
+    expect(store.recordFleetIndexPoints.mock.calls[1][2]).toBe("vendor");
+    expect(vendor.get("cold-email-cost-per-positive-reply")).toMatchObject({ workflowDynastySlug: "sales-cold-email-outreach-ballad", value: 2731.64 / 47, unavailableReason: null });
   });
 
   it("an unreadable ledger book records none of the cold email indexes (no fake point)", async () => {

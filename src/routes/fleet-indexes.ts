@@ -27,7 +27,7 @@ import { vendorLegPrice, vendorPooled, vendorRankingRows, type IndexRow, type Pi
 import { dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
 import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
 import { scriptKeyOf } from "../lib/research/engine-script-performance.js";
-import { scriptIndexRows } from "../lib/script-index-rows.js";
+import { indexRowsWithHistory, scriptIndexRows, type IndexRowsBoth } from "../lib/script-index-rows.js";
 import { legCutoffIso } from "../lib/maturity.js";
 import { PUBLIC_COST_BASIS_TEXT, VENDOR_COST_UNKNOWN, vendorCoverage } from "../lib/public-vendor-cost.js";
 import { meetingBookedPrice } from "../lib/outcome-prices.js";
@@ -216,6 +216,40 @@ export async function readScriptIndexRows(now = new Date()): Promise<ScriptIndex
   }
 }
 
+/**
+ * The pipe's workflow-era rows today, both bases (INDEX-HISTORY-1117): its stored leg workflow ranking (every workflow on
+ * its whole history; all retired since MIGRATE-1105, figures kept) and the same rows at real vendor cost. Null (logged)
+ * when the ranking is not built or its vendor twin cannot be read: the index then records nothing this tick.
+ */
+async function readWorkflowHistoryRows(servedLeg: string): Promise<IndexRowsBoth | null> {
+  const legKey = computationLegKey(servedLeg);
+  try {
+    const ranking = await readLegWorkflowRanking(SCEO_FEATURE_SLUG, legKey, RANKING_WAIT_MS);
+    if (!ranking?.computedAt) {
+      console.warn(`[features-service] fleet indexes: the ${legKey} workflow ranking is not built, its indexes not recorded this tick`);
+      return null;
+    }
+    return { billed: ranking.rows, vendor: vendorRankingRows(ranking.rows, await pipeVendorTwin(SCEO_FEATURE_SLUG, ranking.legKey)) };
+  } catch (error) {
+    console.error(`[features-service] fleet indexes: the ${legKey} workflow history is unreadable, its indexes not recorded this tick:`, error);
+    return null;
+  }
+}
+
+/**
+ * The cold email indexes' rows today, EVERY era (INDEX-HISTORY-1117, `indexRowsWithHistory`): the Engine's scripts and the
+ * pipe's workflows, each on its whole history. A leg whose scripts or workflows cannot be read records nothing.
+ */
+export async function readColdEmailIndexRows(now = new Date()): Promise<{ visit: IndexRowsBoth | null; reply: IndexRowsBoth | null }> {
+  const scripts = await readScriptIndexRows(now);
+  const visitHistory = await readWorkflowHistoryRows(SCEO_WEBSITE_VISIT_LEG);
+  const replyHistory = await readWorkflowHistoryRows(SCEO_POSITIVE_REPLY_LEG);
+  return {
+    visit: scripts && visitHistory ? indexRowsWithHistory(scripts.visit, visitHistory) : null,
+    reply: scripts && replyHistory ? indexRowsWithHistory(scripts.reply, replyHistory) : null,
+  };
+}
+
 export interface ScriptIndexRowsNow {
   visit: { billed: IndexRow[]; vendor: IndexRow[] };
   reply: { billed: IndexRow[]; vendor: IndexRow[] };
@@ -223,8 +257,8 @@ export interface ScriptIndexRowsNow {
 
 /** One recording: read every input, write today's point of each index whose inputs were readable. */
 export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
-  const [scripts, mbRanking, mbFleet, brandEngagement] = await Promise.all([
-    readScriptIndexRows(now),
+  const [coldEmail, mbRanking, mbFleet, brandEngagement] = await Promise.all([
+    readColdEmailIndexRows(now),
     // The meeting chain's second pipe: Positive reply -> Meeting booked (AI Meeting Booking), its own workflows.
     readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, RANKING_WAIT_MS),
     getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked").catch((error): MeetingLegFleet | null => {
@@ -240,8 +274,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
   if (!meetingPipe) console.warn("[features-service] fleet indexes: meeting pipe unreadable, meeting indexes not recorded this tick");
   const points = computeFleetIndexPoints({
-    websiteVisitRows: scripts?.visit.billed ?? null,
-    positiveReplyRows: scripts?.reply.billed ?? null,
+    websiteVisitRows: coldEmail.visit?.billed ?? null,
+    positiveReplyRows: coldEmail.reply?.billed ?? null,
     meetingPipe,
     brandEngagement,
     meetingLedger,
@@ -255,7 +289,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   // The PUBLIC twin (PUBLIC-VENDOR-COST-1031): the same picks, every money value at real vendor cost. Its own failure
   // records nothing on the vendor basis this tick (logged); the billed series above stands.
   try {
-    const vendorPoints = await vendorIndexPoints({ scripts, mbRanking, mbFleet, meetingExpected });
+    const vendorPoints = await vendorIndexPoints({ coldEmail, mbRanking, mbFleet, meetingExpected });
     await recordFleetIndexPoints(vendorPoints, now, "vendor");
     console.log(`[features-service] fleet indexes: recorded ${vendorPoints.length} vendor-cost point(s)`);
   } catch (error) {
@@ -290,13 +324,13 @@ export async function vendorMeetingPipe(mbRanking: NonNullable<Ranking>, mbFleet
  * value read on the vendor basis of the same rows. An input that cannot be read records nothing for its indexes.
  */
 async function vendorIndexPoints(billed: {
-  scripts: ScriptIndexRowsNow | null;
+  coldEmail: { visit: IndexRowsBoth | null; reply: IndexRowsBoth | null };
   mbRanking: Ranking;
   mbFleet: MeetingLegFleet | null;
   meetingExpected: ExpectedMeetingPrice | null;
 }): Promise<FleetIndexPoint[]> {
-  const visitRows = billed.scripts?.visit.vendor ?? null;
-  const replyRows = billed.scripts?.reply.vendor ?? null;
+  const visitRows = billed.coldEmail.visit?.vendor ?? null;
+  const replyRows = billed.coldEmail.reply?.vendor ?? null;
   const vendorMeeting = billed.mbRanking?.computedAt && billed.mbFleet ? await vendorMeetingPipe(billed.mbRanking, billed.mbFleet) : null;
   const meetingPipe = vendorMeeting?.pipe ?? null;
   const meetingTwin = vendorMeeting?.twin ?? null;
