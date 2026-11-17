@@ -3,9 +3,11 @@
  * where the market price of an outcome stands today and how it moved. "SCEO" (Sales Cold Email Outreach) is an internal prefix only: public names read "Cold Email <metric> Index", slugs `cold-email-*` (owner 2026-10-19, INDEX-SLUGS-SEO-1019: SEO names, no "Distribute.you").
  *
  * Every index is read off figures this service already serves, never a second computation:
- * - the cost / rate of a pipe's outcome = the BEST MATURE workflow of the pipe that can still run
- *   (`/public/stats/leg-workflow-ranking`, the row `moneyGoesHere`): what a client buys today. A workflow
- *   that no longer runs is out, so the curve never freezes on a retired one;
+ * - the cost / rate of a cold email outcome = the BEST script of the `email_sent` Engine that can still run
+ *   (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`: each script measured on the general ledger's daily book, the
+ *   Research Engine measure's rule; the best MATURE one, else the best AVAILABLE one with a measured outcome, `noise`):
+ *   what a client buys today. Before 2026-11-09 the days read the per-pipe leg workflow ranking (`moneyGoesHere`), the
+ *   rule their recomputed history keeps; a script or workflow that no longer runs is never picked;
  * - every figure is a PIPE figure (owner 2026-10-18, MB-INDEX-PIPES-1018: « On ne compte pour l'index que des cost de
  *   pipe »), never a rate pooled over the fleet's people. The meeting index is the only CHAIN, the owner's formula:
  *   cost per meeting = (cost per positive reply of the best workflow on Lead found -> Positive reply)
@@ -252,6 +254,12 @@ export interface FleetIndexInputs {
   meetingExpected?: ExpectedMeetingPrice | null;
   /** One entry per client brand (`/public/stats/ranked?groupBy=brand`); null = unreadable, nothing recorded. */
   brandEngagement?: BrandEngagement[] | null;
+  /**
+   * The best AVAILABLE runnable row stands in while none is mature (`indexPipePick`, PUBLIC-INDEXES-NULL-1117): the live
+   * recorder and the scripts' era history set it. Absent / false = the workflow era's rule (mature or null
+   * `no_mature_workflow`), kept by its history run so a past day recomputed again never moves.
+   */
+  bestAvailableStandsIn?: boolean;
 }
 
 /** A client brand's lifetime cold email spend and engaged persons. */
@@ -316,9 +324,32 @@ function bestMature(rows: IndexRow[]): IndexRow | null {
   return rows.find((r) => r.moneyGoesHere && r.selectable && r.basis === "mature") ?? null;
 }
 
-function legPoint(def: FleetIndexDefinition, rows: IndexRow[]): FleetIndexPoint {
-  const best = bestMature(rows);
-  if (!best) {
+/**
+ * PURE. What a pipe's index is read on today (PUBLIC-INDEXES-NULL-1117): the best MATURE runnable row (`moneyGoesHere`),
+ * else the BEST AVAILABLE one: the runnable row with a measured outcome the ranking puts first (its `rank`, the ONE leg
+ * order, read on the billed evidence, so the billed and the vendor series pick the same script). Since MIGRATE-1105 every
+ * campaign runs Engine SCRIPTS and every workflow is retired (prod 2026-11-09: Ballad, the money workflow of the reply
+ * index, stopped running); a script is younger than the 21-day maturity cut, so no row was mature and six indexes read
+ * null for eight days. The owner's rule for the meeting pipe (« Affiche l'index dès maintenant », MB-INDEX-PIPES-1018)
+ * now holds on every pipe: the best available stands in, always `noise`. Null = no runnable row measured an outcome.
+ */
+export function indexPipePick(rows: readonly IndexRow[], bestAvailableStandsIn = true): { row: IndexRow; mature: boolean } | null {
+  const mature = bestMature([...rows]);
+  if (mature) return { row: mature, mature: true };
+  if (!bestAvailableStandsIn) return null;
+  const learning = rows
+    .filter((r) => r.selectable && r.outcomes > 0 && r.contacted > 0)
+    .sort((a, b) => a.rank - b.rank || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
+  return learning ? { row: learning, mature: false } : null;
+}
+
+function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStandsIn: boolean): FleetIndexPoint {
+  const pick = indexPipePick(rows, bestAvailableStandsIn);
+  if (!pick && !bestAvailableStandsIn) {
+    // The workflow era's rule, kept for its recomputed past days (a past day never moves): mature or nothing.
+    return { indexSlug: def.slug, value: null, status: "noise", outcomes: 0, contacted: null, workflowDynastySlug: null, workflowDynastyName: null, unavailableReason: "no_mature_workflow", inputs: {} };
+  }
+  if (!pick) {
     return {
       indexSlug: def.slug,
       value: null,
@@ -327,27 +358,36 @@ function legPoint(def: FleetIndexDefinition, rows: IndexRow[]): FleetIndexPoint 
       contacted: null,
       workflowDynastySlug: null,
       workflowDynastyName: null,
-      unavailableReason: "no_mature_workflow",
+      // True reason: nothing that can run today has measured the outcome yet (a retired script or workflow never stands in).
+      unavailableReason: rows.length === 0 ? "no_script_ran_yet" : rows.some((r) => r.selectable) ? "no_runnable_script_with_outcome" : "nothing_runnable_on_pipe",
       inputs: {},
     };
   }
+  const best = pick.row;
   const value = def.metric === "cost_per_outcome" ? best.costPerOutcomeUsd : best.conversionRatePct;
   return {
     indexSlug: def.slug,
     value,
-    status: indexStatus(best.outcomes, true),
+    status: indexStatus(best.outcomes, pick.mature),
     outcomes: best.outcomes,
     contacted: best.contacted,
     workflowDynastySlug: best.workflowDynastySlug,
     workflowDynastyName: best.workflowDynastyName,
     unavailableReason: value == null ? (best.vendorCostUnknown ? VENDOR_COST_UNKNOWN : "not_measured") : null,
-    inputs: { spentUsd: best.spentUsd, outcomes: best.outcomes, contacted: best.contacted, ...(best.unpricedSharePct !== undefined ? { unpricedSharePct: best.unpricedSharePct } : {}) },
+    inputs: {
+      pick: pick.mature ? "best_mature" : "best_available_learning",
+      basis: best.basis,
+      spentUsd: best.spentUsd,
+      outcomes: best.outcomes,
+      contacted: best.contacted,
+      ...(best.unpricedSharePct !== undefined ? { unpricedSharePct: best.unpricedSharePct } : {}),
+    },
   };
 }
 
-function meetingPoint(def: FleetIndexDefinition, replyRows: IndexRow[], pipe: MeetingPipeEvidence): FleetIndexPoint {
+function meetingPoint(def: FleetIndexDefinition, replyRows: IndexRow[], pipe: MeetingPipeEvidence, bestAvailableStandsIn: boolean): FleetIndexPoint {
   const cost = def.metric === "cost_per_outcome";
-  const reply = legPoint(cost ? COST_PER_INTEREST : INTEREST_RATE, replyRows);
+  const reply = legPoint(cost ? COST_PER_INTEREST : INTEREST_RATE, replyRows, bestAvailableStandsIn);
   const mb = bestMeetingPipePick(pipe);
   const inputs: Record<string, number | string | null> = {
     formula: cost ? "interest_cost / meeting_rate + meeting_pipe_cost_per_meeting" : "interest_rate * meeting_rate",
@@ -523,16 +563,17 @@ const COST_PER_ENGAGED_LEAD = fleetIndexBySlug("cold-email-cost-per-engaged-lead
 /** PURE. Today's point of every index whose inputs were readable (an unreadable input records nothing). */
 export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoint[] {
   const points: FleetIndexPoint[] = [];
+  const standsIn = inputs.bestAvailableStandsIn === true;
   for (const def of FLEET_INDEXES) {
-    if (def.outcome === "website_visit" && inputs.websiteVisitRows) points.push(legPoint(def, inputs.websiteVisitRows));
-    if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows));
+    if (def.outcome === "website_visit" && inputs.websiteVisitRows) points.push(legPoint(def, inputs.websiteVisitRows, standsIn));
+    if (def.outcome === "positive_reply" && inputs.positiveReplyRows) points.push(legPoint(def, inputs.positiveReplyRows, standsIn));
     // The Cost Per Meeting Index reads the ledger (MEETING-COST-METHODS-1024); the meeting rate stays the pipes' chain.
     if (def.slug === COST_PER_MEETING.slug) {
-      const chain = inputs.positiveReplyRows && inputs.meetingPipe ? meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe) : null;
+      const chain = inputs.positiveReplyRows && inputs.meetingPipe ? meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe, standsIn) : null;
       const p = meetingCostIndexPoint(inputs.meetingLedger ?? null, inputs.meetingExpected ?? null, chain);
       if (p) points.push(p);
     } else if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
-      points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe));
+      points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe, standsIn));
     }
     if (def.outcome === "engaged_lead" && inputs.brandEngagement) points.push(engagedLeadPoint(inputs.brandEngagement));
   }

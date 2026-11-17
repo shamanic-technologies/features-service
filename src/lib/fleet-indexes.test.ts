@@ -51,10 +51,36 @@ describe("fleet indexes", () => {
     expect(p.has("cold-email-cost-per-meeting")).toBe(false);
   });
 
-  it("no mature workflow that can run = a null value with its reason, status noise", () => {
-    const rows = [row({ moneyGoesHere: false, basis: "flash", isMature: false })];
-    const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null }));
-    expect(p.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "no_mature_workflow" });
+  it("no mature row that can run: the best AVAILABLE runnable row stands in, status noise (PUBLIC-INDEXES-NULL-1117)", () => {
+    // Prod 2026-11-09..11-17: the money workflow (ballad) retired, the runnable scripts younger than the 21-day cut.
+    const rows = [
+      row({ workflowDynastySlug: "sales-cold-email-outreach-ballad", selectable: false, executable: false, basis: "mature", moneyGoesHere: false, rank: 9, costPerOutcomeUsd: 58, outcomes: 47 }),
+      row({ workflowDynastySlug: "email_sent/dy_never_replied", basis: "flash", isMature: false, moneyGoesHere: false, rank: 1, costPerOutcomeUsd: null, outcomes: 0, contacted: 300 }),
+      row({ workflowDynastySlug: "email_sent/dy_dear", basis: "flash", isMature: false, moneyGoesHere: false, rank: 3, costPerOutcomeUsd: 150, outcomes: 2, contacted: 2000 }),
+      row({ workflowDynastySlug: "email_sent/dy_cold_email_signed_sender_client_brand", basis: "flash", isMature: false, moneyGoesHere: false, rank: 2, costPerOutcomeUsd: 53.2, conversionRatePct: 0.0686, outcomes: 5, contacted: 7288 }),
+    ];
+    const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null, bestAvailableStandsIn: true }));
+    // The workflow era's recomputed history keeps its rule: mature or nothing.
+    expect(byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null })).get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, unavailableReason: "no_mature_workflow" });
+    expect(p.get("cold-email-cost-per-positive-reply")).toMatchObject({
+      value: 53.2,
+      status: "noise",
+      outcomes: 5,
+      contacted: 7288,
+      workflowDynastySlug: "email_sent/dy_cold_email_signed_sender_client_brand",
+      unavailableReason: null,
+      inputs: expect.objectContaining({ pick: "best_available_learning", basis: "flash" }),
+    });
+    expect(p.get("cold-email-positive-reply-rate")).toMatchObject({ value: 0.0686, status: "noise" });
+  });
+
+  it("an index reads empty only when nothing runnable measured the outcome: a TRUE reason, never no_mature_workflow", () => {
+    const retiredOnly = [row({ selectable: false, executable: false, moneyGoesHere: false })];
+    const noOutcome = [row({ basis: "flash", isMature: false, moneyGoesHere: false, outcomes: 0, costPerOutcomeUsd: null })];
+    const a = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: retiredOnly, meetingPipe: null, bestAvailableStandsIn: true }));
+    const b = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: noOutcome, meetingPipe: null, bestAvailableStandsIn: true }));
+    expect(a.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "nothing_runnable_on_pipe" });
+    expect(b.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, status: "noise", unavailableReason: "no_runnable_script_with_outcome" });
   });
 
   const mbRow = (over: Partial<LegWorkflowRankingRow>) =>

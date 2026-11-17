@@ -411,10 +411,14 @@ const sameStored = (r: StoredIndexRow, p: FleetIndexPoint): boolean =>
   canonical(r.inputs) === canonical(p.inputs);
 
 /**
- * PURE. What a run writes: a day a row was RECORDED live on is never touched; a recomputed row identical to the new point
- * is left alone (a re-run writes nothing); a new day is inserted, a changed recomputed day rewritten.
+ * PURE. What a run writes: a day a row was RECORDED live on is never touched (with `replaceRecordedNulls`, unless that
+ * recorded row holds no value); a recomputed row identical to the new point is left alone (a re-run writes nothing); a new day is inserted, a changed recomputed day rewritten.
  */
-export function planRecomputedWrites(points: readonly DatedIndexPoint[], stored: readonly StoredIndexRow[]): {
+export function planRecomputedWrites(
+  points: readonly DatedIndexPoint[],
+  stored: readonly StoredIndexRow[],
+  opts: { replaceRecordedNulls?: boolean } = {},
+): {
   writes: DatedIndexPoint[];
   skippedRecorded: number;
   unchanged: number;
@@ -425,7 +429,8 @@ export function planRecomputedWrites(points: readonly DatedIndexPoint[], stored:
   let unchanged = 0;
   for (const p of points) {
     const r = byKey.get(`${p.point.indexSlug}|${p.day}`);
-    if (r && r.basis !== "recomputed") skippedRecorded += 1;
+    // A recorded row holding NO value may be replaced when asked (PUBLIC-INDEXES-NULL-1117); a recorded value never.
+    if (r && r.basis !== "recomputed" && !(opts.replaceRecordedNulls && r.value === null)) skippedRecorded += 1;
     else if (r && sameStored(r, p.point)) unchanged += 1;
     else writes.push(p);
   }
