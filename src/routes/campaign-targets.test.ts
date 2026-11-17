@@ -13,6 +13,8 @@ const copies = vi.fn();
 vi.mock("./agent-catalogue.js", () => ({ funnelCopiesFor: (...a: unknown[]) => copies(...a) }));
 const ledgerOf = vi.fn();
 vi.mock("../lib/campaign-ledger-units-client.js", async (orig) => ({ ...(await orig<object>()), fetchCampaignLedgerUnits: (...a: unknown[]) => ledgerOf(...a) }));
+const carriedUnits = vi.fn();
+vi.mock("../lib/outcome-silver-io.js", () => ({ readCarriedUnits: (...a: unknown[]) => carriedUnits(...a) }));
 const brandLedger = vi.fn();
 vi.mock("../lib/scope-outcome-ledger-io.js", () => ({ fetchBrandOutcomeLedger: (...a: unknown[]) => brandLedger(...a) }));
 const fetchSalesFunnelCampaigns = vi.fn();
@@ -82,6 +84,7 @@ beforeEach(() => {
   readPlan.mockResolvedValue({ orgId: "org-1", brandId: "b1", offerId: "o1", status: "ok", failure: null, body: planBody(15, "f1"), computedAt: "2026-11-06T09:00:00.000Z" });
   budget.mockResolvedValue({ dailyBudgetUsd: 30, budget: null, volumeReached: null });
   copies.mockResolvedValue({ pipeSteps: new Map([["p-src", { fromStep: null, toStep: "lead_found" }], ["p-mail", { fromStep: "lead_found", toStep: "conversation" }]]) });
+  carriedUnits.mockResolvedValue([]);
   // Each campaign's runs produced 2 positive replies (its own ledger units).
   ledgerOf.mockImplementation(async (id: string) =>
     id === "u-mail" ? { byOutcome: new Map([["conversation", new Map([[day(1), 1], [day(0), 1]])]]), daysMissing: [] } : { byOutcome: new Map(), daysMissing: [] },
@@ -149,6 +152,30 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     expect(t.ledgerDaysMissing).toEqual([day(0)]);
     expect(t.milestones[1].projection.outcomesPerDay).toBe(t.projection.outcomesPerDay);
     expect((await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=nope")).status).toBe(404);
+  });
+
+  // UNIT-LINKS-CONSUME-1117: a Target Unit declared late on a run naming no campaign is credited to the campaign the
+  // ledger's stored link names.
+  it("a late Unit the ledger's link ties to the campaign counts on its Target, once, on its own day", async () => {
+    ledgerOf.mockImplementation(async (id: string) =>
+      id === "u-src" ? { byOutcome: new Map([["lead_found", new Map([[day(2), 60], [day(1), 40]])]]), daysMissing: [] } : { byOutcome: new Map(), daysMissing: [] },
+    );
+    carriedUnits.mockResolvedValue([
+      { outcomeKey: "conversation", day: day(1), campaignIds: ["u-mail"] },
+      { outcomeKey: "conversation", day: day(0), campaignIds: ["u-mail", "u-src"] }, // carried by two units of the campaign: one Unit
+    ]);
+    const res = await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c2");
+    expect(res.status).toBe(200);
+    const t = res.body.targets[0];
+    expect(carriedUnits).toHaveBeenCalledWith(["u-src", "u-mail"]);
+    expect(t.milestones.map((m: { step: string }) => m.step)).toEqual(["lead_found", "conversation"]);
+    expect(t.milestones[0].count).toBe(100);
+    expect(t.milestones[1]).toMatchObject({ isTarget: true, count: 2, countSource: "ledger" });
+    expect(t.milestones[1].past.filter((p: { outcomes: number }) => p.outcomes > 0).map((p: { date: string; outcomes: number }) => [p.date, p.outcomes])).toEqual([[day(1), 1], [day(0), 1]]);
+    // The carried Units unreadable = the ledger unreadable: counts null, never a count without them.
+    carriedUnits.mockRejectedValue(new Error("db down"));
+    const down = await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c2");
+    expect(down.body.targets[0].milestones[1]).toMatchObject({ count: null, countUnavailableReason: "ledger_unreadable" });
   });
 
   // PROJECTION-CAP-1117 (prod 2026-11-17, Wide Email: monthly cap reached, « next Lead found in about 2 hours »).

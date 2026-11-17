@@ -6,7 +6,7 @@
  */
 import { Router, type Request, type Response } from "express";
 import { apiKeyOnly } from "../middleware/auth.js";
-import { readSilverStats, readSilverSweepRecord } from "../lib/outcome-silver-io.js";
+import { readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
 import { FLEET_SCOPE_ID, type SilverScope } from "../lib/outcome-silver.js";
 
 const router = Router();
@@ -20,8 +20,8 @@ router.get("/internal/outcome-distributions", apiKeyOnly, async (req: Request, r
     const scopeId = scope === "fleet" ? FLEET_SCOPE_ID : typeof q.scopeId === "string" && q.scopeId !== "" ? q.scopeId : null;
     if (scopeId === null) return void res.status(400).json({ error: "scopeId is required for a brand or a campaign", reason: "scope_id_missing" });
     const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
-    const [sweep, rows] = await Promise.all([readSilverSweepRecord(), readSilverStats(scope, scopeId, { fromKey: str(q.fromKey), toKey: str(q.toKey) })]);
-    if (sweep === null) return void res.status(503).json({ error: "The first sweep has not completed yet (the ledger's Units are still being copied)", reason: "outcome_distributions_not_built_yet" });
+    const [sweep, rows] = await Promise.all([readCurrentSilverSweep(), readSilverStats(scope, scopeId, { fromKey: str(q.fromKey), toKey: str(q.toKey) })]);
+    if (sweep === null) return void res.status(503).json({ error: "No sweep has completed on the current rule yet (the ledger's Units and links are still being copied)", reason: "outcome_distributions_not_built_yet" });
     res.json({
       scope,
       scopeId,
