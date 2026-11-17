@@ -160,8 +160,12 @@ const LINKS_PAGE = Number(process.env.OUTCOME_UNIT_LINKS_PAGE ?? 5000);
 const LINKS_PAGE_GAP_MS = Number(process.env.OUTCOME_UNIT_LINKS_PAGE_GAP_MS ?? 500);
 const LINKS_FOLLOW_EVERY_MS = 15 * 60_000;
 const LINKS_FIRST_TICK_MS = 2 * 60_000;
-/** Bump to copy every link again from the start. */
-const LINKS_FORMAT = "v1";
+/**
+ * Bump to copy every link again from the start. v2 (UNIT-LINK-COVERAGE-1117): the v1 copy lacked 99,497 of the ledger's
+ * 551,516 links: runs-service paged its feed in TEXT order of the change id and its numeric cursor skipped rows (fixed
+ * there, PAGE-ORDER-1117); a cursor that already went past them never sees them again, so the copy starts over.
+ */
+const LINKS_FORMAT = "v2";
 const LINKS_CELL = `outcome-unit-links-copy:${LINKS_FORMAT}`;
 
 interface LinksCopyState {
