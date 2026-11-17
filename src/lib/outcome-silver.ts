@@ -12,8 +12,8 @@
  *  3. DELAY of a transition: the delay the ledger STATES on the link between the two Units (`delaySeconds`).
  *
  * UNIT-LINKS-CONSUME-1117-FIX: the YIELD is counted on UNITS, never on links. `to` Units ÷ the censored exposure of the
- * `from` Units, both over the Units of the scope that a campaign carries (a campaign's own counts: the ones its page
- * prints; a brand and the fleet pool their campaigns). A stored link says WHICH Unit a Unit came from: where producers
+ * `from` Units, both over the Units of the scope that a campaign carries (a sales funnel campaign's own counts: the ones
+ * its page prints; a brand and the fleet pool their funnel campaigns). A stored link says WHICH Unit a Unit came from: where producers
  * declare no consumption the link is missing, the Unit still happened, so a yield counted on links reads low by exactly
  * the missing links (prod 2026-11-17: 0.62 for a campaign whose counts give 0.90). The links give the delay curve, the
  * campaign a late Unit is credited to, and which transitions exist; `linkedToUnits` / `linkCoverage` say how much of the
@@ -323,9 +323,9 @@ export interface UnitCostStat {
 }
 
 export interface TransitionStat {
-  /** `from` Units of the scope that a campaign carries. */
+  /** `from` Units of the scope's sales funnel campaigns. */
   fromUnits: number;
-  /** `to` Units of the scope that a campaign carries: COUNTED, whether or not a stored link ties them to a `from` Unit. */
+  /** `to` Units of the scope's sales funnel campaigns: COUNTED, whether or not a stored link ties them to a `from` Unit. */
   toUnits: number;
   /** Of `toUnits`, those a stored link (or a walk of links) ties to a `from` Unit. */
   linkedToUnits: number;
@@ -352,7 +352,7 @@ export interface SilverStatRow {
 }
 
 /** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
-export const SILVER_RULE = "2026-11-17.4-yield-on-units";
+export const SILVER_RULE = "2026-11-17.5-funnel-campaigns";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -400,10 +400,14 @@ export function buildSilverStats(input: {
     if (d) rows.push({ scope, scopeId, fromKey: "", toKey: outcomeKey, sampleSize: d.n, body: { kind: "unit_cost", stat: { units: d.n, costUsd: d, meanGrossCostUsd: c.gross / 100 / d.n } } });
   }
 
-  // 2. Units per scope, outcome and day, over the Units a campaign carries (the basis of every yield, both sides).
+  // 2. Units per scope, outcome and day: the basis of every yield, both sides. A yield is counted inside SALES FUNNEL
+  // CAMPAIGNS only (UNIT-LINK-COVERAGE-1117): a funnel campaign is the closed system where the `to` Units come from the
+  // `from` Units; a brand and the fleet pool theirs. A Unit of a campaign in no funnel campaign (or of no campaign) has
+  // no such system: the fleet counted 15,350 `to` Units whose `from` Unit was never declared (made before the ledger held it).
+  const inFunnel = (campaignIds: readonly string[]) => funnels(campaignIds).length > 0;
   const fromDays = new Map<string, Map<string, number>>();
   for (const r of input.unitDays)
-    for (const s of r.campaignIds.length === 0 ? [] : scopesOf(r.campaignIds, r.brandId)) {
+    for (const s of inFunnel(r.campaignIds) ? scopesOf(r.campaignIds, r.brandId) : []) {
       const k = `${s}\u0000${r.outcomeKey}`;
       const days = fromDays.get(k) ?? fromDays.set(k, new Map()).get(k)!;
       days.set(r.day, (days.get(r.day) ?? 0) + r.units);
@@ -431,7 +435,7 @@ export function buildSilverStats(input: {
   // `to` Units a link ties to a `from` Unit, per scope and transition (same basis as the counts: Units a campaign carries).
   const linked = new Map<string, number>();
   for (const r of input.linkedTo)
-    for (const s of r.campaignIds.length === 0 ? [] : scopesOf(r.campaignIds, r.brandId)) {
+    for (const s of inFunnel(r.campaignIds) ? scopesOf(r.campaignIds, r.brandId) : []) {
       const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
       linked.set(k, (linked.get(k) ?? 0) + r.units);
     }
