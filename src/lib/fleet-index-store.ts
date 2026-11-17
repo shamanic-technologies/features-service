@@ -88,9 +88,16 @@ export async function readFleetIndexRows(indexSlugs: readonly string[], costBasi
 
 /**
  * Write recomputed past points (`planRecomputedWrites` decided which). A day that holds a RECORDED row is left as is by
- * the statement itself (`setWhere basis = 'recomputed'`), whatever the plan said.
+ * the statement itself (`setWhere basis = 'recomputed'`), whatever the plan said; with `replaceRecordedNulls` a recorded
+ * row holding NO value may be replaced too (PUBLIC-INDEXES-NULL-1117: a null recorded under a rule that could no longer
+ * read today's production is no measure), never a recorded value.
  */
-export async function writeRecomputedFleetIndexPoints(points: readonly DatedIndexPoint[], now: Date, costBasis: IndexCostBasis = "billed"): Promise<void> {
+export async function writeRecomputedFleetIndexPoints(
+  points: readonly DatedIndexPoint[],
+  now: Date,
+  costBasis: IndexCostBasis = "billed",
+  opts: { replaceRecordedNulls?: boolean } = {},
+): Promise<void> {
   for (const { day, point: p } of points) {
     const row = {
       indexSlug: p.indexSlug,
@@ -113,7 +120,9 @@ export async function writeRecomputedFleetIndexPoints(points: readonly DatedInde
       .onConflictDoUpdate({
         target: [fleetIndexPoints.indexSlug, fleetIndexPoints.day, fleetIndexPoints.costBasis],
         set: { ...row, recordedAt: sql`excluded.recorded_at` },
-        setWhere: sql`${fleetIndexPoints.basis} = 'recomputed'`,
+        setWhere: opts.replaceRecordedNulls
+          ? sql`(${fleetIndexPoints.basis} = 'recomputed' OR ${fleetIndexPoints.value} IS NULL)`
+          : sql`${fleetIndexPoints.basis} = 'recomputed'`,
       });
   }
 }

@@ -29,6 +29,31 @@ vi.mock("../lib/fleet-positive-repliers.js", () => persons);
 // MEETING-COST-METHODS-1024: the Cost Per Meeting Index reads the ledger's booked meeting.
 const ledger = { readLedgerMeetingCost: vi.fn(async (): Promise<LedgerMeetingCost | null> => ({ unitCostUsd: 866.47, produced: 8, coveragePct: 90.5, daysMissing: 0, unpricedInputs: 1 })) };
 vi.mock("./research.js", () => ledger);
+// PUBLIC-INDEXES-NULL-1117: the cold email indexes read the email_sent Engine's scripts on the daily ledger book.
+const book = vi.hoisted(() => ({ loadDailyLedgerBook: vi.fn() }));
+vi.mock("../lib/ledger-book.js", async (orig) => ({ ...(await orig<typeof import("../lib/ledger-book.js")>()), loadDailyLedgerBook: book.loadDailyLedgerBook }));
+vi.mock("../lib/script-catalogue-client.js", async (orig) => ({
+  ...(await orig<typeof import("../lib/script-catalogue-client.js")>()),
+  readRunnableScriptsForCatalogue: vi.fn(async () => [{ outcome: "email_sent", dynasty: "dy_cold_email" }, { outcome: "email_reply_received", dynasty: "dy_inbound_decision" }]),
+}));
+/** 1,000 emails sent for $100 by one script on a campaign stating no leg; 5 positive replies and 10 website visits on them. */
+function scriptsBook() {
+  const consumed = (consumerKey: string, count: number) => ({ consumerKey, consumedKey: "email_sent", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", sourceCampaignId: "c", sourceWorkflowSlug: null, sourceScriptSlug: "email_sent/dy_cold_email/v2", count, runStartDay: "2026-11-12", sourceRunStartDay: "2026-11-10" });
+  return {
+    book: {
+      produced: [
+        { outcomeKey: "email_sent", campaignId: "c", workflowSlug: null, scriptSlug: "email_sent/dy_cold_email/v2", occurrences: 1000, costUsd: 100, runStartDay: "2026-11-10" },
+        { outcomeKey: "conversation", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", occurrences: 5, costUsd: 0, runStartDay: "2026-11-12" },
+        { outcomeKey: "website_visit", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", occurrences: 10, costUsd: 0, runStartDay: "2026-11-12" },
+      ],
+      noOutput: [],
+      consumed: [consumed("conversation", 5), consumed("website_visit", 10)],
+    },
+    daysMissing: 0,
+    missingDays: [],
+    staleDays: [],
+  };
+}
 const { default: router, recordFleetIndexesNow } = await import("./fleet-indexes.js");
 const app = express().use(router);
 
@@ -124,16 +149,11 @@ describe("GET /public/indexes/:slug", () => {
 });
 
 describe("recording", () => {
-  it("records every index from the three pipes' rankings, and the meeting pipe's Research points", async () => {
+  it("records every index from the email_sent Engine's scripts and the meeting pipe, with no pipe assignment anywhere (PUBLIC-INDEXES-NULL-1117)", async () => {
+    book.loadDailyLedgerBook.mockImplementation(async () => scriptsBook());
     ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) => ({
-      computedAt: "2026-10-18T12:00:00Z",
-      rows: [
-        leg === "start_to_website_visit"
-          ? rankingRow({})
-          : leg === "conversation_to_meeting_booked"
-            ? rankingRow({ workflowDynastySlug: "rhodium", basis: "flash", isMature: false, moneyGoesHere: false, spentUsd: 51, contacted: 12, outcomes: 3 })
-            : rankingRow({ costPerOutcomeUsd: 128.8, conversionRatePct: 0.15, outcomes: 5 }),
-      ],
+      computedAt: "2026-11-17T12:00:00Z",
+      rows: leg === "conversation_to_meeting_booked" ? [rankingRow({ workflowDynastySlug: "rhodium", basis: "flash", isMature: false, moneyGoesHere: false, spentUsd: 51, contacted: 12, outcomes: 3 })] : [],
     }));
     meeting.getInternalPipeFleet.mockResolvedValue({
       pooled: { spentUsd: 60, contacted: 20, outcomes: 3, spentByDynasty: {} },
@@ -142,20 +162,24 @@ describe("recording", () => {
         { orgId: "b", spentUsd: 20, contacted: 8, outcomes: 0 },
       ],
     });
-    const n = await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
-    // 6 pipe indexes + 2 meeting Research points; the client indexes' inputs are unreadable here.
+    const n = await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
+    // 6 cold email indexes + 2 meeting Research points; the client indexes' inputs are unreadable here.
     expect(n).toBe(8);
-    // Asked on the legs' computation spelling: the served outbound one reads as an unknown leg (no maturity).
-    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["conversation_to_meeting_booked", "start_to_conversation", "start_to_website_visit"]);
+    // The cold email legs' rankings are no longer read: only the meeting pipe's.
+    expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1])).toEqual(["conversation_to_meeting_booked"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
+    expect(bySlug.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: 20, status: "noise", outcomes: 5, contacted: 1000, workflowDynastySlug: "email_sent/dy_cold_email", unavailableReason: null, inputs: { pick: "best_available_learning" } });
+    expect(bySlug.get("cold-email-positive-reply-rate")).toMatchObject({ value: 0.5, status: "noise" });
+    expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 10, outcomes: 10, contacted: 1000 });
+    expect(bySlug.get("cold-email-click-rate")).toMatchObject({ value: 1 });
     // LANDING-MEETING-PRICE-1027: ledger short + outcome prices unread = the pipes' chain, labelled expected
-    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 128.8 / 0.25 + 51 / 3, status: "noise", unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", ledgerUnavailableReason: "ledger_coverage_short", ledgerUnitCostUsd: 866.47 } });
-    expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.15 * 0.25, 6);
+    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 20 / 0.25 + 51 / 3, status: "noise", unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", ledgerUnavailableReason: "ledger_coverage_short", ledgerUnitCostUsd: 866.47 } });
+    expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.5 * 0.25, 6);
     // MEETING-INDEX-EXPECTED-1025: with an expected price, the ledger's short figure gives way to it, labelled expected
     ranking.readOutcomePricesMeetingBooked.mockResolvedValueOnce({ priceUsd: 794.46, maturity: "mature", unmeasuredReason: null, legs: [{ figures: { outcomes: 40 } }, { figures: { outcomes: 12 } }] });
     store.recordFleetIndexPoints.mockClear();
-    await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
+    await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
     const again = new Map(store.recordFleetIndexPoints.mock.calls[0][0].map((p: { indexSlug: string }) => [p.indexSlug, p]));
     expect(again.get("cold-email-cost-per-meeting")).toMatchObject({ value: 794.46, status: "signal", outcomes: 12, inputs: { valueKind: "expected", ledgerUnavailableReason: "ledger_coverage_short" } });
     expect(bySlug.get("research:meeting-booking:best-workflow")).toMatchObject({ value: 17, workflowDynastySlug: "rhodium", outcomes: 3 });
@@ -163,19 +187,29 @@ describe("recording", () => {
     expect(bySlug.get("research:meeting-booking:client-median")).toMatchObject({ value: null, unavailableReason: "median_client_has_no_meeting" });
   });
 
-  it("an unreadable ranking records none of its indexes (no fake point)", async () => {
-    ranking.readLegWorkflowRanking.mockImplementation(async (_f: string, leg: string) =>
-      leg === "start_to_website_visit" ? null : { computedAt: "2026-10-18T12:00:00Z", rows: [rankingRow({})] },
-    );
+  it("an unreadable ledger book records none of the cold email indexes (no fake point)", async () => {
+    book.loadDailyLedgerBook.mockRejectedValue(new Error("runs-service down"));
+    ranking.readLegWorkflowRanking.mockResolvedValue({ computedAt: "2026-11-17T12:00:00Z", rows: [rankingRow({})] });
     meeting.getInternalPipeFleet.mockRejectedValue(new Error("lead-service down"));
-    await recordFleetIndexesNow(new Date("2026-10-18T13:00:00Z"));
+    await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
-    expect(points.map((p: { indexSlug: string }) => p.indexSlug).sort()).toEqual(["cold-email-cost-per-meeting", "cold-email-cost-per-positive-reply", "cold-email-positive-reply-rate"]);
+    // only the ledger's own meeting figure (its true reason), never a cold email index
+    expect(points.map((p: { indexSlug: string; unavailableReason: string }) => [p.indexSlug, p.unavailableReason])).toEqual([["cold-email-cost-per-meeting", "ledger_coverage_short"]]);
+  });
+
+  it("a past day of the scripts' era missing from the book records none of the cold email indexes", async () => {
+    book.loadDailyLedgerBook.mockImplementation(async () => ({ ...scriptsBook(), daysMissing: 1, missingDays: ["2026-11-14"] }));
+    ranking.readLegWorkflowRanking.mockResolvedValue(null);
+    meeting.getInternalPipeFleet.mockResolvedValue(null);
+    await recordFleetIndexesNow(new Date("2026-11-17T13:00:00Z"));
+    const [points] = store.recordFleetIndexPoints.mock.calls[0];
+    expect(points.some((p: { indexSlug: string }) => p.indexSlug !== "cold-email-cost-per-meeting")).toBe(false);
   });
 });
 
 describe("client indexes (INDEX-ENGAGED-ROI-1019)", () => {
   beforeEach(() => {
+    book.loadDailyLedgerBook.mockRejectedValue(new Error("book not under test"));
     ranking.readLegWorkflowRanking.mockResolvedValue(null);
     meeting.getInternalPipeFleet.mockResolvedValue(null);
     ledger.readLedgerMeetingCost.mockResolvedValue(null);

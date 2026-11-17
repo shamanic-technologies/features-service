@@ -10,6 +10,10 @@
  *                            # every day from the first (PUBLIC-VENDOR-COST-1031-HISTORY, `lib/client-index-history.ts`):
  *                            # each (org, brand) replayed as of each day; written only when the replay of today
  *                            # reproduces the live point (the client ROI index is deleted, ROI-CONSISTENCY-1103)
+ *   ... --scripts-era [--apply]   # the cold email indexes from 2026-11-09 (the day the last money workflow stopped
+ *                            # running) to yesterday, AS OF each day, on the `email_sent` Engine's scripts
+ *                            # (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`), both bases; replaces the
+ *                            # recorded NULL rows of those days (never a recorded value), then records today
  *
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
@@ -26,7 +30,14 @@ import { matchChannelLegKey } from "../lib/funnel-legs.js";
 import { readMembershipPairs, readPairDatedSpend, readPairPersons } from "../lib/fleet-index-history-io.js";
 import { addPairBrandEngagement, emptyBrandEngagementHistory, engagedLeadPointOn, type PairSpendDay } from "../lib/client-index-history.js";
 import { engagedLeadPoint } from "../lib/fleet-indexes.js";
-import { readVendorBrandEngagement } from "../routes/fleet-indexes.js";
+import { readVendorBrandEngagement, recordFleetIndexesNow, vendorMeetingPipe } from "../routes/fleet-indexes.js";
+import { readLegWorkflowRanking } from "../routes/public.js";
+import { dailyBookSinceDay, loadDailyLedgerBook, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
+import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
+import { scriptKeyOf } from "../lib/research/engine-script-performance.js";
+import { recomputeScriptsEraIndexPoints } from "../lib/script-index-rows.js";
+import { bestMeetingPipePick, type MeetingPipeEvidence } from "../lib/fleet-indexes.js";
+import { getInternalPipeFleet, MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY } from "../lib/meeting-leg-fleet.js";
 
 const log = (line: string) => console.log(`[fleet-index-backfill] ${line}`);
 
@@ -41,6 +52,10 @@ async function main(): Promise<void> {
   const now = new Date();
   if (process.argv.includes("--vendor-clients")) {
     await clientIndexHistory(now, apply);
+    return;
+  }
+  if (process.argv.includes("--scripts-era")) {
+    await scriptsEraHistory(now, apply);
     return;
   }
   const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
@@ -273,3 +288,82 @@ main()
     console.error("[fleet-index-backfill] failed:", error);
     process.exit(1);
   });
+
+/** The first day no workflow could run any more on the cold email legs (prod: the indexes recorded null from it). */
+const SCRIPTS_ERA_FIRST_INDEX_DAY = "2026-11-09";
+
+/** The meeting pipe's counts and spend, as the meeting indexes record them (`inputs`), to prove it did not move. */
+function meetingPipeKey(inputs: unknown): string {
+  const i = (inputs ?? {}) as Record<string, unknown>;
+  const n = (v: unknown) => (typeof v === "number" ? Math.round(v * 1e6) / 1e6 : v ?? null);
+  return JSON.stringify([i.meetingPipeSource ?? null, n(i.positiveRepliesActedOn), n(i.meetingsBooked), n(i.meetingPipeSpentUsd)]);
+}
+
+/** PUBLIC-INDEXES-NULL-1117: the cold email indexes of the scripts' era, as of each day, on the Engine's scripts. */
+async function scriptsEraHistory(now: Date, apply: boolean): Promise<void> {
+  const today = now.toISOString().slice(0, 10);
+  const days = dayRange(SCRIPTS_ERA_FIRST_INDEX_DAY, addDays(today, -1));
+  const since = dailyBookSinceDay(now.getTime());
+  const [gross, vendor, unpriced, runnableScripts] = await Promise.all([
+    loadDailyLedgerBook("gross", since),
+    loadDailyLedgerBook("vendor", since),
+    loadDailyLedgerBook("unpricedGross", since),
+    readRunnableScriptsForCatalogue(),
+  ]);
+  for (const [name, read] of [["gross", gross], ["vendor", vendor], ["unpricedGross", unpriced]] as const) {
+    const stale = new Set(read.staleDays ?? []);
+    const late = (read.missingDays ?? []).filter((d) => d >= SCRIPTS_FIRST_DAY && d < today && !stale.has(d));
+    log(`book ${name}: ${read.book.produced.length} produced, ${read.book.noOutput.length} no-output, ${read.book.consumed.length} consumed rows; ${late.length} past day(s) missing, ${stale.size} stale`);
+    if (late.length > 0) throw new Error(`the ${name} book misses ${late.join(",")}: nothing to rebuild on`);
+  }
+  const runnable = new Set(runnableScripts.map(scriptDynastyKey));
+  const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
+  const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
+  // The meeting pipe on both bases, live; used on every rebuilt day only if it equals the last day recorded before them.
+  const [mbRanking, mbFleet] = await Promise.all([
+    readLegWorkflowRanking(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, 10 * 60_000),
+    getInternalPipeFleet(MEETING_BOOKING_FEATURE_SLUG, MEETING_BOOKING_LEG_KEY, "meeting_booked"),
+  ]);
+  let meeting: { billed: MeetingPipeEvidence; vendor: MeetingPipeEvidence } | null = null;
+  if (mbRanking?.computedAt) {
+    const billedPipe: MeetingPipeEvidence = { rows: mbRanking.rows, pooled: mbFleet.pooled };
+    const vendorPipe = (await vendorMeetingPipe(mbRanking, mbFleet)).pipe;
+    const before = addDays(SCRIPTS_ERA_FIRST_INDEX_DAY, -1);
+    const recorded = await Promise.all((["billed", "vendor"] as const).map(async (b) => (await readFleetIndexRows(["cold-email-meeting-rate"], b)).find((r) => r.day === before && r.basis === "recorded")));
+    const liveKey = (pipe: MeetingPipeEvidence) => {
+      const p = bestMeetingPipePick(pipe);
+      return JSON.stringify([p?.source ?? null, p?.contacted ?? null, p?.outcomes ?? null, p ? Math.round(p.spentUsd * 1e6) / 1e6 : null]);
+    };
+    const same = recorded[0] && recorded[1] && meetingPipeKey(recorded[0].inputs) === liveKey(billedPipe) && meetingPipeKey(recorded[1].inputs) === liveKey(vendorPipe);
+    log(`meeting pipe ${before} recorded billed ${meetingPipeKey(recorded[0]?.inputs)} vendor ${meetingPipeKey(recorded[1]?.inputs)} / live billed ${liveKey(billedPipe)} vendor ${liveKey(vendorPipe)}: ${same ? "SAME, used on every day" : "MOVED, meeting indexes not rebuilt"}`);
+    if (same) meeting = { billed: billedPipe, vendor: vendorPipe };
+  }
+  const out = recomputeScriptsEraIndexPoints({
+    days,
+    books: { gross: gross.book, vendor: vendor.book, unpriced: unpriced.book },
+    keyOf: scriptKeyOf([...runnable]),
+    runnable,
+    websiteVisitLeg: visitLeg,
+    positiveReplyLeg: replyLeg,
+    meeting,
+  });
+  const slugs = FLEET_INDEXES.map((d) => d.slug);
+  for (const [basis, points] of [["billed", out.billed], ["vendor", out.vendor]] as const) {
+    for (const p of points) {
+      const pt = p.point;
+      log(`${basis} ${p.day} ${pt.indexSlug}: ${pt.value === null ? `null(${pt.unavailableReason})` : pt.value.toFixed(4)} ${pt.status} @${pt.workflowDynastySlug ?? "-"} ${JSON.stringify(pt.inputs)}`);
+    }
+    const stored = await readFleetIndexRows(slugs, basis);
+    const plan = planRecomputedWrites(points, stored, { replaceRecordedNulls: true });
+    log(`${basis} plan: ${plan.writes.length} to write, ${plan.unchanged} unchanged, ${plan.skippedRecorded} recorded days left as recorded`);
+    if (apply) {
+      await writeRecomputedFleetIndexPoints(plan.writes, now, basis, { replaceRecordedNulls: true });
+      log(`${basis}: wrote ${plan.writes.length} point(s)`);
+    }
+  }
+  if (!apply) {
+    log("dry run: nothing written (pass --apply to write)");
+    return;
+  }
+  log(`today: recorded ${await recordFleetIndexesNow(now)} point(s) with the live rule`);
+}
