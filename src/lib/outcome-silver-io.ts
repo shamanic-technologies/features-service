@@ -373,7 +373,8 @@ const MAX_WALK_LINKS = 12;
  * other Units (each pair once; the delay = the links' stated `delaySeconds` added along the walk), binned by delay, each
  * small group with its pairs' own delays (exact quantiles on a small sample). A `to` Unit dated before its `from` Unit (a
  * past fact recorded late: a negative stated delay) is a pair of delay zero. Beside them, the `to` Units those pairs tie
- * (each once, by the campaigns and brand the `to` Unit carries): the link coverage of the Units counted. One statement
+ * (each once, by the campaigns and brand the `to` Unit carries, with the campaigns and brand of the `from` Units it is
+ * tied to): the link coverage of the Units counted, and the Units made from another scope's `from` Units. One statement
  * per outcome, never the whole copy at once.
  */
 export async function readPairBins(fromKey: string): Promise<{ pairBins: PairBinRow[]; linkedTo: LinkedToRow[] }> {
@@ -389,18 +390,27 @@ export async function readPairBins(fromKey: string): Promise<{ pairBins: PairBin
       SELECT * FROM (SELECT DISTINCT ON (src, unit) unit, campaigns, brand, k, to_campaigns, GREATEST(delay, 0) / 3600.0 AS hours FROM walk ORDER BY src, unit, depth) p WHERE k <> ${fromKey}
     )
     SELECT 'bin' AS kind, k AS to_key, campaigns, brand, width_bucket(hours, ${edges}::float8[]) AS bin, count(*)::int AS n, sum(hours)::float8 AS sum_hours,
-           CASE WHEN count(*) <= ${EXACT_DELAY_MAX_PAIRS} THEN array_agg(hours::float8) END AS samples
+           CASE WHEN count(*) <= ${EXACT_DELAY_MAX_PAIRS} THEN array_agg(hours::float8) END AS samples, NULL::text[] AS sources
     FROM pairs GROUP BY 2, 3, 4, 5
     UNION ALL
-    SELECT 'linked', t.k, t.to_campaigns, u.brand_id, NULL, count(*)::int, NULL, NULL
-    FROM (SELECT DISTINCT unit, k, to_campaigns FROM pairs) t JOIN outcome_units u ON u.id = t.unit AND NOT u.reversed GROUP BY 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
+    SELECT 'linked', t.k, t.to_campaigns, u.brand_id, NULL, count(*)::int, NULL, NULL, t.sources
+    FROM (SELECT unit, k, to_campaigns, array_agg(DISTINCT array_to_string(campaigns, ',') || '|' || COALESCE(brand, '')) AS sources FROM pairs GROUP BY 1, 2, 3) t
+    JOIN outcome_units u ON u.id = t.unit AND NOT u.reversed GROUP BY 2, 3, 4, 9`)) as unknown as Array<Record<string, unknown>>;
   const pairBins: PairBinRow[] = [];
   const linkedTo: LinkedToRow[] = [];
   for (const r of rows) {
-    if (r.kind === "linked") linkedTo.push({ fromKey, toKey: r.to_key as string, campaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, units: Number(r.n) });
+    if (r.kind === "linked") linkedTo.push({ fromKey, toKey: r.to_key as string, campaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, sources: textArray(r.sources).map(linkSourceOf), units: Number(r.n) });
     else pairBins.push({ fromKey, toKey: r.to_key as string, fromCampaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, bin: Number(r.bin), pairs: Number(r.n), sumHours: Number(r.sum_hours), samplesHours: Array.isArray(r.samples) ? (r.samples as unknown[]).map(Number) : null });
   }
   return { pairBins, linkedTo };
+}
+
+/** PURE. One `from` source of a linked `to` Unit as the SQL group spells it: its campaigns comma-joined, a bar, its brand. */
+export function linkSourceOf(text: string): { campaignIds: string[]; brandId: string | null } {
+  const bar = text.lastIndexOf("|");
+  const campaigns = text.slice(0, bar);
+  const brand = text.slice(bar + 1);
+  return { campaignIds: campaigns === "" ? [] : campaigns.split(","), brandId: brand === "" ? null : brand };
 }
 
 /** Every outcome a stored link leaves from. */

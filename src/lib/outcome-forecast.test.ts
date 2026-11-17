@@ -5,7 +5,7 @@ import type { SpendCapacityInput } from "./spend-capacity.js";
 
 const prior = { shape: 0.5, rate: 500 };
 const delayOf = (n: number, hours = 48): DelayDistribution => ({ n, meanHours: hours, medianHours: hours, p10Hours: hours / 2, p25Hours: hours / 2, p75Hours: hours * 2, p90Hours: hours * 2, cdf: [{ hours: hours * 2, share: 1 }] });
-const stat = (fromUnits: number, toUnits: number, pairs = 0): TransitionStat => ({ fromUnits, toUnits, linkedToUnits: pairs, linkCoverage: toUnits > 0 ? pairs / toUnits : null, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs > 0 ? delayOf(pairs) : null });
+const stat = (fromUnits: number, toUnits: number, pairs = 0): TransitionStat => ({ fromUnits, toUnits, foreignToUnits: 0, linkedToUnits: pairs, linkCoverage: toUnits > 0 ? pairs / toUnits : null, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs > 0 ? delayOf(pairs) : null });
 
 describe("chooseYield (campaign measured > brand measured > fleet measured > plan > default)", () => {
   it("the campaign's own yield when its exposure outweighs the fleet prior", () => {

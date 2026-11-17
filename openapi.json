@@ -82364,9 +82364,13 @@
                             "type": "number",
                             "description": "Units of `toKey` in the scope that a campaign carries: COUNTED (the yield's count), whether or not a stored link ties them to a `fromKey` Unit. A missing link is not a missing Unit."
                           },
+                          "foreignToUnits": {
+                            "type": "number",
+                            "description": "`toKey` Units of the scope that the ledger's links tie ONLY to `fromKey` Units outside it (a campaign acting on Units another campaign made): left out of `toUnits`, in no yield of this scope."
+                          },
                           "linkedToUnits": {
                             "type": "number",
-                            "description": "Of `toUnits`, those a stored link (or a walk of links) of the ledger ties to a `fromKey` Unit."
+                            "description": "Of `toUnits`, those a stored link (or a walk of links) of the ledger ties to a `fromKey` Unit of the scope."
                           },
                           "linkCoverage": {
                             "type": "number",
@@ -82509,6 +82513,7 @@
                           "toKey",
                           "fromUnits",
                           "toUnits",
+                          "foreignToUnits",
                           "linkedToUnits",
                           "linkCoverage",
                           "exposure",
