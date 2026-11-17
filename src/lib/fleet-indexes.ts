@@ -5,7 +5,7 @@
  * Every index is read off figures this service already serves, never a second computation:
  * - the cost / rate of a cold email outcome = the BEST script of the `email_sent` Engine that can still run
  *   (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`: each script measured on the general ledger's daily book, the
- *   Research Engine measure's rule; the best MATURE one, else the best AVAILABLE one with a measured outcome, `noise`):
+ *   Research Engine measure's rule; the best MATURE one, else the best AVAILABLE one once it reaches the noise bar, `noise`; below it null `not_measured`, INDEX-VISITS-1117):
  *   what a client buys today. Before 2026-11-09 the days read the per-pipe leg workflow ranking (`moneyGoesHere`), the
  *   rule their recomputed history keeps; a script or workflow that no longer runs is never picked;
  * - every figure is a PIPE figure (owner 2026-10-18, MB-INDEX-PIPES-1018: « On ne compte pour l'index que des cost de
@@ -330,17 +330,25 @@ function bestMature(rows: IndexRow[]): IndexRow | null {
  * order, read on the billed evidence, so the billed and the vendor series pick the same script). Since MIGRATE-1105 every
  * campaign runs Engine SCRIPTS and every workflow is retired (prod 2026-11-09: Ballad, the money workflow of the reply
  * index, stopped running); a script is younger than the 21-day maturity cut, so no row was mature and six indexes read
- * null for eight days. The owner's rule for the meeting pipe (« Affiche l'index dès maintenant », MB-INDEX-PIPES-1018)
- * now holds on every pipe: the best available stands in, always `noise`. Null = no runnable row measured an outcome.
+ * null for eight days. The best available stands in, always `noise`, but ONLY once its own outcomes reach the noise bar
+ * (`SIGNAL_MIN_OUTCOMES`, the maturity bar of `lib/maturity.ts`; owner 2026-11-17, INDEX-VISITS-1117: « a public index
+ * must not print a value built on 1 outcome as if it were a price »: $280 per website visit and 0.014% off ONE visit on
+ * 7,288 emails, beside 1.6% on 18 visits the day before). Below it the point is null `not_measured`, its outcomes kept.
+ * Null = no runnable row cleared the bar. (The meeting pipe's own stand-in, `bestMeetingPipePick`, keeps its owner rule.)
  */
 export function indexPipePick(rows: readonly IndexRow[], bestAvailableStandsIn = true): { row: IndexRow; mature: boolean } | null {
   const mature = bestMature([...rows]);
   if (mature) return { row: mature, mature: true };
   if (!bestAvailableStandsIn) return null;
-  const learning = rows
+  const learning = bestAvailableLearning(rows);
+  return learning && learning.outcomes >= SIGNAL_MIN_OUTCOMES ? { row: learning, mature: false } : null;
+}
+
+/** The runnable row with a measured outcome the ONE leg order puts first (billed rank, so both bases pick the same). */
+function bestAvailableLearning(rows: readonly IndexRow[]): IndexRow | undefined {
+  return rows
     .filter((r) => r.selectable && r.outcomes > 0 && r.contacted > 0)
     .sort((a, b) => a.rank - b.rank || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
-  return learning ? { row: learning, mature: false } : null;
 }
 
 function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStandsIn: boolean): FleetIndexPoint {
@@ -350,6 +358,21 @@ function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStan
     return { indexSlug: def.slug, value: null, status: "noise", outcomes: 0, contacted: null, workflowDynastySlug: null, workflowDynastyName: null, unavailableReason: "no_mature_workflow", inputs: {} };
   }
   if (!pick) {
+    // A runnable row measured the outcome, under the noise bar: not a price yet, said with what it rests on.
+    const below = bestAvailableLearning(rows);
+    if (below) {
+      return {
+        indexSlug: def.slug,
+        value: null,
+        status: "noise",
+        outcomes: below.outcomes,
+        contacted: below.contacted,
+        workflowDynastySlug: below.workflowDynastySlug,
+        workflowDynastyName: below.workflowDynastyName,
+        unavailableReason: "not_measured",
+        inputs: { pick: "below_noise_bar", outcomesRequired: SIGNAL_MIN_OUTCOMES, outcomes: below.outcomes, contacted: below.contacted, spentUsd: below.spentUsd },
+      };
+    }
     return {
       indexSlug: def.slug,
       value: null,
@@ -359,7 +382,7 @@ function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStan
       workflowDynastySlug: null,
       workflowDynastyName: null,
       // True reason: nothing that can run today has measured the outcome yet (a retired script or workflow never stands in).
-      unavailableReason: rows.length === 0 ? "no_script_ran_yet" : rows.some((r) => r.selectable) ? "no_runnable_script_with_outcome" : "nothing_runnable_on_pipe",
+      unavailableReason: rows.length === 0 ? "no_script_ran_yet" : rows.some((r) => r.selectable) ? "not_measured" : "nothing_runnable_on_pipe",
       inputs: {},
     };
   }

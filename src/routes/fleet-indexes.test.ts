@@ -43,11 +43,11 @@ function scriptsBook() {
     book: {
       produced: [
         { outcomeKey: "email_sent", campaignId: "c", workflowSlug: null, scriptSlug: "email_sent/dy_cold_email/v2", occurrences: 1000, costUsd: 100, runStartDay: "2026-11-10" },
-        { outcomeKey: "conversation", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", occurrences: 5, costUsd: 0, runStartDay: "2026-11-12" },
+        { outcomeKey: "conversation", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", occurrences: 10, costUsd: 0, runStartDay: "2026-11-12" },
         { outcomeKey: "website_visit", campaignId: "c", workflowSlug: null, scriptSlug: "email_reply_received/dy_inbound_decision/v1", occurrences: 10, costUsd: 0, runStartDay: "2026-11-12" },
       ],
       noOutput: [],
-      consumed: [consumed("conversation", 5), consumed("website_visit", 10)],
+      consumed: [consumed("conversation", 10), consumed("website_visit", 10)],
     },
     daysMissing: 0,
     missingDays: [],
@@ -169,13 +169,13 @@ describe("recording", () => {
     expect(ranking.readLegWorkflowRanking.mock.calls.map((c: unknown[]) => c[1])).toEqual(["conversation_to_meeting_booked"]);
     const [points] = store.recordFleetIndexPoints.mock.calls[0];
     const bySlug = new Map(points.map((p: { indexSlug: string }) => [p.indexSlug, p]));
-    expect(bySlug.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: 20, status: "noise", outcomes: 5, contacted: 1000, workflowDynastySlug: "email_sent/dy_cold_email", unavailableReason: null, inputs: { pick: "best_available_learning" } });
-    expect(bySlug.get("cold-email-positive-reply-rate")).toMatchObject({ value: 0.5, status: "noise" });
+    expect(bySlug.get("cold-email-cost-per-positive-reply")).toMatchObject({ value: 10, status: "noise", outcomes: 10, contacted: 1000, workflowDynastySlug: "email_sent/dy_cold_email", unavailableReason: null, inputs: { pick: "best_available_learning" } });
+    expect(bySlug.get("cold-email-positive-reply-rate")).toMatchObject({ value: 1, status: "noise" });
     expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 10, outcomes: 10, contacted: 1000 });
     expect(bySlug.get("cold-email-click-rate")).toMatchObject({ value: 1 });
     // LANDING-MEETING-PRICE-1027: ledger short + outcome prices unread = the pipes' chain, labelled expected
-    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 20 / 0.25 + 51 / 3, status: "noise", unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", ledgerUnavailableReason: "ledger_coverage_short", ledgerUnitCostUsd: 866.47 } });
-    expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(0.5 * 0.25, 6);
+    expect(bySlug.get("cold-email-cost-per-meeting")).toMatchObject({ value: 10 / 0.25 + 51 / 3, status: "noise", unavailableReason: null, inputs: { valueKind: "expected", method: "expected_pipe_chain", ledgerUnavailableReason: "ledger_coverage_short", ledgerUnitCostUsd: 866.47 } });
+    expect((bySlug.get("cold-email-meeting-rate") as { value: number }).value).toBeCloseTo(1 * 0.25, 6);
     // MEETING-INDEX-EXPECTED-1025: with an expected price, the ledger's short figure gives way to it, labelled expected
     ranking.readOutcomePricesMeetingBooked.mockResolvedValueOnce({ priceUsd: 794.46, maturity: "mature", unmeasuredReason: null, legs: [{ figures: { outcomes: 40 } }, { figures: { outcomes: 12 } }] });
     store.recordFleetIndexPoints.mockClear();
