@@ -73,33 +73,34 @@ export const ROUTE_COMPUTE_RULES: Readonly<Record<string, string>> = {
   // (`lib/fleet-leg-rates.ts`): every route below serving an expected figure re-keys its cells.
   // ROI-ROUNDING-1116: every served ROI multiple to 6 significant digits (`lib/roi-multiple.ts`), never 2 decimals (a
   // true 0.004x served 0): every route below serving a ROI re-keys its cells, campaign-targets included.
+  // MEASURED-BEFORE-DEFAULT-1117-OWN: the sales-path rung takes a pipe's OWN measured cost only (a borrowed price read 2,188x).
   // MEASURED-BEFORE-DEFAULT-1117: every expected COST per outcome takes every measured rung before a default (catalogue
   // `expectedPipeCost`, sales-path fleet rung `mergeFleetLegCosts`): every route below serving an expected figure re-keys.
-  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "measured-before-default-1117",
+  "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts": "measured-before-default-1117-own",
   "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/activity": "ledger-negative-days-1110",
-  "/offers/{offerId}/spend-charts": "measured-before-default-1117",
-  "/brands/{brandId}/spend-charts": "measured-before-default-1117",
-  "/brands/{brandId}/sales-funnel-campaigns": "measured-before-default-1117",
+  "/offers/{offerId}/spend-charts": "measured-before-default-1117-own",
+  "/brands/{brandId}/spend-charts": "measured-before-default-1117-own",
+  "/brands/{brandId}/sales-funnel-campaigns": "measured-before-default-1117-own",
   // OUTCOME-ACCOUNTING-GAPS-1107: Lead found names its next step, Signup's AI follow-up leg priced, true no-Unit reason.
   // OUTCOME-COST-CUMUL-1109: $ Spent per step = its own + the steps above (process costing), $ / outcome on OUR Units.
   // OUTCOME-TOTAL-UNITS-1110: our Units net of withdrawn ones (a negative ledger day), + totalOutcomes.
   // LEDGER-NEGATIVE-DAYS-1110: EVERY ledger read nets withdrawn Units by one rule (`standingUnitsByDay`): every route below.
-  "/offers/{offerId}/outcome-cost-series": "measured-before-default-1117",
-  "/brands/{brandId}/outcome-cost-series": "measured-before-default-1117",
-  "/offers/{offerId}/outcomes": "measured-before-default-1117",
-  "/offers/{offerId}/revenue": "measured-before-default-1117",
-  "/brands/{brandId}/offers": "measured-before-default-1117",
-  "/brands/{brandId}/revenue": "measured-before-default-1117",
+  "/offers/{offerId}/outcome-cost-series": "measured-before-default-1117-own",
+  "/brands/{brandId}/outcome-cost-series": "measured-before-default-1117-own",
+  "/offers/{offerId}/outcomes": "measured-before-default-1117-own",
+  "/offers/{offerId}/revenue": "measured-before-default-1117-own",
+  "/brands/{brandId}/offers": "measured-before-default-1117-own",
+  "/brands/{brandId}/revenue": "measured-before-default-1117-own",
   // CAMPAIGN-CONVERSION-1116: the Milestones chain leaves a unit jumping Start -> Target out of the walk.
   // PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (a reached cap expects nothing until its reset);
   // MEASURED-BEFORE-DEFAULT-1117 re-keys it again (its value retires both).
-  "/brands/{brandId}/campaign-targets": "measured-before-default-1117",
-  "/features/{featureSlug}/revenue": "measured-before-default-1117",
-  "/features/{featureSlug}/stats": "measured-before-default-1117",
+  "/brands/{brandId}/campaign-targets": "measured-before-default-1117-own",
+  "/features/{featureSlug}/revenue": "measured-before-default-1117-own",
+  "/features/{featureSlug}/stats": "measured-before-default-1117-own",
   // EXPECTED-FLEET-RATE-1116: the sales paths' leg rates and the catalogue-priced figures read the fleet rung too.
-  "/offers/{offerId}/sales-paths": "measured-before-default-1117",
-  "/brands/{brandId}/lived-sales-paths": "measured-before-default-1117",
-  "/brands/{brandId}/published-units/{outcomeKey}": "measured-before-default-1117",
+  "/offers/{offerId}/sales-paths": "measured-before-default-1117-own",
+  "/brands/{brandId}/lived-sales-paths": "measured-before-default-1117-own",
+  "/brands/{brandId}/published-units/{outcomeKey}": "measured-before-default-1117-own",
 };
 
 /** `value` with every `#/components/schemas/X` reference replaced by the schema it names (cycles kept as the ref). */

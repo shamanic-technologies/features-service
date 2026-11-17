@@ -734,17 +734,22 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
 }
 
 /**
- * PURE (MEASURED-BEFORE-DEFAULT-1117): every platform pipe's expected cost per outcome that rests on a MEASURED rung
- * (basis measured or fleet), keyed `${computedLegKey}|${channelSlug}` (the sales paths' `priceKey`). The sales-path
+ * PURE (MEASURED-BEFORE-DEFAULT-1117): every platform pipe's expected cost per outcome that rests on its OWN measured
+ * rung (workflow, flash, its own history; never a price borrowed from another channel), keyed `${computedLegKey}|${channelSlug}` (the sales paths' `priceKey`). The sales-path
  * cost cascade reads it as its fleet rung after the outcome-prices one, so an offer's expected model never prices a leg
  * at its seeded default while the catalogue holds a measured figure of the same outcome (one order for every Engine).
  * Plays are left out: a pipe's own price is the channel's.
  */
+const OWN_MEASURED_COST_SOURCES: ReadonlySet<ExpectedCostSource> = new Set(["workflow", "flash", "pipe_history"]);
+
 export function measuredLegCostsOf(model: Pick<CatalogueModel, "pipes">): Map<string, number> {
   const out = new Map<string, number>();
   for (const p of model.pipes.values()) {
     const c = p.expectedCost;
-    if (!c || (c.basis !== "measured" && c.basis !== "fleet") || !usable(c.costPerOutcomeUsd)) continue;
+    // The pipe's OWN measured cost only (workflow, flash, its own history): a price BORROWED from another channel
+    // (`same_leg_fleet`, `same_step_fleet`) is an assumption about this channel, never its measurement. Prod 2026-11-17:
+    // AI Follow-up Email borrowed Founder Hello's $0.04 per positive reply and Wide Email's offer read 2,188x.
+    if (!c || !OWN_MEASURED_COST_SOURCES.has(c.source) || !usable(c.costPerOutcomeUsd)) continue;
     out.set(`${p.computedLegKey}|${p.channelSlug}`, c.costPerOutcomeUsd);
   }
   return out;
