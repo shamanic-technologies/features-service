@@ -148,12 +148,17 @@ import {
   type ShowcaseVendorCost,
 } from "../lib/showcase-funnels.js";
 import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
+import { fetchMeetingAttributionBody } from "../lib/meeting-reporting-client.js";
 import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib/public-vendor-cost.js";
 import {
   buildShowcaseCandidates,
   furthestRungReached,
+  isOurBrandDomain,
   isStaffOnlyBrand,
+  meetingsBookedByBrandOf,
   pickByMostMeetings,
+  withMeetingFactCandidates,
+  withMeetingFacts,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
   walkComplete,
@@ -3143,14 +3148,37 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   if (staffOnlyBrands.size > 0) {
     console.log(`[features-service] showcase: ${staffOnlyBrands.size} staff test client(s) left out: ${[...staffOnlyBrands].join(", ")}`);
   }
-  const candidates = allCandidates === null ? null : allCandidates.filter((c) => !staffOnlyBrands.has(c.brandId));
+  // Meetings booked = EVERY meeting the client stated, any source (CRM, tracker, hand statement), distinct people
+  // (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « prends les plus gros chiffres. 172 meetings »): a cold email channel's
+  // engine pass only sees the people its campaigns served, so Doc Dinners' 172 CRM meetings read 0. A failed read THROWS
+  // (the prior showcase stays served), never a row ranked on positive replies alone.
+  const meetingFacts = allCandidates === null ? new Map<string, number>() : meetingsBookedByBrandOf(await fetchMeetingAttributionBody());
+  const candidates =
+    allCandidates === null ? null : withMeetingFactCandidates(allCandidates.filter((c) => !staffOnlyBrands.has(c.brandId)), meetingFacts);
   const picks = pickShowcaseClients(candidates, SHOWCASE_GROUP_SIZE);
 
   // The row is CONFIRMED on each candidate's own walked chain — the one the homepage draws — before a
   // client is named. The walk is bounded so a stale snapshot never turns one refresh into a fleet-wide
   // fan-out.
-  const recentWalkable = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_RECENT_WALKS);
-  const brandInfo = recentWalkable.length > 0 ? await fetchBrandInfoBatch(recentWalkable) : new Map();
+  // Our OWN brand is never named (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « ne mets pas distribute »): its recorded
+  // domain is ours (`isOurBrandDomain`). A brand whose record brand-service did not answer is not named either (we could
+  // not tell it is not ours). The info is read for the ranked head plus a margin, so the walk keeps its bound.
+  const rankedHead = picks.recentlyStarted.rankedBrandIds.slice(0, SHOWCASE_MAX_RECENT_WALKS * 2);
+  const brandInfo = rankedHead.length > 0 ? await fetchBrandInfoBatch(rankedHead) : new Map();
+  const recentWalkable = rankedHead
+    .filter((id) => {
+      const info = brandInfo.get(id);
+      if (!info) {
+        console.warn(`[features-service] showcase: brand ${id} has no brand-service record on this read, not named`);
+        return false;
+      }
+      if (isOurBrandDomain(info.domain)) {
+        console.log(`[features-service] showcase: brand ${id} (${info.domain}) is ours, not named`);
+        return false;
+      }
+      return true;
+    })
+    .slice(0, SHOWCASE_MAX_RECENT_WALKS);
 
   const walkedFull = new Map<string, WalkedShowcaseBrand>();
   const walked = new Map<string, ShowcaseBrandFunnels>();
@@ -3184,7 +3212,8 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
         }
       },
     );
-    for (const e of entries) {
+    for (const raw of entries) {
+      const e = withMeetingFacts(raw, meetingFacts.get(raw.entry.brand.id) ?? 0);
       walked.set(e.entry.brand.id, e.entry);
       walkedFull.set(e.entry.brand.id, e);
     }
