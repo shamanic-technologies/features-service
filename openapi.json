@@ -82358,11 +82358,20 @@
                           },
                           "fromUnits": {
                             "type": "number",
-                            "description": "Units of `fromKey` in the scope. At campaign scope a Unit counts for the campaign(s) it carries: its own run's, else those of the Units it came from (a Unit declared late on a run naming no campaign)."
+                            "description": "Units of `fromKey` in the scope that a campaign carries (its own run's campaign, else those of the Units it came from: a Unit declared late on a run naming no campaign). A brand and the fleet pool their campaigns."
                           },
                           "toUnits": {
                             "type": "number",
-                            "description": "Units of `toKey` the ledger's stored links tie to a `fromKey` Unit of the scope (directly or through a walk of links): what became of the scope's `from` Units, wherever the `to` Unit was declared."
+                            "description": "Units of `toKey` in the scope that a campaign carries: COUNTED (the yield's count), whether or not a stored link ties them to a `fromKey` Unit. A missing link is not a missing Unit."
+                          },
+                          "linkedToUnits": {
+                            "type": "number",
+                            "description": "Of `toUnits`, those a stored link (or a walk of links) of the ledger ties to a `fromKey` Unit."
+                          },
+                          "linkCoverage": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "linkedToUnits / toUnits; null without a `to` Unit. Low = producers declare the `to` Unit without the Unit it consumed: the delay rests on the linked share only."
                           },
                           "exposure": {
                             "type": "number",
@@ -82442,7 +82451,7 @@
                             "properties": {
                               "n": {
                                 "type": "number",
-                                "description": "Pairs measured: a `to` Unit and a `from` Unit the ledger's stored links tie (directly or through a walk of links); the delay is the one the links state."
+                                "description": "Pairs measured: a `to` Unit and a `from` Unit the ledger's stored links tie (directly or through a walk of links); the delay is the one the links state. Up to 200 pairs the quantiles are exact (computed on the pairs' own delays), above they are read off bins."
                               },
                               "meanHours": {
                                 "type": "number"
@@ -82500,6 +82509,8 @@
                           "toKey",
                           "fromUnits",
                           "toUnits",
+                          "linkedToUnits",
+                          "linkCoverage",
                           "exposure",
                           "censoredBy",
                           "yield",
@@ -82908,7 +82919,17 @@
                                           "type": "number"
                                         },
                                         "toUnits": {
-                                          "type": "number"
+                                          "type": "number",
+                                          "description": "Units of the next milestone COUNTED in the scope: the yield's count, whether or not a stored link ties them."
+                                        },
+                                        "linkedToUnits": {
+                                          "type": "number",
+                                          "description": "Of toUnits, those a stored link of the ledger ties to a Unit of this milestone."
+                                        },
+                                        "linkCoverage": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "linkedToUnits / toUnits; null without a `to` Unit. A thin coverage means the delay rests on few of the Units; the yield does not depend on it."
                                         },
                                         "exposure": {
                                           "type": "number"
@@ -82921,11 +82942,13 @@
                                         "scope",
                                         "fromUnits",
                                         "toUnits",
+                                        "linkedToUnits",
+                                        "linkCoverage",
                                         "exposure",
                                         "delayPairs"
                                       ]
                                     },
-                                    "description": "What each scope measured on this transition (sample sizes)."
+                                    "description": "What each scope measured on this transition (sample sizes, and how much of it the ledger's links tie)."
                                   }
                                 },
                                 "required": [
