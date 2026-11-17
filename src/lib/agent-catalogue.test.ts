@@ -4,6 +4,7 @@ vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
 import {
   buildCatalogueModel,
+  measuredLegCostsOf,
   byRoi,
   roiBasisOf,
   channelEconomics,
@@ -444,7 +445,7 @@ describe("a learning funnel still serves an EXPECTED cost per paying client and 
     }
   });
 
-  it("takes a pipe's cost in order: mature workflow > seeded default > benchmark > flash > another channel on the leg", () => {
+  it("takes a pipe's cost in order: mature workflow > flash > another channel on the leg > seeded default (MEASURED-BEFORE-DEFAULT-1117)", () => {
     const p = (id: string) => model.pipes.get(id)!;
     expect(expectedPipeCost(p("sales-cold-email-outreach|lead_found_to_conversation"), model.pipes.values())?.source).toBe("workflow");
     expect(expectedPipeCost(p("sales-cold-email-outreach|lead_found_to_website_visit"), model.pipes.values())).toMatchObject({ source: "default", costPerOutcomeUsd: 5 });
@@ -528,6 +529,45 @@ describe("a funnel id resolves whatever the size of its path (WARM-FUNNEL-NOT-FO
   it("every listed funnel of every path resolves to itself", () => {
     const small = buildCatalogueModel(inputs());
     for (const p of small.paths.values()) for (const f of funnelsOfPath(small, p)) expect(funnelById(small, f.id)?.id, f.id).toBe(f.id);
+  });
+});
+
+describe("MEASURED-BEFORE-DEFAULT-1117: every measured rung of a pipe's cost before a default (owner 2026-11-17)", () => {
+  type P = Parameters<typeof expectedPipeCost>[0];
+  const pipe = (id: string, computedLegKey: string, from: string | null, to: string, m: Partial<PipeMeasurement> | null): P =>
+    ({ id, channelSlug: id.split("|")[0], computedLegKey, fromStep: from, toStep: to, operatedBy: "platform", measurement: m ? { basis: null, costPerOutcomeUsd: null, conversionRatePct: null, workflowDynastySlug: null, spentUsd: 0, ...m } : null }) as unknown as P;
+  // A seeded-default leg: cold email -> positive reply ($50 default).
+  const coldEmail = (m: Partial<PipeMeasurement> | null) => pipe("sales-cold-email-outreach|lead_found_to_conversation", "start_to_conversation", "lead_found", "conversation", m);
+  // A benchmark leg: cold LinkedIn -> conversation ($30 benchmark).
+  const linkedin = (m: Partial<PipeMeasurement> | null) => pipe("cold-linkedin-outreach|start_to_conversation", "start_to_conversation", null, "conversation", m);
+  const sameLeg = pipe("zz-other|lead_found_to_conversation", "lead_found_to_conversation", "lead_found", "conversation", { basis: "mature", costPerOutcomeUsd: 70 });
+  const sameStep = pipe("zz-hello|start_to_conversation", "start_to_conversation", null, "conversation", { historyCostPerOutcomeUsd: 90 });
+
+  it("the seeded default comes after every measured rung, in order", () => {
+    expect(expectedPipeCost(coldEmail({ basis: "mature", costPerOutcomeUsd: 60 }), [sameLeg])).toEqual({ costPerOutcomeUsd: 60, source: "workflow", basis: "measured" });
+    // Wide Email (prod 2026-11-17): the fleet's flash $103.76 per positive reply, never the $50 default.
+    expect(expectedPipeCost(coldEmail({ basis: "flash", costPerOutcomeUsd: 103.76, historyCostPerOutcomeUsd: 183.35 }), [sameLeg])).toEqual({ costPerOutcomeUsd: 103.76, source: "flash", basis: "fleet" });
+    expect(expectedPipeCost(coldEmail({ historyCostPerOutcomeUsd: 183.35 }), [sameLeg])).toEqual({ costPerOutcomeUsd: 183.35, source: "pipe_history", basis: "fleet" });
+    expect(expectedPipeCost(coldEmail(null), [sameLeg, sameStep])).toEqual({ costPerOutcomeUsd: 70, source: "same_leg_fleet", basis: "fleet" });
+    expect(expectedPipeCost(coldEmail(null), [sameStep])).toEqual({ costPerOutcomeUsd: 90, source: "same_step_fleet", basis: "fleet" });
+    expect(expectedPipeCost(coldEmail(null), [])).toEqual({ costPerOutcomeUsd: 50, source: "default", basis: "default" });
+  });
+
+  it("the market benchmark too, then the pipe's own spend last", () => {
+    expect(expectedPipeCost(linkedin({ basis: "flash", costPerOutcomeUsd: 12 }), [])).toEqual({ costPerOutcomeUsd: 12, source: "flash", basis: "fleet" });
+    expect(expectedPipeCost(linkedin(null), [sameStep])).toEqual({ costPerOutcomeUsd: 90, source: "same_leg_fleet", basis: "fleet" });
+    expect(expectedPipeCost(linkedin(null), [sameLeg])).toEqual({ costPerOutcomeUsd: 70, source: "same_step_fleet", basis: "fleet" });
+    expect(expectedPipeCost(linkedin({ spentUsd: 12 }), [])).toEqual({ costPerOutcomeUsd: 30, source: "benchmark", basis: "default" });
+    expect(expectedPipeCost(pipe("zz-none|start_to_conversation", "start_to_conversation", null, "conversation", { spentUsd: 12 }), [])).toEqual({ costPerOutcomeUsd: 12, source: "own_spend", basis: "default" });
+  });
+
+  it("the sales paths' fleet rung reads only the measured costs (`measuredLegCostsOf`)", () => {
+    const withCost = (p: P, all: P[]) => Object.assign(p, { expectedCost: expectedPipeCost(p, all) });
+    const measured = withCost(coldEmail({ basis: "flash", costPerOutcomeUsd: 103.76 }), []);
+    const defaulted = withCost(pipe("ai-meeting-booking|conversation_to_meeting_booked", "conversation_to_meeting_booked", "conversation", "meeting_booked", null), []);
+    const benchmarked = withCost(linkedin(null), []);
+    const m = measuredLegCostsOf({ pipes: new Map([measured, defaulted, benchmarked].map((p) => [p.id, p])) } as never);
+    expect([...m]).toEqual([["start_to_conversation|sales-cold-email-outreach", 103.76]]);
   });
 });
 

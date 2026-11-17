@@ -38,6 +38,7 @@ import {
   type SalesPathScope,
   withCampaignRois,
   withSalesPathNames,
+  mergeFleetLegCosts,
 } from "../lib/offer-sales-paths.js";
 import { campaignNamesOf, salesPathNamesFor, SalesPathNamePoolExhaustedError, withCampaignNames } from "../lib/sales-path-names.js";
 import { runLadder, type LadderBody } from "../lib/leg-ladder.js";
@@ -202,7 +203,11 @@ export async function computeOfferSalesPathsModel(args: {
   // (lazy import: that router is large). Right after a boot the store is EMPTY for the minutes its first
   // build takes; this read awaits that build, and fails VISIBLY (503) past the bound — never prices a
   // measured leg at its seeded default because the process is young (2026-10-03: $5 vs $1.41).
-  const fleetPrices = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices(...(fleetWaitMs === undefined ? [] : [fleetWaitMs]));
+  const outcomePriceCosts = await (await import("./public.js")).awaitFleetLegCostsFromOutcomePrices(...(fleetWaitMs === undefined ? [] : [fleetWaitMs]));
+  // MEASURED-BEFORE-DEFAULT-1117 (owner 2026-11-17: a measured figure always beats a default, every Engine): a leg the
+  // outcome-prices build does not price takes the catalogue's MEASURED expected cost of the same (leg, channel) (its
+  // flash, history, or the fleet's price of the same outcome) before the seeded default. Same function as the catalogue.
+  const fleetPrices = mergeFleetLegCosts(outcomePriceCosts, await (await import("./agent-catalogue.js")).loadCatalogueMeasuredLegCosts());
   // The fleet's measured conversion per (leg, channel), from the build just awaited (EXPECTED-FLEET-RATE-1116: the rate
   // rung after the brand's own, before the default).
   const fleetRates = (await import("./public.js")).fleetLegConversionRatesFromOutcomePrices();

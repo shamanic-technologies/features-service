@@ -426,3 +426,21 @@ describe("a contacted lead's value EXPIRES 30 days after the LAST email sent to 
     expect(computeRevenue(PATHS, [clicker, replier], LTR, [], pricing)).toEqual(computeRevenue(PATHS, [clicker, replier], LTR));
   });
 });
+
+describe("MEASURED-BEFORE-DEFAULT-1117: a contacted lead with no measured group rate takes the fleet's measured rate before the benchmark", () => {
+  it("reads the fleet's cold-email entry conversion per signal; a signal the fleet never measured is absent", async () => {
+    const { fleetContactedEntryRatesBySignal } = await import("./contacted-value.js");
+    expect(fleetContactedEntryRatesBySignal(new Map([["start_to_conversation|sales-cold-email-outreach", 0.1023]]))).toEqual({ positiveReply: 0.1023 });
+    expect(fleetContactedEntryRatesBySignal(new Map([["start_to_website_visit|sales-cold-email-outreach", 0.4]]))).toEqual({ clicked: 0.4 });
+    expect(fleetContactedEntryRatesBySignal(new Map())).toEqual({});
+  });
+
+  it("group measured > fleet measured > seeded benchmark, signal by signal", async () => {
+    const { contactedEntryRatesOf } = await import("./revenue-engine.js");
+    const person = { campaignId: "c1", workflowSlug: "w1" };
+    const base = { entryRatePctByGroup: {}, defaultEntryRatePct: { positiveReply: 1, clicked: 2 }, lastSentOnOrAfter: "2026-01-01T00:00:00Z" };
+    expect(contactedEntryRatesOf(person, { ...base, entryRatePctByGroup: { "c1|w1": { positiveReply: 0.5 } }, fleetEntryRatePct: { positiveReply: 0.1 } })).toEqual({ rates: { positiveReply: 0.5 }, source: "measured" });
+    expect(contactedEntryRatesOf(person, { ...base, fleetEntryRatePct: { positiveReply: 0.1023 } })).toEqual({ rates: { positiveReply: 0.1023, clicked: 2 }, source: "fleet_measured" });
+    expect(contactedEntryRatesOf(person, { ...base, fleetEntryRatePct: {} })).toEqual({ rates: { positiveReply: 1, clicked: 2 }, source: "default_entry" });
+  });
+});

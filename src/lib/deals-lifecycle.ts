@@ -87,7 +87,7 @@ export type LifecycleCardZeroReason =
   | "won_counted_on_ledger";
 
 export type LifecycleValueKind = "contacted_expected_value" | "expected_value" | "won_value";
-export type EntryRateSource = "measured" | "default_entry";
+export type EntryRateSource = "measured" | "fleet_measured" | "default_entry";
 
 export interface LifecycleCard {
   humanId: string;

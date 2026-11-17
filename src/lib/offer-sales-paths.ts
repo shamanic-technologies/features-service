@@ -54,7 +54,9 @@
  *
  *   costPerOutcome = the best MATURE workflow's net mature cost per outcome (above)        `workflow`
  *                  > the channel's MEASURED fleet cost per outcome on the leg, when real
- *                    spend exists (runs-service, `/public/stats/outcome-prices` legs)     `fleet_measured`
+ *                    spend exists (runs-service, `/public/stats/outcome-prices` legs), else the
+ *                    catalogue's measured expected cost of the (leg, channel) (`mergeFleetLegCosts`,
+ *                    MEASURED-BEFORE-DEFAULT-1117: a measured figure always beats a default) `fleet_measured`
  *                  > the seeded `DEFAULT_COST_PER_OUTCOME_USD` for (channel, leg)        `default`
  *
  *   So a managed leg never yields `leg_cost_unavailable` merely because no workflow is active or
@@ -536,6 +538,18 @@ export function legChannelsForScope(
 ): SalesPathChannelInput[] {
   if (scope === "ticked") return platformChannelsForLeg(channels, legKey, managed);
   return channels.filter((c) => shortlist.has(c.slug) && c.legKeys.includes(legKey));
+}
+
+/**
+ * PURE (MEASURED-BEFORE-DEFAULT-1117): the fleet rung's costs, one map: the outcome-prices build's measured cost of a
+ * (leg, channel) first, else the catalogue's measured expected cost of it (`lib/agent-catalogue.ts` `measuredLegCostsOf`).
+ * Only measured figures enter: a default never rides this rung.
+ */
+export function mergeFleetLegCosts(outcomePrices: ReadonlyMap<string, number>, catalogueMeasured: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [k, v] of catalogueMeasured) if (usable(v)) out.set(k, v);
+  for (const [k, v] of outcomePrices) if (usable(v)) out.set(k, v);
+  return out;
 }
 
 /** PURE: the cost cascade for one (leg, channel) — workflow > fleet measured > default. */

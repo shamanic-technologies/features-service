@@ -57,6 +57,7 @@ import {
   type ResolvedPath,
 } from "./revenue-engine.js";
 import { DEFAULT_ENTRY_RATE_PCT } from "./default-leg-rates.js";
+import { fleetLegRatePct, type FleetLegRates } from "./fleet-leg-rates.js";
 
 export { ENGAGED_SIGNALS };
 
@@ -70,6 +71,23 @@ export const DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL: Readonly<Record<string, nu
   ...(DEFAULT_ENTRY_RATE_PCT.conversation !== undefined ? { positiveReply: DEFAULT_ENTRY_RATE_PCT.conversation } : {}),
   ...(DEFAULT_ENTRY_RATE_PCT.website_visit !== undefined ? { clicked: DEFAULT_ENTRY_RATE_PCT.website_visit } : {}),
 };
+
+/**
+ * PURE (MEASURED-BEFORE-DEFAULT-1117): the FLEET's measured cold-email entry rate per engine signal (outcome prices'
+ * conversion of the route's leg on cold email), the rung before `DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL`. A signal the
+ * fleet never measured is absent.
+ */
+export function fleetContactedEntryRatesBySignal(fleet: FleetLegRates): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [signal, legKey] of Object.entries(ROUTE_LEG)) {
+    const r = fleetLegRatePct(fleet, legKey, CONTACTED_ENTRY_CHANNEL_SLUG);
+    if (r !== null) out[signal] = r;
+  }
+  return out;
+}
+
+/** The channel the seeded contacted entry rates benchmark (cold email). */
+const CONTACTED_ENTRY_CHANNEL_SLUG = "sales-cold-email-outreach";
 
 /** The funnel step each entry route lands on, in the catalogue's own wording. */
 const ROUTE_STEP: Record<string, string> = {
