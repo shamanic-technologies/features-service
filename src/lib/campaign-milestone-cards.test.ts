@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { milestoneChainOf, milestoneCardsOf, cumulativeFromDaily, type MilestoneCardInput } from "./campaign-milestone-cards.js";
+import { milestoneChainOf, milestoneCardsOf, cumulativeFromDaily, withProducedMilestones, type MilestoneCardInput } from "./campaign-milestone-cards.js";
 import { unconstrainedSchedule } from "./spend-capacity.js";
 import { parseCampaignLedgerUnits, sumLedgerUnits } from "./campaign-ledger-units-client.js";
 
@@ -82,5 +82,38 @@ describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", ()
     expect(s.byOutcome.get("threads_post_published")?.get("2026-11-05")).toBe(3);
     expect(s.daysMissing).toEqual(["2026-11-06"]);
     expect(cumulativeFromDaily(new Map([["2026-11-06", 1]]), "2026-11-05")).toEqual([]);
+  });
+});
+
+// MILESTONES-CONTACTED-1117: one rule for every campaign, read off the ledger and the outcome rung catalogue.
+describe("withProducedMilestones", () => {
+  const rank: Record<string, number> = { lead_found: 1, message_sent: 2, email_sent: 2, conversation: 3, meeting_booked: 5, paid_client: 7 };
+  const rankOf = (k: string) => rank[k] ?? null;
+  const chain = [
+    { step: "lead_found", unitCampaignIds: ["src"] },
+    { step: "conversation", unitCampaignIds: ["mail"] },
+    { step: "paid_client", unitCampaignIds: ["team", "follow"] },
+  ];
+  it("inserts every produced outcome ranked strictly between two milestones, lowest rung first, before the later one", () => {
+    const produced = new Map([
+      ["src", new Set(["email_checked", "lead_found"])],
+      ["mail", new Set(["message_written", "message_sent", "email_sent", "conversation"])],
+      ["follow", new Set(["message_sent", "meeting_booked"])],
+    ]);
+    const out = withProducedMilestones(chain, produced, rankOf, new Set(["conversation"]));
+    expect(out.map((m) => [m.step, m.producedBy])).toEqual([
+      ["lead_found", null],
+      ["email_sent", ["mail"]],
+      ["message_sent", ["mail"]],
+      ["conversation", null],
+      // message_sent (rung 2) is below Positive reply (3): never placed between it and the Target.
+      ["meeting_booked", ["team", "follow"]],
+      ["paid_client", null],
+    ]);
+  });
+  it("an outcome already counted by a milestone, or a milestone with no rung, adds nothing", () => {
+    const produced = new Map([["mail", new Set(["message_sent"])]]);
+    expect(withProducedMilestones(chain, produced, rankOf, new Set(["message_sent"])).map((m) => m.step)).toEqual(["lead_found", "conversation", "paid_client"]);
+    expect(withProducedMilestones(chain, produced, (k) => (k === "lead_found" ? null : rankOf(k)), new Set()).map((m) => m.step)).toEqual(["lead_found", "conversation", "paid_client"]);
   });
 });

@@ -63,8 +63,45 @@ export function milestoneChainOf(allUnits: readonly UnitEdge[], target: string |
   });
 }
 
+/**
+ * PURE (MILESTONES-CONTACTED-1117, owner 2026-11-17 « Ajoute ça »: Wide Email read Lead found 4,157 -> Positive reply 2,
+ * the 3,734 people its cold email part reached were nowhere). Between two milestones of the chain, every outcome the units
+ * landing on the later one PRODUCED (`producedByUnit`: ledger keys with Units > 0) whose Lifecycle rung (`rankOf`, the
+ * outcome rung catalogue) stands STRICTLY between the two milestones' rungs is a milestone of its own, placed before the
+ * later one (lowest rung first, then key). The first milestone's lower bound is Start (rank 0). A rung-less outcome
+ * (`none`: a message written, an email checked) or one on a milestone's own rung is no milestone; an outcome already
+ * counted by a milestone (`counted`) is never counted twice. ONE rule for every campaign: never an outcome or a channel named.
+ * `producedBy` = the units that produced it (the units landing on the later milestone); null on a chain milestone.
+ */
+export function withProducedMilestones(
+  chain: ReadonlyArray<{ step: string; unitCampaignIds: string[] }>,
+  producedByUnit: ReadonlyMap<string, ReadonlySet<string>>,
+  rankOf: (outcomeKey: string) => number | null,
+  counted: ReadonlySet<string>,
+): Array<{ step: string; unitCampaignIds: string[]; producedBy: string[] | null }> {
+  const onChain = new Set(chain.map((m) => m.step));
+  const out: Array<{ step: string; unitCampaignIds: string[]; producedBy: string[] | null }> = [];
+  chain.forEach((m, i) => {
+    const lower = i === 0 ? 0 : rankOf(chain[i - 1]!.step);
+    const upper = rankOf(m.step);
+    if (lower !== null && upper !== null) {
+      const keys = new Set(m.unitCampaignIds.flatMap((id) => [...(producedByUnit.get(id) ?? [])]));
+      const between = [...keys]
+        .filter((k) => !onChain.has(k) && !counted.has(k))
+        .map((k) => ({ k, r: rankOf(k) }))
+        .filter((x): x is { k: string; r: number } => x.r !== null && x.r > lower && x.r < upper)
+        .sort((a, b) => a.r - b.r || a.k.localeCompare(b.k));
+      for (const { k } of between) out.push({ step: k, unitCampaignIds: [], producedBy: [...m.unitCampaignIds] });
+    }
+    out.push({ step: m.step, unitCampaignIds: m.unitCampaignIds, producedBy: null });
+  });
+  return out;
+}
+
 export interface MilestoneCardInput {
   step: string;
+  /** MILESTONES-CONTACTED-1117: an outcome the units landing on the next milestone produced on the way (no unit lands on it). */
+  producedOnTheWay?: boolean;
   label: string;
   lifecycleRung: string | null;
   /** Units of this step the campaign's runs produced, per UTC day (ledger); empty when none declared one. */
@@ -86,6 +123,8 @@ export interface MilestoneCard {
   label: string;
   lifecycleRung: string | null;
   isTarget: boolean;
+  /** MILESTONES-CONTACTED-1117: produced on the way by the units landing on the next milestone (no unit lands here). */
+  producedOnTheWay: boolean;
   count: number | null;
   countSource: "ledger" | null;
   countUnavailableReason: string | null;
@@ -176,6 +215,7 @@ export function milestoneCardsOf(input: {
       label: m.label,
       lifecycleRung: m.lifecycleRung,
       isTarget,
+      producedOnTheWay: m.producedOnTheWay === true,
       count: c.count,
       countSource: c.source,
       countUnavailableReason: c.count === null ? c.reason ?? "not_counted_for_this_campaign" : null,
