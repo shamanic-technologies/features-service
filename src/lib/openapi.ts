@@ -10447,6 +10447,84 @@ registry.registerPath({
   },
 });
 
+// ── OUTCOME-FORECAST-1117, SILVER: what is measured on the ledger's Units, per scope ──
+const OutcomeDistributionSchema = z.object({
+  n: z.number().describe("Sample size."),
+  mean: z.number(),
+  median: z.number(),
+  p10: z.number(),
+  p25: z.number(),
+  p75: z.number(),
+  p90: z.number(),
+});
+const OutcomeRateEstimateSchema = z.object({
+  mean: z.number().describe("Units of `to` per Unit of `from` (a rate: it can pass 1), the posterior's mean."),
+  median: z.number(),
+  p10: z.number(),
+  p25: z.number(),
+  p75: z.number(),
+  p90: z.number(),
+  shape: z.number().describe("The posterior Gamma(shape, rate): prior + this scope's `to` Units over its effective exposure."),
+  rate: z.number(),
+});
+const OutcomeDelayDistributionSchema = z.object({
+  n: z.number().describe("Pairs measured: a `to` Unit and the latest `from` Unit of the same subject at or before it."),
+  meanHours: z.number(),
+  medianHours: z.number(),
+  p10Hours: z.number(),
+  p25Hours: z.number(),
+  p75Hours: z.number(),
+  p90Hours: z.number(),
+  cdf: z.array(z.object({ hours: z.number(), share: z.number() })).describe("The measured curve: share of pairs whose delay is under `hours`."),
+});
+const OutcomeTransitionStatSchema = z.object({
+  fromKey: z.string(),
+  toKey: z.string(),
+  fromUnits: z.number().describe("Units of `fromKey` in the scope."),
+  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the same subject, both in the scope."),
+  exposure: z.number().describe("Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."),
+  censoredBy: z.enum(["campaign", "brand", "fleet"]).nullable().describe("Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."),
+  yield: OutcomeRateEstimateSchema,
+  prior: z.object({ shape: z.number(), rate: z.number() }).describe("The fleet's Gamma prior on this transition (empirical Bayes over every campaign); `rate` = the `from` Units it weighs."),
+  delay: OutcomeDelayDistributionSchema.nullable().describe("Null = no pair measured in this scope."),
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/outcome-distributions",
+  summary: "Silver: cost per Unit, yield and delay measured on the ledger's Units, per scope (internal, api-key, staff)",
+  description:
+    "OUTCOME-FORECAST-1117. What is MEASURED, no hypothesis, on our copy of the produced Units of runs-service's ledger, at one scope (`campaign` = a sales funnel campaign, `brand`, `fleet`): per outcome the distribution of the production cost the ledger states on each Unit; per transition (any two outcomes sharing a subject) the yield (Units of `to` per Unit of `from`, Gamma-Poisson empirical Bayes on censored exposure) and the delay distribution. One mechanism for every outcome. Stored by a daily sweep, never computed on the read.",
+  tags: ["Internal"],
+  request: {
+    query: z.object({
+      scope: z.enum(["fleet", "brand", "campaign"]),
+      scopeId: z.string().describe("The brand id or the sales funnel campaign id; not read for `fleet`.").optional(),
+      fromKey: z.string().describe("One transition's `from` outcome ('' = cost rows only).").optional(),
+      toKey: z.string().describe("One outcome: its cost row and the transitions landing on it.").optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The stored distributions of the scope",
+      content: {
+        "application/json": {
+          schema: z.object({
+            scope: z.enum(["fleet", "brand", "campaign"]),
+            scopeId: z.string(),
+            computedAt: z.string().describe("When the sweep that stored these ran."),
+            unitsHeld: z.number().describe("Produced Units in our copy of the ledger (fleet)."),
+            unitCosts: z.array(z.object({ outcomeKey: z.string(), units: z.number(), costUsd: OutcomeDistributionSchema.describe("Production cost per Unit as the ledger states it, USD, net basis (what the org pays)."), meanGrossCostUsd: z.number() })),
+            transitions: z.array(OutcomeTransitionStatSchema),
+          }),
+        },
+      },
+    },
+    400: { description: "scope_unrecognised | scope_id_missing" },
+    502: { description: "outcome_distributions_unreadable" },
+    503: { description: "outcome_distributions_not_built_yet" },
+  },
+});
+
 const generator = new OpenApiGeneratorV3(registry.definitions);
 
 export const openApiDocument = generator.generateDocument({

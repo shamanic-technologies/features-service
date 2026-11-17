@@ -82205,6 +82205,333 @@
           }
         }
       }
+    },
+    "/internal/outcome-distributions": {
+      "get": {
+        "summary": "Silver: cost per Unit, yield and delay measured on the ledger's Units, per scope (internal, api-key, staff)",
+        "description": "OUTCOME-FORECAST-1117. What is MEASURED, no hypothesis, on our copy of the produced Units of runs-service's ledger, at one scope (`campaign` = a sales funnel campaign, `brand`, `fleet`): per outcome the distribution of the production cost the ledger states on each Unit; per transition (any two outcomes sharing a subject) the yield (Units of `to` per Unit of `from`, Gamma-Poisson empirical Bayes on censored exposure) and the delay distribution. One mechanism for every outcome. Stored by a daily sweep, never computed on the read.",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fleet",
+                "brand",
+                "campaign"
+              ]
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The brand id or the sales funnel campaign id; not read for `fleet`."
+            },
+            "required": false,
+            "description": "The brand id or the sales funnel campaign id; not read for `fleet`.",
+            "name": "scopeId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "One transition's `from` outcome ('' = cost rows only)."
+            },
+            "required": false,
+            "description": "One transition's `from` outcome ('' = cost rows only).",
+            "name": "fromKey",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "One outcome: its cost row and the transitions landing on it."
+            },
+            "required": false,
+            "description": "One outcome: its cost row and the transitions landing on it.",
+            "name": "toKey",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored distributions of the scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "fleet",
+                        "brand",
+                        "campaign"
+                      ]
+                    },
+                    "scopeId": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string",
+                      "description": "When the sweep that stored these ran."
+                    },
+                    "unitsHeld": {
+                      "type": "number",
+                      "description": "Produced Units in our copy of the ledger (fleet)."
+                    },
+                    "unitCosts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "outcomeKey": {
+                            "type": "string"
+                          },
+                          "units": {
+                            "type": "number"
+                          },
+                          "costUsd": {
+                            "type": "object",
+                            "properties": {
+                              "n": {
+                                "type": "number",
+                                "description": "Sample size."
+                              },
+                              "mean": {
+                                "type": "number"
+                              },
+                              "median": {
+                                "type": "number"
+                              },
+                              "p10": {
+                                "type": "number"
+                              },
+                              "p25": {
+                                "type": "number"
+                              },
+                              "p75": {
+                                "type": "number"
+                              },
+                              "p90": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "n",
+                              "mean",
+                              "median",
+                              "p10",
+                              "p25",
+                              "p75",
+                              "p90"
+                            ],
+                            "description": "Production cost per Unit as the ledger states it, USD, net basis (what the org pays)."
+                          },
+                          "meanGrossCostUsd": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "outcomeKey",
+                          "units",
+                          "costUsd",
+                          "meanGrossCostUsd"
+                        ]
+                      }
+                    },
+                    "transitions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fromKey": {
+                            "type": "string"
+                          },
+                          "toKey": {
+                            "type": "string"
+                          },
+                          "fromUnits": {
+                            "type": "number",
+                            "description": "Units of `fromKey` in the scope."
+                          },
+                          "toUnits": {
+                            "type": "number",
+                            "description": "Units of `toKey` paired with a `fromKey` Unit of the same subject, both in the scope."
+                          },
+                          "exposure": {
+                            "type": "number",
+                            "description": "Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."
+                          },
+                          "censoredBy": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "campaign",
+                              "brand",
+                              "fleet",
+                              null
+                            ],
+                            "description": "Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."
+                          },
+                          "yield": {
+                            "type": "object",
+                            "properties": {
+                              "mean": {
+                                "type": "number",
+                                "description": "Units of `to` per Unit of `from` (a rate: it can pass 1), the posterior's mean."
+                              },
+                              "median": {
+                                "type": "number"
+                              },
+                              "p10": {
+                                "type": "number"
+                              },
+                              "p25": {
+                                "type": "number"
+                              },
+                              "p75": {
+                                "type": "number"
+                              },
+                              "p90": {
+                                "type": "number"
+                              },
+                              "shape": {
+                                "type": "number",
+                                "description": "The posterior Gamma(shape, rate): prior + this scope's `to` Units over its effective exposure."
+                              },
+                              "rate": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "mean",
+                              "median",
+                              "p10",
+                              "p25",
+                              "p75",
+                              "p90",
+                              "shape",
+                              "rate"
+                            ]
+                          },
+                          "prior": {
+                            "type": "object",
+                            "properties": {
+                              "shape": {
+                                "type": "number"
+                              },
+                              "rate": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "shape",
+                              "rate"
+                            ],
+                            "description": "The fleet's Gamma prior on this transition (empirical Bayes over every campaign); `rate` = the `from` Units it weighs."
+                          },
+                          "delay": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "n": {
+                                "type": "number",
+                                "description": "Pairs measured: a `to` Unit and the latest `from` Unit of the same subject at or before it."
+                              },
+                              "meanHours": {
+                                "type": "number"
+                              },
+                              "medianHours": {
+                                "type": "number"
+                              },
+                              "p10Hours": {
+                                "type": "number"
+                              },
+                              "p25Hours": {
+                                "type": "number"
+                              },
+                              "p75Hours": {
+                                "type": "number"
+                              },
+                              "p90Hours": {
+                                "type": "number"
+                              },
+                              "cdf": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "hours": {
+                                      "type": "number"
+                                    },
+                                    "share": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "hours",
+                                    "share"
+                                  ]
+                                },
+                                "description": "The measured curve: share of pairs whose delay is under `hours`."
+                              }
+                            },
+                            "required": [
+                              "n",
+                              "meanHours",
+                              "medianHours",
+                              "p10Hours",
+                              "p25Hours",
+                              "p75Hours",
+                              "p90Hours",
+                              "cdf"
+                            ],
+                            "description": "Null = no pair measured in this scope."
+                          }
+                        },
+                        "required": [
+                          "fromKey",
+                          "toKey",
+                          "fromUnits",
+                          "toUnits",
+                          "exposure",
+                          "censoredBy",
+                          "yield",
+                          "prior",
+                          "delay"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "scope",
+                    "scopeId",
+                    "computedAt",
+                    "unitsHeld",
+                    "unitCosts",
+                    "transitions"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "scope_unrecognised | scope_id_missing"
+          },
+          "502": {
+            "description": "outcome_distributions_unreadable"
+          },
+          "503": {
+            "description": "outcome_distributions_not_built_yet"
+          }
+        }
+      }
     }
   }
 }

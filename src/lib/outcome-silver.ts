@@ -1,0 +1,418 @@
+/**
+ * OUTCOME-FORECAST-1117, SILVER (owner 2026-11-17: « pour les coûts la moyenne, la médiane, les ranges de percentile », the
+ * same for the duration an outcome takes; « découper ces chiffres et hypothèses par layers »). PURE.
+ *
+ * What is MEASURED about the Units of the ledger, with NO hypothesis, at three scopes (a campaign, a brand, the fleet):
+ *  1. COST PER UNIT of an outcome: the distribution of the production cost the ledger states on each Unit.
+ *  2. YIELD of a transition (Units of `to` per Unit of `from`): a rate, never a probability (a lead found holds several
+ *     messages sent). Estimated the standard way for a count over an exposure: Gamma-Poisson (empirical Bayes), the prior
+ *     fitted on every campaign of the fleet by maximum marginal likelihood (negative binomial); CENSORING by effective
+ *     exposure (a `from` Unit of age a counts for F(a), F = the transition's own measured delay curve: the actuarial
+ *     estimator `lib/outcome-estimates.ts` applies to positive replies only).
+ *  3. DELAY of a transition: the time between a `to` Unit and the latest `from` Unit of the SAME subject at or before it.
+ *
+ * ONE mechanism for every outcome: no outcome, channel or Engine is named here (guard `outcome-silver.test.ts`).
+ * The rows come from our copy of the ledger's Units (`outcome_units`, `lib/outcome-units-copy.ts`), grouped by SQL only
+ * (`lib/outcome-silver-store.ts`); every figure is computed here.
+ */
+import { lnGamma } from "./outcome-estimates.js";
+
+// ── Distributions ──────────────────────────────────────────────────────────────────────────────────
+
+export interface WeightedPoint {
+  value: number;
+  weight: number;
+}
+
+export interface Distribution {
+  /** Sample size (Σ weights). */
+  n: number;
+  mean: number;
+  median: number;
+  p10: number;
+  p25: number;
+  p75: number;
+  p90: number;
+}
+
+/** PURE. The q-quantile of weighted points (lower weighted quantile: the smallest value whose cumulative weight reaches q). */
+export function weightedQuantile(sorted: readonly WeightedPoint[], total: number, q: number): number {
+  let acc = 0;
+  for (const p of sorted) {
+    acc += p.weight;
+    if (acc >= q * total - 1e-9) return p.value;
+  }
+  return sorted[sorted.length - 1]!.value;
+}
+
+/** PURE. Mean, median and percentiles of weighted points; null without a sample. `exactSum` = Σ value when the points are binned. */
+export function distributionOf(points: readonly WeightedPoint[], exactSum?: number): Distribution | null {
+  const pts = points.filter((p) => p.weight > 0 && Number.isFinite(p.value)).sort((a, b) => a.value - b.value);
+  const n = pts.reduce((a, p) => a + p.weight, 0);
+  if (n <= 0) return null;
+  const q = (x: number) => weightedQuantile(pts, n, x);
+  return { n, mean: (exactSum ?? pts.reduce((a, p) => a + p.value * p.weight, 0)) / n, median: q(0.5), p10: q(0.1), p25: q(0.25), p75: q(0.75), p90: q(0.9) };
+}
+
+// ── Delays ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** Upper edges of the delay bins, in hours (the SQL `width_bucket` thresholds): fine below a day, then days, weeks, months. */
+export const DELAY_EDGES_HOURS: readonly number[] = [0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 36, 48, 72, 96, 120, 144, 168, 240, 336, 504, 720, 1080, 1440, 2160, 2880, 4320, 8760];
+/** The open last bin (a year and more) is read as ending here. */
+const LAST_BIN_END_HOURS = 2 * 8760;
+
+/** PURE. [from, to) hours of a `width_bucket` bin index (0 = under the first edge). */
+export function delayBinRange(bin: number): [number, number] {
+  const e = DELAY_EDGES_HOURS;
+  return [bin <= 0 ? 0 : e[Math.min(bin, e.length) - 1]!, bin >= e.length ? LAST_BIN_END_HOURS : e[Math.max(bin, 0)]!];
+}
+
+export interface DelayDistribution {
+  /** Pairs measured (a `to` Unit and the `from` Unit it came after). */
+  n: number;
+  meanHours: number;
+  medianHours: number;
+  p10Hours: number;
+  p25Hours: number;
+  p75Hours: number;
+  p90Hours: number;
+  /** The measured curve: share of pairs whose delay is under `hours`, one point per edge of a bin that holds pairs. */
+  cdf: Array<{ hours: number; share: number }>;
+}
+
+/** PURE. A transition's delay distribution from its binned pairs (quantiles interpolated inside the bin; the mean is exact). */
+export function delayDistributionOf(bins: ReadonlyMap<number, number>, sumHours: number): DelayDistribution | null {
+  const rows = [...bins].filter(([, n]) => n > 0).sort((a, b) => a[0] - b[0]);
+  const n = rows.reduce((a, [, c]) => a + c, 0);
+  if (n <= 0) return null;
+  const quantile = (q: number): number => {
+    let acc = 0;
+    for (const [bin, c] of rows) {
+      if (acc + c >= q * n - 1e-9) {
+        const [lo, hi] = delayBinRange(bin);
+        return lo + (hi - lo) * Math.min(1, Math.max(0, (q * n - acc) / c));
+      }
+      acc += c;
+    }
+    return delayBinRange(rows[rows.length - 1]![0])[1];
+  };
+  // One point per edge of a bin holding pairs (its lower edge too when the bin before it is empty: nothing arrives there).
+  let acc = 0;
+  const cdf: Array<{ hours: number; share: number }> = [];
+  for (const [bin, c] of rows) {
+    const [lo, hi] = delayBinRange(bin);
+    if (lo > (cdf[cdf.length - 1]?.hours ?? 0)) cdf.push({ hours: lo, share: acc / n });
+    cdf.push({ hours: hi, share: (acc += c) / n });
+  }
+  return { n, meanHours: sumHours / n, medianHours: quantile(0.5), p10Hours: quantile(0.1), p25Hours: quantile(0.25), p75Hours: quantile(0.75), p90Hours: quantile(0.9), cdf };
+}
+
+/** PURE. The share of a transition's `to` Units arrived within `hours` of their `from` Unit (linear between the curve's points). */
+export function delayCdfAt(cdf: ReadonlyArray<{ hours: number; share: number }>, hours: number): number {
+  if (cdf.length === 0) return 1;
+  if (hours <= 0) return 0;
+  let prevH = 0;
+  let prevS = 0;
+  for (const p of cdf) {
+    if (hours <= p.hours) return prevS + (p.share - prevS) * ((hours - prevH) / (p.hours - prevH));
+    prevH = p.hours;
+    prevS = p.share;
+  }
+  return 1;
+}
+
+// ── Yields (Gamma-Poisson) ─────────────────────────────────────────────────────────────────────────
+
+/** Regularized lower incomplete gamma P(a, x) (Numerical Recipes: series below a + 1, continued fraction above). */
+export function gammaP(a: number, x: number): number {
+  if (x <= 0) return 0;
+  const gln = lnGamma(a);
+  if (x < a + 1) {
+    let ap = a;
+    let sum = 1 / a;
+    let del = sum;
+    for (let i = 0; i < 1000; i++) {
+      ap += 1;
+      del *= x / ap;
+      sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-14) break;
+    }
+    return Math.min(1, sum * Math.exp(-x + a * Math.log(x) - gln));
+  }
+  let b = x + 1 - a;
+  let c = 1 / 1e-300;
+  let d = 1 / b;
+  let h = d;
+  for (let i = 1; i < 1000; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b;
+    if (Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an / c;
+    if (Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-14) break;
+  }
+  return Math.max(0, 1 - Math.exp(-x + a * Math.log(x) - gln) * h);
+}
+
+/** PURE. The p-quantile of Gamma(shape, rate) (bisection on the incomplete gamma). */
+export function gammaQuantile(p: number, shape: number, rate: number): number {
+  let lo = 0;
+  let hi = Math.max(1, shape) * 4;
+  while (gammaP(shape, hi) < p) hi *= 2;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (gammaP(shape, mid) < p) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / (2 * rate);
+}
+
+/** One group's evidence on a transition: `to` Units over the effective exposure of its `from` Units. */
+export interface RateEvidence {
+  toUnits: number;
+  exposure: number;
+}
+
+export interface GammaPrior {
+  shape: number;
+  /** In exposure units: the prior weighs as much as this many `from` Units. */
+  rate: number;
+}
+
+/**
+ * PURE. The fleet's Gamma prior on a transition's rate, empirical Bayes: mean = the pooled rate (half a Unit over the pooled
+ * exposure when nothing was ever made: never a zero rate), strength = the value maximizing the negative binomial marginal
+ * likelihood of every group (grid on log strength). Fewer than two groups = the weakest prior (half a Unit).
+ */
+export function fitGammaPrior(groups: readonly RateEvidence[]): GammaPrior {
+  const g = groups.filter((x) => x.exposure > 0);
+  const E = g.reduce((a, x) => a + x.exposure, 0);
+  const Y = g.reduce((a, x) => a + x.toUnits, 0);
+  if (E <= 0) return { shape: 0.5, rate: 0.5 };
+  const m = Math.max(Y, 0.5) / E;
+  const weakest: GammaPrior = { shape: 0.5, rate: 0.5 / m };
+  if (g.length < 2) return weakest;
+  const logLik = (rate: number) => {
+    const shape = m * rate;
+    return g.reduce((acc, x) => acc + lnGamma(x.toUnits + shape) - lnGamma(shape) + shape * Math.log(rate / (rate + x.exposure)) + x.toUnits * Math.log(x.exposure / (rate + x.exposure)), 0);
+  };
+  let best = weakest.rate;
+  let bestLl = -Infinity;
+  const lo = Math.log(weakest.rate);
+  const hi = Math.log(Math.max(weakest.rate * 10, E * 100));
+  for (let i = 0; i <= 200; i++) {
+    const rate = Math.exp(lo + (i / 200) * (hi - lo));
+    const ll = logLik(rate);
+    if (ll > bestLl) {
+      bestLl = ll;
+      best = rate;
+    }
+  }
+  return { shape: m * best, rate: best };
+}
+
+export interface RateEstimate {
+  /** Units of `to` per Unit of `from`: the posterior's mean, median and percentiles. */
+  mean: number;
+  median: number;
+  p10: number;
+  p25: number;
+  p75: number;
+  p90: number;
+  /** The posterior Gamma(shape, rate) itself (a projection draws from it). */
+  shape: number;
+  rate: number;
+}
+
+/** PURE. A group's rate posterior: Gamma(prior.shape + toUnits, prior.rate + exposure). */
+export function rateEstimateOf(e: RateEvidence, prior: GammaPrior): RateEstimate {
+  const shape = prior.shape + e.toUnits;
+  const rate = prior.rate + e.exposure;
+  const q = (p: number) => gammaQuantile(p, shape, rate);
+  return { mean: shape / rate, median: q(0.5), p10: q(0.1), p25: q(0.25), p75: q(0.75), p90: q(0.9), shape, rate };
+}
+
+// ── The Silver build: SQL-grouped rows -> stats per scope ──────────────────────────────────────────
+
+export type SilverScope = "campaign" | "brand" | "fleet";
+export const FLEET_SCOPE_ID = "all";
+
+/** Units of one outcome made on one UTC day by one unit campaign (SQL group). */
+export interface UnitDayRow {
+  outcomeKey: string;
+  campaignId: string | null;
+  brandId: string | null;
+  day: string;
+  units: number;
+}
+/** Units of one outcome by cost (3 significant digits), per unit campaign (SQL group). */
+export interface UnitCostRow {
+  outcomeKey: string;
+  campaignId: string | null;
+  brandId: string | null;
+  costNetCents: number;
+  units: number;
+  sumNetCents: number;
+  sumGrossCents: number;
+}
+/** Pairs of a transition by delay bin, per (unit campaign of `from`, unit campaign of `to`) (SQL group). */
+export interface PairBinRow {
+  fromKey: string;
+  toKey: string;
+  fromCampaignId: string | null;
+  toCampaignId: string | null;
+  brandId: string | null;
+  bin: number;
+  pairs: number;
+  sumHours: number;
+}
+
+export interface UnitCostStat {
+  units: number;
+  /** Production cost per Unit as the ledger states it, in USD on the net basis (what the org pays). */
+  costUsd: Distribution;
+  /** The gross mean beside it (before the org's discount). */
+  meanGrossCostUsd: number;
+}
+
+export interface TransitionStat {
+  fromUnits: number;
+  /** `to` Units paired with a `from` Unit of the same subject, both in the scope. */
+  toUnits: number;
+  /** Σ over `from` Units of the share of their `to` Units already due at their age (= fromUnits when no delay is measured). */
+  exposure: number;
+  /** Whose delay curve censored the exposure; null = none measured anywhere (exposure = fromUnits). */
+  censoredBy: SilverScope | null;
+  yield: RateEstimate;
+  /** The fleet prior the estimate starts from (`rate` = the `from` Units it weighs). */
+  prior: GammaPrior;
+  delay: DelayDistribution | null;
+}
+
+export interface SilverStatRow {
+  scope: SilverScope;
+  scopeId: string;
+  /** '' on a cost row. */
+  fromKey: string;
+  toKey: string;
+  sampleSize: number;
+  body: { kind: "unit_cost"; stat: UnitCostStat } | { kind: "transition"; stat: TransitionStat };
+}
+
+/** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
+export const MIN_DELAY_PAIRS = 10;
+
+const hoursBetweenDays = (day: string, today: string) => ((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 3_600_000) + 12;
+
+/**
+ * PURE. Every Silver stat from the SQL groups. `funnelOf` = the sales funnel campaign of a unit campaign (campaign scope is
+ * the funnel campaign: its Units come from several unit campaigns); `today` = the UTC day ages are counted to.
+ */
+export function buildSilverStats(input: {
+  unitDays: readonly UnitDayRow[];
+  unitCosts: readonly UnitCostRow[];
+  pairBins: readonly PairBinRow[];
+  funnelOf: (unitCampaignId: string) => string | null;
+  today: string;
+}): SilverStatRow[] {
+  const { funnelOf, today } = input;
+  const funnel = (c: string | null) => (c === null ? null : funnelOf(c));
+  const scopesOf = (campaignId: string | null, brandId: string | null): string[] => {
+    const out = [`fleet\u0000${FLEET_SCOPE_ID}`];
+    if (brandId !== null) out.push(`brand\u0000${brandId}`);
+    const f = funnel(campaignId);
+    if (f !== null) out.push(`campaign\u0000${f}`);
+    return out;
+  };
+  const brandOfFunnel = new Map<string, string>();
+  for (const r of input.unitDays) {
+    const f = funnel(r.campaignId);
+    if (f !== null && r.brandId !== null) brandOfFunnel.set(f, r.brandId);
+  }
+  const rows: SilverStatRow[] = [];
+
+  // 1. Cost per Unit.
+  const costs = new Map<string, { pts: WeightedPoint[]; net: number; gross: number }>();
+  for (const r of input.unitCosts)
+    for (const s of scopesOf(r.campaignId, r.brandId)) {
+      const k = `${s}\u0000${r.outcomeKey}`;
+      const c = costs.get(k) ?? costs.set(k, { pts: [], net: 0, gross: 0 }).get(k)!;
+      c.pts.push({ value: r.costNetCents / 100, weight: r.units });
+      c.net += r.sumNetCents;
+      c.gross += r.sumGrossCents;
+    }
+  for (const [k, c] of costs) {
+    const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
+    const d = distributionOf(c.pts, c.net / 100);
+    if (d) rows.push({ scope, scopeId, fromKey: "", toKey: outcomeKey, sampleSize: d.n, body: { kind: "unit_cost", stat: { units: d.n, costUsd: d, meanGrossCostUsd: c.gross / 100 / d.n } } });
+  }
+
+  // 2. `from` Units per scope, outcome and day.
+  const fromDays = new Map<string, Map<string, number>>();
+  for (const r of input.unitDays)
+    for (const s of scopesOf(r.campaignId, r.brandId)) {
+      const k = `${s}\u0000${r.outcomeKey}`;
+      const days = fromDays.get(k) ?? fromDays.set(k, new Map()).get(k)!;
+      days.set(r.day, (days.get(r.day) ?? 0) + r.units);
+    }
+
+  // 3. Pairs per scope and transition (a campaign-scope pair has BOTH Units in the funnel campaign).
+  const pairs = new Map<string, { bins: Map<number, number>; sumHours: number }>();
+  for (const r of input.pairBins) {
+    const scopes = [`fleet\u0000${FLEET_SCOPE_ID}`];
+    if (r.brandId !== null) scopes.push(`brand\u0000${r.brandId}`);
+    const f = funnel(r.toCampaignId);
+    if (f !== null && funnel(r.fromCampaignId) === f) scopes.push(`campaign\u0000${f}`);
+    for (const s of scopes) {
+      const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
+      const p = pairs.get(k) ?? pairs.set(k, { bins: new Map(), sumHours: 0 }).get(k)!;
+      p.bins.set(r.bin, (p.bins.get(r.bin) ?? 0) + r.pairs);
+      p.sumHours += r.sumHours;
+    }
+  }
+  const delays = new Map<string, DelayDistribution>();
+  for (const [k, p] of pairs) {
+    const d = delayDistributionOf(p.bins, p.sumHours);
+    if (d) delays.set(k, d);
+  }
+
+  // 4. Each transition the fleet measured, at every scope holding its `from` Units.
+  const transitions = new Set([...pairs.keys()].filter((k) => k.startsWith("fleet\u0000")).map((k) => k.split("\u0000").slice(2).join("\u0000")));
+  for (const t of transitions) {
+    const [fromKey, toKey] = t.split("\u0000") as [string, string];
+    const evidence: Array<{ scope: SilverScope; scopeId: string; fromUnits: number; toUnits: number; exposure: number; censoredBy: SilverScope | null }> = [];
+    for (const [k, days] of fromDays) {
+      const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
+      if (outcomeKey !== fromKey) continue;
+      const own = delays.get(`${scope}\u0000${scopeId}\u0000${t}`);
+      const brandId = scope === "campaign" ? brandOfFunnel.get(scopeId) ?? null : scope === "brand" ? scopeId : null;
+      const brand = brandId !== null ? delays.get(`brand\u0000${brandId}\u0000${t}`) : undefined;
+      const fleet = delays.get(`fleet\u0000${FLEET_SCOPE_ID}\u0000${t}`);
+      // The curve that censors: the finest scope with a sample that is not thin, else the largest sample measured.
+      const ladder: Array<[SilverScope, DelayDistribution | undefined]> = [[scope, own], ["brand", brand], ["fleet", fleet]];
+      const pick = ladder.find(([, d]) => d !== undefined && d.n >= MIN_DELAY_PAIRS) ?? ladder.filter(([, d]) => d !== undefined).sort((a, b) => b[1]!.n - a[1]!.n)[0];
+      const fromUnits = [...days.values()].reduce((a, n) => a + n, 0);
+      const exposure = pick ? [...days].reduce((a, [day, n]) => a + n * delayCdfAt(pick[1]!.cdf, hoursBetweenDays(day, today)), 0) : fromUnits;
+      const p = pairs.get(`${scope}\u0000${scopeId}\u0000${t}`);
+      evidence.push({ scope, scopeId, fromUnits, toUnits: p ? [...p.bins.values()].reduce((a, n) => a + n, 0) : 0, exposure, censoredBy: pick ? pick[0] : null });
+    }
+    const prior = fitGammaPrior(evidence.filter((e) => e.scope === "campaign"));
+    for (const e of evidence) {
+      // The fleet's own row is what a campaign with no evidence can expect: the prior itself, on the fleet's pooled counts.
+      const est = e.scope === "fleet" ? rateEstimateOf({ toUnits: 0, exposure: 0 }, prior) : rateEstimateOf({ toUnits: e.toUnits, exposure: Math.max(e.exposure, 0) }, prior);
+      rows.push({
+        scope: e.scope,
+        scopeId: e.scopeId,
+        fromKey,
+        toKey,
+        sampleSize: e.fromUnits,
+        body: { kind: "transition", stat: { fromUnits: e.fromUnits, toUnits: e.toUnits, exposure: e.exposure, censoredBy: e.censoredBy, yield: est, prior, delay: delays.get(`${e.scope}\u0000${e.scopeId}\u0000${t}`) ?? null } },
+      });
+    }
+  }
+  return rows;
+}

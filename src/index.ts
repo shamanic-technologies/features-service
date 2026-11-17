@@ -47,6 +47,8 @@ import engineStrategyRoutes from "./routes/engine-strategies.js";
 import unitReportsRoutes from "./routes/unit-reports.js";
 import scriptRatingRoutes from "./routes/script-rating.js";
 import campaignEngineScriptsRoutes from "./routes/campaign-engine-scripts.js";
+import outcomeDistributionsRoutes from "./routes/outcome-distributions.js";
+import { startOutcomeSilverLoop } from "./lib/outcome-silver-io.js";
 import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "./routes/script-engines.js";
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
@@ -161,6 +163,7 @@ app.use(engineStrategyRoutes);
 app.use(unitReportsRoutes);
 app.use(scriptRatingRoutes);
 app.use(scriptEnginesRoutes);
+app.use(outcomeDistributionsRoutes);
 app.use(campaignEngineScriptsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
@@ -293,6 +296,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startBulkRunSweep();
         // A campaign whose Engine cannot run is red on Monitoring (NO-BRIEF-UNBLOCK-1111, lib/engine-held-monitor.ts).
         startEngineHeldMonitor();
+        // OUTCOME-FORECAST-1117: the Silver distributions (cost, yield, delay per outcome and scope), five minutes in,
+        // then daily counted from the stored last sweep; never on listen(), never on a read.
+        startOutcomeSilverLoop();
         // Monitoring's board of what the Rating picks per Engine, rebuilt every 15 minutes (SCRIPT-VALUE-RATING-1113-MON).
         startScriptEnginesLoop();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
