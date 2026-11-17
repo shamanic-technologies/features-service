@@ -512,7 +512,8 @@ export function __resetExpectedReturnMemo(): void {
 // a v1 model (priced a leg the fleet measured on its default) is never served after the deploy.
 // v3 (MEASURED-BEFORE-DEFAULT-1117): `inputs.fleetPrices` also carries the catalogue's measured leg costs; a v2 model
 // priced such a leg on its seeded default.
-const modelCellKey = (key: string): string => `expected-model-v3:${key}`;
+// v4 (MEASURED-BEFORE-DEFAULT-1117-OWN): a v3 model could price a leg on a price borrowed from another channel.
+const modelCellKey = (key: string): string => `expected-model-v4:${key}`;
 
 interface StoredModel {
   offerId: string;

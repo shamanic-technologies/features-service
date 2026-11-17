@@ -566,7 +566,10 @@ describe("MEASURED-BEFORE-DEFAULT-1117: every measured rung of a pipe's cost bef
     const measured = withCost(coldEmail({ basis: "flash", costPerOutcomeUsd: 103.76 }), []);
     const defaulted = withCost(pipe("ai-meeting-booking|conversation_to_meeting_booked", "conversation_to_meeting_booked", "conversation", "meeting_booked", null), []);
     const benchmarked = withCost(linkedin(null), []);
-    const m = measuredLegCostsOf({ pipes: new Map([measured, defaulted, benchmarked].map((p) => [p.id, p])) } as never);
+    // A price borrowed from another channel is never this channel's measurement (prod 2026-11-17: 2,188x).
+    const borrowed = withCost(pipe("ai-follow-up-email|start_to_conversation", "start_to_conversation", null, "conversation", null), [sameStep]);
+    expect(borrowed.expectedCost?.source).toBe("same_leg_fleet");
+    const m = measuredLegCostsOf({ pipes: new Map([measured, defaulted, benchmarked, borrowed].map((p) => [p.id, p])) } as never);
     expect([...m]).toEqual([["start_to_conversation|sales-cold-email-outreach", 103.76]]);
   });
 });
