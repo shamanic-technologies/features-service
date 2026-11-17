@@ -211,6 +211,26 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     }
   });
 
+  // MILESTONES-CONTACTED-1117: the campaign page's Milestones read serves each row's expectedReturn off THIS table.
+  it("salesFunnelCampaignTableBody reads the route's very cell: same view, key and shape, the same expectedReturn per row", async () => {
+    servedCachedArgs.length = 0;
+    servedCachedJsonArgs.length = 0;
+    const rows = [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")])];
+    fetchWithRetry.mockImplementation(async () => new Response(JSON.stringify({ salesFunnelCampaigns: rows })));
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: null, costEconomics: { committedCostUsd: 1, roiMultiple: null, unmeasuredReason: null }, maturity: null });
+    const { expectedReturnForFunnelCampaign } = await import("../lib/expected-return.js");
+    const expected = { roiMultiple: 22.0931, basis: "default", assumptions: [{ input: "rate", legKey: "conversation_to_paid_client", basis: "default", source: "default" }], combinationKey: "k", costPerOutcome: null, unavailableReason: null };
+    vi.mocked(expectedReturnForFunnelCampaign).mockResolvedValueOnce(expected as never).mockResolvedValueOnce(expected as never);
+    const served = (await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH)).body;
+    const { salesFunnelCampaignTableBody } = await import("./sales-funnel-campaigns.js");
+    const body = await salesFunnelCampaignTableBody("b1", null, "net", rows as never, { orgId: AUTH["x-org-id"], userId: AUTH["x-user-id"], runId: AUTH["x-run-id"], featureSlug: undefined });
+    const tableCell = servedCachedArgs.find((a) => a.view === "sales-funnel-campaigns") as { scopeKey: string; responseShape?: string } | undefined;
+    expect(tableCell).toMatchObject({ scopeKey: servedCachedJsonArgs[0]!.scopeKey, responseShape: servedCachedJsonArgs[0]!.responseShape });
+    expect(body.salesFunnelCampaigns[0]!.expectedReturn).toEqual(served.salesFunnelCampaigns[0].expectedReturn);
+    expect(served.salesFunnelCampaigns[0].expectedReturn).toEqual(expected);
+  });
+
   it("rowsFingerprint moves with any row field (a stopped campaign is another cell)", async () => {
     const { rowsFingerprint } = await import("./sales-funnel-campaigns.js");
     const a = [FC("fc1", "f1", [])];

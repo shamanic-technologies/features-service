@@ -10067,6 +10067,7 @@ registry.registerPath({
     "otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains " +
     "in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), " +
     "`budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
+    "plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), " +
     "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, " +
     "LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
     "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). " +
@@ -10124,6 +10125,11 @@ registry.registerPath({
                     label: z.string(),
                     lifecycleRung: z.string().nullable(),
                     isTarget: z.boolean(),
+                    producedOnTheWay: z
+                      .boolean()
+                      .describe(
+                        "MILESTONES-CONTACTED-1117: true = an outcome the units landing on the NEXT milestone produced on the way (ledger Units > 0, its Lifecycle rung strictly between the two milestones' rungs, e.g. Message sent between Lead found and Positive reply). Its $ each = those units' spend ÷ its count; its projection = the milestone before it × the yield the ledger measured from it.",
+                      ),
                     count: campaignTargetValue,
                     countSource: z.enum(["ledger"]).nullable().describe("`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included). LEDGER-ONLY-1107: no other basis; an outcome the ledger lacks is null with `countUnavailableReason` (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`, `no_unit_makes_it`)."),
                     countUnavailableReason: z.string().nullable(),
@@ -10146,6 +10152,12 @@ registry.registerPath({
                   })).describe("One card per milestone of the campaign from Start to its Target (the chain of its own units, never the plan line); the last is the Target and carries the row's count."),
                 milestonesUnavailableReason: z.string().nullable(),
                 ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: their counts may still move."),
+                expectedReturn: expectedReturnRef
+                  .nullable()
+                  .describe(
+                    "MILESTONES-CONTACTED-1117: the campaign's EXPECTED return, the very object `/brands/{brandId}/sales-funnel-campaigns` serves as `expectedReturn` on this campaign's row (same cell: same figure, basis and assumptions; never recomputed here). Print it beside `measuredReturn`. Null + `expectedReturnUnavailableReason` only when that table cannot be read.",
+                  ),
+                expectedReturnUnavailableReason: z.string().nullable().describe("`campaigns_table_unreadable`, `campaign_not_in_campaigns_table`; null when `expectedReturn` is served."),
               }),
             ).describe("One row PER CAMPAIGN (the campaign page). Today reads `offerTargets`."),
             offerTargets: z

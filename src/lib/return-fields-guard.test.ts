@@ -17,7 +17,8 @@ import { describe, expect, it } from "vitest";
 // allowed return (its `roiMultiple`, its basis...) is that return's own field, never a second return.
 // `measuredReturn` = a campaign's MEASURED return on its Target (Today, OUTCOME-RUNG-AND-TARGET-1106).
 // realizedReturnUnavailableReason (LEDGER-ONLY-1107) = why the allowed realized return is null, not a return of its own.
-const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "measuredReturn", "realizedReturn", "realizedReturnUnavailableReason", "returns"]);
+// expectedReturnUnavailableReason (MILESTONES-CONTACTED-1117) = why the allowed expected return is null on a campaign-targets row.
+const ALLOWED = new Set(["ExpectedReturn", "expectedReturn", "expectedReturnUnavailableReason", "measuredReturn", "realizedReturn", "realizedReturnUnavailableReason", "returns"]);
 
 // Return-LIKE names that are not a return below a Target, each kept only WHERE it is served today:
 // a sales funnel's / sales path's expected return per paying client (its Target = Paid client), the
