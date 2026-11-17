@@ -40,6 +40,17 @@ export async function loadFleetCell(key: string): Promise<StoredCell | null> {
   }
 }
 
+/** The stored cell, read LOUD (throws when the store cannot be read): for a caller where "unreadable" must never look like "none". */
+export async function loadFleetCellStrict(key: string): Promise<StoredCell | null> {
+  const [row] = await db
+    .select({ bodyText: featureViewSnapshots.bodyText, computedAt: featureViewSnapshots.computedAt })
+    .from(featureViewSnapshots)
+    .where(and(eq(featureViewSnapshots.view, STORE_VIEW), eq(featureViewSnapshots.scopeKey, key)))
+    .limit(1);
+  if (!row || typeof row.bodyText !== "string") return null;
+  return { text: row.bodyText, computedAt: new Date(row.computedAt).getTime() };
+}
+
 /**
  * Claim the rebuild of a stored cell for `claimMs`. FALSE only when another process holds a live claim;
  * TRUE when nothing is stored yet (the first builder wins by writing) or the store cannot be reached

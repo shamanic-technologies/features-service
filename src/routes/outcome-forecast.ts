@@ -17,8 +17,8 @@ import { fetchSalesFunnelCampaigns, type SalesFunnelCampaignRow } from "../lib/s
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { campaignTargetBasis } from "./campaign-targets.js";
-import { readSilverStats, readSilverSweepRecord } from "../lib/outcome-silver-io.js";
-import { FLEET_SCOPE_ID, type TransitionStat } from "../lib/outcome-silver.js";
+import { readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
+import { FLEET_SCOPE_ID, SILVER_RULE, type TransitionStat } from "../lib/outcome-silver.js";
 import { campaignForecastOf } from "../lib/outcome-forecast.js";
 
 const router = Router();
@@ -29,9 +29,10 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
   const now = new Date().toISOString();
   const [basis, campaign, brand, fleet] = await Promise.all([
     campaignTargetBasis(brandId, row, headers, pricing, now),
-    readSilverStats("campaign", row.id),
-    readSilverStats("brand", brandId),
-    readSilverStats("fleet", FLEET_SCOPE_ID),
+    // No sweep on today's rule = nothing measured to read (stats stored under an older rule are never served).
+    silverComputedAt === null ? [] : readSilverStats("campaign", row.id),
+    silverComputedAt === null ? [] : readSilverStats("brand", brandId),
+    silverComputedAt === null ? [] : readSilverStats("fleet", FLEET_SCOPE_ID),
   ]);
   const stats = new Map<string, TransitionStat>();
   for (const r of [...campaign, ...brand, ...fleet]) if (r.body.kind === "transition") stats.set(`${r.scope}\u0000${r.fromKey}\u0000${r.toKey}`, r.body.stat);
@@ -68,10 +69,10 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/outco
     const [rows] = await Promise.all([fetchSalesFunnelCampaigns(brandId, null, headers), assertBrandHeld(brandId, headers)]);
     const row = rows.find((r) => r.id === salesFunnelCampaignId);
     if (!row) return void res.status(404).json({ error: "No sales funnel campaign with this id on this brand", reason: "sales_funnel_campaign_not_found" });
-    const sweep = await readSilverSweepRecord();
+    const sweep = await readCurrentSilverSweep();
     const body = await servedCached({
       view: "campaign-outcome-forecast",
-      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
+      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
       orgId: auth.orgId,
       ttlMs: TTL_MS,
       responseShape: routeResponseShapeFingerprint(PATH),

@@ -18,7 +18,8 @@ import {
   type TransitionStat,
   type UnitCostStat,
 } from "./outcome-silver.js";
-import { unitRowOf } from "./outcome-silver-io.js";
+import { linkPageChanges, linkRowOf, unitRowOf, type LedgerUnitLink } from "./outcome-silver-io.js";
+import { carriedLedgerUnits, sumLedgerUnits } from "./campaign-ledger-units-client.js";
 
 describe("distributionOf (cost per Unit)", () => {
   it("mean, median and percentiles of weighted points, with the sample size", () => {
@@ -96,23 +97,23 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     today,
     funnelOf,
     unitDays: [
-      { outcomeKey: "alpha", campaignId: "u1", brandId: "B1", day: "2026-01-01", units: 100 },
-      { outcomeKey: "alpha", campaignId: "u1", brandId: "B1", day: "2026-02-28", units: 100 },
-      { outcomeKey: "beta", campaignId: "u2", brandId: "B1", day: "2026-01-03", units: 20 },
-      { outcomeKey: "alpha", campaignId: "u3", brandId: "B1", day: "2026-01-01", units: 300 },
-      { outcomeKey: "alpha", campaignId: "u4", brandId: "B2", day: "2026-01-01", units: 600 },
-      { outcomeKey: "beta", campaignId: "u4", brandId: "B2", day: "2026-01-02", units: 30 },
+      { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 100 },
+      { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-02-28", units: 100 },
+      { outcomeKey: "beta", campaignIds: ["u2"], brandId: "B1", day: "2026-01-03", units: 20 },
+      { outcomeKey: "alpha", campaignIds: ["u3"], brandId: "B1", day: "2026-01-01", units: 300 },
+      { outcomeKey: "alpha", campaignIds: ["u4"], brandId: "B2", day: "2026-01-01", units: 600 },
+      { outcomeKey: "beta", campaignIds: ["u4"], brandId: "B2", day: "2026-01-02", units: 30 },
     ],
     unitCosts: [
-      { outcomeKey: "alpha", campaignId: "u1", brandId: "B1", costNetCents: 10, units: 150, sumNetCents: 1500, sumGrossCents: 3000 },
-      { outcomeKey: "alpha", campaignId: "u1", brandId: "B1", costNetCents: 30, units: 50, sumNetCents: 1500, sumGrossCents: 3000 },
-      { outcomeKey: "alpha", campaignId: "u4", brandId: "B2", costNetCents: 50, units: 600, sumNetCents: 30000, sumGrossCents: 30000 },
+      { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", costNetCents: 10, units: 150, sumNetCents: 1500, sumGrossCents: 3000 },
+      { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", costNetCents: 30, units: 50, sumNetCents: 1500, sumGrossCents: 3000 },
+      { outcomeKey: "alpha", campaignIds: ["u4"], brandId: "B2", costNetCents: 50, units: 600, sumNetCents: 30000, sumGrossCents: 30000 },
     ],
     pairBins: [
       // F1: 20 beta Units came 48-72 h after an alpha Unit (alpha in u1, beta in u2: same funnel campaign).
-      { fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: "u2", brandId: "B1", bin: 13, pairs: 20, sumHours: 1200 },
+      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 20, sumHours: 1200 },
       // F3: 30 pairs at 24-36 h.
-      { fromKey: "alpha", toKey: "beta", fromCampaignId: "u4", toCampaignId: "u4", brandId: "B2", bin: 11, pairs: 30, sumHours: 900 },
+      { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u4"], brandId: "B2", bin: 11, pairs: 30, sumHours: 900 },
     ],
   });
   const row = (scope: string, scopeId: string, fromKey: string, toKey: string) => stats.find((r) => r.scope === scope && r.scopeId === scopeId && r.fromKey === fromKey && r.toKey === toKey) as SilverStatRow | undefined;
@@ -168,12 +169,11 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     const s = buildSilverStats({
       today,
       funnelOf,
-      unitDays: [{ outcomeKey: "alpha", campaignId: "u1", brandId: "B1", day: "2026-01-01", units: 10 }],
+      unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 10 }],
       unitCosts: [],
       pairBins: [
-        { fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: "u3", brandId: "B1", bin: 5, pairs: 3, sumHours: 10 },
-        { fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: null, brandId: "B1", bin: 5, pairs: 1, sumHours: 4 },
-        { fromKey: "alpha", toKey: "beta", fromCampaignId: null, toCampaignId: null, brandId: "B1", bin: 5, pairs: 2, sumHours: 7 },
+        { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 5, pairs: 4, sumHours: 14 },
+        { fromKey: "alpha", toKey: "beta", fromCampaignIds: [], brandId: "B1", bin: 5, pairs: 2, sumHours: 7 },
       ],
     });
     const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
@@ -182,6 +182,106 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     expect(t("fleet", FLEET_SCOPE_ID).toUnits).toBe(6);
     // The prior's mean is the FLEET's pooled rate (6 over 10), not the campaigns' alone (4 over 10): Units tagged on no campaign count.
     expect(t("fleet", FLEET_SCOPE_ID).prior.shape / t("fleet", FLEET_SCOPE_ID).prior.rate).toBeCloseTo(0.6, 9);
+  });
+});
+
+describe("UNIT-LINKS-CONSUME-1117: pairs, delays and campaigns come from the ledger's stored links", () => {
+  const funnelOf = (c: string) => ({ u1: "F1", u2: "F1", u3: "F2" })[c] ?? null;
+  const unit = (id: string, outcomeKey: string, at: string, campaignId: string | null, campaignIds: string[], brandIds = ["B1"]) => ({ id, outcomeKey, at, runId: "r", brandIds, campaignId, campaignIds });
+  const link = (over: Partial<LedgerUnitLink> = {}): LedgerUnitLink => ({
+    fromUnit: unit("11111111-1111-4111-8111-111111111111", "alpha", "2026-01-01T00:00:00.000Z", "u1", ["u1"]),
+    toUnit: unit("22222222-2222-4222-8222-222222222222", "beta", "2026-01-03T00:00:00.000Z", null, ["u1"]),
+    delaySeconds: 7200,
+    removedAt: null,
+    ...over,
+  });
+
+  it("the delay kept is the one the link STATES (delaySeconds), never a difference of dates worked out here", () => {
+    // The two dates are 48 h apart; the ledger states 2 h: the stated delay is the one stored.
+    const row = linkRowOf(link());
+    expect(row.delaySeconds).toBe(7200);
+    expect(row).toMatchObject({ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], toCampaignId: null, toCampaignIds: ["u1"], fromBrandId: "B1" });
+    expect(() => linkRowOf(link({ delaySeconds: undefined as unknown as number }))).toThrow(/delaySeconds/);
+    // A consumed Unit of two brands states no single brand.
+    expect(linkRowOf(link({ fromUnit: unit("11111111-1111-4111-8111-111111111111", "alpha", "2026-01-01T00:00:00.000Z", "u1", ["u1"], ["B1", "B2"]) })).fromBrandId).toBeNull();
+  });
+
+  it("a link served with removedAt is dropped; a link served again replaces itself (the last state wins)", () => {
+    const other = { ...link().toUnit, id: "33333333-3333-4333-8333-333333333333" };
+    const page = [
+      link({ delaySeconds: 10 }),
+      link({ toUnit: other }),
+      link({ delaySeconds: 99 }), // served again: moved
+      link({ toUnit: other, removedAt: "2026-02-01T00:00:00.000Z" }), // no longer stands
+    ];
+    const { upserts, removals } = linkPageChanges(page);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]).toMatchObject({ toUnitId: "22222222-2222-4222-8222-222222222222", delaySeconds: 99 });
+    expect(removals).toEqual([{ fromUnitId: "11111111-1111-4111-8111-111111111111", toUnitId: other.id }]);
+    // Removed then served standing again: it stands.
+    expect(linkPageChanges([link({ removedAt: "2026-02-01T00:00:00.000Z" }), link()]).removals).toEqual([]);
+  });
+
+  it("a Unit declared late under no campaign counts for the campaign(s) its link names, once in the brand and the fleet", () => {
+    const s = buildSilverStats({
+      today: "2026-03-01",
+      funnelOf,
+      unitDays: [
+        { outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 50 },
+        // 4 late beta Units carried by u1, 1 carried by BOTH u1 and u3 (two funnel campaigns), 2 carried by none.
+        { outcomeKey: "beta", campaignIds: ["u1"], brandId: "B1", day: "2026-01-05", units: 4 },
+        { outcomeKey: "beta", campaignIds: ["u1", "u3"], brandId: "B1", day: "2026-01-06", units: 1 },
+        { outcomeKey: "beta", campaignIds: [], brandId: "B1", day: "2026-01-06", units: 2 },
+      ],
+      unitCosts: [],
+      pairBins: [
+        { fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 13, pairs: 5, sumHours: 300 },
+        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1"], brandId: "B1", bin: 11, pairs: 2, sumHours: 60 },
+        { fromKey: "beta", toKey: "gamma", fromCampaignIds: ["u1", "u3"], brandId: "B1", bin: 11, pairs: 1, sumHours: 30 },
+      ],
+    });
+    const t = (scope: string, id: string, fromKey: string, toKey: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === fromKey && r.toKey === toKey)?.body as { stat: TransitionStat } | undefined)?.stat;
+    // The late beta Units are `from` Units of the campaign they carry: F1 holds 5 of them, F2 the one it shares.
+    expect(t("campaign", "F1", "beta", "gamma")).toMatchObject({ fromUnits: 5, toUnits: 3 });
+    expect(t("campaign", "F2", "beta", "gamma")).toMatchObject({ fromUnits: 1, toUnits: 1 });
+    // Counted once in the brand and the fleet, the Units no campaign carries included.
+    expect(t("brand", "B1", "beta", "gamma")).toMatchObject({ fromUnits: 7, toUnits: 3 });
+    expect(t("fleet", FLEET_SCOPE_ID, "beta", "gamma")).toMatchObject({ fromUnits: 7, toUnits: 3 });
+    // The delay is the linked pairs' own.
+    expect(t("campaign", "F1", "beta", "gamma")!.delay).toMatchObject({ n: 3, meanHours: 30 });
+    expect(t("campaign", "F1", "alpha", "beta")).toMatchObject({ fromUnits: 50, toUnits: 5 });
+  });
+
+  it("the campaign page counts a carried Unit once, on the day it was made", () => {
+    const carried = carriedLedgerUnits([
+      { outcomeKey: "beta", day: "2026-01-05" },
+      { outcomeKey: "beta", day: "2026-01-05" },
+      { outcomeKey: "gamma", day: "2026-01-09" },
+    ]);
+    const own = { byOutcome: new Map([["beta", new Map([["2026-01-05", 1]])]]), daysMissing: ["2026-01-09"] };
+    const sum = sumLedgerUnits([own, carried]);
+    expect([...sum.byOutcome.get("beta")!]).toEqual([["2026-01-05", 3]]);
+    expect([...sum.byOutcome.get("gamma")!]).toEqual([["2026-01-09", 1]]);
+    expect(sum.daysMissing).toEqual(["2026-01-09"]);
+  });
+
+  it("no pair is worked out by subject and date any more: the read-side pairing is gone", () => {
+    const io = readFileSync(new URL("./outcome-silver-io.ts", import.meta.url), "utf8");
+    expect(io).not.toContain("x.subject = b.subject");
+    expect(io).not.toContain("CROSS JOIN LATERAL");
+    expect(io).toContain("FROM outcome_unit_links l WHERE l.from_key =");
+    expect(io).toContain("/internal/stats/outcome-chains/unit-links");
+    // Stats stored under an older rule are never served: both readers ask for the sweep made on today's rule.
+    for (const route of ["../routes/outcome-forecast.ts", "../routes/outcome-distributions.ts"]) {
+      const src = readFileSync(new URL(route, import.meta.url), "utf8");
+      expect(src).toContain("readCurrentSilverSweep()");
+      expect(src).not.toContain("readSilverSweepRecord");
+    }
+    expect(io).toContain("record.rule === SILVER_RULE ? record : null");
+    // The campaign page reads the carried Units at its ledger call site.
+    const page = readFileSync(new URL("../routes/campaign-targets.ts", import.meta.url), "utf8");
+    expect(page).toContain("readCarriedUnits(row.units.map((u) => u.campaignId))");
+    expect(page).toContain("carriedLedgerUnits(carried)");
   });
 });
 

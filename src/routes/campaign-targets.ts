@@ -25,7 +25,8 @@ import { milestoneChainOf, milestoneCardsOf, withProducedMilestones, type Milest
 import { lifecycleRankOf, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
 import { salesFunnelCampaignTableBody } from "./sales-funnel-campaigns.js";
 import type { ExpectedReturn } from "../lib/expected-return.js";
-import { fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
+import { carriedLedgerUnits, fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
+import { readCarriedUnits } from "../lib/outcome-silver-io.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
 import { ledgerKeysOfStep } from "../lib/ledger-counts.js";
@@ -81,8 +82,11 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     funnelCopiesFor([row.salesFunnelId]),
     // The Units the campaign's runs produced (ledger). Unreadable = every milestone count null `ledger_unreadable` (LEDGER-ONLY-1107: no other count).
     // MILESTONES-CONTACTED-1117: each unit's own Units kept beside the sum (what a unit PRODUCED names the milestones on its way).
-    Promise.all(row.units.map(async (u) => [u.campaignId, await fetchCampaignLedgerUnits(u.campaignId)] as const))
-      .then((parts) => ({ ...sumLedgerUnits(parts.map(([, p]) => p)), byUnit: new Map(parts) }))
+    // UNIT-LINKS-CONSUME-1117: plus the Units the campaign CARRIES though their own run names no campaign (declared late:
+    // the ledger's stored links name the campaign they came from), each once in the counts. `byUnit` stays what each
+    // unit's own runs produced (it names the milestones on the way).
+    Promise.all([Promise.all(row.units.map(async (u) => [u.campaignId, await fetchCampaignLedgerUnits(u.campaignId)] as const)), readCarriedUnits(row.units.map((u) => u.campaignId))])
+      .then(([parts, carried]) => ({ ...sumLedgerUnits([...parts.map(([, p]) => p), carriedLedgerUnits(carried)]), byUnit: new Map(parts) }))
       .catch((err: Error) => {
         console.error(`[features-service] campaign targets: ledger units of ${row.id} unreadable (milestone counts null): ${err.message}`);
         return null;
@@ -258,7 +262,8 @@ router.get("/brands/:brandId/campaign-targets", apiKeyAuth, async (req, res) => 
     // (prod 2026-11-06: 10 campaigns x 2 cells, every replay fanning out again, 502 at 200 s).
     const body = await servedCached({
       view: "brand-campaign-targets",
-      scopeKey: buildScopeKey(brandId, { orgId: auth.orgId, pricing, campaign: one ?? "ongoing" }),
+      // `units`: the counting rule (UNIT-LINKS-CONSUME-1117: carried Units counted); a cell stored before it is never served.
+      scopeKey: buildScopeKey(brandId, { orgId: auth.orgId, pricing, campaign: one ?? "ongoing", units: "own+carried" }),
       orgId: auth.orgId,
       responseShape: routeResponseShapeFingerprint("/brands/{brandId}/campaign-targets"),
       compute: () => computeCampaignTargets(brandId, one, rows, headers, pricing),
