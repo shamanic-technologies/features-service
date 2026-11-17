@@ -184,10 +184,14 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
         // Units no campaign carries: in no yield, on either side (nothing ties them to a funnel).
         { outcomeKey: "alpha", campaignIds: [], brandId: "B1", day: "2026-01-01", units: 1000 },
         { outcomeKey: "beta", campaignIds: [], brandId: "B1", day: "2026-01-03", units: 500 },
+        // UNIT-LINK-COVERAGE-1117: Units of a campaign in NO sales funnel campaign (u9) are in no yield either: its sent
+        // Units outnumber its found Units 9 to 1 because the found ones were made before the ledger held them.
+        { outcomeKey: "alpha", campaignIds: ["u9"], brandId: "B1", day: "2026-01-01", units: 1000 },
+        { outcomeKey: "beta", campaignIds: ["u9"], brandId: "B1", day: "2026-01-03", units: 9000 },
       ],
       unitCosts: [],
       pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 12, pairs: 2495, sumHours: 2495 * 40, samplesHours: null }],
-      linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u1"], brandId: "B1", units: 2495 }],
+      linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u1"], brandId: "B1", units: 2495 }, { fromKey: "alpha", toKey: "beta", campaignIds: ["u9"], brandId: "B1", units: 700 }],
     });
     const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
     const f1 = t("campaign", "F1");

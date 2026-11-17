@@ -44,6 +44,8 @@ import type { BrandSnapshotRow } from "./fleet-return-store.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
 import type { ShowcaseBrandFunnels } from "./showcase-funnels.js";
 import { funnelLeg } from "./funnel-legs.js";
+import { ledgerKeysOfStep } from "./ledger-counts.js";
+import { scopeOutcomeLedgerRowOf, type OtherFactory } from "./scope-outcome-ledger.js";
 
 /** How many clients the group names: the homepage shows three. */
 export const SHOWCASE_GROUP_SIZE = 3;
@@ -98,40 +100,75 @@ export function isOurBrandDomain(domain: string | null | undefined): boolean {
   return host.length > 0 && isStaffEmail(`x@${host}`);
 }
 
-/**
- * PURE: every MEETING BOOKED a brand's people stated, any source (the client's CRM, the meeting tracker, a hand
- * statement), as DISTINCT people per brand, read off lead-service's `GET /internal/meeting-attribution`
- * `attributedMeetings[]` (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « prends les plus gros chiffres. 172 meetings »).
- * A person = the lead it was matched to, else its address, else the fact itself. Withdrawn facts are not served by
- * lead-service. Before, the hero read the meetings off a cold email channel's engine pass, which only sees the people
- * that channel's campaigns served: Doc Dinners' 172 CRM meetings read 0. FAIL-LOUD on a malformed body (a count we
- * could not read never stands in as 0).
- */
-export function meetingsBookedByBrandOf(body: unknown): Map<string, number> {
-  const rows = (body as { attributedMeetings?: unknown })?.attributedMeetings;
-  if (!Array.isArray(rows)) throw new Error("[features-service] showcase: lead-service meeting-attribution serves no attributedMeetings");
-  const people = new Map<string, Set<string>>();
-  for (const r of rows as Array<Record<string, unknown>>) {
-    if (typeof r.brandId !== "string" || typeof r.event !== "string") {
-      throw new Error("[features-service] showcase: a meeting-attribution row names no brandId or event");
-    }
-    if (r.event !== "meeting_booked") continue;
-    const who =
-      typeof r.leadId === "string" && r.leadId ? `lead:${r.leadId}`
-      : typeof r.email === "string" && r.email.trim() ? `email:${r.email.trim().toLowerCase()}`
-      : `fact:${String(r.conversionEventId)}`;
-    (people.get(r.brandId) ?? people.set(r.brandId, new Set()).get(r.brandId)!).add(who);
-  }
-  return new Map([...people].map(([brandId, s]) => [brandId, s.size]));
+/** The catalogue step the hero card prints as "meetings booked"; its ledger outcome keys come from `ledgerKeysOfStep`. */
+export const SHOWCASE_MEETING_STEP = "meeting_booked";
+
+/** The ONE fleet ledger read of the hero's meetings: every brand's meeting Units per day, ours and another factory's. */
+export function showcaseMeetingsLedgerPath(): string {
+  return `/internal/stats/outcome-costs?groupBy=outcomeKey,brandId,day&outcomeKey=${encodeURIComponent(SHOWCASE_MEETING_STEP)}`;
 }
 
-/** PURE: the candidates with their meetings booked = the brand's stated meeting facts (absent = 0, the read succeeded). */
+/**
+ * PURE: every brand's MEETINGS BOOKED = the Units its LEDGER holds (runs-service `GET /internal/stats/outcome-costs`,
+ * `groupBy=outcomeKey,brandId,day`), the same population and the same rule as the client's own dashboard
+ * (owner 2026-11-07: every conversion counts, the same count on dashboard and homepage; SHOWCASE-LEDGER-1117). Counted by
+ * `scopeOutcomeLedgerRowOf`, the dashboard's own row: ours + another factory's (the client's CRM, team, site), each netted
+ * of the Units a producer WITHDREW (a withdrawn fact never counts), INCLUDING a meeting lead-service IMPLIES from a later
+ * stated sale (a funnel is a chain, LEAD-STATES-1024). Before (SHOWCASE-MEETINGS-1117) the hero counted lead-service's
+ * stated meeting facts: Doc Dinners read 172 on the homepage and 173 on its dashboard (one meeting implied by a sale), and
+ * a stated fact matched to no lead (no lead state, no Unit) counted on the homepage only.
+ * A Unit with no brand names no client. FAIL-LOUD on a malformed body (a count we could not read never stands in as 0).
+ */
+export function meetingsBookedByBrandOfLedger(body: unknown, today: string): Map<string, number> {
+  const b = body as { produced?: unknown; producedElsewhere?: unknown };
+  if (!Array.isArray(b?.produced) || !Array.isArray(b?.producedElsewhere)) {
+    throw new Error("[features-service] showcase: runs-service outcome-costs serves no produced / producedElsewhere");
+  }
+  const keys = ledgerKeysOfStep(SHOWCASE_MEETING_STEP);
+  const ours = new Map<string, Map<string, Map<string, number>>>();
+  const theirs = new Map<string, Map<string, Map<string, Map<OtherFactory, number>>>>();
+  const at = <V>(m: Map<string, V>, k: string, make: () => V): V => m.get(k) ?? m.set(k, make()).get(k)!;
+  for (const g of b.produced as Array<{ dimensions?: Record<string, string | null>; occurrences?: number }>) {
+    const { outcomeKey, brandId, day } = g.dimensions ?? {};
+    if (!outcomeKey || !day) throw new Error("[features-service] showcase: a ledger produced group names no outcomeKey or day");
+    if (!keys.includes(outcomeKey) || !brandId) continue;
+    const days = at(at(ours, brandId, () => new Map()), outcomeKey, () => new Map<string, number>());
+    days.set(day, (days.get(day) ?? 0) + Number(g.occurrences ?? 0));
+  }
+  for (const g of b.producedElsewhere as Array<{ dimensions?: Record<string, string | null>; occurrences?: number }>) {
+    const { outcomeKey, brandId, day, factory } = g.dimensions ?? {};
+    if (!outcomeKey || !day) throw new Error("[features-service] showcase: a ledger producedElsewhere group names no outcomeKey or day");
+    if (factory !== "another_factory" && factory !== "no_proof") throw new Error(`[features-service] showcase: a ledger producedElsewhere group names an unknown factory ${String(factory)}`);
+    if (!keys.includes(outcomeKey) || !brandId) continue;
+    const byFactory = at(at(at(theirs, brandId, () => new Map()), outcomeKey, () => new Map()), day, () => new Map<OtherFactory, number>());
+    byFactory.set(factory, (byFactory.get(factory) ?? 0) + Number(g.occurrences ?? 0));
+  }
+  const out = new Map<string, number>();
+  for (const brandId of new Set([...ours.keys(), ...theirs.keys()])) {
+    const row = scopeOutcomeLedgerRowOf(keys, {
+      producedByDay: ours.get(brandId) ?? new Map(),
+      elsewhereByDay: theirs.get(brandId) ?? new Map(),
+      ownCostUsd: new Map(),
+      unitCosts: new Map(),
+      undeclaredConsumptions: new Map(),
+      fleetProducers: new Map(),
+      fleetProducersKnown: false,
+      daysMissing: [],
+      today,
+    });
+    if (row.units === null) throw new Error(`[features-service] showcase: brand ${brandId} meetings unreadable off the ledger (${row.unitsUnavailableReason})`);
+    if (row.units > 0) out.set(brandId, row.units);
+  }
+  return out;
+}
+
+/** PURE: the candidates with their meetings booked = the brand's ledger meeting Units (absent = 0, the read succeeded). */
 export function withMeetingFactCandidates(candidates: readonly ShowcaseCandidate[], meetings: ReadonlyMap<string, number>): ShowcaseCandidate[] {
   return candidates.map((c) => ({ ...c, meetingsBooked: meetings.get(c.brandId) ?? 0 }));
 }
 
 /**
- * PURE: one walked brand with its meetings booked = its stated meeting facts, on its hero counts AND on every chain rung
+ * PURE: one walked brand with its meetings booked = its ledger meeting Units, on its hero counts AND on every chain rung
  * landing on Meeting booked (so the card, the chain and the pick state ONE figure). A rung's cost is recomputed on the
  * same committed spend; a rung whose money is withheld stays null.
  */
