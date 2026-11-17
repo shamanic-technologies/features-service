@@ -148,14 +148,15 @@ import {
   type ShowcaseVendorCost,
 } from "../lib/showcase-funnels.js";
 import { fetchRunsCostCents } from "../lib/runs-cost-client.js";
-import { fetchMeetingAttributionBody } from "../lib/meeting-reporting-client.js";
+import { readRunsLedgerJson } from "../lib/runs-ledger-read.js";
 import { vendorCoverage, VENDOR_COST_UNKNOWN, type VendorCoverage } from "../lib/public-vendor-cost.js";
 import {
   buildShowcaseCandidates,
   furthestRungReached,
   isOurBrandDomain,
   isStaffOnlyBrand,
-  meetingsBookedByBrandOf,
+  meetingsBookedByBrandOfLedger,
+  showcaseMeetingsLedgerPath,
   pickByMostMeetings,
   withMeetingFactCandidates,
   withMeetingFacts,
@@ -3148,11 +3149,15 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
   if (staffOnlyBrands.size > 0) {
     console.log(`[features-service] showcase: ${staffOnlyBrands.size} staff test client(s) left out: ${[...staffOnlyBrands].join(", ")}`);
   }
-  // Meetings booked = EVERY meeting the client stated, any source (CRM, tracker, hand statement), distinct people
-  // (owner 2026-11-17, SHOWCASE-MEETINGS-1117: « prends les plus gros chiffres. 172 meetings »): a cold email channel's
-  // engine pass only sees the people its campaigns served, so Doc Dinners' 172 CRM meetings read 0. A failed read THROWS
-  // (the prior showcase stays served), never a row ranked on positive replies alone.
-  const meetingFacts = allCandidates === null ? new Map<string, number>() : meetingsBookedByBrandOf(await fetchMeetingAttributionBody());
+  // Meetings booked = the client's LEDGER meeting Units, the count its own dashboard prints (owner 2026-11-07: every
+  // conversion counts, the same count on dashboard and homepage; SHOWCASE-LEDGER-1117): ours + another factory's (CRM,
+  // team), withdrawn facts netted, a meeting implied by a later stated sale included. A cold email channel's engine pass
+  // only sees the people its campaigns served (Doc Dinners' CRM meetings read 0, SHOWCASE-MEETINGS-1117). ONE fleet read
+  // per showcase build; a failed read THROWS (the prior showcase stays served), never a row ranked on positive replies alone.
+  const meetingFacts =
+    allCandidates === null
+      ? new Map<string, number>()
+      : meetingsBookedByBrandOfLedger(await readRunsLedgerJson(showcaseMeetingsLedgerPath(), 0), new Date().toISOString().slice(0, 10));
   const candidates =
     allCandidates === null ? null : withMeetingFactCandidates(allCandidates.filter((c) => !staffOnlyBrands.has(c.brandId)), meetingFacts);
   const picks = pickShowcaseClients(candidates, SHOWCASE_GROUP_SIZE);
