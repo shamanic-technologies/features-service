@@ -308,6 +308,8 @@ export function followUnitLinks(): Promise<LinksFollowResult> {
           // The first whole copy, measured as it goes (a copy resumed after a restart keeps what it had read).
           state.firstCopy = { links: (state.firstCopy?.links ?? 0) + page.links.length, pages: (state.firstCopy?.pages ?? 0) + 1, ms: (state.firstCopy?.ms ?? 0) + (Date.now() - pageStart) };
           if (!more) {
+            // A table filled in one go has no statistics yet: the walks and joins that follow are planned on real ones.
+            await db.execute(sql`ANALYZE outcome_unit_links`);
             state.copied = true;
             console.log(`[features-service] unit links: first whole copy done, ${state.firstCopy.links} links in ${state.firstCopy.pages} pages, ${state.firstCopy.ms} ms`);
           }
@@ -338,11 +340,14 @@ const SIG3 = sql.raw(`CASE WHEN u.cost_net_cents IS NULL OR u.cost_net_cents <= 
  * link leading to it (`toUnit.campaignIds`: the campaigns of the Units it came from); else none.
  */
 const CARRIED = sql.raw(`CASE WHEN u.campaign_id IS NOT NULL THEN ARRAY[u.campaign_id] ELSE COALESCE(c.ids, '{}'::text[]) END`);
-const CARRIED_JOIN = sql.raw(`LEFT JOIN LATERAL (SELECT l.to_campaign_ids AS ids FROM outcome_unit_links l WHERE l.to_unit_id = u.id LIMIT 1) c ON u.campaign_id IS NULL`);
+/** The few Units carried without a campaign of their own (prod 2026-11-17: 1,468), read once per statement off the partial index. */
+const CARRIED_CTE = sql.raw(`WITH carried AS MATERIALIZED (SELECT DISTINCT ON (to_unit_id) to_unit_id, to_campaign_ids AS ids FROM outcome_unit_links WHERE to_campaign_id IS NULL AND to_campaign_ids <> '{}'::text[] ORDER BY to_unit_id)`);
+const CARRIED_JOIN = sql.raw(`LEFT JOIN carried c ON c.to_unit_id = u.id AND u.campaign_id IS NULL`);
 const textArray = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
 
 export async function readUnitDays(): Promise<UnitDayRow[]> {
   const rows = (await db.execute(sql`
+    ${CARRIED_CTE}
     SELECT u.outcome_key, ${CARRIED} AS campaign_ids, u.brand_id, to_char(u.declared_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*)::int AS units
     FROM outcome_units u ${CARRIED_JOIN} WHERE NOT u.reversed GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignIds: textArray(r.campaign_ids), brandId: (r.brand_id as string | null) ?? null, day: r.day as string, units: Number(r.units) }));
@@ -350,6 +355,7 @@ export async function readUnitDays(): Promise<UnitDayRow[]> {
 
 export async function readUnitCosts(): Promise<UnitCostRow[]> {
   const rows = (await db.execute(sql`
+    ${CARRIED_CTE}
     SELECT u.outcome_key, ${CARRIED} AS campaign_ids, u.brand_id, ${SIG3} AS cost, count(*)::int AS units, sum(u.cost_net_cents)::float8 AS net, sum(u.cost_gross_cents)::float8 AS gross
     FROM outcome_units u ${CARRIED_JOIN} WHERE NOT u.reversed AND u.cost_net_cents IS NOT NULL GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignIds: textArray(r.campaign_ids), brandId: (r.brand_id as string | null) ?? null, costNetCents: Number(r.cost), units: Number(r.units), sumNetCents: Number(r.net), sumGrossCents: Number(r.gross ?? 0) }));
@@ -507,6 +513,15 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
 export async function readSilverSweepRecord(): Promise<SilverSweepRecord | null> {
   const cell = await loadFleetCell(SILVER_SWEEP_CELL);
   return cell ? (JSON.parse(cell.text) as SilverSweepRecord) : null;
+}
+
+/**
+ * The last sweep, only when its stats were built on TODAY's rule: stats stored under another rule are not served (a
+ * reader treats them as not built yet, until the sweep the rule change triggers replaces them).
+ */
+export async function readCurrentSilverSweep(): Promise<SilverSweepRecord | null> {
+  const record = await readSilverSweepRecord();
+  return record !== null && record.rule === SILVER_RULE ? record : null;
 }
 
 async function tick(): Promise<void> {

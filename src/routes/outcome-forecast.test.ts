@@ -15,7 +15,7 @@ const basis = vi.fn();
 vi.mock("./campaign-targets.js", () => ({ campaignTargetBasis: (...a: unknown[]) => basis(...a) }));
 const readSilverStats = vi.fn();
 const readSilverSweepRecord = vi.fn();
-vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readSilverSweepRecord: () => readSilverSweepRecord() }));
+vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readCurrentSilverSweep: () => readSilverSweepRecord() }));
 vi.mock("../middleware/auth.js", () => ({
   apiKeyAuth: (req: Record<string, unknown>, _res: unknown, next: () => void) => {
     req.orgId = "org-1";
@@ -107,9 +107,11 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
   });
 
   it("before the first Silver sweep the yields come from the plan line, and it says so; never blank", async () => {
+    // The stats table still holds rows of an OLDER rule (UNIT-LINKS-CONSUME-1117): with no sweep on today's rule they are never read.
     readSilverSweepRecord.mockResolvedValue(null);
-    readSilverStats.mockResolvedValue([]);
+    readSilverStats.mockClear();
     const res = await request(app).get(URL);
+    expect(readSilverStats).not.toHaveBeenCalled();
     expect(res.body.silverComputedAt).toBeNull();
     expect(res.body.hypotheses.transitions.map((t: { yield: { source: string }; delay: { source: string } }) => [t.yield.source, t.delay.source])).toEqual([["plan", "default"], ["plan", "default"]]);
     expect(res.body.forecast).not.toBeNull();

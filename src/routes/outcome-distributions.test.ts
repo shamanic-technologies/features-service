@@ -5,7 +5,7 @@ import request from "supertest";
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 const readSilverStats = vi.fn();
 const readSilverSweepRecord = vi.fn();
-vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readSilverSweepRecord: () => readSilverSweepRecord() }));
+vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readCurrentSilverSweep: () => readSilverSweepRecord() }));
 
 process.env.FEATURES_SERVICE_API_KEY = "k";
 const { default: router } = await import("./outcome-distributions.js");

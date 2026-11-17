@@ -271,6 +271,13 @@ describe("UNIT-LINKS-CONSUME-1117: pairs, delays and campaigns come from the led
     expect(io).not.toContain("CROSS JOIN LATERAL");
     expect(io).toContain("FROM outcome_unit_links l WHERE l.from_key =");
     expect(io).toContain("/internal/stats/outcome-chains/unit-links");
+    // Stats stored under an older rule are never served: both readers ask for the sweep made on today's rule.
+    for (const route of ["../routes/outcome-forecast.ts", "../routes/outcome-distributions.ts"]) {
+      const src = readFileSync(new URL(route, import.meta.url), "utf8");
+      expect(src).toContain("readCurrentSilverSweep()");
+      expect(src).not.toContain("readSilverSweepRecord");
+    }
+    expect(io).toContain("record.rule === SILVER_RULE ? record : null");
     // The campaign page reads the carried Units at its ledger call site.
     const page = readFileSync(new URL("../routes/campaign-targets.ts", import.meta.url), "utf8");
     expect(page).toContain("readCarriedUnits(row.units.map((u) => u.campaignId))");

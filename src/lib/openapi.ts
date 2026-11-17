@@ -10468,7 +10468,7 @@ const OutcomeRateEstimateSchema = z.object({
   rate: z.number(),
 });
 const OutcomeDelayDistributionSchema = z.object({
-  n: z.number().describe("Pairs measured: a `to` Unit and the latest `from` Unit of the same subject at or before it."),
+  n: z.number().describe("Pairs measured: a `to` Unit and a `from` Unit the ledger's stored links tie (directly or through a walk of links); the delay is the one the links state."),
   meanHours: z.number(),
   medianHours: z.number(),
   p10Hours: z.number(),
@@ -10480,8 +10480,8 @@ const OutcomeDelayDistributionSchema = z.object({
 const OutcomeTransitionStatSchema = z.object({
   fromKey: z.string(),
   toKey: z.string(),
-  fromUnits: z.number().describe("Units of `fromKey` in the scope."),
-  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the scope (same subject): what became of the scope's `from` Units, wherever the `to` Unit was declared."),
+  fromUnits: z.number().describe("Units of `fromKey` in the scope. At campaign scope a Unit counts for the campaign(s) it carries: its own run's, else those of the Units it came from (a Unit declared late on a run naming no campaign)."),
+  toUnits: z.number().describe("Units of `toKey` the ledger's stored links tie to a `fromKey` Unit of the scope (directly or through a walk of links): what became of the scope's `from` Units, wherever the `to` Unit was declared."),
   exposure: z.number().describe("Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."),
   censoredBy: z.enum(["campaign", "brand", "fleet"]).nullable().describe("Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."),
   yield: OutcomeRateEstimateSchema,
@@ -10493,7 +10493,7 @@ registry.registerPath({
   path: "/internal/outcome-distributions",
   summary: "Silver: cost per Unit, yield and delay measured on the ledger's Units, per scope (internal, api-key, staff)",
   description:
-    "OUTCOME-FORECAST-1117. What is MEASURED, no hypothesis, on our copy of the produced Units of runs-service's ledger, at one scope (`campaign` = a sales funnel campaign, `brand`, `fleet`): per outcome the distribution of the production cost the ledger states on each Unit; per transition (any two outcomes sharing a subject) the yield (Units of `to` per Unit of `from`, Gamma-Poisson empirical Bayes on censored exposure) and the delay distribution. One mechanism for every outcome. Stored by a daily sweep, never computed on the read.",
+    "OUTCOME-FORECAST-1117. What is MEASURED, no hypothesis, on our copy of the produced Units of runs-service's ledger, at one scope (`campaign` = a sales funnel campaign, `brand`, `fleet`): per outcome the distribution of the production cost the ledger states on each Unit; per transition (two outcomes the ledger's stored links tie, UNIT-LINKS-CONSUME-1117: never paired here by subject and date) the yield (Units of `to` per Unit of `from`, Gamma-Poisson empirical Bayes on censored exposure) and the delay distribution. One mechanism for every outcome. Stored by a daily sweep, never computed on the read.",
   tags: ["Internal"],
   request: {
     query: z.object({
