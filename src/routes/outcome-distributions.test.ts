@@ -24,7 +24,7 @@ describe("GET /internal/outcome-distributions (Silver, staff)", () => {
   it("serves the stored cost rows and transitions of a scope, never computing", async () => {
     readSilverStats.mockResolvedValue([
       { scope: "brand", scopeId: "b1", fromKey: "", toKey: "alpha", sampleSize: 3, computedAt: "x", body: { kind: "unit_cost", stat: { units: 3, costUsd: dist, meanGrossCostUsd: 2 } } },
-      { scope: "brand", scopeId: "b1", fromKey: "alpha", toKey: "beta", sampleSize: 3, computedAt: "x", body: { kind: "transition", stat: { fromUnits: 3, toUnits: 1, exposure: 2.5, censoredBy: "fleet", yield: estimate, prior: { shape: 0.5, rate: 5 }, delay: null } } },
+      { scope: "brand", scopeId: "b1", fromKey: "alpha", toKey: "beta", sampleSize: 3, computedAt: "x", body: { kind: "transition", stat: { fromUnits: 3, toUnits: 1, linkedToUnits: 1, linkCoverage: 1, exposure: 2.5, censoredBy: "fleet", yield: estimate, prior: { shape: 0.5, rate: 5 }, delay: null } } },
     ]);
     const res = await request(app).get("/internal/outcome-distributions?scope=brand&scopeId=b1&toKey=beta").set("x-api-key", "k");
     expect(res.status).toBe(200);
@@ -35,7 +35,7 @@ describe("GET /internal/outcome-distributions (Silver, staff)", () => {
       computedAt: "2026-11-17T10:00:00.000Z",
       unitsHeld: 880000,
       unitCosts: [{ outcomeKey: "alpha", units: 3, costUsd: dist, meanGrossCostUsd: 2 }],
-      transitions: [{ fromKey: "alpha", toKey: "beta", fromUnits: 3, toUnits: 1, exposure: 2.5, censoredBy: "fleet", yield: estimate, prior: { shape: 0.5, rate: 5 }, delay: null }],
+      transitions: [{ fromKey: "alpha", toKey: "beta", fromUnits: 3, toUnits: 1, linkedToUnits: 1, linkCoverage: 1, exposure: 2.5, censoredBy: "fleet", yield: estimate, prior: { shape: 0.5, rate: 5 }, delay: null }],
     });
   });
 

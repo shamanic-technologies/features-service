@@ -24,7 +24,7 @@ import { outcomeSilverStats, outcomeUnitLinks, outcomeUnits } from "../db/schema
 import { fetchWithRetry } from "./fetch-retry.js";
 import { loadFleetCell, loadFleetCellStrict, storeFleetCell } from "./fleet-cell-store.js";
 import { storedCopyIsFresh } from "./boot-warms.js";
-import { buildSilverStats, DELAY_EDGES_HOURS, SILVER_RULE, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
+import { buildSilverStats, DELAY_EDGES_HOURS, EXACT_DELAY_MAX_PAIRS, SILVER_RULE, type LinkedToRow, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
 
 const PAGE = 1000;
 /** Between two pages of the copy: the ledger read prices 1,000 Units a page, never two at once, never back to back. */
@@ -366,25 +366,37 @@ const MAX_WALK_LINKS = 12;
 
 /**
  * The pairs leaving ONE outcome: each of its Units with every Unit the stored links lead to from it, directly or through
- * other Units (each pair once; the delay = the links' stated `delaySeconds` added along the walk), binned by delay. A
- * `to` Unit dated before its `from` Unit (a past fact recorded late: a negative stated delay) is a pair of delay zero.
- * One statement per outcome, never the whole copy at once.
+ * other Units (each pair once; the delay = the links' stated `delaySeconds` added along the walk), binned by delay, each
+ * small group with its pairs' own delays (exact quantiles on a small sample). A `to` Unit dated before its `from` Unit (a
+ * past fact recorded late: a negative stated delay) is a pair of delay zero. Beside them, the `to` Units those pairs tie
+ * (each once, by the campaigns and brand the `to` Unit carries): the link coverage of the Units counted. One statement
+ * per outcome, never the whole copy at once.
  */
-export async function readPairBins(fromKey: string): Promise<PairBinRow[]> {
+export async function readPairBins(fromKey: string): Promise<{ pairBins: PairBinRow[]; linkedTo: LinkedToRow[] }> {
   const edges = `{${DELAY_EDGES_HOURS.join(",")}}`;
   const rows = (await db.execute(sql`
     WITH RECURSIVE walk AS (
-      SELECT l.from_unit_id AS src, l.from_campaign_ids AS campaigns, l.from_brand_id AS brand, l.to_unit_id AS unit, l.to_key AS k, l.delay_seconds AS delay, 1 AS depth
+      SELECT l.from_unit_id AS src, l.from_campaign_ids AS campaigns, l.from_brand_id AS brand, l.to_unit_id AS unit, l.to_key AS k, l.to_campaign_ids AS to_campaigns, l.delay_seconds AS delay, 1 AS depth
       FROM outcome_unit_links l WHERE l.from_key = ${fromKey}
       UNION ALL
-      SELECT w.src, w.campaigns, w.brand, l.to_unit_id, l.to_key, w.delay + l.delay_seconds, w.depth + 1
+      SELECT w.src, w.campaigns, w.brand, l.to_unit_id, l.to_key, l.to_campaign_ids, w.delay + l.delay_seconds, w.depth + 1
       FROM walk w JOIN outcome_unit_links l ON l.from_unit_id = w.unit WHERE w.depth < ${MAX_WALK_LINKS}
-    ), pairs AS (
-      SELECT DISTINCT ON (src, unit) campaigns, brand, k, GREATEST(delay, 0) / 3600.0 AS hours FROM walk ORDER BY src, unit, depth
+    ), pairs AS MATERIALIZED (
+      SELECT * FROM (SELECT DISTINCT ON (src, unit) unit, campaigns, brand, k, to_campaigns, GREATEST(delay, 0) / 3600.0 AS hours FROM walk ORDER BY src, unit, depth) p WHERE k <> ${fromKey}
     )
-    SELECT k AS to_key, campaigns, brand, width_bucket(hours, ${edges}::float8[]) AS bin, count(*)::int AS pairs, sum(hours)::float8 AS sum_hours
-    FROM pairs WHERE k <> ${fromKey} GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
-  return rows.map((r) => ({ fromKey, toKey: r.to_key as string, fromCampaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, bin: Number(r.bin), pairs: Number(r.pairs), sumHours: Number(r.sum_hours) }));
+    SELECT 'bin' AS kind, k AS to_key, campaigns, brand, width_bucket(hours, ${edges}::float8[]) AS bin, count(*)::int AS n, sum(hours)::float8 AS sum_hours,
+           CASE WHEN count(*) <= ${EXACT_DELAY_MAX_PAIRS} THEN array_agg(hours::float8) END AS samples
+    FROM pairs GROUP BY 2, 3, 4, 5
+    UNION ALL
+    SELECT 'linked', t.k, t.to_campaigns, u.brand_id, NULL, count(*)::int, NULL, NULL
+    FROM (SELECT DISTINCT unit, k, to_campaigns FROM pairs) t JOIN outcome_units u ON u.id = t.unit AND NOT u.reversed GROUP BY 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
+  const pairBins: PairBinRow[] = [];
+  const linkedTo: LinkedToRow[] = [];
+  for (const r of rows) {
+    if (r.kind === "linked") linkedTo.push({ fromKey, toKey: r.to_key as string, campaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, units: Number(r.n) });
+    else pairBins.push({ fromKey, toKey: r.to_key as string, fromCampaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, bin: Number(r.bin), pairs: Number(r.n), sumHours: Number(r.sum_hours), samplesHours: Array.isArray(r.samples) ? (r.samples as unknown[]).map(Number) : null });
+  }
+  return { pairBins, linkedTo };
 }
 
 /** Every outcome a stored link leaves from. */
@@ -490,13 +502,16 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
       const t1 = Date.now();
       const [unitDays, unitCosts, funnels] = [await readUnitDays(), await readUnitCosts(), await readFunnelOfUnitCampaigns()];
       const pairBins: PairBinRow[] = [];
+      const linkedTo: LinkedToRow[] = [];
       for (const key of await readLinkFromKeys()) {
-        pairBins.push(...(await readPairBins(key)));
+        const r = await readPairBins(key);
+        pairBins.push(...r.pairBins);
+        linkedTo.push(...r.linkedTo);
         await sleep(250);
       }
       const [{ held }] = (await db.execute(sql`SELECT count(*)::int AS held FROM outcome_unit_links`)) as unknown as [{ held: number }];
       const now = new Date();
-      const stats = buildSilverStats({ unitDays, unitCosts, pairBins, funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
+      const stats = buildSilverStats({ unitDays, unitCosts, pairBins, linkedTo, funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
       await replaceStats(stats, now);
       const record: SilverSweepRecord = { sweptAt: now.toISOString(), rule: SILVER_RULE, copy: { pages: copy.pages, units: copy.units }, links: { pages: follow.pages, read: follow.links, removed: follow.removed, held: Number(held), ms: follow.ms, builtAt: follow.builtAt }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
       await storeFleetCell(SILVER_SWEEP_CELL, JSON.stringify(record), now.getTime());
