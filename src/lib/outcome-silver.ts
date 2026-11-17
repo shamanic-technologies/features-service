@@ -188,10 +188,12 @@ export interface GammaPrior {
  * exposure when nothing was ever made: never a zero rate), strength = the value maximizing the negative binomial marginal
  * likelihood of every group (grid on log strength). Fewer than two groups = the weakest prior (half a Unit).
  */
-export function fitGammaPrior(groups: readonly RateEvidence[]): GammaPrior {
+export function fitGammaPrior(groups: readonly RateEvidence[], pooled?: RateEvidence): GammaPrior {
   const g = groups.filter((x) => x.exposure > 0);
-  const E = g.reduce((a, x) => a + x.exposure, 0);
-  const Y = g.reduce((a, x) => a + x.toUnits, 0);
+  // The mean is the POOLED rate: the fleet's own evidence when given (it holds the Units no campaign is tagged on), else
+  // the groups summed. The groups only say how much campaigns differ (the strength).
+  const E = pooled && pooled.exposure > 0 ? pooled.exposure : g.reduce((a, x) => a + x.exposure, 0);
+  const Y = pooled && pooled.exposure > 0 ? pooled.toUnits : g.reduce((a, x) => a + x.toUnits, 0);
   if (E <= 0) return { shape: 0.5, rate: 0.5 };
   const m = Math.max(Y, 0.5) / E;
   const weakest: GammaPrior = { shape: 0.5, rate: 0.5 / m };
@@ -281,7 +283,7 @@ export interface UnitCostStat {
 
 export interface TransitionStat {
   fromUnits: number;
-  /** `to` Units paired with a `from` Unit of the same subject, both in the scope. */
+  /** `to` Units paired with a `from` Unit of the scope (same subject; the `to` Unit may be declared under no campaign). */
   toUnits: number;
   /** Σ over `from` Units of the share of their `to` Units already due at their age (= fromUnits when no delay is measured). */
   exposure: number;
@@ -302,6 +304,9 @@ export interface SilverStatRow {
   sampleSize: number;
   body: { kind: "unit_cost"; stat: UnitCostStat } | { kind: "transition"; stat: TransitionStat };
 }
+
+/** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
+export const SILVER_RULE = "2026-11-17.2";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -360,13 +365,14 @@ export function buildSilverStats(input: {
       days.set(r.day, (days.get(r.day) ?? 0) + r.units);
     }
 
-  // 3. Pairs per scope and transition (a campaign-scope pair has BOTH Units in the funnel campaign).
+  // 3. Pairs per scope and transition. A campaign's pair = what became of ITS `from` Unit, wherever the `to` Unit was
+  // declared (prod 2026-11-17: no paid client, booked meeting or signup Unit carries a campaign tag).
   const pairs = new Map<string, { bins: Map<number, number>; sumHours: number }>();
   for (const r of input.pairBins) {
     const scopes = [`fleet\u0000${FLEET_SCOPE_ID}`];
     if (r.brandId !== null) scopes.push(`brand\u0000${r.brandId}`);
-    const f = funnel(r.toCampaignId);
-    if (f !== null && funnel(r.fromCampaignId) === f) scopes.push(`campaign\u0000${f}`);
+    const f = funnel(r.fromCampaignId);
+    if (f !== null) scopes.push(`campaign\u0000${f}`);
     for (const s of scopes) {
       const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
       const p = pairs.get(k) ?? pairs.set(k, { bins: new Map(), sumHours: 0 }).get(k)!;
@@ -400,7 +406,7 @@ export function buildSilverStats(input: {
       const p = pairs.get(`${scope}\u0000${scopeId}\u0000${t}`);
       evidence.push({ scope, scopeId, fromUnits, toUnits: p ? [...p.bins.values()].reduce((a, n) => a + n, 0) : 0, exposure, censoredBy: pick ? pick[0] : null });
     }
-    const prior = fitGammaPrior(evidence.filter((e) => e.scope === "campaign"));
+    const prior = fitGammaPrior(evidence.filter((e) => e.scope === "campaign"), evidence.find((e) => e.scope === "fleet"));
     for (const e of evidence) {
       // The fleet's own row is what a campaign with no evidence can expect: the prior itself, on the fleet's pooled counts.
       const est = e.scope === "fleet" ? rateEstimateOf({ toUnits: 0, exposure: 0 }, prior) : rateEstimateOf({ toUnits: e.toUnits, exposure: Math.max(e.exposure, 0) }, prior);

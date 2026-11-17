@@ -10481,11 +10481,11 @@ const OutcomeTransitionStatSchema = z.object({
   fromKey: z.string(),
   toKey: z.string(),
   fromUnits: z.number().describe("Units of `fromKey` in the scope."),
-  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the same subject, both in the scope."),
+  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the scope (same subject): what became of the scope's `from` Units, wherever the `to` Unit was declared."),
   exposure: z.number().describe("Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."),
   censoredBy: z.enum(["campaign", "brand", "fleet"]).nullable().describe("Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."),
   yield: OutcomeRateEstimateSchema,
-  prior: z.object({ shape: z.number(), rate: z.number() }).describe("The fleet's Gamma prior on this transition (empirical Bayes over every campaign); `rate` = the `from` Units it weighs."),
+  prior: z.object({ shape: z.number(), rate: z.number() }).describe("The fleet's Gamma prior on this transition (empirical Bayes: mean = the fleet's pooled rate, strength = how much campaigns differ); `rate` = the `from` Units it weighs."),
   delay: OutcomeDelayDistributionSchema.nullable().describe("Null = no pair measured in this scope."),
 });
 registry.registerPath({
@@ -10522,6 +10522,143 @@ registry.registerPath({
     400: { description: "scope_unrecognised | scope_id_missing" },
     502: { description: "outcome_distributions_unreadable" },
     503: { description: "outcome_distributions_not_built_yet" },
+  },
+});
+
+// ── OUTCOME-FORECAST-1117, GOLD: one campaign's outcomes projected to its Target ──
+const ForecastTunnelSchema = z.object({
+  expected: z.array(z.number()).describe("The mean over the simulation's draws (smooth), one value per day of `days`."),
+  median: z.array(z.number()),
+  p10: z.array(z.number()).describe("Low edge of the tunnel: 1 draw in 10 falls under it."),
+  p90: z.array(z.number()).describe("High edge of the tunnel: 1 draw in 10 passes it."),
+});
+const ForecastBandSchema = z.object({ median: z.number(), p10: z.number(), p90: z.number() });
+const ForecastNextTargetSchema = z.object({
+  shareWithinSearch: z.number().describe("Share of draws that make a Target within `searchDays` (0..1)."),
+  searchDays: z.number(),
+  medianDate: z.string().nullable().describe("UTC day the next Target is due in the median draw; null = later than `searchDays`."),
+  earlyDate: z.string().nullable().describe("1 draw in 10 makes it by this day; null = later than `searchDays`."),
+  lateDate: z.string().nullable().describe("9 draws in 10 make it by this day; null = later than `searchDays` in the slow case (say « more than 3 years », never a date)."),
+  medianInDays: z.number().nullable(),
+});
+const ForecastSourceSchema = z.enum(["campaign", "brand", "fleet", "plan", "default"]).describe("Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default.");
+const ForecastOutputSchema = z.object({
+  days: z.array(z.string()).describe("The UTC days after today (18 months), one per point of every series."),
+  outcomes: z.array(
+    z.object({
+      step: z.string(),
+      label: z.string(),
+      isTarget: z.boolean(),
+      unitsToDate: z.number().describe("Units the campaign made to date (the campaign page's count): every cumulative series starts from it."),
+      cumulativeUnits: ForecastTunnelSchema.describe("Cumulative Units by the end of each day: what already ran keeps maturing, the budget ahead buys more."),
+      unitsPerTarget: ForecastBandSchema.nullable().describe("Units of this milestone it takes to make one Target (the yields down to it); null on the Target."),
+      expectedRevenuePerUnitUsd: ForecastBandSchema.nullable().describe("The Target's revenue walked down through the yields: what one Unit here is expected to bring in (gross, a forecast; never a return). Null = the Target has no value stated."),
+    }),
+  ),
+  spendAheadUsd: z.array(z.number()).describe("Cumulative spend from now, per day of `days`: the budget hypothesis (no uncertainty of its own)."),
+  expectedRevenueUsd: ForecastTunnelSchema.nullable().describe("Cumulative revenue of the Targets made FROM NOW (Targets × the Target's value); null = no value stated."),
+  nextTarget: ForecastNextTargetSchema,
+});
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/outcome-forecast",
+  summary: "A campaign's outcomes projected to its Target: median + percentile tunnel, hypotheses named",
+  description:
+    "OUTCOME-FORECAST-1117 (Gold). For each milestone of the campaign from Start to its Target (the campaign page's own milestones and counts) and each of the next 548 UTC days: the cumulative Units as a median with a p10-p90 tunnel, starting from what already ran (Units already produced keep maturing along the measured delay curve); the spend ahead; the expected revenue; when the next Target is due (searched over 3 years). The same projection at 2x, 5x and 10x the budget (`alternatives`). EVERY hypothesis is named under `hypotheses`: the budget assumed to continue (billing caps and their reset calendar), the cost of one first-milestone Unit, and per transition the yield and the delay with the scope each came from (campaign measured > brand measured > fleet measured > plan line > default; a thin sample falls to the next scope and says so) and the evidence of every scope. Method: Bayesian posterior predictive simulation (1,000 draws: Gamma-Poisson yields, bootstrap cost, Poisson counts, delays from the measured curve). Draw it as served: nothing is to be computed in the browser. Served from a stored Gold cell, recomputed behind the read (at most every 10 minutes, and after each daily Silver sweep). Never blank: `unavailableReason` says why `forecast` is null.",
+  tags: ["Stats"],
+  request: {
+    params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
+    query: z.object({ pricing: z.enum(["gross", "net"]).describe("Money basis of the spend and costs (default net: what the org pays).").optional() }),
+  },
+  responses: {
+    200: {
+      description: "The forecast",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            salesFunnelCampaignId: z.string(),
+            name: z.string(),
+            target: z.object({ key: z.string(), label: z.string(), lifecycleRung: z.string().nullable() }).nullable(),
+            pricing: z.enum(["gross", "net"]),
+            costBasis: z.literal("charged"),
+            computedAt: z.string(),
+            silverComputedAt: z.string().nullable().describe("When the measured distributions it reads were last swept; null = not swept yet (every yield then comes from the plan line)."),
+            method: z.object({ name: z.literal("posterior_predictive_simulation"), draws: z.number(), seriesDays: z.number(), searchDays: z.number() }).nullable(),
+            unavailableReason: z.string().nullable().describe("Why there is no forecast: `campaign_states_no_target`, `target_not_counted_in_ledger`, `no_unit_reaches_a_step`, `yield_unmeasured:<from>-><to>`, `cost_unmeasured_and_plan_prices_no_target`; null = served."),
+            uncountedMilestones: z.array(z.object({ step: z.string(), label: z.string(), reason: z.string().nullable() })).describe("Milestones of the campaign page the ledger cannot count: left out of the projection, named here."),
+            hypotheses: z.object({
+              budget: z.object({
+                source: z.enum(["budget_cap", "daily_budget", "spend_pace_7d"]).nullable().describe("`budget_cap` = billing's cap and its reset calendar; `spend_pace_7d` = no budget stated, the last 7 days' pace; null = nothing more is spent (`unavailableReason`)."),
+                hypothesis: z.literal("the_stated_budget_continues"),
+                monthlyUsd: z.number().nullable().describe("The budget assumed, per month."),
+                capPeriod: z.enum(["daily", "weekly", "monthly", "one_off"]).nullable(),
+                capAmountUsd: z.number().nullable(),
+                capRemainingUsd: z.number().nullable(),
+                capPeriodEnd: z.string().nullable(),
+                spendPerDayWhileSpendingUsd: z.number().nullable(),
+                pausedReason: z.enum(["budget_cap_reached", "volume_cap_reached"]).nullable(),
+                resumesAt: z.string().nullable(),
+                unavailableReason: z.string().nullable().describe("Why nothing more is spent (`campaign_stopped`, a one-off cap spent, caps unreadable, no budget and no recent spend): the projection then only matures what already ran."),
+              }),
+              entryCost: z
+                .object({
+                  step: z.string(),
+                  label: z.string(),
+                  source: z.enum(["campaign", "plan"]).describe("`campaign` = everything it spent ÷ its Units of the first milestone (at least 30); `plan` = the plan line's cost per Target walked back through the yields."),
+                  usdPerUnit: z.number().nullable(),
+                  p10: z.number().nullable(),
+                  p90: z.number().nullable(),
+                  spentUsd: z.number().nullable(),
+                  units: z.number().nullable(),
+                  planBasis: z.string().nullable(),
+                })
+                .nullable(),
+              transitions: z.array(
+                z.object({
+                  fromStep: z.string(),
+                  toStep: z.string(),
+                  fromOutcomeKey: z.string().nullable(),
+                  toOutcomeKey: z.string().nullable(),
+                  yield: z.object({
+                    source: ForecastSourceSchema,
+                    unitsPerUnit: z.number().nullable().describe("Units of `toStep` per Unit of `fromStep` (mean of the estimate; × 100 = % Conversion)."),
+                    median: z.number().nullable(),
+                    p10: z.number().nullable(),
+                    p90: z.number().nullable(),
+                    thinnerScopes: z.array(z.enum(["campaign", "brand"])).describe("Finer scopes that hold a sample too thin to stand alone (it only nudges the estimate): say it."),
+                    evidence: z.array(z.object({ scope: z.enum(["campaign", "brand", "fleet"]), fromUnits: z.number(), toUnits: z.number(), exposure: z.number(), delayPairs: z.number() })).describe("What each scope measured on this transition (sample sizes)."),
+                  }),
+                  delay: z.object({
+                    source: ForecastSourceSchema,
+                    pairs: z.number().describe("Pairs of Units behind the curve (0 on the default)."),
+                    thinSample: z.boolean().describe("Under 10 pairs: the largest sample measured, kept over the default."),
+                    medianHours: z.number().nullable(),
+                    p10Hours: z.number().nullable(),
+                    p90Hours: z.number().nullable(),
+                  }),
+                }),
+              ),
+              targetValue: z.object({ usd: z.number(), source: z.literal("plan_target_value") }).nullable(),
+            }),
+            forecast: ForecastOutputSchema.nullable(),
+            alternatives: z.array(
+              z.object({
+                budgetMultiplier: z.number(),
+                monthlyBudgetUsd: z.number().nullable(),
+                nextTarget: ForecastNextTargetSchema,
+                targetCumulativeUnits: ForecastTunnelSchema,
+                expectedRevenueUsd: ForecastTunnelSchema.nullable(),
+                spendAheadUsd: z.array(z.number()),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    400: { description: "pricing_unrecognised" },
+    404: { description: "brand_not_found | sales_funnel_campaign_not_found" },
+    502: { description: "A dependency failed" },
   },
 });
 
