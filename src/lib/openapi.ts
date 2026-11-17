@@ -24,7 +24,7 @@ const expectedReturnRef = registry.register(
   "ExpectedReturn",
   z
     .object({
-      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
+      roiMultiple: z.number().nullable().describe("The EXPECTED return, never null unless unavailableReason. = the scope's own MATURE return when it has one (basis measured), else its sales path's ROI exactly as GET /offers/{offerId}/sales-paths prices it: lifetime revenue / cost per paying client, each leg's rate brand measured > stated > the fleet's measured conversion > industry default (EXPECTED-FLEET-RATE-1116), each leg's cost best mature workflow > fleet measured (outcome prices, else the catalogue's measured cost of the leg) > seeded default, the offer's stated lifetime revenue else the fleet median. The pipeline-based costEconomics.roiMultiple and its flash / mature pair are deleted (ROI-CONSISTENCY-1103)."),
       basis: expectedBasisSchema.nullable(),
       assumptions: z
         .array(
@@ -4371,7 +4371,7 @@ const lifecycleCardSchema = z.object({
   valueUsd: z.number().nullable().describe("What the card is worth: the MAX over its leads. Null only when the response's `unvaluedReason` is set."),
   zeroValueReason: z.enum(["ruled_out", "step_not_priced", "not_ours", "expired", "cannot_convert", "not_sent", "won_counted_on_ledger"]).nullable().describe("Why the card reads exactly 0: `won_counted_on_ledger` (Paid client: the won value is the ledger's Units x LTR on the rung, LEDGER-ONLY-1107-P2),  `ruled_out` (a human ruled it out, it went cold, or lead-service's Disqualified mark), `step_not_priced` (its steps are on no funnel the offer prices), `not_ours` (what it reached was not caused by any of our pipes, so the pipeline does not price it; a sale not ours is no won value either), `expired` (Contacted, nothing sent for 30 days), `cannot_convert` (bounced / unsubscribed), `not_sent` (no send recorded yet)."),
   valueSource: z.enum(["stated_amount", "lifetime_revenue"]).nullable().describe("Paid client only: the amount a human stated on the sale, else the offer's lifetime revenue per client."),
-  entryRateSource: z.enum(["measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `default_entry` = none measured, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
+  entryRateSource: z.enum(["measured", "fleet_measured", "default_entry"]).nullable().describe("Contacted only: `measured` = the campaign × workflow's entry rate (GET /offers/{offerId}/contacted-value); `fleet_measured` = none measured for it, the fleet's measured cold-email entry rate per signal (outcome prices), the seeded benchmark for a signal the fleet never measured (MEASURED-BEFORE-DEFAULT-1117); `default_entry` = nothing measured anywhere, the seeded cold-email entry benchmark (1% positive reply, 2% click)."),
 });
 const offerDealsLifecycleResponseSchema = z.object({
   offerId: z.string(),
@@ -8062,7 +8062,7 @@ const catalogueExpectedRow = z
       .describe("Why there is no figure: `no_lifetime_revenue`, `leg_unrated:<leg>`, `pipe_unpriced:<pipe id>`, `leg_without_pipe:<leg>`, `customer_time_only` (nothing of ours costs anything), `takeover_step_unvalued` (cost served, roi null). Null with a figure."),
   })
   .describe(
-    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: mature workflow > seeded default > market benchmark > its early flash figure > another channel's mature price on the same leg (the highest); the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`.",
+    "EXPECTED economics (owner 2026-10-11: a ROI is never blank, an assumption if need be): the funnel formula where every missing input takes an assumption. Pipe cost: every measured rung before a default (MEASURED-BEFORE-DEFAULT-1117): mature workflow > its early flash figure > its own history > another channel's price on the same leg (the highest) > the fleet's price of the same outcome > seeded default > market benchmark > its own spend; the customer's team costs 0. Leg rate: the brand's own (measured / stated) > a measured pipe's > the fleet's measured conversion of the leg on its channel > default > entry default (EXPECTED-FLEET-RATE-1116). On a measured/estimated funnel it equals `costUsd`/`roi`.",
   );
 const catalogueExpectedDetail = catalogueExpectedRow.extend({
   lifetimeRevenueUsd: z.number().nullable(),
@@ -10067,6 +10067,7 @@ registry.registerPath({
     "otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains " +
     "in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), " +
     "`budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
+    "plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), " +
     "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, " +
     "LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
     "Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). " +
@@ -10124,6 +10125,11 @@ registry.registerPath({
                     label: z.string(),
                     lifecycleRung: z.string().nullable(),
                     isTarget: z.boolean(),
+                    producedOnTheWay: z
+                      .boolean()
+                      .describe(
+                        "MILESTONES-CONTACTED-1117: true = an outcome the units landing on the NEXT milestone produced on the way (ledger Units > 0, its Lifecycle rung strictly between the two milestones' rungs, e.g. Message sent between Lead found and Positive reply). Its $ each = those units' spend ÷ its count; its projection = the milestone before it × the yield the ledger measured from it.",
+                      ),
                     count: campaignTargetValue,
                     countSource: z.enum(["ledger"]).nullable().describe("`ledger` = the Units the campaign's runs produced (runs-service ledger, any outcome, posts included). LEDGER-ONLY-1107: no other basis; an outcome the ledger lacks is null with `countUnavailableReason` (`outcome_not_declared_in_ledger`, `no_producer_declares_outcome`, `ledger_unreadable`, `no_unit_makes_it`)."),
                     countUnavailableReason: z.string().nullable(),
@@ -10146,6 +10152,12 @@ registry.registerPath({
                   })).describe("One card per milestone of the campaign from Start to its Target (the chain of its own units, never the plan line); the last is the Target and carries the row's count."),
                 milestonesUnavailableReason: z.string().nullable(),
                 ledgerDaysMissing: z.array(z.string()).describe("Ledger days runs-service has not computed yet: their counts may still move."),
+                expectedReturn: expectedReturnRef
+                  .nullable()
+                  .describe(
+                    "MILESTONES-CONTACTED-1117: the campaign's EXPECTED return, the very object `/brands/{brandId}/sales-funnel-campaigns` serves as `expectedReturn` on this campaign's row (same cell: same figure, basis and assumptions; never recomputed here). Print it beside `measuredReturn`. Null + `expectedReturnUnavailableReason` only when that table cannot be read.",
+                  ),
+                expectedReturnUnavailableReason: z.string().nullable().describe("`campaigns_table_unreadable`, `campaign_not_in_campaigns_table`; null when `expectedReturn` is served."),
               }),
             ).describe("One row PER CAMPAIGN (the campaign page). Today reads `offerTargets`."),
             offerTargets: z

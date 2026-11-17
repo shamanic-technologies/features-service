@@ -34,6 +34,7 @@ import {
   funnelsOfPath,
   glyphColorOf,
   legRateOf,
+  measuredLegCostsOf,
   matchesQuery,
   pathEconomics,
   pathIdOf,
@@ -528,6 +529,15 @@ async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifet
  */
 export async function loadCatalogueModelForOffer(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates">): Promise<CatalogueModel> {
   return (await loadModel(offer)).model;
+}
+
+/**
+ * The catalogue's MEASURED expected cost per outcome of every platform pipe (`measuredLegCostsOf`), the sales-path
+ * fleet rung after the outcome-prices one (MEASURED-BEFORE-DEFAULT-1117). Costs do not depend on the lifetime revenue,
+ * so the fleet model answers for every offer. Fails like the catalogue (503 before its first build), never empty.
+ */
+export async function loadCatalogueMeasuredLegCosts(): Promise<Map<string, number>> {
+  return measuredLegCostsOf((await loadModel()).model);
 }
 
 export async function loadCatalogueModelForLifetimeRevenue(lifetimeRevenueUsd: number | null, lifetimeRevenueSource: OfferContext["lifetimeRevenueSource"]): Promise<CatalogueModel> {

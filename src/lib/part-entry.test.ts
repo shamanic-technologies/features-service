@@ -122,13 +122,13 @@ describe("PART-ENTRY-1116: an offer / brand counts from its earliest entry, neve
 describe("PART-ENTRY-1116: the fix retires every cell computed before it", () => {
   it("the three spend-charts routes and campaign-targets state this ship's compute rule", () => {
     // EXPECTED-FLEET-RATE-1116, then ROI-ROUNDING-1116, retire every cell again (a later fix supersedes the rule).
-    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"]).toBe("roi-rounding-1116");
+    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"]).toBe("measured-before-default-1117-own");
     for (const path of [
       "/offers/{offerId}/spend-charts",
       "/brands/{brandId}/spend-charts",
     ])
-      expect(ROUTE_COMPUTE_RULES[path]).toBe("roi-rounding-1116");
-    // PROJECTION-CAP-1117 retires campaign-targets' cells again.
-    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("projection-cap-1117");
+      expect(ROUTE_COMPUTE_RULES[path]).toBe("measured-before-default-1117-own");
+    // PROJECTION-CAP-1117, MEASURED-BEFORE-DEFAULT-1117, then MILESTONES-CONTACTED-1117 retire campaign-targets' cells.
+    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("milestones-contacted-1117");
   });
 });

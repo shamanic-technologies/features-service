@@ -510,7 +510,10 @@ export function __resetExpectedReturnMemo(): void {
 /** `-v1`: bump when `OfferExpectedModel` changes structure (an older stored model then reads as absent). */
 // v2 (EXPECTED-FLEET-RATE-1116): the fleet's measured rate became a rung of every leg rate and rides `inputs.fleetRates`:
 // a v1 model (priced a leg the fleet measured on its default) is never served after the deploy.
-const modelCellKey = (key: string): string => `expected-model-v2:${key}`;
+// v3 (MEASURED-BEFORE-DEFAULT-1117): `inputs.fleetPrices` also carries the catalogue's measured leg costs; a v2 model
+// priced such a leg on its seeded default.
+// v4 (MEASURED-BEFORE-DEFAULT-1117-OWN): a v3 model could price a leg on a price borrowed from another channel.
+const modelCellKey = (key: string): string => `expected-model-v4:${key}`;
 
 interface StoredModel {
   offerId: string;

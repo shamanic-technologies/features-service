@@ -39,6 +39,7 @@ import {
   type ResolvedPath,
 } from "../lib/revenue-engine.js";
 import { DEFAULT_PRICED_CAUSES, type OutcomeCause } from "../lib/outcome-cause.js";
+import { readFleetContactedEntryRates } from "../lib/fleet-contacted-entry-rates.js";
 import { fetchPublicWorkflows } from "../lib/public-stats-clients.js";
 import { dynastyOfSlug } from "../lib/workflow-scope.js";
 import { fetchBrandCampaignRows } from "../lib/campaign-identity-client.js";
@@ -371,8 +372,12 @@ export async function contactedPricingOf(brandId: string, headers: DownstreamHea
     }),
   );
   if (result !== null && result.unmeasuredReason === null) entryRatePctByGroup = contactedEntryRatesByGroup(result.workflows);
+  // The fleet's measured entry rate per signal before the seeded benchmark (MEASURED-BEFORE-DEFAULT-1117); awaited at
+  // boot like every expected rate read (never the benchmark because the process is young).
+  const fleetEntryRatePct = await readFleetContactedEntryRates();
   return {
     entryRatePctByGroup,
+    fleetEntryRatePct,
     defaultEntryRatePct: DEFAULT_CONTACTED_ENTRY_RATES_BY_SIGNAL,
     lastSentOnOrAfter: contactedExpiryCutoffIso(new Date()),
   };

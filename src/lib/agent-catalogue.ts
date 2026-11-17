@@ -85,13 +85,18 @@
  *   EXPECTED (owner 2026-10-11 "A ROI and a % Conversion are never blank (quitte à poser une hypothèse)"; 2026-10-12
  *   FUNNEL-EXPECTED-ROI-1012): every funnel ALSO serves `expected`, the same formula where every missing input takes
  *   an assumption, each named with its basis (`lib/expected-return.ts` words: measured < stated < fleet < default):
- *     pipe cost per outcome  mature workflow (`workflow`, measured) > seeded default for (leg, channel) (`default`)
- *                            > market benchmark (`benchmark`, default) > the pipe's early flash figure (`flash`,
- *                            fleet) > the pipe's own pooled history, every workflow it ran, runnable or not
- *                            (`pipe_history`, fleet; LEAD-SOURCING-EXPECTED-COST-1108) > another channel's mature price on the same leg, the highest (`same_leg_fleet`,
- *                            fleet) > the fleet's mature price of the same OUTCOME from any step, the highest, never
- *                            below what the pipe already spent producing none (`same_step_fleet`, fleet) > that own
- *                            spend alone (`own_spend`, default; FACTORY-P1 2026-10-28). The customer's own team costs nothing. One rule for every pipe, no slug.
+ *     pipe cost per outcome  EVERY MEASURED RUNG FIRST (MEASURED-BEFORE-DEFAULT-1117, owner 2026-11-17 « pour tous les
+ *                            Engine!! / Outcome!!! »: a measured figure always beats a default): mature workflow
+ *                            (`workflow`, measured) > the pipe's early flash figure (`flash`, fleet) > the pipe's own
+ *                            pooled history, every workflow it ran, runnable or not (`pipe_history`, fleet;
+ *                            LEAD-SOURCING-EXPECTED-COST-1108) > another channel's own price on the same leg, the highest
+ *                            (`same_leg_fleet`, fleet) > the fleet's own price of the same OUTCOME from any step, the
+ *                            highest, never below what the pipe already spent producing none (`same_step_fleet`, fleet)
+ *                            > THEN the defaults: seeded default for (leg, channel) (`default`) > market benchmark
+ *                            (`benchmark`, default) > the pipe's own spend alone (`own_spend`, default; FACTORY-P1
+ *                            2026-10-28: a pipe that ran is never unpriced). The customer's own team costs nothing. One
+ *                            rule for every pipe, no slug. Its measured rungs also feed the sales-path fleet rung
+ *                            (`measuredLegCostsOf`).
  *     leg rate               the path's rate (brand measured / stated > default, measured pipe)
  *                            > an entry leg's cold-email default (`DEFAULT_ENTRY_RATE_PCT`) > the seeded leg default.
  *     lifetime revenue       the offer's stated value (stated) or the fleet median (fleet).
@@ -695,11 +700,6 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
   // Read twice below (same leg, then same outcome): a `Map.values()` iterator is spent after one loop.
   const all = [...allPipes];
   if (p.measurement?.basis === "mature" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "workflow", basis: "measured" };
-  const key = `${p.computedLegKey}|${p.channelSlug}`;
-  const seeded = DEFAULT_COST_PER_OUTCOME_USD.get(key);
-  if (usable(seeded)) return { costPerOutcomeUsd: seeded, source: "default", basis: "default" };
-  const benchmark = SALES_PATH_COST_BENCHMARKS.get(key)?.costPerOutcomeUsd;
-  if (usable(benchmark)) return { costPerOutcomeUsd: benchmark, source: "benchmark", basis: "default" };
   if (p.measurement?.basis === "flash" && usable(p.measurement.costPerOutcomeUsd)) return { costPerOutcomeUsd: p.measurement.costPerOutcomeUsd, source: "flash", basis: "fleet" };
   // The pipe's own history over every workflow it ran, runnable or not (LEAD-SOURCING-EXPECTED-COST-1108): a pipe now run by
   // a script whose workflows are all retired made its outcomes at that price, a fact of its own before any other channel's.
@@ -714,8 +714,8 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
   if (sibling !== null) return { costPerOutcomeUsd: sibling, source: "same_leg_fleet", basis: "fleet" };
   // A pipe that produced nothing yet (FACTORY-P1, owner fleet rule: a cost is never blank; an unproven candidate starts from
   // the fleet's belief): the fleet's own price (`ownFleetPriceOf`) of the SAME outcome from any step, the highest, never below what the pipe
-  // already spent producing none (the cascade floor, max(own spend, parent)); with no such price, its own spend alone (one
-  // outcome costs at least that). A pipe that never spent and has no prior stays unpriced.
+  // already spent producing none (the cascade floor, max(own spend, parent)); with no such price, the defaults, then its own
+  // spend alone (one outcome costs at least that). A pipe that never spent and has no prior nor default stays unpriced.
   const spent = usable(p.measurement?.spentUsd) ? p.measurement!.spentUsd! : 0;
   let prior: number | null = null;
   for (const q of all) {
@@ -724,7 +724,35 @@ export function expectedPipeCost(p: CataloguePipe, allPipes: Iterable<CatalogueP
     if (usable(c) && (prior === null || c > prior)) prior = c;
   }
   if (prior !== null) return { costPerOutcomeUsd: Math.max(prior, spent), source: "same_step_fleet", basis: "fleet" };
+  // THEN the defaults (MEASURED-BEFORE-DEFAULT-1117): no measured figure of this outcome anywhere in the fleet.
+  const key = `${p.computedLegKey}|${p.channelSlug}`;
+  const seeded = DEFAULT_COST_PER_OUTCOME_USD.get(key);
+  if (usable(seeded)) return { costPerOutcomeUsd: seeded, source: "default", basis: "default" };
+  const benchmark = SALES_PATH_COST_BENCHMARKS.get(key)?.costPerOutcomeUsd;
+  if (usable(benchmark)) return { costPerOutcomeUsd: benchmark, source: "benchmark", basis: "default" };
   return spent > 0 ? { costPerOutcomeUsd: spent, source: "own_spend", basis: "default" } : null;
+}
+
+/**
+ * PURE (MEASURED-BEFORE-DEFAULT-1117): every platform pipe's expected cost per outcome that rests on its OWN measured
+ * rung (workflow, flash, its own history; never a price borrowed from another channel), keyed `${computedLegKey}|${channelSlug}` (the sales paths' `priceKey`). The sales-path
+ * cost cascade reads it as its fleet rung after the outcome-prices one, so an offer's expected model never prices a leg
+ * at its seeded default while the catalogue holds a measured figure of the same outcome (one order for every Engine).
+ * Plays are left out: a pipe's own price is the channel's.
+ */
+const OWN_MEASURED_COST_SOURCES: ReadonlySet<ExpectedCostSource> = new Set(["workflow", "flash", "pipe_history"]);
+
+export function measuredLegCostsOf(model: Pick<CatalogueModel, "pipes">): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const p of model.pipes.values()) {
+    const c = p.expectedCost;
+    // The pipe's OWN measured cost only (workflow, flash, its own history): a price BORROWED from another channel
+    // (`same_leg_fleet`, `same_step_fleet`) is an assumption about this channel, never its measurement. Prod 2026-11-17:
+    // AI Follow-up Email borrowed Founder Hello's $0.04 per positive reply and Wide Email's offer read 2,188x.
+    if (!c || !OWN_MEASURED_COST_SOURCES.has(c.source) || !usable(c.costPerOutcomeUsd)) continue;
+    out.set(`${p.computedLegKey}|${p.channelSlug}`, c.costPerOutcomeUsd);
+  }
+  return out;
 }
 
 const BASIS_RANK: Record<ExpectedBasis, number> = { measured: 0, stated: 1, fleet: 2, default: 3 };

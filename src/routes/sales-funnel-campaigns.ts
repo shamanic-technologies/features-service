@@ -193,13 +193,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns", apiKeyAuth, async (req, re
     // = one stored body, refreshed behind by ONE replay. Keyed on the campaign rows it was computed from (`rows`, a
     // fingerprint part): a created, stopped or re-planned campaign serves the previous table once and computes the new
     // one behind; the dashboard paints new rows from the live `?fields=copy` read meanwhile.
-    const body = await servedCachedJson({
-      view: "sales-funnel-campaigns",
-      scopeKey: buildScopeKey(brandId, { orgId: headers.orgId, offerId: offerFilter ?? undefined, pricing, rows: rowsFingerprint(rows) }),
-      orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
-      compute: () => computeFunnelCampaignTable(brandId, offerFilter, pricing, rows, headers),
-    });
+    const body = await servedCachedJson(tableCellOf(brandId, offerFilter, pricing, rows, headers));
     sendSnapshotJson(res, body);
   } catch (err) {
     if (err instanceof BrandOwnershipError) return void res.status(404).json({ error: err.message, reason: "brand_not_found" });
@@ -223,6 +217,25 @@ router.post("/internal/brands/:brandId/sales-funnel-campaigns/precompute", apiKe
   res.status(202).json({ brandId: auth.params.brandId, offerId, accepted: true });
   void warmFunnelCampaignReads({ brandId: auth.params.brandId, offerId, identity: { orgId: auth.orgId, userId: auth.userId, runId: auth.runId } });
 });
+
+/** The table's ONE Gold cell (the route's read and every other read of its rows share it). */
+function tableCellOf(brandId: string, offerFilter: string | null, pricing: Pricing, rows: readonly SalesFunnelCampaignRow[], headers: DownstreamHeaders) {
+  return {
+    view: "sales-funnel-campaigns",
+    scopeKey: buildScopeKey(brandId, { orgId: headers.orgId, offerId: offerFilter ?? undefined, pricing, rows: rowsFingerprint(rows) }),
+    orgId: headers.orgId,
+    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
+    compute: () => computeFunnelCampaignTable(brandId, offerFilter, pricing, rows, headers),
+  };
+}
+
+/**
+ * MILESTONES-CONTACTED-1117: the table body THIS route serves for `rows` (the same cell, parsed), so another read serving a
+ * row's figure (the campaign page's `expectedReturn` beside its Target) serves the very figure the Campaigns table does.
+ */
+export function salesFunnelCampaignTableBody(brandId: string, offerFilter: string | null, pricing: Pricing, rows: readonly SalesFunnelCampaignRow[], headers: DownstreamHeaders) {
+  return servedCached(tableCellOf(brandId, offerFilter, pricing, rows, headers));
+}
 
 /** PURE: the campaign rows a table cell is computed from, as a short key part (any field moved = another cell). */
 export function rowsFingerprint(rows: readonly SalesFunnelCampaignRow[]): string {
