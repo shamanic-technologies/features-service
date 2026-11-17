@@ -61,7 +61,14 @@ const titleOf = (key: string) => key.split("_").map((w, i) => (i === 0 ? w[0]!.t
 
 type TargetRowWithMilestones = CampaignTargetRow & { milestones: MilestoneCard[]; milestonesUnavailableReason: string | null; ledgerDaysMissing: string[]; ledgerOutcomeKeys: string[] };
 
-async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, StepLifecycleRung>, labels: ReadonlyMap<string, string>, now: string, brandLedger: ScopeOutcomeLedgerInput | null): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput }> {
+/** OUTCOME-FORECAST-1117: each milestone's ledger outcome keys and its plan-line Units needed per Target (never serialised here). */
+export interface MilestoneBasis {
+  step: string;
+  ledgerKeys: string[];
+  neededPerTarget: number | null;
+}
+
+async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, StepLifecycleRung>, labels: ReadonlyMap<string, string>, now: string, brandLedger: ScopeOutcomeLedgerInput | null): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput; milestoneBasis: MilestoneBasis[] }> {
   const [activity, charts, stored, caps, copies, ledger] = await Promise.all([
     funnelCampaignActivity(row, brandId, headers, pricing),
     funnelCampaignSpendCharts(row, brandId, pricing, headers),
@@ -223,6 +230,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   });
   return {
     input,
+    milestoneBasis: chain.map((m, i) => ({ step: m.step, ledgerKeys: ledgerKeysOf(m.step, m.producedBy !== null ? [] : m.unitCampaignIds), neededPerTarget: cardInputs[i]!.neededPerTarget })),
     row: {
       ...base,
       targetCountSource: targetCard?.countSource ?? null,
@@ -262,6 +270,20 @@ router.get("/brands/:brandId/campaign-targets", apiKeyAuth, async (req, res) => 
     res.status(502).json({ error: "Failed to read the brand's campaign Targets" });
   }
 });
+
+/**
+ * OUTCOME-FORECAST-1117: ONE campaign's Target row, its inputs and its milestones' ledger keys: the very figures the campaign
+ * page serves (same reads, same cells), for the forecast built on them (`routes/outcome-forecast.ts`).
+ */
+export async function campaignTargetBasis(brandId: string, row: SalesFunnelCampaignRow, headers: DownstreamHeaders, pricing: Pricing, now: string) {
+  const [rungs, declared] = await Promise.all([listOutcomeRungs(), listDeclaredSteps()]);
+  const labels = new Map<string, string>([
+    ...Object.entries(CHANNEL_STEPS).map(([k, v]) => [k, v.label] as const),
+    ...NEW_LEAD_STATE_STEPS.map((s) => [s.key, s.label] as const),
+    ...declared.map((d) => [d.key, d.label] as const),
+  ]);
+  return rowFor(row, brandId, headers, pricing, rungs, labels, now, null);
+}
 
 async function computeCampaignTargets(brandId: string, one: string | null, rows: readonly SalesFunnelCampaignRow[], headers: DownstreamHeaders, pricing: Pricing) {
   {

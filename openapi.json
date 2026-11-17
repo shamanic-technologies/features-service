@@ -82532,6 +82532,888 @@
           }
         }
       }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/outcome-forecast": {
+      "get": {
+        "summary": "A campaign's outcomes projected to its Target: median + percentile tunnel, hypotheses named",
+        "description": "OUTCOME-FORECAST-1117 (Gold). For each milestone of the campaign from Start to its Target (the campaign page's own milestones and counts) and each of the next 548 UTC days: the cumulative Units as a median with a p10-p90 tunnel, starting from what already ran (Units already produced keep maturing along the measured delay curve); the spend ahead; the expected revenue; when the next Target is due (searched over 3 years). The same projection at 2x, 5x and 10x the budget (`alternatives`). EVERY hypothesis is named under `hypotheses`: the budget assumed to continue (billing caps and their reset calendar), the cost of one first-milestone Unit, and per transition the yield and the delay with the scope each came from (campaign measured > brand measured > fleet measured > plan line > default; a thin sample falls to the next scope and says so) and the evidence of every scope. Method: Bayesian posterior predictive simulation (1,000 draws: Gamma-Poisson yields, bootstrap cost, Poisson counts, delays from the measured curve). Draw it as served: nothing is to be computed in the browser. Served from a stored Gold cell, recomputed behind the read (at most every 10 minutes, and after each daily Silver sweep). Never blank: `unavailableReason` says why `forecast` is null.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "salesFunnelCampaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "gross",
+                "net"
+              ],
+              "description": "Money basis of the spend and costs (default net: what the org pays)."
+            },
+            "required": false,
+            "description": "Money basis of the spend and costs (default net: what the org pays).",
+            "name": "pricing",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The forecast",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "salesFunnelCampaignId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "lifecycleRung": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                        "lifecycleRung"
+                      ]
+                    },
+                    "pricing": {
+                      "type": "string",
+                      "enum": [
+                        "gross",
+                        "net"
+                      ]
+                    },
+                    "costBasis": {
+                      "type": "string",
+                      "enum": [
+                        "charged"
+                      ]
+                    },
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "silverComputedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "When the measured distributions it reads were last swept; null = not swept yet (every yield then comes from the plan line)."
+                    },
+                    "method": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "enum": [
+                            "posterior_predictive_simulation"
+                          ]
+                        },
+                        "draws": {
+                          "type": "number"
+                        },
+                        "seriesDays": {
+                          "type": "number"
+                        },
+                        "searchDays": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "draws",
+                        "seriesDays",
+                        "searchDays"
+                      ]
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Why there is no forecast: `campaign_states_no_target`, `target_not_counted_in_ledger`, `no_unit_reaches_a_step`, `yield_unmeasured:<from>-><to>`, `cost_unmeasured_and_plan_prices_no_target`; null = served."
+                    },
+                    "uncountedMilestones": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "step": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "step",
+                          "label",
+                          "reason"
+                        ]
+                      },
+                      "description": "Milestones of the campaign page the ledger cannot count: left out of the projection, named here."
+                    },
+                    "hypotheses": {
+                      "type": "object",
+                      "properties": {
+                        "budget": {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "budget_cap",
+                                "daily_budget",
+                                "spend_pace_7d",
+                                null
+                              ],
+                              "description": "`budget_cap` = billing's cap and its reset calendar; `spend_pace_7d` = no budget stated, the last 7 days' pace; null = nothing more is spent (`unavailableReason`)."
+                            },
+                            "hypothesis": {
+                              "type": "string",
+                              "enum": [
+                                "the_stated_budget_continues"
+                              ]
+                            },
+                            "monthlyUsd": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The budget assumed, per month."
+                            },
+                            "capPeriod": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "daily",
+                                "weekly",
+                                "monthly",
+                                "one_off",
+                                null
+                              ]
+                            },
+                            "capAmountUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "capRemainingUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "capPeriodEnd": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "spendPerDayWhileSpendingUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "pausedReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "budget_cap_reached",
+                                "volume_cap_reached",
+                                null
+                              ]
+                            },
+                            "resumesAt": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "unavailableReason": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Why nothing more is spent (`campaign_stopped`, a one-off cap spent, caps unreadable, no budget and no recent spend): the projection then only matures what already ran."
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "hypothesis",
+                            "monthlyUsd",
+                            "capPeriod",
+                            "capAmountUsd",
+                            "capRemainingUsd",
+                            "capPeriodEnd",
+                            "spendPerDayWhileSpendingUsd",
+                            "pausedReason",
+                            "resumesAt",
+                            "unavailableReason"
+                          ]
+                        },
+                        "entryCost": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "step": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "campaign",
+                                "plan"
+                              ],
+                              "description": "`campaign` = everything it spent ÷ its Units of the first milestone (at least 30); `plan` = the plan line's cost per Target walked back through the yields."
+                            },
+                            "usdPerUnit": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "p10": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "p90": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "spentUsd": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "units": {
+                              "type": "number",
+                              "nullable": true
+                            },
+                            "planBasis": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "step",
+                            "label",
+                            "source",
+                            "usdPerUnit",
+                            "p10",
+                            "p90",
+                            "spentUsd",
+                            "units",
+                            "planBasis"
+                          ]
+                        },
+                        "transitions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fromStep": {
+                                "type": "string"
+                              },
+                              "toStep": {
+                                "type": "string"
+                              },
+                              "fromOutcomeKey": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "toOutcomeKey": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "yield": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "enum": [
+                                      "campaign",
+                                      "brand",
+                                      "fleet",
+                                      "plan",
+                                      "default"
+                                    ],
+                                    "description": "Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default."
+                                  },
+                                  "unitsPerUnit": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "Units of `toStep` per Unit of `fromStep` (mean of the estimate; × 100 = % Conversion)."
+                                  },
+                                  "median": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "p10": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "p90": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "thinnerScopes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "campaign",
+                                        "brand"
+                                      ]
+                                    },
+                                    "description": "Finer scopes that hold a sample too thin to stand alone (it only nudges the estimate): say it."
+                                  },
+                                  "evidence": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "scope": {
+                                          "type": "string",
+                                          "enum": [
+                                            "campaign",
+                                            "brand",
+                                            "fleet"
+                                          ]
+                                        },
+                                        "fromUnits": {
+                                          "type": "number"
+                                        },
+                                        "toUnits": {
+                                          "type": "number"
+                                        },
+                                        "exposure": {
+                                          "type": "number"
+                                        },
+                                        "delayPairs": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "scope",
+                                        "fromUnits",
+                                        "toUnits",
+                                        "exposure",
+                                        "delayPairs"
+                                      ]
+                                    },
+                                    "description": "What each scope measured on this transition (sample sizes)."
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "unitsPerUnit",
+                                  "median",
+                                  "p10",
+                                  "p90",
+                                  "thinnerScopes",
+                                  "evidence"
+                                ]
+                              },
+                              "delay": {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "string",
+                                    "enum": [
+                                      "campaign",
+                                      "brand",
+                                      "fleet",
+                                      "plan",
+                                      "default"
+                                    ],
+                                    "description": "Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default."
+                                  },
+                                  "pairs": {
+                                    "type": "number",
+                                    "description": "Pairs of Units behind the curve (0 on the default)."
+                                  },
+                                  "thinSample": {
+                                    "type": "boolean",
+                                    "description": "Under 10 pairs: the largest sample measured, kept over the default."
+                                  },
+                                  "medianHours": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "p10Hours": {
+                                    "type": "number",
+                                    "nullable": true
+                                  },
+                                  "p90Hours": {
+                                    "type": "number",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "pairs",
+                                  "thinSample",
+                                  "medianHours",
+                                  "p10Hours",
+                                  "p90Hours"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "fromStep",
+                              "toStep",
+                              "fromOutcomeKey",
+                              "toOutcomeKey",
+                              "yield",
+                              "delay"
+                            ]
+                          }
+                        },
+                        "targetValue": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "usd": {
+                              "type": "number"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "plan_target_value"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "usd",
+                            "source"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "budget",
+                        "entryCost",
+                        "transitions",
+                        "targetValue"
+                      ]
+                    },
+                    "forecast": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "days": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The UTC days after today (18 months), one per point of every series."
+                        },
+                        "outcomes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "step": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "isTarget": {
+                                "type": "boolean"
+                              },
+                              "unitsToDate": {
+                                "type": "number",
+                                "description": "Units the campaign made to date (the campaign page's count): every cumulative series starts from it."
+                              },
+                              "cumulativeUnits": {
+                                "type": "object",
+                                "properties": {
+                                  "expected": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    },
+                                    "description": "The mean over the simulation's draws (smooth), one value per day of `days`."
+                                  },
+                                  "median": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "p10": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    },
+                                    "description": "Low edge of the tunnel: 1 draw in 10 falls under it."
+                                  },
+                                  "p90": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    },
+                                    "description": "High edge of the tunnel: 1 draw in 10 passes it."
+                                  }
+                                },
+                                "required": [
+                                  "expected",
+                                  "median",
+                                  "p10",
+                                  "p90"
+                                ],
+                                "description": "Cumulative Units by the end of each day: what already ran keeps maturing, the budget ahead buys more."
+                              },
+                              "unitsPerTarget": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "median": {
+                                    "type": "number"
+                                  },
+                                  "p10": {
+                                    "type": "number"
+                                  },
+                                  "p90": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "median",
+                                  "p10",
+                                  "p90"
+                                ],
+                                "description": "Units of this milestone it takes to make one Target (the yields down to it); null on the Target."
+                              },
+                              "expectedRevenuePerUnitUsd": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "median": {
+                                    "type": "number"
+                                  },
+                                  "p10": {
+                                    "type": "number"
+                                  },
+                                  "p90": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "median",
+                                  "p10",
+                                  "p90"
+                                ],
+                                "description": "The Target's revenue walked down through the yields: what one Unit here is expected to bring in (gross, a forecast; never a return). Null = the Target has no value stated."
+                              }
+                            },
+                            "required": [
+                              "step",
+                              "label",
+                              "isTarget",
+                              "unitsToDate",
+                              "cumulativeUnits",
+                              "unitsPerTarget",
+                              "expectedRevenuePerUnitUsd"
+                            ]
+                          }
+                        },
+                        "spendAheadUsd": {
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          },
+                          "description": "Cumulative spend from now, per day of `days`: the budget hypothesis (no uncertainty of its own)."
+                        },
+                        "expectedRevenueUsd": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "expected": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "description": "The mean over the simulation's draws (smooth), one value per day of `days`."
+                            },
+                            "median": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              }
+                            },
+                            "p10": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "description": "Low edge of the tunnel: 1 draw in 10 falls under it."
+                            },
+                            "p90": {
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              },
+                              "description": "High edge of the tunnel: 1 draw in 10 passes it."
+                            }
+                          },
+                          "required": [
+                            "expected",
+                            "median",
+                            "p10",
+                            "p90"
+                          ],
+                          "description": "Cumulative revenue of the Targets made FROM NOW (Targets × the Target's value); null = no value stated."
+                        },
+                        "nextTarget": {
+                          "type": "object",
+                          "properties": {
+                            "shareWithinSearch": {
+                              "type": "number",
+                              "description": "Share of draws that make a Target within `searchDays` (0..1)."
+                            },
+                            "searchDays": {
+                              "type": "number"
+                            },
+                            "medianDate": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "UTC day the next Target is due in the median draw; null = later than `searchDays`."
+                            },
+                            "earlyDate": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "1 draw in 10 makes it by this day; null = later than `searchDays`."
+                            },
+                            "lateDate": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "9 draws in 10 make it by this day; null = later than `searchDays` in the slow case (say « more than 3 years », never a date)."
+                            },
+                            "medianInDays": {
+                              "type": "number",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "shareWithinSearch",
+                            "searchDays",
+                            "medianDate",
+                            "earlyDate",
+                            "lateDate",
+                            "medianInDays"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "days",
+                        "outcomes",
+                        "spendAheadUsd",
+                        "expectedRevenueUsd",
+                        "nextTarget"
+                      ]
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "budgetMultiplier": {
+                            "type": "number"
+                          },
+                          "monthlyBudgetUsd": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "nextTarget": {
+                            "type": "object",
+                            "properties": {
+                              "shareWithinSearch": {
+                                "type": "number",
+                                "description": "Share of draws that make a Target within `searchDays` (0..1)."
+                              },
+                              "searchDays": {
+                                "type": "number"
+                              },
+                              "medianDate": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "UTC day the next Target is due in the median draw; null = later than `searchDays`."
+                              },
+                              "earlyDate": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "1 draw in 10 makes it by this day; null = later than `searchDays`."
+                              },
+                              "lateDate": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "9 draws in 10 make it by this day; null = later than `searchDays` in the slow case (say « more than 3 years », never a date)."
+                              },
+                              "medianInDays": {
+                                "type": "number",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "shareWithinSearch",
+                              "searchDays",
+                              "medianDate",
+                              "earlyDate",
+                              "lateDate",
+                              "medianInDays"
+                            ]
+                          },
+                          "targetCumulativeUnits": {
+                            "type": "object",
+                            "properties": {
+                              "expected": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "The mean over the simulation's draws (smooth), one value per day of `days`."
+                              },
+                              "median": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "p10": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "Low edge of the tunnel: 1 draw in 10 falls under it."
+                              },
+                              "p90": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "High edge of the tunnel: 1 draw in 10 passes it."
+                              }
+                            },
+                            "required": [
+                              "expected",
+                              "median",
+                              "p10",
+                              "p90"
+                            ]
+                          },
+                          "expectedRevenueUsd": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "expected": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "The mean over the simulation's draws (smooth), one value per day of `days`."
+                              },
+                              "median": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                }
+                              },
+                              "p10": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "Low edge of the tunnel: 1 draw in 10 falls under it."
+                              },
+                              "p90": {
+                                "type": "array",
+                                "items": {
+                                  "type": "number"
+                                },
+                                "description": "High edge of the tunnel: 1 draw in 10 passes it."
+                              }
+                            },
+                            "required": [
+                              "expected",
+                              "median",
+                              "p10",
+                              "p90"
+                            ]
+                          },
+                          "spendAheadUsd": {
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "required": [
+                          "budgetMultiplier",
+                          "monthlyBudgetUsd",
+                          "nextTarget",
+                          "targetCumulativeUnits",
+                          "expectedRevenueUsd",
+                          "spendAheadUsd"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "salesFunnelCampaignId",
+                    "name",
+                    "target",
+                    "pricing",
+                    "costBasis",
+                    "computedAt",
+                    "silverComputedAt",
+                    "method",
+                    "unavailableReason",
+                    "uncountedMilestones",
+                    "hypotheses",
+                    "forecast",
+                    "alternatives"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "pricing_unrecognised"
+          },
+          "404": {
+            "description": "brand_not_found | sales_funnel_campaign_not_found"
+          },
+          "502": {
+            "description": "A dependency failed"
+          }
+        }
+      }
     }
   }
 }
