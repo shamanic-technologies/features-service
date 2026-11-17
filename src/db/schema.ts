@@ -1243,3 +1243,44 @@ export const scriptDrawShareDays = pgTable(
   },
   (table) => [primaryKey({ name: "script_draw_share_days_pk", columns: [table.day, table.scriptDynasty] })],
 );
+
+/**
+ * OUTCOME-FORECAST-1117, SILVER: our copy of the PRODUCED Units of runs-service's ledger, one row per Unit (the ledger's
+ * occurrence id), followed incrementally (`lib/outcome-units-copy.ts`). `subject` = `<subject service>:<subject id>`;
+ * `brand_id` = the declaring run's brand when it names exactly one. Read by the Silver sweep only. Migration 0076.
+ */
+export const outcomeUnits = pgTable(
+  "outcome_units",
+  {
+    id: uuid("id").primaryKey(),
+    outcomeKey: text("outcome_key").notNull(),
+    subject: text("subject").notNull(),
+    declaredAt: timestamp("declared_at", { withTimezone: true }).notNull(),
+    orgId: text("org_id"),
+    brandId: text("brand_id"),
+    campaignId: text("campaign_id"),
+    costNetCents: doublePrecision("cost_net_cents"),
+    costGrossCents: doublePrecision("cost_gross_cents"),
+    reversed: boolean("reversed").notNull().default(false),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("outcome_units_subject").on(table.subject, table.outcomeKey, table.declaredAt), index("outcome_units_key").on(table.outcomeKey, table.declaredAt)],
+);
+
+/**
+ * OUTCOME-FORECAST-1117, SILVER: what is measured per scope (`campaign` = a sales funnel campaign, `brand`, `fleet`): a
+ * cost row per outcome (`from_key` '') and a row per transition (yield + delay). Replaced whole by each sweep. Migration 0076.
+ */
+export const outcomeSilverStats = pgTable(
+  "outcome_silver_stats",
+  {
+    scope: text("scope").notNull(),
+    scopeId: text("scope_id").notNull(),
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    sampleSize: doublePrecision("sample_size").notNull(),
+    body: jsonb("body").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [primaryKey({ name: "outcome_silver_stats_pk", columns: [table.scope, table.scopeId, table.fromKey, table.toKey] })],
+);
