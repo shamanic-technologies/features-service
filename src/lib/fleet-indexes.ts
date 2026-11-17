@@ -367,6 +367,54 @@ function bestAvailableLearning(rows: readonly IndexRow[]): IndexRow | undefined 
     .sort((a, b) => a.rank - b.rank || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
 }
 
+/**
+ * PURE. A cold email index while no script or workflow is PROVEN on the leg (INDEX-HISTORY-1117, owner go 2026-11-17: « 2.
+ * ok », the landing prints it with its "Expected" tag): an EXPECTED figure built from what we measured, `valueKind:
+ * "expected"`, always `noise`, every input on the point.
+ *   rate  = the leg's measured conversion over every script and workflow it ever ran (Σ outcomes ÷ Σ people reached), a
+ *           RATE hypothesis, never a cost pooled across dynasties;
+ *   cost  = the subject dynasty's OWN measured cost per person reached ÷ that rate. Subject = the best available runnable
+ *           script (`bestAvailableLearning`), else the runnable script that reached the most people.
+ * Null (the caller's true reason) when the leg never measured an outcome or nothing runnable reached anybody.
+ */
+export function expectedLegPoint(def: FleetIndexDefinition, rows: readonly IndexRow[]): FleetIndexPoint | null {
+  const outcomes = rows.reduce((t, r) => t + r.outcomes, 0);
+  const reached = rows.reduce((t, r) => t + r.contacted, 0);
+  if (outcomes <= 0 || reached <= 0) return null;
+  const subject = bestAvailableLearning(rows) ?? [...rows].filter((r) => r.selectable && r.contacted > 0).sort((a, b) => b.contacted - a.contacted || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1))[0];
+  if (!subject) return null;
+  const ratePct = (100 * outcomes) / reached;
+  const costPerReachedUsd = subject.spentUsd / subject.contacted;
+  const cost = def.metric === "cost_per_outcome";
+  const unknown = cost && subject.vendorCostUnknown === true;
+  const value = cost ? (unknown || costPerReachedUsd <= 0 ? null : costPerReachedUsd / (ratePct / 100)) : ratePct;
+  return {
+    indexSlug: def.slug,
+    value,
+    status: "noise",
+    outcomes: subject.outcomes,
+    contacted: subject.contacted,
+    workflowDynastySlug: subject.workflowDynastySlug,
+    workflowDynastyName: subject.workflowDynastyName,
+    unavailableReason: value === null ? (unknown ? VENDOR_COST_UNKNOWN : "not_measured") : null,
+    inputs: {
+      valueKind: "expected",
+      method: "expected_measured_rates",
+      formula: cost ? "subject_cost_per_person_reached / leg_measured_rate" : "leg_measured_rate",
+      pick: "expected_below_noise_bar",
+      outcomesRequired: SIGNAL_MIN_OUTCOMES,
+      legOutcomes: outcomes,
+      legReached: reached,
+      legRatePct: ratePct,
+      subjectSpentUsd: subject.spentUsd,
+      subjectReached: subject.contacted,
+      subjectOutcomes: subject.outcomes,
+      subjectCostPerReachedUsd: costPerReachedUsd,
+      ...(subject.unpricedSharePct !== undefined ? { unpricedSharePct: subject.unpricedSharePct } : {}),
+    },
+  };
+}
+
 function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStandsIn: boolean): FleetIndexPoint {
   const pick = indexPipePick(rows, bestAvailableStandsIn);
   if (!pick && !bestAvailableStandsIn) {
@@ -374,6 +422,10 @@ function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStan
     return { indexSlug: def.slug, value: null, status: "noise", outcomes: 0, contacted: null, workflowDynastySlug: null, workflowDynastyName: null, unavailableReason: "no_mature_workflow", inputs: {} };
   }
   if (!pick) {
+    // INDEX-HISTORY-1117 (owner go 2026-11-17, « 2. ok »): nothing proven yet = the EXPECTED figure from our measured
+    // rates, labelled expected, never a blank index while we hold data.
+    const expected = expectedLegPoint(def, rows);
+    if (expected) return expected;
     // A runnable row measured the outcome, under the noise bar: not a price yet, said with what it rests on.
     const below = bestAvailableLearning(rows);
     if (below) {
@@ -456,6 +508,8 @@ function meetingPoint(def: FleetIndexDefinition, replyRows: IndexRow[], pipe: Me
   if (cost && mb.vendorCostUnknown) return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: VENDOR_COST_UNKNOWN };
   const rate = mb.ratePct / 100;
   const value = cost ? reply.value / rate + mb.costPerMeetingUsd : reply.value * rate;
+  // An EXPECTED interest figure (nothing proven on the reply leg, INDEX-HISTORY-1117) makes the chain expected too.
+  if (reply.inputs.valueKind === "expected") inputs.valueKind = "expected";
   return {
     ...base,
     value,

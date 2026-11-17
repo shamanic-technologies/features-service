@@ -62,17 +62,16 @@ describe("fleet indexes", () => {
     const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null, bestAvailableStandsIn: true }));
     // The workflow era's recomputed history keeps its rule: mature or nothing.
     expect(byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: rows, meetingPipe: null })).get("cold-email-cost-per-positive-reply")).toMatchObject({ value: null, unavailableReason: "no_mature_workflow" });
-    // INDEX-VISITS-1117: 5 replies is under the noise bar (10): not a price, said with what it rests on
-    expect(p.get("cold-email-cost-per-positive-reply")).toMatchObject({
-      value: null,
-      status: "noise",
-      outcomes: 5,
-      contacted: 7288,
-      workflowDynastySlug: "email_sent/dy_cold_email_signed_sender_client_brand",
-      unavailableReason: "not_measured",
-      inputs: expect.objectContaining({ pick: "below_noise_bar", outcomesRequired: 10 }),
-    });
-    expect(p.get("cold-email-positive-reply-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_measured" });
+    // INDEX-VISITS-1117: 5 replies is under the noise bar (10): never its measured figure as a price; INDEX-HISTORY-1117
+    // (owner « 2. ok »): the EXPECTED figure instead, the subject's own cost per person ÷ the leg's measured rate
+    const cpr = p.get("cold-email-cost-per-positive-reply")!;
+    expect(cpr).toMatchObject({ status: "noise", outcomes: 5, contacted: 7288, workflowDynastySlug: "email_sent/dy_cold_email_signed_sender_client_brand", unavailableReason: null, inputs: expect.objectContaining({ valueKind: "expected", method: "expected_measured_rates", pick: "expected_below_noise_bar" }) });
+    const legRate = (rows.reduce((t, r) => t + r.outcomes, 0) / rows.reduce((t, r) => t + r.contacted, 0)) * 100;
+    expect(cpr.inputs.legRatePct).toBeCloseTo(legRate, 10);
+    const subject = rows.find((r) => r.workflowDynastySlug === "email_sent/dy_cold_email_signed_sender_client_brand")!;
+    expect(cpr.value).toBeCloseTo(subject.spentUsd / subject.contacted / (legRate / 100), 10);
+    expect(p.get("cold-email-positive-reply-rate")).toMatchObject({ status: "noise", unavailableReason: null, inputs: expect.objectContaining({ valueKind: "expected" }) });
+    expect(p.get("cold-email-positive-reply-rate")!.value).toBeCloseTo(legRate, 10);
     // at the bar the best available stands in, status noise
     const ten = rows.map((r) => (r.workflowDynastySlug === "email_sent/dy_cold_email_signed_sender_client_brand" ? { ...r, outcomes: 10 } : r));
     const q = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: ten, meetingPipe: null, bestAvailableStandsIn: true }));
@@ -152,6 +151,17 @@ describe("fleet indexes", () => {
     expect(meetingCostIndexPoint(recomputing, { ...expected, priceUsd: null })).toMatchObject({ value: null, unavailableReason: "ledger_being_recomputed" });
     expect(meetingCostIndexPoint(null, { ...expected, maturity: "learning" })).toMatchObject({ value: 794.46, status: "noise", inputs: { ledgerUnavailableReason: "ledger_unreadable" } });
     expect(meetingCostIndexPoint(null, null)).toBeNull();
+  });
+
+  it("INDEX-HISTORY-1117: a meeting rate chained on an EXPECTED interest figure is labelled expected too", () => {
+    const meetingPipe: MeetingPipeEvidence = {
+      rows: [mbRow({ spentUsd: 0.31, contacted: 0, outcomes: 0 })],
+      pooled: { spentUsd: 5, contacted: 12, outcomes: 3, spentByDynasty: {} },
+    };
+    const replyRows = [row({ workflowDynastySlug: "email_sent/dy_x", basis: "flash", isMature: false, moneyGoesHere: false, outcomes: 5, contacted: 7288, spentUsd: 260 })];
+    const p = byslug(computeFleetIndexPoints({ websiteVisitRows: null, positiveReplyRows: replyRows, meetingPipe, bestAvailableStandsIn: true })).get("cold-email-meeting-rate")!;
+    expect(p.value).toBeCloseTo((5 / 7288) * 100 * 0.25, 10);
+    expect(p).toMatchObject({ status: "noise", inputs: expect.objectContaining({ valueKind: "expected" }) });
   });
 
   it("LANDING-MEETING-PRICE-1027: ledger recomputing or short + outcome prices unmeasured = the pipes' chain, labelled expected", () => {
