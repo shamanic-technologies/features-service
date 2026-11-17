@@ -17,7 +17,7 @@ import { outcomeSilverStats, outcomeUnits } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
 import { storedCopyIsFresh } from "./boot-warms.js";
-import { buildSilverStats, DELAY_EDGES_HOURS, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
+import { buildSilverStats, DELAY_EDGES_HOURS, SILVER_RULE, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
 
 const PAGE = 1000;
 /** Between two pages of the copy: the ledger read prices 1,000 Units a page, never two at once, never back to back. */
@@ -238,6 +238,8 @@ export async function readSilverStats(scope: SilverScope, scopeId: string, filte
 
 export interface SilverSweepRecord {
   sweptAt: string;
+  /** The rule the stats were built on (`SILVER_RULE`); absent on a sweep before it existed. */
+  rule?: string;
   copy: { pages: number; units: number };
   units: number;
   stats: number;
@@ -268,7 +270,7 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
       const now = new Date();
       const stats = buildSilverStats({ unitDays, unitCosts, pairBins, funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
       await replaceStats(stats, now);
-      const record: SilverSweepRecord = { sweptAt: now.toISOString(), copy: { pages: copy.pages, units: copy.units }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
+      const record: SilverSweepRecord = { sweptAt: now.toISOString(), rule: SILVER_RULE, copy: { pages: copy.pages, units: copy.units }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
       await storeFleetCell(SILVER_SWEEP_CELL, JSON.stringify(record), now.getTime());
       console.log(`[features-service] outcome silver sweep: ${copy.units} Units copied in ${copy.pages} pages (${record.copyMs} ms), ${record.units} Units held, ${stats.length} stats built in ${record.buildMs} ms`);
       for (const fn of afterSweep) await fn().catch((err) => console.error("[features-service] outcome silver sweep follower failed:", err));
@@ -289,7 +291,7 @@ async function tick(): Promise<void> {
   let waitMs = RETRY_MS;
   try {
     const last = await loadFleetCell(SILVER_SWEEP_CELL);
-    if (storedCopyIsFresh(last?.computedAt, SWEEP_EVERY_MS)) waitMs = (last!.computedAt as number) + SWEEP_EVERY_MS - Date.now();
+    if (storedCopyIsFresh(last?.computedAt, SWEEP_EVERY_MS) && (JSON.parse(last!.text) as SilverSweepRecord).rule === SILVER_RULE) waitMs = (last!.computedAt as number) + SWEEP_EVERY_MS - Date.now();
     else {
       await runOutcomeSilverSweep();
       waitMs = SWEEP_EVERY_MS;
