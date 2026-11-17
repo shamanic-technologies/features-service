@@ -10481,11 +10481,11 @@ const OutcomeTransitionStatSchema = z.object({
   fromKey: z.string(),
   toKey: z.string(),
   fromUnits: z.number().describe("Units of `fromKey` in the scope."),
-  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the same subject, both in the scope."),
+  toUnits: z.number().describe("Units of `toKey` paired with a `fromKey` Unit of the scope (same subject): what became of the scope's `from` Units, wherever the `to` Unit was declared."),
   exposure: z.number().describe("Effective exposure: each `from` Unit counts for the share of its `to` Units already due at its age (censoring). Equals `fromUnits` when no delay is measured."),
   censoredBy: z.enum(["campaign", "brand", "fleet"]).nullable().describe("Whose delay curve censored the exposure (the finest scope with at least 10 pairs, else the largest sample); null = none measured."),
   yield: OutcomeRateEstimateSchema,
-  prior: z.object({ shape: z.number(), rate: z.number() }).describe("The fleet's Gamma prior on this transition (empirical Bayes over every campaign); `rate` = the `from` Units it weighs."),
+  prior: z.object({ shape: z.number(), rate: z.number() }).describe("The fleet's Gamma prior on this transition (empirical Bayes: mean = the fleet's pooled rate, strength = how much campaigns differ); `rate` = the `from` Units it weighs."),
   delay: OutcomeDelayDistributionSchema.nullable().describe("Null = no pair measured in this scope."),
 });
 registry.registerPath({

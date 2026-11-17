@@ -159,23 +159,29 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     expect(fleet.toUnits).toBe(50);
     expect(fleet.prior).toEqual(f1.prior);
     expect(fleet.yield.mean).toBeCloseTo(fleet.prior.shape / fleet.prior.rate, 12);
-    expect(fleet.prior.shape / fleet.prior.rate).toBeCloseTo(50 / 1000, 9); // pooled over the campaigns' exposure (100 + 300 + 600)
+    expect(fleet.prior.shape / fleet.prior.rate).toBeCloseTo(50 / fleet.exposure, 9); // the fleet's pooled rate, on its censored exposure
     // Brand scope pools its campaigns.
     expect(transition("brand", "B1")).toMatchObject({ fromUnits: 500, toUnits: 20 });
   });
 
-  it("a pair whose two Units sit in different funnel campaigns is no campaign's pair", () => {
+  it("a campaign's pair is what became of ITS from-Unit, wherever the to-Unit was declared (even under no campaign)", () => {
     const s = buildSilverStats({
       today,
       funnelOf,
       unitDays: [{ outcomeKey: "alpha", campaignId: "u1", brandId: "B1", day: "2026-01-01", units: 10 }],
       unitCosts: [],
-      pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: "u3", brandId: "B1", bin: 5, pairs: 4, sumHours: 14 }],
+      pairBins: [
+        { fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: "u3", brandId: "B1", bin: 5, pairs: 3, sumHours: 10 },
+        { fromKey: "alpha", toKey: "beta", fromCampaignId: "u1", toCampaignId: null, brandId: "B1", bin: 5, pairs: 1, sumHours: 4 },
+        { fromKey: "alpha", toKey: "beta", fromCampaignId: null, toCampaignId: null, brandId: "B1", bin: 5, pairs: 2, sumHours: 7 },
+      ],
     });
     const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
-    expect(t("campaign", "F1").toUnits).toBe(0);
-    expect(t("brand", "B1").toUnits).toBe(4);
-    expect(t("fleet", FLEET_SCOPE_ID).toUnits).toBe(4);
+    expect(t("campaign", "F1").toUnits).toBe(4);
+    expect(t("brand", "B1").toUnits).toBe(6);
+    expect(t("fleet", FLEET_SCOPE_ID).toUnits).toBe(6);
+    // The prior's mean is the FLEET's pooled rate (6 over 10), not the campaigns' alone (4 over 10): Units tagged on no campaign count.
+    expect(t("fleet", FLEET_SCOPE_ID).prior.shape / t("fleet", FLEET_SCOPE_ID).prior.rate).toBeCloseTo(0.6, 9);
   });
 });
 

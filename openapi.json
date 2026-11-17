@@ -82362,7 +82362,7 @@
                           },
                           "toUnits": {
                             "type": "number",
-                            "description": "Units of `toKey` paired with a `fromKey` Unit of the same subject, both in the scope."
+                            "description": "Units of `toKey` paired with a `fromKey` Unit of the scope (same subject): what became of the scope's `from` Units, wherever the `to` Unit was declared."
                           },
                           "exposure": {
                             "type": "number",
@@ -82434,7 +82434,7 @@
                               "shape",
                               "rate"
                             ],
-                            "description": "The fleet's Gamma prior on this transition (empirical Bayes over every campaign); `rate` = the `from` Units it weighs."
+                            "description": "The fleet's Gamma prior on this transition (empirical Bayes: mean = the fleet's pooled rate, strength = how much campaigns differ); `rate` = the `from` Units it weighs."
                           },
                           "delay": {
                             "type": "object",
