@@ -52,6 +52,19 @@ export async function fetchCampaignLedgerUnits(campaignId: string): Promise<Camp
   return parsed;
 }
 
+/**
+ * PURE. UNIT-LINKS-CONSUME-1117: the Units a campaign carries without its run naming it (one row per Unit, as the ledger's
+ * stored links serve them) as per-outcome per-day counts, to sum with what its own runs produced.
+ */
+export function carriedLedgerUnits(rows: ReadonlyArray<{ outcomeKey: string; day: string }>): CampaignLedgerUnits {
+  const byOutcome = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const days = byOutcome.get(r.outcomeKey) ?? byOutcome.set(r.outcomeKey, new Map()).get(r.outcomeKey)!;
+    days.set(r.day, (days.get(r.day) ?? 0) + 1);
+  }
+  return { byOutcome, daysMissing: [] };
+}
+
 /** PURE. Several campaigns' units summed per outcome and day. */
 export function sumLedgerUnits(parts: readonly CampaignLedgerUnits[]): CampaignLedgerUnits {
   const byOutcome = new Map<string, Map<string, number>>();

@@ -6,16 +6,23 @@
  * Units once (`outcome_units`), one outcome at a time, one page at a time with a pause, resumable (cursor stored per
  * outcome), then follow each outcome from two days before its last pass (a Unit declared late lands in the overlap).
  * LIMITS, said: a Unit back-dated more than the overlap, or reversed after it, is seen only by a full re-copy (bump
- * `FORMAT`); a Unit's subject is copied as declared (runs-service's subject equivalences are not applied).
+ * `FORMAT`).
  *
- * The sweep then groups the copy in SQL (never a figure computed in SQL), builds every stat in `lib/outcome-silver.ts`
+ * UNIT-LINKS-CONSUME-1117: which Unit a Unit came from is the ledger's STORED link (`GET
+ * /internal/stats/outcome-chains/unit-links`: both Units, both dates, `delaySeconds`, the campaign(s) each carries,
+ * subject equivalences followed). We copy the links whole once (`outcome_unit_links`, page by page with a pause, the
+ * cursor stored after each page), then follow the cursor after each of the ledger's builds (~15 min): a link served again
+ * replaces ours, a link served with `removedAt` is dropped. Every pair and every delay is read off that copy; nothing is
+ * paired here by subject and date. Prod 2026-11-17: 451,692 links, 91 pages read in 139 s, no load moved on the box.
+ *
+ * The sweep then groups the copies in SQL (never a figure computed in SQL), builds every stat in `lib/outcome-silver.ts`
  * and replaces `outcome_silver_stats` whole. Daily, counted from the STORED last sweep; never on listen(), never on a read.
  */
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { outcomeSilverStats, outcomeUnits } from "../db/schema.js";
+import { outcomeSilverStats, outcomeUnitLinks, outcomeUnits } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
-import { loadFleetCell, storeFleetCell } from "./fleet-cell-store.js";
+import { loadFleetCell, loadFleetCellStrict, storeFleetCell } from "./fleet-cell-store.js";
 import { storedCopyIsFresh } from "./boot-warms.js";
 import { buildSilverStats, DELAY_EDGES_HOURS, SILVER_RULE, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
 
@@ -68,12 +75,18 @@ export function unitRowOf(u: LedgerUnit): OutcomeUnitRow {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref?.());
 
+class RunsReadError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function runsGet(path: string): Promise<unknown> {
   const url = process.env.RUNS_SERVICE_URL;
   const key = process.env.RUNS_SERVICE_API_KEY;
   if (!url || !key) throw new Error("RUNS_SERVICE_URL or RUNS_SERVICE_API_KEY not configured");
   const r = await fetchWithRetry(`${url}${path}`, { headers: { "x-api-key": key } }, { backgroundShare: false });
-  if (!r.ok) throw new Error(`runs-service ${path} ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (!r.ok) throw new RunsReadError(`runs-service ${path} ${r.status}: ${(await r.text()).slice(0, 200)}`, r.status);
   return r.json();
 }
 
@@ -141,55 +154,258 @@ export async function copyOutcomeUnits(): Promise<{ pages: number; units: number
   return { pages, units, complete: true };
 }
 
+// ── The copy of the ledger's stored links ──
+
+const LINKS_PAGE = Number(process.env.OUTCOME_UNIT_LINKS_PAGE ?? 5000);
+const LINKS_PAGE_GAP_MS = Number(process.env.OUTCOME_UNIT_LINKS_PAGE_GAP_MS ?? 500);
+const LINKS_FOLLOW_EVERY_MS = 15 * 60_000;
+const LINKS_FIRST_TICK_MS = 2 * 60_000;
+/** Bump to copy every link again from the start. */
+const LINKS_FORMAT = "v1";
+const LINKS_CELL = `outcome-unit-links-copy:${LINKS_FORMAT}`;
+
+interface LinksCopyState {
+  cursor: string | null;
+  /** The whole copy was read through once: the table holds every standing link as of `builtAt`. */
+  copied: boolean;
+  builtAt: string | null;
+  /** The first whole copy, measured: links read, pages, wall time. */
+  firstCopy: { links: number; pages: number; ms: number } | null;
+}
+
+export interface LedgerLinkUnit {
+  id: string;
+  outcomeKey: string;
+  at: string;
+  brandIds: string[];
+  campaignId: string | null;
+  campaignIds: string[];
+}
+
+export interface LedgerUnitLink {
+  fromUnit: LedgerLinkUnit;
+  toUnit: LedgerLinkUnit;
+  delaySeconds: number;
+  removedAt: string | null;
+}
+
+export type OutcomeUnitLinkRow = typeof outcomeUnitLinks.$inferInsert;
+
+/** PURE. One stored link of the ledger as the row we keep: the delay is the one the ledger states. */
+export function linkRowOf(l: LedgerUnitLink): OutcomeUnitLinkRow {
+  if (!Number.isFinite(l.delaySeconds)) throw new Error(`[features-service] unit link ${l.fromUnit.id} -> ${l.toUnit.id} states no delaySeconds`);
+  return {
+    fromUnitId: l.fromUnit.id,
+    toUnitId: l.toUnit.id,
+    fromKey: l.fromUnit.outcomeKey,
+    toKey: l.toUnit.outcomeKey,
+    fromAt: new Date(l.fromUnit.at),
+    toAt: new Date(l.toUnit.at),
+    delaySeconds: l.delaySeconds,
+    fromCampaignIds: [...l.fromUnit.campaignIds].sort(),
+    toCampaignId: l.toUnit.campaignId,
+    toCampaignIds: [...l.toUnit.campaignIds].sort(),
+    fromBrandId: l.fromUnit.brandIds.length === 1 ? l.fromUnit.brandIds[0]! : null,
+  };
+}
+
+/**
+ * PURE. What one served page does to our copy. Links come in write order and a link is served again when it moved: the
+ * LAST state of each (fromUnit, toUnit) wins; a link served with `removedAt` no longer stands and is dropped.
+ */
+export function linkPageChanges(links: readonly LedgerUnitLink[]): { upserts: OutcomeUnitLinkRow[]; removals: Array<{ fromUnitId: string; toUnitId: string }> } {
+  const last = new Map<string, LedgerUnitLink>();
+  for (const l of links) last.set(`${l.fromUnit.id}\u0000${l.toUnit.id}`, l);
+  const upserts: OutcomeUnitLinkRow[] = [];
+  const removals: Array<{ fromUnitId: string; toUnitId: string }> = [];
+  for (const l of last.values()) {
+    if (l.removedAt !== null && l.removedAt !== undefined) removals.push({ fromUnitId: l.fromUnit.id, toUnitId: l.toUnit.id });
+    else upserts.push(linkRowOf(l));
+  }
+  return { upserts, removals };
+}
+
+async function applyLinkPage(links: readonly LedgerUnitLink[]): Promise<{ upserted: number; removed: number }> {
+  const { upserts, removals } = linkPageChanges(links);
+  for (let i = 0; i < upserts.length; i += 1000)
+    await db
+      .insert(outcomeUnitLinks)
+      .values(upserts.slice(i, i + 1000))
+      .onConflictDoUpdate({
+        target: [outcomeUnitLinks.fromUnitId, outcomeUnitLinks.toUnitId],
+        set: {
+          fromKey: sql`excluded.from_key`,
+          toKey: sql`excluded.to_key`,
+          fromAt: sql`excluded.from_at`,
+          toAt: sql`excluded.to_at`,
+          delaySeconds: sql`excluded.delay_seconds`,
+          fromCampaignIds: sql`excluded.from_campaign_ids`,
+          toCampaignId: sql`excluded.to_campaign_id`,
+          toCampaignIds: sql`excluded.to_campaign_ids`,
+          fromBrandId: sql`excluded.from_brand_id`,
+          syncedAt: sql`now()`,
+        },
+      });
+  for (const r of removals) await db.execute(sql`DELETE FROM outcome_unit_links WHERE from_unit_id = ${r.fromUnitId} AND to_unit_id = ${r.toUnitId}`);
+  return { upserted: upserts.length, removed: removals.length };
+}
+
+export interface LinksFollowResult {
+  /** The table holds the whole copy (a first copy still running, or the ledger not built yet, = false). */
+  copied: boolean;
+  pages: number;
+  links: number;
+  removed: number;
+  ms: number;
+  builtAt: string | null;
+}
+
+let following: Promise<LinksFollowResult> | null = null;
+
+/**
+ * Read what the ledger wrote since our cursor (everything on the first pass) into `outcome_unit_links`. Single flight,
+ * resumable: the cursor is stored after each page. The ledger answers 503 until its first build after a deploy: nothing
+ * is read then, our copy stands.
+ */
+export function followUnitLinks(): Promise<LinksFollowResult> {
+  following ??= (async () => {
+    try {
+      const t0 = Date.now();
+      // Read LOUD: a state that cannot be read must never look like "no copy yet" (the table would be emptied).
+      const stored = await loadFleetCellStrict(LINKS_CELL);
+      // No state under this FORMAT = a first copy: start from an empty table (rows of an older format are not ours).
+      if (!stored) await db.execute(sql`DELETE FROM outcome_unit_links`);
+      const state: LinksCopyState = stored ? (JSON.parse(stored.text) as LinksCopyState) : { cursor: null, copied: false, builtAt: null, firstCopy: null };
+      const save = () => storeFleetCell(LINKS_CELL, JSON.stringify(state), Date.now());
+      if (!stored) await save();
+      let pages = 0;
+      let links = 0;
+      let removed = 0;
+      for (;;) {
+        const pageStart = Date.now();
+        let page: { builtAt?: string; links?: LedgerUnitLink[]; nextCursor?: string | null; caughtUp?: boolean };
+        try {
+          page = (await runsGet(`/internal/stats/outcome-chains/unit-links?limit=${LINKS_PAGE}${state.cursor ? `&cursor=${encodeURIComponent(state.cursor)}` : ""}`)) as typeof page;
+        } catch (err) {
+          if (err instanceof RunsReadError && err.status === 503) {
+            console.log("[features-service] unit links: the ledger has not built since its deploy (503), our copy stands until its next build");
+            return { copied: state.copied, pages, links, removed, ms: Date.now() - t0, builtAt: state.builtAt };
+          }
+          throw err;
+        }
+        if (!Array.isArray(page.links) || typeof page.caughtUp !== "boolean") throw new Error("runs-service unit-links served no links or no caughtUp");
+        const applied = await applyLinkPage(page.links);
+        pages += 1;
+        links += page.links.length;
+        removed += applied.removed;
+        // The cursor to come back with: the page's own; a caught-up page with none keeps the one we hold.
+        state.cursor = page.nextCursor ?? state.cursor;
+        state.builtAt = page.builtAt ?? state.builtAt;
+        const more = !page.caughtUp;
+        if (more && (page.nextCursor === null || page.nextCursor === undefined)) throw new Error("runs-service unit-links served no nextCursor before caughtUp");
+        if (more) await sleep(LINKS_PAGE_GAP_MS);
+        if (!state.copied) {
+          // The first whole copy, measured as it goes (a copy resumed after a restart keeps what it had read).
+          state.firstCopy = { links: (state.firstCopy?.links ?? 0) + page.links.length, pages: (state.firstCopy?.pages ?? 0) + 1, ms: (state.firstCopy?.ms ?? 0) + (Date.now() - pageStart) };
+          if (!more) {
+            state.copied = true;
+            console.log(`[features-service] unit links: first whole copy done, ${state.firstCopy.links} links in ${state.firstCopy.pages} pages, ${state.firstCopy.ms} ms`);
+          }
+        }
+        await save();
+        if (!more) break;
+      }
+      return { copied: state.copied, pages, links, removed, ms: Date.now() - t0, builtAt: state.builtAt };
+    } finally {
+      following = null;
+    }
+  })();
+  return following;
+}
+
+export async function readLinksCopyState(): Promise<LinksCopyState | null> {
+  const cell = await loadFleetCell(LINKS_CELL);
+  return cell ? (JSON.parse(cell.text) as LinksCopyState) : null;
+}
+
 // ── SQL groups (grouping only: every figure is computed in lib/outcome-silver.ts) ──
 
 /** 3 significant digits of a cost (the histogram's resolution). */
-const SIG3 = sql.raw(`CASE WHEN cost_net_cents IS NULL OR cost_net_cents <= 0 THEN 0 ELSE round(cost_net_cents::numeric, 2 - floor(log(cost_net_cents::numeric))::int)::float8 END`);
+const SIG3 = sql.raw(`CASE WHEN u.cost_net_cents IS NULL OR u.cost_net_cents <= 0 THEN 0 ELSE round(u.cost_net_cents::numeric, 2 - floor(log(u.cost_net_cents::numeric))::int)::float8 END`);
+
+/**
+ * The campaign(s) a Unit carries: its own run's; else, on a Unit whose run names none, the ones the ledger serves on a
+ * link leading to it (`toUnit.campaignIds`: the campaigns of the Units it came from); else none.
+ */
+const CARRIED = sql.raw(`CASE WHEN u.campaign_id IS NOT NULL THEN ARRAY[u.campaign_id] ELSE COALESCE(c.ids, '{}'::text[]) END`);
+const CARRIED_JOIN = sql.raw(`LEFT JOIN LATERAL (SELECT l.to_campaign_ids AS ids FROM outcome_unit_links l WHERE l.to_unit_id = u.id LIMIT 1) c ON u.campaign_id IS NULL`);
+const textArray = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
 
 export async function readUnitDays(): Promise<UnitDayRow[]> {
   const rows = (await db.execute(sql`
-    SELECT outcome_key, campaign_id, brand_id, to_char(declared_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*)::int AS units
-    FROM outcome_units WHERE NOT reversed GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
-  return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignId: (r.campaign_id as string | null) ?? null, brandId: (r.brand_id as string | null) ?? null, day: r.day as string, units: Number(r.units) }));
+    SELECT u.outcome_key, ${CARRIED} AS campaign_ids, u.brand_id, to_char(u.declared_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*)::int AS units
+    FROM outcome_units u ${CARRIED_JOIN} WHERE NOT u.reversed GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignIds: textArray(r.campaign_ids), brandId: (r.brand_id as string | null) ?? null, day: r.day as string, units: Number(r.units) }));
 }
 
 export async function readUnitCosts(): Promise<UnitCostRow[]> {
   const rows = (await db.execute(sql`
-    SELECT outcome_key, campaign_id, brand_id, ${SIG3} AS cost, count(*)::int AS units, sum(cost_net_cents)::float8 AS net, sum(cost_gross_cents)::float8 AS gross
-    FROM outcome_units WHERE NOT reversed AND cost_net_cents IS NOT NULL GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
-  return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignId: (r.campaign_id as string | null) ?? null, brandId: (r.brand_id as string | null) ?? null, costNetCents: Number(r.cost), units: Number(r.units), sumNetCents: Number(r.net), sumGrossCents: Number(r.gross ?? 0) }));
+    SELECT u.outcome_key, ${CARRIED} AS campaign_ids, u.brand_id, ${SIG3} AS cost, count(*)::int AS units, sum(u.cost_net_cents)::float8 AS net, sum(u.cost_gross_cents)::float8 AS gross
+    FROM outcome_units u ${CARRIED_JOIN} WHERE NOT u.reversed AND u.cost_net_cents IS NOT NULL GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({ outcomeKey: r.outcome_key as string, campaignIds: textArray(r.campaign_ids), brandId: (r.brand_id as string | null) ?? null, costNetCents: Number(r.cost), units: Number(r.units), sumNetCents: Number(r.net), sumGrossCents: Number(r.gross ?? 0) }));
+}
+
+/** A walk follows at most this many links (prod 2026-11-17: the longest holds 5). */
+const MAX_WALK_LINKS = 12;
+
+/**
+ * The pairs leaving ONE outcome: each of its Units with every Unit the stored links lead to from it, directly or through
+ * other Units (each pair once; the delay = the links' stated `delaySeconds` added along the walk), binned by delay. A
+ * `to` Unit dated before its `from` Unit (a past fact recorded late: a negative stated delay) is a pair of delay zero.
+ * One statement per outcome, never the whole copy at once.
+ */
+export async function readPairBins(fromKey: string): Promise<PairBinRow[]> {
+  const edges = `{${DELAY_EDGES_HOURS.join(",")}}`;
+  const rows = (await db.execute(sql`
+    WITH RECURSIVE walk AS (
+      SELECT l.from_unit_id AS src, l.from_campaign_ids AS campaigns, l.from_brand_id AS brand, l.to_unit_id AS unit, l.to_key AS k, l.delay_seconds AS delay, 1 AS depth
+      FROM outcome_unit_links l WHERE l.from_key = ${fromKey}
+      UNION ALL
+      SELECT w.src, w.campaigns, w.brand, l.to_unit_id, l.to_key, w.delay + l.delay_seconds, w.depth + 1
+      FROM walk w JOIN outcome_unit_links l ON l.from_unit_id = w.unit WHERE w.depth < ${MAX_WALK_LINKS}
+    ), pairs AS (
+      SELECT DISTINCT ON (src, unit) campaigns, brand, k, GREATEST(delay, 0) / 3600.0 AS hours FROM walk ORDER BY src, unit, depth
+    )
+    SELECT k AS to_key, campaigns, brand, width_bucket(hours, ${edges}::float8[]) AS bin, count(*)::int AS pairs, sum(hours)::float8 AS sum_hours
+    FROM pairs WHERE k <> ${fromKey} GROUP BY 1, 2, 3, 4`)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({ fromKey, toKey: r.to_key as string, fromCampaignIds: textArray(r.campaigns), brandId: (r.brand as string | null) ?? null, bin: Number(r.bin), pairs: Number(r.pairs), sumHours: Number(r.sum_hours) }));
+}
+
+/** Every outcome a stored link leaves from. */
+export async function readLinkFromKeys(): Promise<string[]> {
+  const rows = (await db.execute(sql`SELECT DISTINCT from_key FROM outcome_unit_links ORDER BY 1`)) as unknown as Array<{ from_key: string }>;
+  return rows.map((r) => r.from_key);
+}
+
+/** One Unit a campaign carries without its run naming it (declared late on a run with no campaign), as the links serve it. */
+export interface CarriedUnitRow {
+  outcomeKey: string;
+  day: string;
+  campaignIds: string[];
 }
 
 /**
- * The pairs landing on ONE outcome: each of its Units with, per other outcome, the LATEST Unit of the same subject at or
- * before it (one index probe per Unit, `outcome_units_subject`), binned by delay. One statement per outcome, never the
- * whole copy at once.
+ * The Units these unit campaigns CARRY though their own run names no campaign: the `to` Units of a stored link whose
+ * `campaignIds` hold one of them (each Unit once). Read off our copy, as fresh as the last follow (~15 min).
  */
-export async function readPairBins(toKey: string): Promise<PairBinRow[]> {
-  const edges = `{${DELAY_EDGES_HOURS.join(",")}}`;
+export async function readCarriedUnits(unitCampaignIds: readonly string[]): Promise<CarriedUnitRow[]> {
+  if (unitCampaignIds.length === 0) return [];
+  const ids = sql.join(unitCampaignIds.map((c) => sql`${c}`), sql`, `);
   const rows = (await db.execute(sql`
-    SELECT a.k AS from_key, a.campaign_id AS from_campaign, b.campaign_id AS to_campaign, b.brand_id,
-           width_bucket(extract(epoch FROM b.declared_at - a.t) / 3600.0, ${edges}::float8[]) AS bin,
-           count(*)::int AS pairs, sum(extract(epoch FROM b.declared_at - a.t) / 3600.0)::float8 AS sum_hours
-    FROM outcome_units b
-    CROSS JOIN LATERAL (
-      SELECT DISTINCT ON (x.outcome_key) x.outcome_key AS k, x.declared_at AS t, x.campaign_id
-      FROM outcome_units x
-      WHERE x.subject = b.subject AND x.outcome_key <> b.outcome_key AND x.declared_at <= b.declared_at AND NOT x.reversed
-      ORDER BY x.outcome_key, x.declared_at DESC
-    ) a
-    WHERE b.outcome_key = ${toKey} AND NOT b.reversed
-    GROUP BY 1, 2, 3, 4, 5`)) as unknown as Array<Record<string, unknown>>;
-  return rows.map((r) => ({
-    fromKey: r.from_key as string,
-    toKey,
-    fromCampaignId: (r.from_campaign as string | null) ?? null,
-    toCampaignId: (r.to_campaign as string | null) ?? null,
-    brandId: (r.brand_id as string | null) ?? null,
-    bin: Number(r.bin),
-    pairs: Number(r.pairs),
-    sumHours: Number(r.sum_hours),
-  }));
+    SELECT DISTINCT ON (to_unit_id) to_key, to_char(to_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, to_campaign_ids
+    FROM outcome_unit_links WHERE to_campaign_id IS NULL AND to_campaign_ids && ARRAY[${ids}]::text[]
+    ORDER BY to_unit_id`)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({ outcomeKey: r.to_key as string, day: r.day as string, campaignIds: textArray(r.to_campaign_ids) }));
 }
 
 /** Every unit campaign's sales funnel campaign (campaign-service's whole list). */
@@ -241,6 +457,8 @@ export interface SilverSweepRecord {
   /** The rule the stats were built on (`SILVER_RULE`); absent on a sweep before it existed. */
   rule?: string;
   copy: { pages: number; units: number };
+  /** The follow of the ledger's stored links made by this sweep, and the links then held. */
+  links?: { pages: number; read: number; removed: number; held: number; ms: number; builtAt: string | null };
   units: number;
   stats: number;
   copyMs: number;
@@ -260,19 +478,23 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
     try {
       const t0 = Date.now();
       const copy = await copyOutcomeUnits();
+      const follow = await followUnitLinks();
+      // Never a stat built on half the links: the sweep waits for the whole copy (retried by the tick).
+      if (!follow.copied) throw new Error("the ledger's unit links are not copied through yet (first copy running, or the ledger has not built since its deploy)");
       const t1 = Date.now();
       const [unitDays, unitCosts, funnels] = [await readUnitDays(), await readUnitCosts(), await readFunnelOfUnitCampaigns()];
       const pairBins: PairBinRow[] = [];
-      for (const key of [...new Set(unitDays.map((r) => r.outcomeKey))].sort()) {
+      for (const key of await readLinkFromKeys()) {
         pairBins.push(...(await readPairBins(key)));
         await sleep(250);
       }
+      const [{ held }] = (await db.execute(sql`SELECT count(*)::int AS held FROM outcome_unit_links`)) as unknown as [{ held: number }];
       const now = new Date();
       const stats = buildSilverStats({ unitDays, unitCosts, pairBins, funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
       await replaceStats(stats, now);
-      const record: SilverSweepRecord = { sweptAt: now.toISOString(), rule: SILVER_RULE, copy: { pages: copy.pages, units: copy.units }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
+      const record: SilverSweepRecord = { sweptAt: now.toISOString(), rule: SILVER_RULE, copy: { pages: copy.pages, units: copy.units }, links: { pages: follow.pages, read: follow.links, removed: follow.removed, held: Number(held), ms: follow.ms, builtAt: follow.builtAt }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
       await storeFleetCell(SILVER_SWEEP_CELL, JSON.stringify(record), now.getTime());
-      console.log(`[features-service] outcome silver sweep: ${copy.units} Units copied in ${copy.pages} pages (${record.copyMs} ms), ${record.units} Units held, ${stats.length} stats built in ${record.buildMs} ms`);
+      console.log(`[features-service] outcome silver sweep: ${copy.units} Units copied in ${copy.pages} pages (${record.copyMs} ms), ${follow.links} links followed in ${follow.ms} ms (${held} held), ${record.units} Units held, ${stats.length} stats built in ${record.buildMs} ms`);
       for (const fn of afterSweep) await fn().catch((err) => console.error("[features-service] outcome silver sweep follower failed:", err));
       return record;
     } finally {
@@ -302,8 +524,22 @@ async function tick(): Promise<void> {
   setTimeout(() => void tick(), Math.max(60_000, waitMs)).unref();
 }
 
-/** Five minutes after listen, then daily counted from the STORED last sweep (a deploy never re-runs a sweep made today). */
+async function linksTick(): Promise<void> {
+  try {
+    const r = await followUnitLinks();
+    if (r.links > 0) console.log(`[features-service] unit links followed: ${r.links} links in ${r.pages} pages, ${r.removed} dropped, ${r.ms} ms`);
+  } catch (err) {
+    console.error(`[features-service] unit links follow failed (our copy stands, the cursor resumes in ${LINKS_FOLLOW_EVERY_MS / 60_000} min):`, err);
+  }
+  setTimeout(() => void linksTick(), LINKS_FOLLOW_EVERY_MS).unref();
+}
+
+/**
+ * After listen, never on it: the links are followed from two minutes in then every 15 (the ledger's build cadence); the
+ * sweep five minutes in, then daily counted from the STORED last sweep (a deploy never re-runs a sweep made today).
+ */
 export function startOutcomeSilverLoop(): void {
   if (process.env.OUTCOME_SILVER_ENABLED === "false") return;
+  setTimeout(() => void linksTick(), LINKS_FIRST_TICK_MS).unref();
   setTimeout(() => void tick(), FIRST_TICK_MS).unref();
 }

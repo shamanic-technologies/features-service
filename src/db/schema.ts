@@ -1264,7 +1264,35 @@ export const outcomeUnits = pgTable(
     reversed: boolean("reversed").notNull().default(false),
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("outcome_units_subject").on(table.subject, table.outcomeKey, table.declaredAt), index("outcome_units_key").on(table.outcomeKey, table.declaredAt)],
+  (table) => [index("outcome_units_key").on(table.outcomeKey, table.declaredAt)],
+);
+
+/**
+ * UNIT-LINKS-CONSUME-1117, SILVER: our copy of the links runs-service stores between two Units (`GET
+ * /internal/stats/outcome-chains/unit-links`): the Unit a Unit came from, both dates, the delay it states and the
+ * campaign(s) each Unit carries. `from_brand_id` = the consumed Unit's brand when its run names exactly one. Migration 0077.
+ */
+export const outcomeUnitLinks = pgTable(
+  "outcome_unit_links",
+  {
+    fromUnitId: uuid("from_unit_id").notNull(),
+    toUnitId: uuid("to_unit_id").notNull(),
+    fromKey: text("from_key").notNull(),
+    toKey: text("to_key").notNull(),
+    fromAt: timestamp("from_at", { withTimezone: true }).notNull(),
+    toAt: timestamp("to_at", { withTimezone: true }).notNull(),
+    delaySeconds: doublePrecision("delay_seconds").notNull(),
+    fromCampaignIds: text("from_campaign_ids").array().notNull(),
+    toCampaignId: text("to_campaign_id"),
+    toCampaignIds: text("to_campaign_ids").array().notNull(),
+    fromBrandId: text("from_brand_id"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "outcome_unit_links_pk", columns: [table.fromUnitId, table.toUnitId] }),
+    index("outcome_unit_links_to_unit").on(table.toUnitId),
+    index("outcome_unit_links_from_key").on(table.fromKey),
+  ],
 );
 
 /**

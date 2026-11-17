@@ -9,11 +9,17 @@
  *     fitted on every campaign of the fleet by maximum marginal likelihood (negative binomial); CENSORING by effective
  *     exposure (a `from` Unit of age a counts for F(a), F = the transition's own measured delay curve: the actuarial
  *     estimator `lib/outcome-estimates.ts` applies to positive replies only).
- *  3. DELAY of a transition: the time between a `to` Unit and the latest `from` Unit of the SAME subject at or before it.
+ *  3. DELAY of a transition: the delay the ledger STATES on the link between the two Units (`delaySeconds`).
+ *
+ * UNIT-LINKS-CONSUME-1117: a PAIR is a link the ledger stores (the Unit a Unit came from, subject equivalences followed),
+ * or a walk of such links (A -> B -> C pairs A with C, the delays added). Nothing is paired here by subject and date. A
+ * Unit counts for the campaign(s) it CARRIES as the ledger serves them: its own run's, else those of the Units it came
+ * from (a Unit declared late on a run naming no campaign). A Unit carried by two campaigns counts in both, once in its
+ * brand and in the fleet.
  *
  * ONE mechanism for every outcome: no outcome, channel or Engine is named here (guard `outcome-silver.test.ts`).
- * The rows come from our copy of the ledger's Units (`outcome_units`, `lib/outcome-units-copy.ts`), grouped by SQL only
- * (`lib/outcome-silver-store.ts`); every figure is computed here.
+ * The rows come from our copies of the ledger's Units and links (`outcome_units`, `outcome_unit_links`), grouped by SQL
+ * only (`lib/outcome-silver-io.ts`); every figure is computed here.
  */
 import { lnGamma } from "./outcome-estimates.js";
 
@@ -243,30 +249,29 @@ export function rateEstimateOf(e: RateEvidence, prior: GammaPrior): RateEstimate
 export type SilverScope = "campaign" | "brand" | "fleet";
 export const FLEET_SCOPE_ID = "all";
 
-/** Units of one outcome made on one UTC day by one unit campaign (SQL group). */
+/** Units of one outcome made on one UTC day, by the unit campaign(s) they carry ([] = none) (SQL group). */
 export interface UnitDayRow {
   outcomeKey: string;
-  campaignId: string | null;
+  campaignIds: readonly string[];
   brandId: string | null;
   day: string;
   units: number;
 }
-/** Units of one outcome by cost (3 significant digits), per unit campaign (SQL group). */
+/** Units of one outcome by cost (3 significant digits), by the unit campaign(s) they carry (SQL group). */
 export interface UnitCostRow {
   outcomeKey: string;
-  campaignId: string | null;
+  campaignIds: readonly string[];
   brandId: string | null;
   costNetCents: number;
   units: number;
   sumNetCents: number;
   sumGrossCents: number;
 }
-/** Pairs of a transition by delay bin, per (unit campaign of `from`, unit campaign of `to`) (SQL group). */
+/** Linked pairs of a transition by delay bin, by the unit campaign(s) the `from` Unit carries and its brand (SQL group). */
 export interface PairBinRow {
   fromKey: string;
   toKey: string;
-  fromCampaignId: string | null;
-  toCampaignId: string | null;
+  fromCampaignIds: readonly string[];
   brandId: string | null;
   bin: number;
   pairs: number;
@@ -283,7 +288,7 @@ export interface UnitCostStat {
 
 export interface TransitionStat {
   fromUnits: number;
-  /** `to` Units paired with a `from` Unit of the scope (same subject; the `to` Unit may be declared under no campaign). */
+  /** `to` Units linked to a `from` Unit of the scope (the ledger's stored links, walked; the `to` Unit may be declared under no campaign). */
   toUnits: number;
   /** Σ over `from` Units of the share of their `to` Units already due at their age (= fromUnits when no delay is measured). */
   exposure: number;
@@ -306,7 +311,7 @@ export interface SilverStatRow {
 }
 
 /** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
-export const SILVER_RULE = "2026-11-17.2";
+export const SILVER_RULE = "2026-11-17.3-unit-links";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -325,25 +330,22 @@ export function buildSilverStats(input: {
   today: string;
 }): SilverStatRow[] {
   const { funnelOf, today } = input;
-  const funnel = (c: string | null) => (c === null ? null : funnelOf(c));
-  const scopesOf = (campaignId: string | null, brandId: string | null): string[] => {
+  /** The sales funnel campaigns of the unit campaigns a Unit carries (each once). */
+  const funnels = (campaignIds: readonly string[]): string[] => [...new Set(campaignIds.flatMap((c) => funnelOf(c) ?? []))];
+  const scopesOf = (campaignIds: readonly string[], brandId: string | null): string[] => {
     const out = [`fleet\u0000${FLEET_SCOPE_ID}`];
     if (brandId !== null) out.push(`brand\u0000${brandId}`);
-    const f = funnel(campaignId);
-    if (f !== null) out.push(`campaign\u0000${f}`);
+    for (const f of funnels(campaignIds)) out.push(`campaign\u0000${f}`);
     return out;
   };
   const brandOfFunnel = new Map<string, string>();
-  for (const r of input.unitDays) {
-    const f = funnel(r.campaignId);
-    if (f !== null && r.brandId !== null) brandOfFunnel.set(f, r.brandId);
-  }
+  for (const r of input.unitDays) if (r.brandId !== null) for (const f of funnels(r.campaignIds)) brandOfFunnel.set(f, r.brandId);
   const rows: SilverStatRow[] = [];
 
   // 1. Cost per Unit.
   const costs = new Map<string, { pts: WeightedPoint[]; net: number; gross: number }>();
   for (const r of input.unitCosts)
-    for (const s of scopesOf(r.campaignId, r.brandId)) {
+    for (const s of scopesOf(r.campaignIds, r.brandId)) {
       const k = `${s}\u0000${r.outcomeKey}`;
       const c = costs.get(k) ?? costs.set(k, { pts: [], net: 0, gross: 0 }).get(k)!;
       c.pts.push({ value: r.costNetCents / 100, weight: r.units });
@@ -359,21 +361,17 @@ export function buildSilverStats(input: {
   // 2. `from` Units per scope, outcome and day.
   const fromDays = new Map<string, Map<string, number>>();
   for (const r of input.unitDays)
-    for (const s of scopesOf(r.campaignId, r.brandId)) {
+    for (const s of scopesOf(r.campaignIds, r.brandId)) {
       const k = `${s}\u0000${r.outcomeKey}`;
       const days = fromDays.get(k) ?? fromDays.set(k, new Map()).get(k)!;
       days.set(r.day, (days.get(r.day) ?? 0) + r.units);
     }
 
-  // 3. Pairs per scope and transition. A campaign's pair = what became of ITS `from` Unit, wherever the `to` Unit was
-  // declared (prod 2026-11-17: no paid client, booked meeting or signup Unit carries a campaign tag).
+  // 3. Pairs per scope and transition. A scope's pair = what became of ITS `from` Unit (the campaigns and the brand that
+  // Unit carries: the very basis its `from` Units are counted on), wherever the `to` Unit was declared.
   const pairs = new Map<string, { bins: Map<number, number>; sumHours: number }>();
   for (const r of input.pairBins) {
-    const scopes = [`fleet\u0000${FLEET_SCOPE_ID}`];
-    if (r.brandId !== null) scopes.push(`brand\u0000${r.brandId}`);
-    const f = funnel(r.fromCampaignId);
-    if (f !== null) scopes.push(`campaign\u0000${f}`);
-    for (const s of scopes) {
+    for (const s of scopesOf(r.fromCampaignIds, r.brandId)) {
       const k = `${s}\u0000${r.fromKey}\u0000${r.toKey}`;
       const p = pairs.get(k) ?? pairs.set(k, { bins: new Map(), sumHours: 0 }).get(k)!;
       p.bins.set(r.bin, (p.bins.get(r.bin) ?? 0) + r.pairs);
