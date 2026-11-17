@@ -21,7 +21,10 @@ import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { campaignTargetRowOf, offerTargetsOf, offerTargetFromLedger, targetScheduleOf, PROJECTION_DAYS, type CampaignTargetInput, type CampaignTargetRow } from "../lib/campaign-targets.js";
-import { milestoneChainOf, milestoneCardsOf, type MilestoneCard, type MilestoneCardInput } from "../lib/campaign-milestone-cards.js";
+import { milestoneChainOf, milestoneCardsOf, withProducedMilestones, type MilestoneCard, type MilestoneCardInput } from "../lib/campaign-milestone-cards.js";
+import { lifecycleRankOf, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
+import { salesFunnelCampaignTableBody } from "./sales-funnel-campaigns.js";
+import type { ExpectedReturn } from "../lib/expected-return.js";
 import { fetchCampaignLedgerUnits, sumLedgerUnits } from "../lib/campaign-ledger-units-client.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
@@ -58,7 +61,7 @@ const titleOf = (key: string) => key.split("_").map((w, i) => (i === 0 ? w[0]!.t
 
 type TargetRowWithMilestones = CampaignTargetRow & { milestones: MilestoneCard[]; milestonesUnavailableReason: string | null; ledgerDaysMissing: string[]; ledgerOutcomeKeys: string[] };
 
-async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, string>, labels: ReadonlyMap<string, string>, now: string, brandLedger: ScopeOutcomeLedgerInput | null): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput }> {
+async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: DownstreamHeaders, pricing: Pricing, rungs: ReadonlyMap<string, StepLifecycleRung>, labels: ReadonlyMap<string, string>, now: string, brandLedger: ScopeOutcomeLedgerInput | null): Promise<{ row: TargetRowWithMilestones; input: CampaignTargetInput }> {
   const [activity, charts, stored, caps, copies, ledger] = await Promise.all([
     funnelCampaignActivity(row, brandId, headers, pricing),
     funnelCampaignSpendCharts(row, brandId, pricing, headers),
@@ -70,8 +73,9 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     }),
     funnelCopiesFor([row.salesFunnelId]),
     // The Units the campaign's runs produced (ledger). Unreadable = every milestone count null `ledger_unreadable` (LEDGER-ONLY-1107: no other count).
-    Promise.all(row.units.map((u) => fetchCampaignLedgerUnits(u.campaignId)))
-      .then(sumLedgerUnits)
+    // MILESTONES-CONTACTED-1117: each unit's own Units kept beside the sum (what a unit PRODUCED names the milestones on its way).
+    Promise.all(row.units.map(async (u) => [u.campaignId, await fetchCampaignLedgerUnits(u.campaignId)] as const))
+      .then((parts) => ({ ...sumLedgerUnits(parts.map(([, p]) => p)), byUnit: new Map(parts) }))
       .catch((err: Error) => {
         console.error(`[features-service] campaign targets: ledger units of ${row.id} unreadable (milestone counts null): ${err.message}`);
         return null;
@@ -108,7 +112,16 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     for (const k of keys) for (const [day, n] of ledger?.byOutcome.get(k) ?? []) out.set(day, (out.get(day) ?? 0) + n);
     return out;
   };
-  const chain = milestoneChainOf(edges, targetKey);
+  const walk = milestoneChainOf(edges, targetKey);
+  // MILESTONES-CONTACTED-1117: every outcome the units PRODUCED on the way between two milestones (its rung strictly between
+  // theirs, the outcome rung catalogue) is a milestone of its own: Wide Email's cold email part makes Message sent (Contacted)
+  // between Lead found and Positive reply. Read off the ledger and the catalogue, never an outcome named here.
+  const producedByUnit = new Map(
+    [...(ledger?.byUnit ?? [])].map(([id, p]) => [id, new Set([...p.byOutcome].filter(([, days]) => [...days.values()].reduce((a, n) => a + n, 0) > 0).map(([k]) => k))] as const),
+  );
+  const countedOnWalk = new Set(walk.flatMap((m) => ledgerKeysOf(m.step, m.unitCampaignIds)));
+  const chain = withProducedMilestones(walk, producedByUnit, (k) => lifecycleRankOf(rungs.get(k) ?? null), countedOnWalk);
+  const ledgerTotalOf = (step: string, ids: readonly string[]) => [...ledgerOfMilestone(step, ids).values()].reduce((a, n) => a + n, 0);
   const spendOf = (ids: readonly string[]) => {
     const own = charts.pipes.filter((p) => ids.includes(p.campaignId));
     if (own.length === ids.length) return own.reduce((a, p) => a + p.totals.spendUsd, 0);
@@ -129,7 +142,27 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
   const neededAtTarget = targetKey ? neededByStep.get(targetKey) ?? null : null;
   let upTo = 0;
   let upToKnown = true;
-  const cardInputs: MilestoneCardInput[] = chain.map((m) => {
+  const cardInputs: MilestoneCardInput[] = chain.map((m, i) => {
+    if (m.producedBy !== null) {
+      // Produced on the way: what its producing units spent made it too (full absorption), counted once in "up to" (on the
+      // milestone they land on). Expected per Target = the milestone before it × the yield the ledger measured from it.
+      const own = spendOf(m.producedBy);
+      const prev = i > 0 ? chain[i - 1]! : null;
+      const prevNeeded = prev ? neededByStep.get(prev.step) : undefined;
+      const prevCount = prev ? ledgerTotalOf(prev.step, prev.unitCampaignIds) : 0;
+      const needed = prevNeeded !== undefined && prevCount > 0 ? prevNeeded * (ledgerTotalOf(m.step, []) / prevCount) : undefined;
+      return {
+        step: m.step,
+        producedOnTheWay: true,
+        label: labelOf(m.step),
+        lifecycleRung: rungs.get(m.step) ?? null,
+        ledgerByDay: ledgerOfMilestone(m.step, []),
+        ledgerUnavailableReason: ledger === null ? "ledger_unreadable" : notDeclared(ledgerKeysOf(m.step, [])),
+        ownSpendUsd: own,
+        spendUpToUsd: upToKnown && own !== null ? upTo + own : null,
+        neededPerTarget: needed !== undefined && neededAtTarget !== null && neededAtTarget > 0 ? needed / neededAtTarget : null,
+      };
+    }
     const own = m.unitCampaignIds.length > 0 ? spendOf(m.unitCampaignIds) : 0;
     if (own === null) upToKnown = false;
     else upTo += own;
@@ -248,8 +281,22 @@ async function computeCampaignTargets(brandId: string, one: string | null, rows:
       console.error(`[features-service] campaign targets: brand ledger of ${brandId} unreadable (brand totals null): ${err.message}`);
       return null;
     });
-    const built = await mapWithConcurrency(ordered, 3, (r) => rowFor(r, brandId, headers, pricing, rungs, labels, now, brandLedger));
-    const targets = built.map((b) => b.row);
+    // MILESTONES-CONTACTED-1117: each row's EXPECTED return is the very object the Campaigns table serves on that campaign's
+    // row (`/brands/{brandId}/sales-funnel-campaigns`, the same cell: same rows, pricing, basis and assumptions), never
+    // recomputed here. Unreadable = null + reason, logged; the row's other figures still served.
+    const [built, table] = await Promise.all([
+      mapWithConcurrency(ordered, 3, (r) => rowFor(r, brandId, headers, pricing, rungs, labels, now, brandLedger)),
+      salesFunnelCampaignTableBody(brandId, null, pricing, rows, headers).catch((err: Error) => {
+        console.error(`[features-service] campaign targets: sales funnel campaigns table of ${brandId} unreadable (expectedReturn null): ${err.message}`);
+        return null;
+      }),
+    ]);
+    const expectedById = new Map<string, ExpectedReturn>(table === null ? [] : table.salesFunnelCampaigns.map((r) => [r.id, r.expectedReturn] as const));
+    const targets = built.map((b) => {
+      const expectedReturn = expectedById.get(b.row.salesFunnelCampaignId) ?? null;
+      if (table !== null && expectedReturn === null) console.error(`[features-service] campaign targets: campaign ${b.row.salesFunnelCampaignId} absent from its brand's table (expectedReturn null)`);
+      return { ...b.row, expectedReturn, expectedReturnUnavailableReason: expectedReturn !== null ? null : table === null ? "campaigns_table_unreadable" : "campaign_not_in_campaigns_table" };
+    });
     // TARGET-ROWS-UNIQUE-1107: Today reads ONE entry per (offer, Target), its campaigns merged; `targets` stays per campaign (campaign page).
     // LEDGER-ONLY-1107: each entry's count, $ each, spend, return and past are the BRAND's ledger total of its Target outcome.
     const keysByEntry = new Map<string, Set<string>>();

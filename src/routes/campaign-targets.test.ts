@@ -24,6 +24,8 @@ const charts = vi.fn();
 vi.mock("./spend-charts.js", () => ({ funnelCampaignSpendCharts: (...a: unknown[]) => charts(...a) }));
 const readPlan = vi.fn();
 vi.mock("../lib/factory-shadow-store.js", () => ({ readPlan: (...a: unknown[]) => readPlan(...a) }));
+const table = vi.fn();
+vi.mock("./sales-funnel-campaigns.js", () => ({ salesFunnelCampaignTableBody: (...a: unknown[]) => table(...a) }));
 const budget = vi.fn();
 vi.mock("../lib/funnel-campaign-budget-client.js", () => ({ fetchFunnelCampaignCaps: (...a: unknown[]) => budget(...a) }));
 vi.mock("../middleware/auth.js", () => ({
@@ -63,7 +65,11 @@ const pipeDaily = [
 ];
 const planBody = (cost: number, funnelId: string) => ({ plan: { target: "conversation", mode: "proactive", running: { funnelId, reachesTarget: true, figures: { costPerTargetUsd: cost, basis: "fleet", unavailableReason: null, targetValueUsd: 60 } }, shadow: null } });
 
+const EXPECTED = { roiMultiple: 22.0931, basis: "default", assumptions: [{ input: "rate", legKey: "conversation_to_paid_client", basis: "default", source: "default" }], combinationKey: "k", costPerOutcome: null, unavailableReason: null };
+
 beforeEach(() => {
+  table.mockReset();
+  table.mockResolvedValue({ salesFunnelCampaigns: [{ id: "c1", expectedReturn: EXPECTED }, { id: "c2", expectedReturn: { ...EXPECTED, roiMultiple: 3 } }] });
   fetchSalesFunnelCampaigns.mockResolvedValue([row("c1", "ongoing"), row("c2", "stopped")]);
   activity.mockResolvedValue({ funnel: { steps: [{ key: "lead_found", label: "Lead found", kind: "step", people: 100 }, { key: "conversation", label: "Positive reply", kind: "step", people: 2 }] } });
   charts.mockResolvedValue({
@@ -223,5 +229,56 @@ describe("GET /brands/:brandId/campaign-targets", () => {
     expect(e).not.toHaveProperty("milestones");
     expect(e).toMatchObject({ offerId: "o1", target: { key: "conversation" }, salesFunnelCampaignIds: ["c1", "c2"] });
     expect(e.projection.outcomesPerDay).toBe(body.targets[0].projection.outcomesPerDay * 2);
+  });
+
+  // MILESTONES-CONTACTED-1117 (prod 2026-11-17, Wide Email: Lead found 4,157 -> Positive reply 2, the 3,734 messages sent nowhere).
+  it("an outcome the units PRODUCED on the way, its rung between two milestones', is a milestone of its own; a rung-less one is not", async () => {
+    const { setOutcomeRung, __resetOutcomeRungsMemory } = (await import("../lib/outcome-rungs-store.js")) as unknown as {
+      setOutcomeRung: (k: string, r: string, by: string) => Promise<void>;
+      __resetOutcomeRungsMemory: () => void;
+    };
+    await setOutcomeRung("message_sent", "contacted", "test");
+    await setOutcomeRung("message_written", "none", "test");
+    try {
+      ledgerOf.mockImplementation(async (id: string) =>
+        id === "u-src"
+          ? { byOutcome: new Map([["lead_found", new Map([[day(2), 100]])]]), daysMissing: [] }
+          : {
+              byOutcome: new Map([
+                ["message_written", new Map([[day(2), 31]])],
+                ["message_sent", new Map([[day(2), 20], [day(1), 10]])],
+                ["conversation", new Map([[day(1), 1], [day(0), 1]])],
+              ]),
+              daysMissing: [],
+            },
+      );
+      const legs = [{ legKey: "l1", pipeId: "p-src" }, { legKey: "l2", pipeId: "p-mail" }];
+      const figures = { costPerTargetUsd: 15, basis: "fleet", unavailableReason: null, targetValueUsd: 60, legs: [{ legKey: "l1", outcomesNeededPerPayingClient: 50 }, { legKey: "l2", outcomesNeededPerPayingClient: 1 }] };
+      readPlan.mockResolvedValue({ orgId: "org-1", brandId: "b1", offerId: "o1", status: "ok", failure: null, body: { plan: { target: "conversation", mode: "proactive", running: { funnelId: "f1", reachesTarget: true, legs, figures }, shadow: null } }, computedAt: "2026-11-06T09:00:00.000Z" });
+      const t = (await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c1")).body.targets[0];
+      expect(t.milestones.map((m: { step: string }) => m.step)).toEqual(["lead_found", "message_sent", "conversation"]);
+      expect(t.milestones.map((m: { producedOnTheWay: boolean }) => m.producedOnTheWay)).toEqual([false, true, false]);
+      expect(t.milestones[0]).toMatchObject({ count: 100, conversionToNextPct: 30 });
+      // Its $ each = what the units producing it spent ($20) ÷ 30; from Start = every unit up to it ($30) ÷ 30.
+      expect(t.milestones[1]).toMatchObject({ label: "Message sent", lifecycleRung: "contacted", count: 30, countSource: "ledger", costPerUnitUsd: 0.6667, costFromStartUsd: 1, conversionToNextPct: 6.67 });
+      expect(t.milestones[1].past.map((p: { outcomes: number }) => p.outcomes)).toEqual([20, 10, 0]);
+      // The spend is counted once up to the Target.
+      expect(t.milestones[2]).toMatchObject({ isTarget: true, count: 2, costPerUnitUsd: 10, costFromStartUsd: 15 });
+      // Expected per Target = Lead found's 50 × the measured yield 30/100 = 15: 15 × 2 Targets a day.
+      expect(t.milestones[1].projection.outcomesPerDay).toBe(30);
+      expect(t.milestones[0].projection.outcomesPerDay).toBe(100);
+    } finally {
+      __resetOutcomeRungsMemory();
+    }
+  });
+
+  it("serves each row's EXPECTED return: the very object the Campaigns table serves on that campaign's row; unreadable = null + reason", async () => {
+    const res = await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c1");
+    expect(res.body.targets[0]).toMatchObject({ expectedReturn: EXPECTED, expectedReturnUnavailableReason: null });
+    // The same cell as the Campaigns table: brand-wide, the read's pricing, the very rows.
+    expect(table.mock.calls[0]!.slice(0, 4)).toEqual(["b1", null, "net", [row("c1", "ongoing"), row("c2", "stopped")]]);
+    table.mockRejectedValue(new Error("table down"));
+    const down = (await request(app).get("/brands/b1/campaign-targets?salesFunnelCampaignId=c1")).body.targets[0];
+    expect(down).toMatchObject({ expectedReturn: null, expectedReturnUnavailableReason: "campaigns_table_unreadable", outcomesToDate: 2 });
   });
 });
