@@ -6,8 +6,10 @@
  * - the cost / rate of a cold email outcome = the BEST script of the `email_sent` Engine that can still run
  *   (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`: each script measured on the general ledger's daily book, the
  *   Research Engine measure's rule; the best MATURE one, else the best AVAILABLE one once it reaches the noise bar, `noise`; below it null `not_measured`, INDEX-VISITS-1117):
- *   what a client buys today. Before 2026-11-09 the days read the per-pipe leg workflow ranking (`moneyGoesHere`), the
- *   rule their recomputed history keeps; a script or workflow that no longer runs is never picked;
+ *   Since INDEX-HISTORY-1117 (owner 2026-11-17) the candidates are every era's: the Engine's scripts AND the pipe's
+ *   workflows on their whole history (`indexRowsWithHistory`), the cheapest PROVEN one (mature, >= the noise bar) wins,
+ *   runnable or not. Before 2026-11-09 the days read the per-pipe leg workflow ranking (`moneyGoesHere`), the rule their
+ *   recomputed history keeps;
  * - every figure is a PIPE figure (owner 2026-10-18, MB-INDEX-PIPES-1018: « On ne compte pour l'index que des cost de
  *   pipe »), never a rate pooled over the fleet's people. The meeting index is the only CHAIN, the owner's formula:
  *   cost per meeting = (cost per positive reply of the best workflow on Lead found -> Positive reply)
@@ -325,8 +327,9 @@ function bestMature(rows: IndexRow[]): IndexRow | null {
 }
 
 /**
- * PURE. What a pipe's index is read on today (PUBLIC-INDEXES-NULL-1117): the best MATURE runnable row (`moneyGoesHere`),
- * else the BEST AVAILABLE one: the runnable row with a measured outcome the ranking puts first (its `rank`, the ONE leg
+ * PURE. What a pipe's index is read on today (INDEX-HISTORY-1117, was PUBLIC-INDEXES-NULL-1117): the best PROVEN row of any
+ * era (`moneyGoesHere` on the rows `indexRowsWithHistory` merged: mature, >= the noise bar, runnable or not), else the BEST
+ * AVAILABLE one: the runnable row with a measured outcome the ranking puts first (its `rank`, the ONE leg
  * order, read on the billed evidence, so the billed and the vendor series pick the same script). Since MIGRATE-1105 every
  * campaign runs Engine SCRIPTS and every workflow is retired (prod 2026-11-09: Ballad, the money workflow of the reply
  * index, stopped running); a script is younger than the 21-day maturity cut, so no row was mature and six indexes read
@@ -337,11 +340,24 @@ function bestMature(rows: IndexRow[]): IndexRow | null {
  * Null = no runnable row cleared the bar. (The meeting pipe's own stand-in, `bestMeetingPipePick`, keeps its owner rule.)
  */
 export function indexPipePick(rows: readonly IndexRow[], bestAvailableStandsIn = true): { row: IndexRow; mature: boolean } | null {
-  const mature = bestMature([...rows]);
-  if (mature) return { row: mature, mature: true };
-  if (!bestAvailableStandsIn) return null;
+  if (!bestAvailableStandsIn) {
+    const mature = bestMature([...rows]);
+    return mature ? { row: mature, mature: true } : null;
+  }
+  // INDEX-HISTORY-1117: the best PROVEN row of any era (a workflow or script that no longer runs keeps its results), from
+  // the noise bar; `indexRowsWithHistory` puts it first and marks it `moneyGoesHere`.
+  const proven = rows.find((r) => r.moneyGoesHere && isProvenIndexRow(r));
+  if (proven) return { row: proven, mature: true };
   const learning = bestAvailableLearning(rows);
   return learning && learning.outcomes >= SIGNAL_MIN_OUTCOMES ? { row: learning, mature: false } : null;
+}
+
+/**
+ * PURE. A row whose figure is a price on a public index (INDEX-HISTORY-1117): mature on its leg AND at least the noise bar
+ * of outcomes (`SIGNAL_MIN_OUTCOMES`; owner 2026-11-17: never a value built on 1 outcome), runnable or not.
+ */
+export function isProvenIndexRow(r: Pick<IndexRow, "basis" | "outcomes">): boolean {
+  return r.basis === "mature" && r.outcomes >= SIGNAL_MIN_OUTCOMES;
 }
 
 /** The runnable row with a measured outcome the ONE leg order puts first (billed rank, so both bases pick the same). */
@@ -398,7 +414,8 @@ function legPoint(def: FleetIndexDefinition, rows: IndexRow[], bestAvailableStan
     workflowDynastyName: best.workflowDynastyName,
     unavailableReason: value == null ? (best.vendorCostUnknown ? VENDOR_COST_UNKNOWN : "not_measured") : null,
     inputs: {
-      pick: pick.mature ? "best_mature" : "best_available_learning",
+      pick: pick.mature ? (bestAvailableStandsIn ? "best_proven" : "best_mature") : "best_available_learning",
+      ...(bestAvailableStandsIn ? { runsToday: best.selectable ? "yes" : "no" } : {}),
       basis: best.basis,
       spentUsd: best.spentUsd,
       outcomes: best.outcomes,

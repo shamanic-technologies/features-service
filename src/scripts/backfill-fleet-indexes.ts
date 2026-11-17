@@ -11,14 +11,15 @@
  *                            # each (org, brand) replayed as of each day; written only when the replay of today
  *                            # reproduces the live point (the client ROI index is deleted, ROI-CONSISTENCY-1103)
  *   ... --scripts-era [--apply]   # the cold email indexes from 2026-11-09 (the day the last money workflow stopped
- *                            # running) to yesterday, AS OF each day, on the `email_sent` Engine's scripts
- *                            # (PUBLIC-INDEXES-NULL-1117, `lib/script-index-rows.ts`), both bases; replaces the
+ *                            # running) to yesterday, AS OF each day, on the `email_sent` Engine's scripts AND the
+ *                            # pipe's workflows on their history (PUBLIC-INDEXES-NULL-1117, INDEX-HISTORY-1117,
+ *                            # `lib/script-index-rows.ts`), both bases; replaces the
  *                            # recorded NULL rows of those days (never a recorded value), then records today
  *
  * Re-runnable: a day already recomputed with the same figures is not written again, a RECORDED day is never touched.
  */
 import { FLEET_INDEXES, SCEO_FEATURE_SLUG, SCEO_POSITIVE_REPLY_LEG, SCEO_WEBSITE_VISIT_LEG } from "../lib/fleet-indexes.js";
-import { addDays, dayRange, emptyPersonHistory, planRecomputedWrites, rankingOn, recomputeIndexHistory, recomputeVendorIndexHistory, type DatedIndexPoint, type HistoryInputs } from "../lib/fleet-index-history.js";
+import { addDays, dayRange, emptyPersonHistory, legFiguresOn, planRecomputedWrites, rankingOn, recomputeIndexHistory, recomputeVendorIndexHistory, type DatedIndexPoint, type HistoryInputs } from "../lib/fleet-index-history.js";
 import { readAssignmentChanges, readDatedSlugSpend, readDatedSlugSpendBases, readHistoryLegs, readMeetingHistoryInputs, readMeetingSpendBases, readPersonHistory, readWorkflowVersions } from "../lib/fleet-index-history-io.js";
 import { meetingPipeOn } from "../lib/meeting-pipe-history.js";
 import { fetchDynastyMerges } from "../lib/public-stats-clients.js";
@@ -31,6 +32,7 @@ import { readMembershipPairs, readPairDatedSpend, readPairPersons } from "../lib
 import { addPairBrandEngagement, emptyBrandEngagementHistory, engagedLeadPointOn, type PairSpendDay } from "../lib/client-index-history.js";
 import { engagedLeadPoint } from "../lib/fleet-indexes.js";
 import { readVendorBrandEngagement, recordFleetIndexesNow, vendorMeetingPipe } from "../routes/fleet-indexes.js";
+import { vendorRankingRows } from "../lib/fleet-index-vendor.js";
 import { readLegWorkflowRanking } from "../routes/public.js";
 import { dailyBookSinceDay, loadDailyLedgerBook, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
 import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
@@ -179,6 +181,28 @@ async function vendorHistory(
   }
   await writeRecomputedFleetIndexPoints(plan.writes, now, "vendor");
   log(`wrote ${plan.writes.length} recomputed vendor point(s)`);
+}
+
+/** The workflow history's inputs (every day from the first spend to yesterday) and its vendor bases, no meeting pipe. */
+async function readWorkflowEraInputs(now: Date): Promise<{ inputs: HistoryInputs; bases: Awaited<ReturnType<typeof readDatedSlugSpendBases>> }> {
+  const visitLeg = computationLegKey(SCEO_WEBSITE_VISIT_LEG);
+  const replyLeg = computationLegKey(SCEO_POSITIVE_REPLY_LEG);
+  const legKeys = [visitLeg, replyLeg];
+  const [legs, workflows, assignmentChanges, merges] = await Promise.all([
+    readHistoryLegs(SCEO_FEATURE_SLUG, legKeys),
+    readWorkflowVersions(SCEO_FEATURE_SLUG),
+    readAssignmentChanges(SCEO_FEATURE_SLUG, legKeys),
+    fetchDynastyMerges(SCEO_FEATURE_SLUG),
+  ]);
+  const spend = await readDatedSlugSpend(SCEO_FEATURE_SLUG, legs);
+  if (spend.length === 0) throw new Error("no spend on either leg: no workflow history");
+  const first = spend.reduce((a, s) => (s.day < a ? s.day : a), spend[0]!.day);
+  const days = dayRange(first, addDays(now.toISOString().slice(0, 10), -1));
+  const persons = emptyPersonHistory(days);
+  const pairs = await readPersonHistory(SCEO_FEATURE_SLUG, persons, legs, log);
+  const bases = await readDatedSlugSpendBases(SCEO_FEATURE_SLUG, legs);
+  log(`workflow history: ${workflows.length} versions, ${spend.length} spend buckets, ${pairs} pairs walked, days ${first} .. ${days.at(-1)}`);
+  return { inputs: { days, websiteVisitLeg: visitLeg, positiveReplyLeg: replyLeg, persons, spend, assignmentChanges, workflows, merges }, bases };
 }
 
 /** Relative gap between a replay and a live figure (both null = equal). */
@@ -338,8 +362,18 @@ async function scriptsEraHistory(now: Date, apply: boolean): Promise<void> {
     log(`meeting pipe ${before} recorded billed ${meetingPipeKey(recorded[0]?.inputs)} vendor ${meetingPipeKey(recorded[1]?.inputs)} / live billed ${liveKey(billedPipe)} vendor ${liveKey(vendorPipe)}: ${same ? "SAME, used on every day" : "MOVED, meeting indexes not rebuilt"}`);
     if (same) meeting = { billed: billedPipe, vendor: vendorPipe };
   }
+  // The pipe's workflows as of each day (INDEX-HISTORY-1117): the workflow history's own inputs, both bases.
+  const history = await readWorkflowEraInputs(now);
+  const historyRows = (legKey: string, day: string) => {
+    const at = history.inputs.days.indexOf(day);
+    if (at < 0) throw new Error(`the workflow history holds no day ${day} (its days ${history.inputs.days[0]} .. ${history.inputs.days.at(-1)})`);
+    const billed = rankingOn(history.inputs, legKey, at);
+    const twin = { vendor: legFiguresOn(history.inputs, legKey, at, history.bases.vendor), unpriced: legFiguresOn(history.inputs, legKey, at, history.bases.unpriced) };
+    return { billed, vendor: vendorRankingRows(billed, twin) };
+  };
   const out = recomputeScriptsEraIndexPoints({
     days,
+    historyRows,
     books: { gross: gross.book, vendor: vendor.book, unpriced: unpriced.book },
     keyOf: scriptKeyOf([...runnable]),
     runnable,

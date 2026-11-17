@@ -23,7 +23,7 @@
 import type { LedgerPipeBook } from "./ledger-pipe-costs.js";
 import { legCutoffIso, legMaturityFigures, outcomeFigures, type LegMaturityFigures } from "./maturity.js";
 import { runStartUntilOf } from "./ledger-book.js";
-import { computeFleetIndexPoints, type FleetIndexPoint, type MeetingPipeEvidence } from "./fleet-indexes.js";
+import { computeFleetIndexPoints, isProvenIndexRow, type FleetIndexPoint, type MeetingPipeEvidence } from "./fleet-indexes.js";
 import type { DatedIndexPoint } from "./fleet-index-history.js";
 import { measureScriptFigures, type LedgerScriptFigures } from "./research/engine-script-performance.js";
 import { rankLegWorkflows, type LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
@@ -98,14 +98,49 @@ export function scriptIndexRows(
   return { billed, vendor };
 }
 
+/** One index's rows on both bases (billed = the order, vendor = the public money of the same rows). */
+export interface IndexRowsBoth {
+  billed: IndexRow[];
+  vendor: IndexRow[];
+}
+
+/**
+ * PURE. A cold email index's candidates, EVERY era (owner 2026-11-17, INDEX-HISTORY-1117: « Mais c'est pas vrai qu'on a pas
+ * assez de data !!! »): the `email_sent` Engine's scripts AND the workflow dynasties of the pipe's own leg ranking, each on
+ * its own whole history (a workflow that stopped with MIGRATE-1105 keeps its results: prod 2026-11-17 Ballad, 47 positive
+ * replies on 20,811 people, mature, read by no index since 2026-11-09). Never pooled: each row stays one script / workflow.
+ *
+ * Order (billed, so both bases pick the same row): the PROVEN rows (`isProvenIndexRow`: mature, >= the noise bar) by billed
+ * cost per outcome, cheapest first, the first one `moneyGoesHere` (the index's pick, `indexPipePick`); then every other
+ * row, scripts first in their own leg order, then the workflows in theirs (the best available runnable script below the
+ * bar is read from them). The ranking's script rows (`<outcome>/<dynasty>`) are dropped from the history: the scripts are
+ * read on the Engine's measure, over every campaign.
+ */
+export function indexRowsWithHistory(scripts: IndexRowsBoth, history: IndexRowsBoth): IndexRowsBoth {
+  const isWorkflow = (r: IndexRow) => !r.workflowDynastySlug.includes("/");
+  const billedAll = [...scripts.billed, ...history.billed.filter(isWorkflow)];
+  const priced = (r: IndexRow) => isProvenIndexRow(r) && r.costPerOutcomeUsd !== null;
+  const head = billedAll.filter(priced).sort((a, b) => a.costPerOutcomeUsd! - b.costPerOutcomeUsd! || (a.workflowDynastySlug < b.workflowDynastySlug ? -1 : 1));
+  const ordered = [...head, ...billedAll.filter((r) => !priced(r))];
+  const place = new Map(ordered.map((r, i) => [r.workflowDynastySlug, { rank: i + 1, moneyGoesHere: i === 0 && priced(r) }]));
+  const placed = (r: IndexRow): IndexRow => ({ ...r, ...place.get(r.workflowDynastySlug)! });
+  const vendor = [...scripts.vendor, ...history.vendor.filter(isWorkflow)].filter((r) => place.has(r.workflowDynastySlug)).map(placed);
+  return { billed: ordered.map(placed), vendor: vendor.sort((a, b) => a.rank - b.rank) };
+}
+
 /** What the scripts-era history reads (`recomputeScriptsEraIndexPoints`). */
 export interface ScriptsEraHistoryInputs {
   /** Days to rebuild, oldest first. */
   days: readonly string[];
   books: ScriptIndexBooks;
   keyOf: (slug: string | null | undefined) => string;
-  /** Script dynasties runnable today (a script retired since keeps its figures, never picked). */
+  /** Script dynasties runnable today (a script retired since keeps its figures). */
   runnable: ReadonlySet<string>;
+  /**
+   * The pipe's workflow-era rows AS OF the end of `day` on `legKey`, both bases (the workflow history's `rankingOn` and its
+   * vendor twin): merged with the scripts (`indexRowsWithHistory`), so a past day reads every era like the live recorder.
+   */
+  historyRows: (legKey: string, day: string) => IndexRowsBoth;
   websiteVisitLeg: string;
   positiveReplyLeg: string;
   /**
@@ -130,9 +165,9 @@ export function recomputeScriptsEraIndexPoints(i: ScriptsEraHistoryInputs): { bi
   const vendor: DatedIndexPoint[] = [];
   for (const day of i.days) {
     const books = { gross: bookAsOf(i.books.gross, day), vendor: bookAsOf(i.books.vendor, day), unpriced: bookAsOf(i.books.unpriced, day) };
-    const visit = scriptIndexRows("website_visit", i.websiteVisitLeg, books, i.keyOf, i.runnable, matureCutDayOn(i.websiteVisitLeg, day));
-    const reply = scriptIndexRows("conversation", i.positiveReplyLeg, books, i.keyOf, i.runnable, matureCutDayOn(i.positiveReplyLeg, day));
-    const stamp = (p: FleetIndexPoint, costBasis: "billed" | "vendor"): DatedIndexPoint => ({ day, point: { ...p, inputs: { ...p.inputs, asOfDay: day, costBasis, source: "email_sent_engine_scripts" } } });
+    const visit = indexRowsWithHistory(scriptIndexRows("website_visit", i.websiteVisitLeg, books, i.keyOf, i.runnable, matureCutDayOn(i.websiteVisitLeg, day)), i.historyRows(i.websiteVisitLeg, day));
+    const reply = indexRowsWithHistory(scriptIndexRows("conversation", i.positiveReplyLeg, books, i.keyOf, i.runnable, matureCutDayOn(i.positiveReplyLeg, day)), i.historyRows(i.positiveReplyLeg, day));
+    const stamp = (p: FleetIndexPoint, costBasis: "billed" | "vendor"): DatedIndexPoint => ({ day, point: { ...p, inputs: { ...p.inputs, asOfDay: day, costBasis, source: "email_sent_engine_scripts_and_workflow_history" } } });
     for (const p of computeFleetIndexPoints({ websiteVisitRows: visit.billed, positiveReplyRows: reply.billed, meetingPipe: i.meeting?.billed ?? null, bestAvailableStandsIn: true })) billed.push(stamp(p, "billed"));
     for (const p of computeFleetIndexPoints({ websiteVisitRows: visit.vendor, positiveReplyRows: reply.vendor, meetingPipe: i.meeting?.vendor ?? null, bestAvailableStandsIn: true })) vendor.push(stamp(p, "vendor"));
   }
