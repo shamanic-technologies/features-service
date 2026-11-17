@@ -128,7 +128,7 @@ describe("PART-ENTRY-1116: the fix retires every cell computed before it", () =>
       "/brands/{brandId}/spend-charts",
     ])
       expect(ROUTE_COMPUTE_RULES[path]).toBe("measured-before-default-1117-own");
-    // PROJECTION-CAP-1117 then MEASURED-BEFORE-DEFAULT-1117 retire campaign-targets' cells.
-    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("measured-before-default-1117-own");
+    // PROJECTION-CAP-1117, MEASURED-BEFORE-DEFAULT-1117, then MILESTONES-CONTACTED-1117 retire campaign-targets' cells.
+    expect(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]).toBe("milestones-contacted-1117");
   });
 });
