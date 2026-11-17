@@ -21,7 +21,7 @@ import {
   type TransitionStat,
   type UnitCostStat,
 } from "./outcome-silver.js";
-import { linkPageChanges, linkRowOf, unitRowOf, type LedgerUnitLink } from "./outcome-silver-io.js";
+import { linkPageChanges, linkRowOf, linkSourceOf, unitRowOf, type LedgerUnitLink } from "./outcome-silver-io.js";
 import { carriedLedgerUnits, sumLedgerUnits } from "./campaign-ledger-units-client.js";
 
 describe("distributionOf (cost per Unit)", () => {
@@ -120,8 +120,8 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     ],
     // Every beta Unit of F1 is tied by a link; 24 of F3's 30.
     linkedTo: [
-      { fromKey: "alpha", toKey: "beta", campaignIds: ["u2"], brandId: "B1", units: 20 },
-      { fromKey: "alpha", toKey: "beta", campaignIds: ["u4"], brandId: "B2", units: 24 },
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["u2"], brandId: "B1", sources: [{ campaignIds: ["u1"], brandId: "B1" }], units: 20 },
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["u4"], brandId: "B2", sources: [{ campaignIds: ["u4"], brandId: "B2" }], units: 24 },
     ],
   });
   const row = (scope: string, scopeId: string, fromKey: string, toKey: string) => stats.find((r) => r.scope === scope && r.scopeId === scopeId && r.fromKey === fromKey && r.toKey === toKey) as SilverStatRow | undefined;
@@ -191,7 +191,7 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
       ],
       unitCosts: [],
       pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u1"], brandId: "B1", bin: 12, pairs: 2495, sumHours: 2495 * 40, samplesHours: null }],
-      linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u1"], brandId: "B1", units: 2495 }, { fromKey: "alpha", toKey: "beta", campaignIds: ["u9"], brandId: "B1", units: 700 }],
+      linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u1"], brandId: "B1", sources: [{ campaignIds: ["u1"], brandId: "B1" }], units: 2495 }, { fromKey: "alpha", toKey: "beta", campaignIds: ["u9"], brandId: "B1", sources: [{ campaignIds: ["u9"], brandId: "B1" }], units: 700 }],
     });
     const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
     const f1 = t("campaign", "F1");
@@ -205,7 +205,7 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     for (const [scope, id] of [["brand", "B1"], ["fleet", FLEET_SCOPE_ID]] as const) expect(t(scope, id)).toMatchObject({ fromUnits: 4157, toUnits: 3737, linkedToUnits: 2495 });
     expect(t("fleet", FLEET_SCOPE_ID).prior.shape / t("fleet", FLEET_SCOPE_ID).prior.rate).toBeCloseTo(3737 / t("fleet", FLEET_SCOPE_ID).exposure, 9);
     // No `to` Unit at all: the coverage is unknown, never 0 or 1.
-    const none = buildSilverStats({ today, funnelOf, unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "alpha", campaignIds: ["u3"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "beta", campaignIds: ["u3"], brandId: "B1", day: "2026-01-02", units: 1 }], unitCosts: [], pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u3"], brandId: "B1", bin: 5, pairs: 1, sumHours: 3.5, samplesHours: [3.5] }], linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u3"], brandId: "B1", units: 1 }] });
+    const none = buildSilverStats({ today, funnelOf, unitDays: [{ outcomeKey: "alpha", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "alpha", campaignIds: ["u3"], brandId: "B1", day: "2026-01-01", units: 10 }, { outcomeKey: "beta", campaignIds: ["u3"], brandId: "B1", day: "2026-01-02", units: 1 }], unitCosts: [], pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["u3"], brandId: "B1", bin: 5, pairs: 1, sumHours: 3.5, samplesHours: [3.5] }], linkedTo: [{ fromKey: "alpha", toKey: "beta", campaignIds: ["u3"], brandId: "B1", sources: [{ campaignIds: ["u3"], brandId: "B1" }], units: 1 }] });
     expect((none.find((r) => r.scope === "campaign" && r.scopeId === "F1" && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat).toMatchObject({ toUnits: 0, linkedToUnits: 0, linkCoverage: null });
   });
 
@@ -246,6 +246,47 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     const many = Array.from({ length: 201 }, () => 25);
     expect(build(row("u1", many)).medianHours).toBe(30); // 201 pairs: the middle of the bin [24 h, 36 h)
     expect(build(row("u1", many.slice(0, 200))).medianHours).toBe(25); // 200 pairs: the pairs' own
+  });
+});
+
+describe("UNIT-LINK-LEFTOVERS-1117: a `to` Unit the links tie only to another scope's `from` Units is in no yield of this one", () => {
+  // Prod 2026-11-17: a campaign 10 days old found 113 leads and sent 1,087 first messages, one per lead: 106 to its own
+  // leads, 981 to leads the brand's EARLIER campaigns (in no sales funnel campaign) had found. Counted whole it read 9.6.
+  const funnelOf = (c: string) => ({ src: "F1", mail: "F1", other: "F2" })[c] ?? null;
+  const s = buildSilverStats({
+    today: "2026-03-01",
+    funnelOf,
+    unitDays: [
+      { outcomeKey: "alpha", campaignIds: ["src"], brandId: "B1", day: "2026-01-01", units: 113 },
+      { outcomeKey: "beta", campaignIds: ["mail"], brandId: "B1", day: "2026-01-03", units: 1087 },
+      { outcomeKey: "alpha", campaignIds: ["other"], brandId: "B1", day: "2026-01-01", units: 400 },
+    ],
+    unitCosts: [],
+    pairBins: [{ fromKey: "alpha", toKey: "beta", fromCampaignIds: ["src"], brandId: "B1", bin: 12, pairs: 106, sumHours: 106 * 40, samplesHours: null }],
+    linkedTo: [
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["mail"], brandId: "B1", sources: [{ campaignIds: ["src"], brandId: "B1" }], units: 100 },
+      // Tied to a `from` Unit of the campaign AND to one outside it: made from the campaign's own.
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["mail"], brandId: "B1", sources: [{ campaignIds: ["legacy"], brandId: "B1" }, { campaignIds: ["src"], brandId: "B1" }], units: 6 },
+      // Tied only to leads of a campaign in no funnel campaign: outside every scope.
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["mail"], brandId: "B1", sources: [{ campaignIds: ["legacy"], brandId: "B1" }], units: 900 },
+      // Tied only to leads of ANOTHER funnel campaign of the brand: outside the campaign, inside its brand and the fleet.
+      { fromKey: "alpha", toKey: "beta", campaignIds: ["mail"], brandId: "B1", sources: [{ campaignIds: ["other"], brandId: "B1" }], units: 61 },
+    ],
+  });
+  const t = (scope: string, id: string) => (s.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === "alpha")!.body as { stat: TransitionStat }).stat;
+  it("the campaign's yield is its own leads' (106 of 113), the 981 others are named, the 20 unlinked still count", () => {
+    const f1 = t("campaign", "F1");
+    expect(f1).toMatchObject({ fromUnits: 113, toUnits: 126, foreignToUnits: 961, linkedToUnits: 106 });
+    expect(f1.linkCoverage).toBeCloseTo(106 / 126, 12);
+    expect(f1.yield.mean).toBeLessThan(1.2);
+  });
+  it("the brand and the fleet keep what another of their funnel campaigns found, and leave out what no funnel campaign found", () => {
+    for (const [scope, id] of [["brand", "B1"], ["fleet", FLEET_SCOPE_ID]] as const) expect(t(scope, id)).toMatchObject({ fromUnits: 513, toUnits: 187, foreignToUnits: 900, linkedToUnits: 167 });
+  });
+  it("reads a source as the SQL group spells it", () => {
+    expect(linkSourceOf("a,b|B1")).toEqual({ campaignIds: ["a", "b"], brandId: "B1" });
+    expect(linkSourceOf("|")).toEqual({ campaignIds: [], brandId: null });
+    expect(linkSourceOf("a|")).toEqual({ campaignIds: ["a"], brandId: null });
   });
 });
 
