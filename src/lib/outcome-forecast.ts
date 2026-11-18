@@ -48,7 +48,7 @@ export interface ScopeEvidence {
  */
 export const BLEND_PSEUDO_CASES = 10;
 /** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
-export const FORECAST_RULE = "2026-11-18.4-live-campaign-own-curve";
+export const FORECAST_RULE = "2026-11-18.5-entry-cost-own-source";
 /**
  * FORECAST-TUNNEL-1118. How SURE a rate is, apart from where its mean sits. The mean is blended with a fallback worth
  * `BLEND_PSEUDO_CASES`; the SPREAD each draw samples from must not treat that fallback as 10 observed cases when it is a
@@ -58,6 +58,8 @@ export const FORECAST_RULE = "2026-11-18.4-live-campaign-own-curve";
  * nothing measured. So a step resting on the plan line alone is drawn from a very wide range, 1,000 cases from a tight one.
  */
 export const PLAN_LINE_SPREAD_CASES = 0.5;
+/** A brand's measured cost of one Unit stands as a fallback from this many Units; under it the fleet's is taken. */
+export const MIN_UNIT_COST_UNITS = 30;
 
 /** One level of the ladder a figure rests on, from the fallback up to the campaign. */
 export interface BlendLevel {
@@ -283,23 +285,31 @@ export function chooseDelay(s: TransitionStats, liveCampaign: DelayDistribution 
   return { source, pairs, thinSample: source !== "default" && pairs < MIN_DELAY_PAIRS, medianHours: delayQuantileOf(cdf, 0.5), p10Hours: delayQuantileOf(cdf, 0.1), p90Hours: delayQuantileOf(cdf, 0.9), cdf, blend, curves };
 }
 
+export type EntryCostSource = "campaign" | "brand" | "fleet" | "plan";
+
 export interface EntryCostHypothesis {
-  source: "campaign" | "plan";
-  /** USD per Unit of the first milestone, everything the campaign spends included. */
+  /** The level weighing most in the cost used. */
+  source: EntryCostSource;
+  /** USD per Unit of the first milestone: the cost USED (the campaign's own, blended with its fallback by its Units). */
   usdPerUnit: number;
   p10: number;
   p90: number;
-  /** campaign: its spend and Units of the first milestone to date. plan: null. */
+  /** The campaign's spend and Units of the first milestone to date; null = it made none yet. */
   spentUsd: number | null;
   units: number | null;
-  /** plan: the basis the plan line states for its cost per Target. */
+  /** The campaign's own measured cost (everything it spent ÷ its Units of the first milestone); null = no Unit yet. */
+  measuredUsdPerUnit: number | null;
+  /** What it falls back on, and from where (`brand` / `fleet` = the ledger's measured cost of one such Unit; `plan` = the plan line's own); null = none. */
+  fallbackUsdPerUnit: number | null;
+  fallbackSource: Exclude<EntryCostSource, "campaign"> | null;
+  /** Share of the campaign's own measurement in the cost used. */
+  weight: number;
+  /** plan fallback: the basis the plan line states for its cost per Target. */
   planBasis: string | null;
   /** The values a draw picks from. */
   draws: number[];
 }
 
-/** Under this many Units of its first milestone a campaign's own cost is not measured yet: the plan line prices it. */
-export const MIN_ENTRY_UNITS = 30;
 const COST_RESAMPLES = 200;
 
 /** Deterministic generator (mulberry32): the same inputs give the same stored projection. */
@@ -322,15 +332,25 @@ const quantileOf = (sorted: ArrayLike<number>, q: number): number => {
 };
 
 /**
- * PURE. What one Unit of the first milestone costs, all in. Measured on the campaign (everything it spent ÷ its Units of the
- * first milestone; the uncertainty = bootstrap over its days), else the plan line's cost per Target walked back through the
- * yields (`planCostPerEntryUsd`), else null.
+ * PURE. What one Unit of the first milestone costs. FORECAST-LEAD-DEALS-1118: the same ladder as every figure, measured
+ * before default: the campaign's own cost (everything it spent ÷ its Units of the first milestone, from its FIRST Unit;
+ * the uncertainty = bootstrap over its days), blended with its fallback by its Units (`BLEND_PSEUDO_CASES`, on the log
+ * scale). The fallback
+ * is a cost of ONE such Unit stated by its own source: the brand's, else the fleet's measured cost in the ledger, else
+ * the plan line's own (its cost per Target ÷ its own Units needed per Target). Never the plan's cost per Target times
+ * yields measured elsewhere: a plan line assuming a default rate of 60% priced a message at $0.000008 once multiplied by
+ * the fleet's measured 0.00007, where the campaign's own 27 messages cost $0.075 each. Nothing = null.
  */
-export function chooseEntryCost(days: ReadonlyArray<{ spendUsd: number; units: number }>, plan: { costPerEntryUsd: number | null; basis: string | null }, rng: () => number): EntryCostHypothesis | null {
+export function chooseEntryCost(days: ReadonlyArray<{ spendUsd: number; units: number }>, fallback: { usdPerUnit: number; source: Exclude<EntryCostSource, "campaign">; planBasis: string | null } | null, rng: () => number): EntryCostHypothesis | null {
   const spent = days.reduce((a, d) => a + d.spendUsd, 0);
   const units = days.reduce((a, d) => a + d.units, 0);
-  if (units >= MIN_ENTRY_UNITS && spent > 0) {
-    const point = spent / units;
+  const fb = fallback !== null && fallback.usdPerUnit > 0 ? fallback : null;
+  if (units > 0 && spent > 0) {
+    const measured = spent / units;
+    const weight = fb === null ? 1 : units / (units + BLEND_PSEUDO_CASES);
+    // Blended on the log scale (a cost is a ratio: 10 times too high and 10 times too low weigh alike), so a fallback far
+    // from the measurement barely moves a campaign holding thousands of Units.
+    const mix = (own: number) => (fb === null ? own : Math.exp(weight * Math.log(own) + (1 - weight) * Math.log(fb.usdPerUnit)));
     const draws: number[] = [];
     for (let i = 0; i < COST_RESAMPLES; i++) {
       let s = 0;
@@ -340,12 +360,12 @@ export function chooseEntryCost(days: ReadonlyArray<{ spendUsd: number; units: n
         s += d.spendUsd;
         u += d.units;
       }
-      draws.push(u > 0 && s > 0 ? s / u : point);
+      draws.push(mix(u > 0 && s > 0 ? s / u : measured));
     }
     const sorted = [...draws].sort((a, b) => a - b);
-    return { source: "campaign", usdPerUnit: point, p10: quantileOf(sorted, 0.1), p90: quantileOf(sorted, 0.9), spentUsd: spent, units, planBasis: null, draws };
+    return { source: weight >= 0.5 ? "campaign" : fb!.source, usdPerUnit: mix(measured), p10: quantileOf(sorted, 0.1), p90: quantileOf(sorted, 0.9), spentUsd: spent, units, measuredUsdPerUnit: measured, fallbackUsdPerUnit: fb?.usdPerUnit ?? null, fallbackSource: fb?.source ?? null, weight, planBasis: fb?.planBasis ?? null, draws };
   }
-  if (plan.costPerEntryUsd !== null && plan.costPerEntryUsd > 0) return { source: "plan", usdPerUnit: plan.costPerEntryUsd, p10: plan.costPerEntryUsd, p90: plan.costPerEntryUsd, spentUsd: null, units: null, planBasis: plan.basis, draws: [plan.costPerEntryUsd] };
+  if (fb !== null) return { source: fb.source, usdPerUnit: fb.usdPerUnit, p10: fb.usdPerUnit, p90: fb.usdPerUnit, spentUsd: null, units: null, measuredUsdPerUnit: null, fallbackUsdPerUnit: fb.usdPerUnit, fallbackSource: fb.source, weight: 0, planBasis: fb.planBasis, draws: [fb.usdPerUnit] };
   return null;
 }
 
@@ -673,6 +693,8 @@ export interface CampaignForecastInput {
    * links); null = none. Absent = nothing is read live.
    */
   liveCampaignDelay?: (fromKey: string, toKey: string) => DelayDistribution | null;
+  /** Silver: the measured cost of ONE Unit of an outcome at a scope (the ledger's stated production cost), with its Units; null = none. */
+  unitCost?: (scope: "brand" | "fleet", outcomeKey: string) => { units: number; meanUsd: number } | null;
   silverComputedAt: string | null;
 }
 
@@ -760,9 +782,22 @@ export function campaignForecastOf(i: CampaignForecastInput) {
   const spendOn = new Map(i.spendByDay.map((d) => [d.date, d.spendUsd]));
   const unitsOn = new Map(entry.unitsByDay.map((d) => [d.date, d.units]));
   const costDays = [...new Set([...spendOn.keys(), ...unitsOn.keys()])].sort().map((date) => ({ spendUsd: spendOn.get(date) ?? 0, units: unitsOn.get(date) ?? 0 }));
-  const entryPerTarget = picks.reduce((a, p) => a * (p.yield!.shape / p.yield!.rate), 1);
-  const entryCost = chooseEntryCost(costDays, { costPerEntryUsd: i.plan.costPerTargetUsd !== null ? i.plan.costPerTargetUsd * entryPerTarget : null, basis: i.plan.basis }, rng);
+  // What the first milestone's cost falls back on: a cost of ONE such Unit from its own source, measured before default.
+  const measuredAt = (scope: "brand" | "fleet") => entry.ledgerKeys.map((k) => i.unitCost?.(scope, k) ?? null).filter((c): c is { units: number; meanUsd: number } => c !== null && c.units > 0 && c.meanUsd > 0).sort((x, y) => y.units - x.units)[0] ?? null;
+  const brandCost = measuredAt("brand");
+  const fleetCost = measuredAt("fleet");
+  const planOwn = i.plan.costPerTargetUsd !== null && i.plan.costPerTargetUsd > 0 && entry.neededPerTarget !== null && entry.neededPerTarget > 0 ? i.plan.costPerTargetUsd / entry.neededPerTarget : null;
+  const fallback =
+    brandCost !== null && brandCost.units >= MIN_UNIT_COST_UNITS
+      ? { usdPerUnit: brandCost.meanUsd, source: "brand" as const, planBasis: null }
+      : fleetCost !== null
+        ? { usdPerUnit: fleetCost.meanUsd, source: "fleet" as const, planBasis: null }
+        : planOwn !== null
+          ? { usdPerUnit: planOwn, source: "plan" as const, planBasis: i.plan.basis }
+          : null;
+  const entryCost = chooseEntryCost(costDays, fallback, rng);
   if (entryCost === null) return empty("cost_unmeasured_and_plan_prices_no_target");
+
 
   const run = (m: number) => {
     const schedule = spendReason === null ? expectedScheduleOf(i.spendPerDayUsd! * m, i.spendPerDayUsd! * m, scaledCapacity(i.capacity, m), i.now) : null;
@@ -797,7 +832,7 @@ export function campaignForecastOf(i: CampaignForecastInput) {
     unavailableReason: null as string | null,
     hypotheses: {
       budget,
-      entryCost: { step: entry.step, label: entry.label, source: entryCost.source, usdPerUnit: round(entryCost.usdPerUnit), p10: round(entryCost.p10), p90: round(entryCost.p90), spentUsd: entryCost.spentUsd, units: entryCost.units, planBasis: entryCost.planBasis },
+      entryCost: { step: entry.step, label: entry.label, source: entryCost.source, usdPerUnit: round(entryCost.usdPerUnit), p10: round(entryCost.p10), p90: round(entryCost.p90), spentUsd: entryCost.spentUsd, units: entryCost.units, measuredUsdPerUnit: entryCost.measuredUsdPerUnit === null ? null : round(entryCost.measuredUsdPerUnit), fallbackUsdPerUnit: entryCost.fallbackUsdPerUnit === null ? null : round(entryCost.fallbackUsdPerUnit), fallbackSource: entryCost.fallbackSource, weight: round(entryCost.weight, 4), planBasis: entryCost.planBasis },
       transitions: picks.map((p) => {
         const b = band(p.yield!.shape, p.yield!.rate);
         return {

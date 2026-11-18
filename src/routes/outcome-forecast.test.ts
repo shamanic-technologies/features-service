@@ -87,7 +87,8 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
     expect(res.body.forecast.outcomes[0].unitsToDate).toBe(2000);
     expect(res.body.forecast.days).toHaveLength(548);
     expect(res.body.hypotheses.budget).toMatchObject({ source: "daily_budget", spendPerDayWhileSpendingUsd: 10 });
-    expect(res.body.hypotheses.entryCost).toMatchObject({ step: "t_a", source: "campaign", usdPerUnit: 0.1 });
+    expect(res.body.hypotheses.entryCost).toMatchObject({ step: "t_a", source: "campaign", measuredUsdPerUnit: 0.1 });
+    expect(res.body.hypotheses.entryCost.usdPerUnit).toBeCloseTo(0.1, 2);
     expect(res.body.hypotheses.transitions.map((t: { yield: { source: string }; delay: { source: string } }) => [t.yield.source, t.delay.source])).toEqual([["campaign", "campaign"], ["fleet", "fleet"]]);
     // FORECAST-FRESH-EVIDENCE-1118: the transition Silver holds no campaign row for reads the campaign's own pairs live,
     // for its unit campaigns and that pair of outcomes only; the one it holds a row for reads nothing.
