@@ -23,6 +23,8 @@ import { db } from "../db/index.js";
 import { outcomeSilverStats, outcomeUnitLinks, outcomeUnits } from "../db/schema.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { loadFleetCell, loadFleetCellStrict, storeFleetCell } from "./fleet-cell-store.js";
+import { listOutcomeRungs } from "./outcome-rungs-store.js";
+import { lifecycleRankOf } from "./lifecycle-ladder.js";
 import { storedCopyIsFresh } from "./boot-warms.js";
 import { buildSilverStats, DELAY_EDGES_HOURS, EXACT_DELAY_MAX_PAIRS, SILVER_RULE, type LinkedToRow, type PairBinRow, type SilverScope, type SilverStatRow, type UnitCostRow, type UnitDayRow } from "./outcome-silver.js";
 
@@ -547,6 +549,8 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
       if (!follow.copied) throw new Error("the ledger's unit links are not copied through yet (first copy running, or the ledger has not built since its deploy)");
       const t1 = Date.now();
       const [unitDays, unitCosts, funnels] = [await readUnitDays(), await readUnitCosts(), await readFunnelOfUnitCampaigns()];
+      // The outcome rung catalogue (DATA): which outcome a campaign makes stands lowest = its first milestone.
+      const rungs = await listOutcomeRungs();
       const pairBins: PairBinRow[] = [];
       const linkedTo: LinkedToRow[] = [];
       for (const key of await readLinkFromKeys()) {
@@ -557,7 +561,7 @@ export function runOutcomeSilverSweep(): Promise<SilverSweepRecord> {
       }
       const [{ held }] = (await db.execute(sql`SELECT count(*)::int AS held FROM outcome_unit_links`)) as unknown as [{ held: number }];
       const now = new Date();
-      const stats = buildSilverStats({ unitDays, unitCosts, pairBins, linkedTo, funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
+      const stats = buildSilverStats({ unitDays, unitCosts, pairBins, linkedTo, rankOf: (k) => lifecycleRankOf(rungs.get(k) ?? null), funnelOf: (c) => funnels.get(c) ?? null, today: now.toISOString().slice(0, 10) });
       await replaceStats(stats, now);
       const record: SilverSweepRecord = { sweptAt: now.toISOString(), rule: SILVER_RULE, copy: { pages: copy.pages, units: copy.units }, links: { pages: follow.pages, read: follow.links, removed: follow.removed, held: Number(held), ms: follow.ms, builtAt: follow.builtAt }, units: unitDays.reduce((a, r) => a + r.units, 0), stats: stats.length, copyMs: t1 - t0, buildMs: Date.now() - t1 };
       await storeFleetCell(SILVER_SWEEP_CELL, JSON.stringify(record), now.getTime());

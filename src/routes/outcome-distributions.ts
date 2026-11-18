@@ -29,6 +29,8 @@ router.get("/internal/outcome-distributions", apiKeyOnly, async (req: Request, r
       unitsHeld: sweep.units,
       unitCosts: rows.flatMap((r) => (r.body.kind === "unit_cost" ? [{ outcomeKey: r.toKey, ...r.body.stat }] : [])),
       transitions: rows.flatMap((r) => (r.body.kind === "transition" ? [{ fromKey: r.fromKey, toKey: r.toKey, ...r.body.stat }] : [])),
+      // What sales funnel campaigns spent all in per Unit of their first milestone (FORECAST-ENTRY-COST-BASIS-1118).
+      entryCosts: rows.flatMap((r) => (r.body.kind === "entry_cost" ? [{ outcomeKey: r.toKey, ...r.body.stat, usdPerUnit: r.body.stat.units > 0 ? r.body.stat.spendUsd / r.body.stat.units : null }] : [])),
     });
   } catch (err) {
     console.error("[features-service] outcome distributions read failed:", err);
