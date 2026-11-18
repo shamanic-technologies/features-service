@@ -19,7 +19,7 @@ import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { campaignTargetBasis } from "./campaign-targets.js";
 import { readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
 import { FLEET_SCOPE_ID, SILVER_RULE, type TransitionStat } from "../lib/outcome-silver.js";
-import { campaignForecastOf } from "../lib/outcome-forecast.js";
+import { campaignForecastOf, FORECAST_RULE } from "../lib/outcome-forecast.js";
 
 const router = Router();
 const PATH = "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/outcome-forecast";
@@ -72,7 +72,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/outco
     const sweep = await readCurrentSilverSweep();
     const body = await servedCached({
       view: "campaign-outcome-forecast",
-      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
+      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, gold: FORECAST_RULE, units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
       orgId: auth.orgId,
       ttlMs: TTL_MS,
       responseShape: routeResponseShapeFingerprint(PATH),
