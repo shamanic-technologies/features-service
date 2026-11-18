@@ -82920,7 +82920,7 @@
                                       "own_counts",
                                       null
                                     ],
-                                    "description": "Where the campaign level's cases come from: `silver` = the stored daily sweep; `live_counts` = the campaign page's own counts now, censored by the delay curve (Silver holds no row for this campaign on this transition yet: a campaign counts from day one, FORECAST-FRESH-EVIDENCE-1118); `own_counts` = the same counts uncensored (nothing measured anywhere); null = the campaign holds no evidence."
+                                    "description": "Where the campaign level's cases come from: `silver` = the stored daily sweep; `live_counts` = the campaign page's own counts now, censored as the sweep does on the campaign's own pairs read live off the links when it holds at least 10 (Silver holds no row for this campaign on this transition yet: a campaign counts from day one, FORECAST-FRESH-EVIDENCE-1118); `own_counts` = the same counts uncensored (nothing measured anywhere); null = the campaign holds no evidence."
                                   },
                                   "effectiveCases": {
                                     "type": "number",

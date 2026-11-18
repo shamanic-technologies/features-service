@@ -18,7 +18,7 @@
  *
  * ONE mechanism for every campaign and outcome (guard `outcome-silver.test.ts`).
  */
-import { delayCdfAt, gammaQuantile, MIN_DELAY_PAIRS, type TransitionStat } from "./outcome-silver.js";
+import { delayCdfAt, gammaQuantile, MIN_DELAY_PAIRS, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
 import { capacityUnavailableReason, expectedScheduleOf, SCHEDULE_DAYS, type SpendCapacityInput } from "./spend-capacity.js";
 
 export type HypothesisSource = "campaign" | "brand" | "fleet" | "plan" | "default";
@@ -48,7 +48,7 @@ export interface ScopeEvidence {
  */
 export const BLEND_PSEUDO_CASES = 10;
 /** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
-export const FORECAST_RULE = "2026-11-18.3-live-campaign-evidence";
+export const FORECAST_RULE = "2026-11-18.4-live-campaign-own-curve";
 /**
  * FORECAST-TUNNEL-1118. How SURE a rate is, apart from where its mean sits. The mean is blended with a fallback worth
  * `BLEND_PSEUDO_CASES`; the SPREAD each draw samples from must not treat that fallback as 10 observed cases when it is a
@@ -127,7 +127,7 @@ const heaviest = <T extends { share: number; level: HypothesisSource }>(levels: 
  * With no plan rate the coarsest measured level stands alone (half a case added: never a zero rate). Nothing at all = null.
  *
  * FORECAST-FRESH-EVIDENCE-1118: `live` = the campaign's cases as its page counts them NOW (`to` Units over the exposure of
- * its `from` Units, censored by the delay curve). The campaign level takes them when Silver holds no row for it (a campaign
+ * its `from` Units, censored as the sweep does). The campaign level takes them when Silver holds no row for it (a campaign
  * younger than the last daily sweep read the fleet's rate alone: 2.25 messages per lead where its own counts said 79 over
  * 106). They are not yet in the brand's or the fleet's stored counts, so nothing is taken away from those.
  */
@@ -255,14 +255,18 @@ export function delayQuantileOf(cdf: ReadonlyArray<{ hours: number; share: numbe
  * curves, each MIXED into the one below with the weight pairs ÷ (pairs + `BLEND_PSEUDO_CASES`), a level counting the pairs
  * the finer ones do not already hold (THIN-SAMPLE-BLEND-1118: 2 pairs no longer set a curve alone).
  */
-export function chooseDelay(s: TransitionStats): DelayHypothesis {
+export function chooseDelay(s: TransitionStats, liveCampaign: DelayDistribution | null = null): DelayHypothesis {
+  // A campaign Silver holds no row for brings the delay it measured itself (FORECAST-FRESH-EVIDENCE-1118).
+  if (s.campaign === null && liveCampaign !== null) s = { ...s, campaign: { delay: liveCampaign } as TransitionStat };
   const K = BLEND_PSEUDO_CASES;
   let cdf = defaultDelayCdf();
   const blend: DelayBlendLevel[] = [{ level: "default", pairs: 0, medianHours: DEFAULT_DELAY_MEDIAN_DAYS * 24, weight: 1, share: 1 }];
   const own: Array<Array<{ hours: number; share: number }>> = [cdf];
   const ownPairs = new Map<HypothesisSource, number>([["default", 0]]);
   const n = (scope: "campaign" | "brand" | "fleet") => s[scope]?.delay?.n ?? 0;
-  const ladder: Array<["fleet" | "brand" | "campaign", number]> = [["fleet", n("fleet") - (s.brand?.delay ? n("brand") : n("campaign"))], ["brand", n("brand") - n("campaign")], ["campaign", n("campaign")]];
+  // Pairs read live are not in the brand's or the fleet's stored curves yet: nothing is taken from those.
+  const inStored = liveCampaign !== null && s.campaign?.delay === liveCampaign ? 0 : n("campaign");
+  const ladder: Array<["fleet" | "brand" | "campaign", number]> = [["fleet", n("fleet") - (s.brand?.delay ? n("brand") : inStored)], ["brand", n("brand") - inStored], ["campaign", n("campaign")]];
   for (const [scope, pairs] of ladder) {
     const d = s[scope]?.delay;
     if (!d || pairs <= 0) continue;
@@ -664,6 +668,11 @@ export interface CampaignForecastInput {
   targetValueUsd: number | null;
   /** Silver: the stored transition of a scope, null = none. */
   transition: (scope: "campaign" | "brand" | "fleet", fromKey: string, toKey: string) => TransitionStat | null;
+  /**
+   * The delay the campaign measured ITSELF on a transition Silver holds no campaign row for (its pairs, read live off the
+   * links); null = none. Absent = nothing is read live.
+   */
+  liveCampaignDelay?: (fromKey: string, toKey: string) => DelayDistribution | null;
   silverComputedAt: string | null;
 }
 
@@ -731,12 +740,17 @@ export function campaignForecastOf(i: CampaignForecastInput) {
     const stats: TransitionStats = best === null ? { campaign: null, brand: null, fleet: null } : { campaign: i.transition("campaign", best.a, best.b), brand: i.transition("brand", best.a, best.b), fleet: i.transition("fleet", best.a, best.b) };
     const own = { fromUnits: m.unitsByDay.reduce((s, d) => s + d.units, 0), toUnits: next.unitsByDay.reduce((s, d) => s + d.units, 0) };
     const planRate = m.neededPerTarget !== null && next.neededPerTarget !== null && m.neededPerTarget > 0 ? next.neededPerTarget / m.neededPerTarget : null;
-    const delay = chooseDelay(stats);
-    // The campaign's cases as the page counts them now: each `from` Unit counts for the share of its `to` Units already
-    // due at its age on the curve the projection uses (the censoring Silver applies; midday of its day).
+    // A campaign Silver holds no row for yet (younger than the last sweep): its cases as its page counts them NOW, each
+    // `from` Unit counting for the share of its `to` Units already due at its age: the sweep's own censoring, on the curve
+    // the sweep would pick (the campaign's OWN pairs when it holds at least 10, read live off the links; else the brand's,
+    // else the fleet's stored curve). Prod 2026-11-18: censored by the fleet's curve alone (follow-up steps sent weeks
+    // later) a campaign's 79 messages for 106 leads read 3.5 per lead; on its own pairs it reads what it is.
+    const live = stats.campaign === null && best !== null ? i.liveCampaignDelay?.(best.a, best.b) ?? null : null;
+    const curves = [live, stats.brand?.delay ?? null, stats.fleet?.delay ?? null].filter((d): d is DelayDistribution => d !== null);
+    const censor = curves.find((d) => d.n >= MIN_DELAY_PAIRS) ?? [...curves].sort((x, y) => y.n - x.n)[0] ?? null;
     const today0 = Date.parse(`${i.now.slice(0, 10)}T00:00:00.000Z`);
-    const exposure = m.unitsByDay.reduce((s, d) => s + d.units * delayCdfAt(delay.cdf, (today0 - Date.parse(`${d.date}T00:00:00.000Z`)) / 3_600_000 + 12), 0);
-    return { from: m, to: next, keys: best, yield: chooseYield(stats, planRate, own, { toUnits: own.toUnits, exposure }), delay };
+    const exposure = censor === null ? own.fromUnits : m.unitsByDay.reduce((s, d) => s + d.units * delayCdfAt(censor.cdf, (today0 - Date.parse(`${d.date}T00:00:00.000Z`)) / 3_600_000 + 12), 0);
+    return { from: m, to: next, keys: best, yield: chooseYield(stats, planRate, own, { toUnits: own.toUnits, exposure }), delay: chooseDelay(stats, live) };
   });
   const missing = picks.find((p) => p.yield === null);
   if (missing) return empty(`yield_unmeasured:${missing.from.step}->${missing.to.step}`);
