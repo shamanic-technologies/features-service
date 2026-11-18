@@ -10633,6 +10633,8 @@ registry.registerPath({
                     p90: z.number().nullable(),
                     thinnerScopes: z.array(z.enum(["campaign", "brand"])).describe("Finer scopes that hold evidence but weigh less than `source` in the rate used."),
                     pseudoCases: z.number().describe("The fixed strength of a fallback, in cases (10): a level's own measurement weighs cases-it-could-expect / (those + 10) against the level below. 3 cases barely move it, 10 weigh half, 100 weigh 91%."),
+                    effectiveCases: z.number().nullable().describe("The cases the rate used is known by: what each draw of the simulation samples its rate with (Gamma, mean = `unitsPerUnit`). Few = a wide tunnel, thousands = a tight one. Apart from `pseudoCases`, which only weighs the MEAN."),
+                    planLineSpreadCases: z.number().describe("What a plan line is worth for the SPREAD: half a case (a human's stated rate, not a measurement; the weakest proper prior on a rate). It weighs 10 cases in the mean and half a case in how sure the rate is."),
                     blend: z
                       .array(
                         z.object({
@@ -10644,6 +10646,7 @@ registry.registerPath({
                           weight: z.number().nullable().describe("Share of this level's own measurement in ITS blended rate (0 = the fallback alone, 1 = itself alone)."),
                           blendedRate: z.number().nullable().describe("The rate after blending at this level; the last level's equals `unitsPerUnit`."),
                           share: z.number().nullable().describe("Share of this level's measurement in the rate finally used; the shares sum to 1. `source` = the largest."),
+                          spreadCases: z.number().nullable().describe("The cases the rate is KNOWN by after this level (FORECAST-TUNNEL-1118): the fallback's own (at most 10) plus this level's cases. The plan line starts at `planLineSpreadCases`."),
                         }),
                       )
                       .describe("The ladder the rate rests on, fallback first (plan line, fleet, brand, campaign): per level its raw measured rate with its cases, the fallback, the weight and the blended rate."),

@@ -82911,6 +82911,15 @@
                                     "type": "number",
                                     "description": "The fixed strength of a fallback, in cases (10): a level's own measurement weighs cases-it-could-expect / (those + 10) against the level below. 3 cases barely move it, 10 weigh half, 100 weigh 91%."
                                   },
+                                  "effectiveCases": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "The cases the rate used is known by: what each draw of the simulation samples its rate with (Gamma, mean = `unitsPerUnit`). Few = a wide tunnel, thousands = a tight one. Apart from `pseudoCases`, which only weighs the MEAN."
+                                  },
+                                  "planLineSpreadCases": {
+                                    "type": "number",
+                                    "description": "What a plan line is worth for the SPREAD: half a case (a human's stated rate, not a measurement; the weakest proper prior on a rate). It weighs 10 cases in the mean and half a case in how sure the rate is."
+                                  },
                                   "blend": {
                                     "type": "array",
                                     "items": {
@@ -82961,6 +82970,11 @@
                                           "type": "number",
                                           "nullable": true,
                                           "description": "Share of this level's measurement in the rate finally used; the shares sum to 1. `source` = the largest."
+                                        },
+                                        "spreadCases": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The cases the rate is KNOWN by after this level (FORECAST-TUNNEL-1118): the fallback's own (at most 10) plus this level's cases. The plan line starts at `planLineSpreadCases`."
                                         }
                                       },
                                       "required": [
@@ -82971,7 +82985,8 @@
                                         "fallbackRate",
                                         "weight",
                                         "blendedRate",
-                                        "share"
+                                        "share",
+                                        "spreadCases"
                                       ]
                                     },
                                     "description": "The ladder the rate rests on, fallback first (plan line, fleet, brand, campaign): per level its raw measured rate with its cases, the fallback, the weight and the blended rate."
@@ -83033,6 +83048,8 @@
                                   "p90",
                                   "thinnerScopes",
                                   "pseudoCases",
+                                  "effectiveCases",
+                                  "planLineSpreadCases",
                                   "blend",
                                   "evidence"
                                 ]
