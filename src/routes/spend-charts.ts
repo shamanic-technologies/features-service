@@ -22,7 +22,7 @@ import { parsePricing, type Pricing } from "../lib/pricing.js";
 import { fetchSalesFunnelCampaigns, type SalesFunnelCampaignRow, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { funnelCopiesFor } from "./agent-catalogue.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import {
   expectedForOffer,
   expectedReturnForCampaign,
@@ -273,7 +273,7 @@ export function funnelCampaignSpendCharts(row: SalesFunnelCampaignRow, brandId: 
       pricing,
     }),
     orgId: headers.orgId,
-    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"),
+    ...routeCacheFingerprints("/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts"),
     compute: () => computeFunnelCampaignSpendCharts(row, pricing, headers),
   });
 }
@@ -423,7 +423,7 @@ router.get("/brands/:brandId/spend-charts", apiKeyAuth, async (req, res) => {
         pricing,
       }),
       orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/spend-charts"),
+      ...routeCacheFingerprints("/brands/{brandId}/spend-charts"),
       compute: () => computeBrandSpendCharts(brandId, offerIds, rows, channels, pricing, headers),
     });
     res.json(body);
@@ -465,7 +465,7 @@ router.get("/offers/:offerId/spend-charts", apiKeyAuth, async (req, res) => {
         pricing,
       }),
       orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/offers/{offerId}/spend-charts"),
+      ...routeCacheFingerprints("/offers/{offerId}/spend-charts"),
       compute: () => computeOfferSpendCharts(offerId, brandId, ofOffer, offerChannels, pricing, headers),
     });
     res.json(body);
