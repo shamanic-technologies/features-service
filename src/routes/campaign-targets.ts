@@ -19,7 +19,7 @@ import { listOutcomeRungs } from "../lib/outcome-rungs-store.js";
 import { fetchFunnelCampaignCaps } from "../lib/funnel-campaign-budget-client.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import { campaignTargetRowOf, offerTargetsOf, offerTargetFromLedger, targetScheduleOf, PROJECTION_DAYS, type CampaignTargetInput, type CampaignTargetRow } from "../lib/campaign-targets.js";
 import { milestoneChainOf, milestoneCardsOf, withProducedMilestones, type MilestoneCard, type MilestoneCardInput } from "../lib/campaign-milestone-cards.js";
 import { lifecycleRankOf, type StepLifecycleRung } from "../lib/lifecycle-ladder.js";
@@ -265,7 +265,7 @@ router.get("/brands/:brandId/campaign-targets", apiKeyAuth, async (req, res) => 
       // `units`: the counting rule (UNIT-LINKS-CONSUME-1117: carried Units counted); a cell stored before it is never served.
       scopeKey: buildScopeKey(brandId, { orgId: auth.orgId, pricing, campaign: one ?? "ongoing", units: "own+carried" }),
       orgId: auth.orgId,
-      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/campaign-targets"),
+      ...routeCacheFingerprints("/brands/{brandId}/campaign-targets"),
       compute: () => computeCampaignTargets(brandId, one, rows, headers, pricing),
     });
     res.json(body);

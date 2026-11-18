@@ -15,7 +15,7 @@
  */
 import { fetchWithRetry } from "./fetch-retry.js";
 import { servedCachedWrappedJson, buildScopeKey, type SnapshotJson } from "./view-cache.js";
-import { routeResponseShapeFingerprint } from "./response-shape.js";
+import { routeCacheFingerprints } from "./response-shape.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -554,7 +554,7 @@ export async function readPublishedUnits(orgId: string, brandId: string, outcome
     scopeKey: buildScopeKey(brandId, { orgId, outcomeKey, pricing }),
     orgId,
     ttlMs: FRESH_MS,
-    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/published-units/{outcomeKey}"),
+    ...routeCacheFingerprints("/brands/{brandId}/published-units/{outcomeKey}"),
     compute: async () => ({ ...(await computePublishedUnits(orgId, brandId, outcomeKey, pricing)), computedAt: new Date().toISOString() }),
   }, { brandId, pricing });
 }

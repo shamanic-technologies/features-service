@@ -142,15 +142,41 @@ export function routeResponseShapeFingerprint(
   const operation = doc.paths?.[path]?.[method];
   if (!operation?.responses) throw new Error(`routeResponseShapeFingerprint: no ${method.toUpperCase()} ${path} in the OpenAPI document`);
   const inlined = inlineRefs(operation.responses, doc.components?.schemas ?? {});
-  // A route with no stated compute rule hashes exactly as before (its cells stay warm).
-  const rule = method === "get" ? rules[path] : undefined;
-  const fingerprint = shapeFingerprint(rule === undefined ? inlined : { responses: inlined, computeRule: rule });
+  // MON-PAGE-SPEED-1118: the shape fingerprint hashes ONLY the response schema (fields, types), never the
+  // compute rule. The compute rule is a SEPARATE scope-key part (`_rule`) that lives in
+  // `FINGERPRINT_KEY_PARTS` (view-cache.ts): a rule bump finds a family member from the previous build
+  // and serves it stale-while-revalidate (50 ms, not 50 s), while a schema change (new/removed field)
+  // still makes a cold miss (the old body has the wrong shape, it must not be served).
+  const fingerprint = shapeFingerprint(inlined);
   if (document === openApiDocument && rules === ROUTE_COMPUTE_RULES) routeMemo.set(memoKey, fingerprint);
   return fingerprint;
 }
 
 /** The scope-key part carrying the shape. Underscored: no route reads a `_shape` query param. */
 export const SHAPE_KEY_PART = "_shape";
+
+/**
+ * The scope-key part carrying the compute RULE (MON-PAGE-SPEED-1118). Listed in `FINGERPRINT_KEY_PARTS`
+ * (view-cache.ts) so a rule bump finds a family member (stale-while-revalidate, not a cold miss).
+ */
+export const RULE_KEY_PART = "_rule";
+
+/**
+ * The compute rule for a route, or undefined when none is stated. Thread it into the scope key
+ * (e.g. via `buildScopeKey`) so a rule bump keys a new cell that finds its family member.
+ */
+export function routeComputeRule(path: string, rules: Readonly<Record<string, string>> = ROUTE_COMPUTE_RULES): string | undefined {
+  return rules[path];
+}
+
+/**
+ * Convenience: `{ responseShape, computeRule }` for a route, ready to spread into a `CachedViewArgs`.
+ * Routes that pass a conditional `responseShape` (e.g. `costBasis === "actual" ? undefined : ...`)
+ * should call `routeComputeRule` directly.
+ */
+export function routeCacheFingerprints(path: string): { responseShape: string; computeRule: string | undefined } {
+  return { responseShape: routeResponseShapeFingerprint(path), computeRule: routeComputeRule(path) };
+}
 
 /** A cell key bound to a response shape. */
 export function withResponseShape(scopeKey: string, fingerprint = responseShapeFingerprint()): string {

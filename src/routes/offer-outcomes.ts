@@ -11,7 +11,7 @@
  * rungs would count a lead reached through two funnels twice.
  */
 import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import { applyDisqualifiedMarks, fetchDisqualifiedLeadIds } from "../lib/disqualification-marks.js";
 import { Router } from "express";
 import { withLedgerOfferOutcomes } from "../lib/ledger-offer-outcomes.js";
@@ -168,7 +168,7 @@ router.get("/offers/:offerId/outcomes", apiKeyAuth, async (rawReq, res) => {
 
     const payload = await servedCachedJson({
       view: "offer-outcomes",
-      responseShape: routeResponseShapeFingerprint("/offers/{offerId}/outcomes"),
+      ...routeCacheFingerprints("/offers/{offerId}/outcomes"),
       scopeKey: buildScopeKey(offerId, {
         orgId: req.orgId,
         brandId,

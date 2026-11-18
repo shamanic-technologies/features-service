@@ -69,7 +69,7 @@
  * total: a row for one channel and the total above it are visibly one statement at two grains.
  */
 import { ContactedValueUnavailableError, contactedValueUnavailableBody } from "../lib/contacted-value-unavailable.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import { keysOnARung, offerCompanyLifecycleCached } from "../lib/company-lifecycle-io.js";
 import { Router } from "express";
 import { withLedgerRealizedReturn } from "../lib/ledger-realized-return.js";
@@ -326,7 +326,7 @@ export async function offerRevenueJson(args: OfferRevenueArgs): Promise<Snapshot
 
   return servedCachedJson({
     view: "offer-revenue",
-    responseShape: routeResponseShapeFingerprint("/offers/{offerId}/revenue"),
+    ...routeCacheFingerprints("/offers/{offerId}/revenue"),
     // Keyed on the offer, never on a feature — and on the CHANNEL SET too, because a newly funded
     // channel changes every figure while none of the other key parts moves.
     scopeKey: buildScopeKey(offerId, {
